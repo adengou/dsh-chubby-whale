@@ -907,6 +907,116 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       }
 
 
+      // ===== 流式对话：边生成边开口 =====
+      // 传统路径要等整段生成完才合成语音；这里把模型吐出的文字按句切开立刻送朗读，
+      // 首字延迟从「整段生成 + 首段合成」降到「首句生成 + 首段合成」。
+      // 任何异常都在 4 秒内回退到普通 /chat，不影响可用性。
+      async function tryStreamChat(text: string, opts?: { voice?: boolean }): Promise<boolean> {
+        try { if (localStorage.getItem('chubby-stream') === 'off') return false } catch (e) { }
+        let spokeAny = false
+        let full = ''
+        let tail = ''
+        let ctl: any = null
+        try { ctl = typeof AbortController !== 'undefined' ? new AbortController() : null } catch (e) { ctl = null }
+        const firstTimer = setTimeout(() => { try { if (!spokeAny && ctl) ctl.abort() } catch (e) { } }, 4000)
+        const startedAt = Date.now()
+        let bubbleAt = 0
+
+        const flush = (force: boolean): void => {
+          if (!tail) return
+          // 句末标点处先念；没标点就攒到 40 字（避免等太长）
+          const m = tail.match(/[\s\S]*?[。！？!?；;\n]/)
+          if (m && m[0].length >= 2) {
+            const seg = m[0].trim()
+            tail = tail.slice(m[0].length)
+            if (seg) { try { speakText(seg, { rate: '+0%' }) } catch (e) { } ; spokeAny = true }
+            return flush(false)
+          }
+          if (force || tail.length >= 40) {
+            const seg = tail.trim()
+            tail = ''
+            if (seg) { try { speakText(seg, { rate: '+0%' }) } catch (e) { } ; spokeAny = true }
+          }
+        }
+
+        try {
+          const res = await fetch('/api/chubby-whale/chat-stream', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ message: text, lang: 'zh', voice: !!(opts && opts.voice) }),
+            signal: ctl ? ctl.signal : undefined,
+          })
+          if (!res.ok || !res.body) { clearTimeout(firstTimer); return false }
+          const reader = res.body.getReader()
+          const dec = new TextDecoder()
+          let buf = ''
+          setBusy(true)
+          busyAtRef.current = Date.now()
+          for (;;) {
+            const { value, done } = await reader.read()
+            if (done) break
+            buf += dec.decode(value, { stream: true })
+            let idx = buf.indexOf('\n')
+            while (idx >= 0) {
+              const line = buf.slice(0, idx).trim()
+              buf = buf.slice(idx + 1)
+              idx = buf.indexOf('\n')
+              if (!line.startsWith('data:')) continue
+              let obj: any = null
+              try { obj = JSON.parse(line.slice(5).trim()) } catch (e) { obj = null }
+              if (!obj) continue
+              if (obj.error) { throw new Error(String(obj.error)) }
+              if (typeof obj.delta === 'string' && obj.delta) {
+                full += obj.delta
+                tail += obj.delta
+                clearTimeout(firstTimer)
+                flush(false)
+                const nowT = Date.now()
+                if (nowT - bubbleAt > 400) { bubbleAt = nowT; showBubble(full.slice(-60), 3000) }
+              }
+              if (obj.done) {
+                const reply = String(obj.reply || full || '').trim()
+                full = reply || full
+                if (reply) {
+                  const rpPlain = reply.replace(/[\s。，！？,.!?、…~～]/g, '')
+                  const now2 = Date.now()
+                  const dup = lastReplyText && lastReplyAt && now2 - lastReplyAt < 30000 && rpPlain === lastReplyText
+                  if (!dup) {
+                    lastReplyText = rpPlain
+                    lastReplyAt = now2
+                    flush(true)
+                    setBusy(false)
+                    setMessages((m: any[]) => [...m, { who: 'fish', text: reply }])
+                    showBubble(reply, 6000)
+                    animRef.current?.talkFor(1500)
+                    scrollBody()
+                    try { (window as any).__chubbyWhale.lastChat = { stage: 'stream-done', firstDeltaMs: obj.firstDeltaMs || 0, ms: obj.ms || 0, cached: !!obj.cached, reply: reply.slice(0, 40) } } catch (e) { }
+                  }
+                }
+                clearTimeout(firstTimer)
+                return true
+              }
+            }
+          }
+          clearTimeout(firstTimer)
+          // 流正常结束但没收到 done（少见）：把已攒的文字念完并展示
+          flush(true)
+          setBusy(false)
+          if (full) { setMessages((m: any[]) => [...m, { who: 'fish', text: full }]); showBubble(full, 6000); scrollBody() }
+          return true
+        } catch (e: any) {
+          clearTimeout(firstTimer)
+          setBusy(false)
+          if (spokeAny) {
+            flush(true)
+            try { (window as any).__chubbyWhale.streamFallback = String(e && e.message || e) } catch (e2) { }
+            return true
+          }
+          return false
+        }
+      }
+
+
       async function sendText(rawText: string, opts?: { voice?: boolean }): Promise<void> {
         const text = String(rawText || '').trim()
         if (!text) return
@@ -922,6 +1032,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try { storyBusyRef.current = false } catch (e) { }
         }
         if (tryLocalRoute(text)) { setInput(''); return }
+        // 流式优先：边生成边念；失败会自动回退到下面的普通 /chat
+        try { if (await tryStreamChat(text, opts)) { setInput(''); return } } catch (e) { }
         const myEpoch = ++chatEpoch
         try { const hit = persona.reactTo(text); if (hit) { sayLine(hit.text, 4000); if (hit.event === 'praise') animRef.current?.pushHeart() } } catch (e) { }
         setInput('')

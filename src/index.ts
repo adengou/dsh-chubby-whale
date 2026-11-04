@@ -11,6 +11,7 @@ import { readApiKey } from './host/config.js'
 import { createStore } from './host/store.js'
 import { createCache } from './host/cache.js'
 import { createChatHandler } from './host/routes/chat.js'
+import { createChatStreamHandler } from './host/routes/chat-stream.js'
 import { createStoryHandlers } from './host/routes/story.js'
 import { createMiscHandlers } from './host/routes/misc.js'
 import { createReminderHandlers } from './host/routes/reminders.js'
@@ -116,6 +117,15 @@ export function apply(ctx: any, config?: any): void {
     loadMemorySummary: store.loadMemorySummary,
     saveMemorySummary: store.saveMemorySummary,
   })
+  const chatStream = createChatStreamHandler({
+    getKey,
+    loadHistory: store.loadHistory,
+    appendTurns: (store as any).appendTurns,
+    systemPrompt: SYSTEM_PROMPT,
+    addTokens: store.addTokens,
+    cache: chatCache,
+    loadMemorySummary: store.loadMemorySummary,
+  })
   const story = createStoryHandlers({
     dataDir: DATA_DIR,
     workerPath: join(__dirname, 'story-worker.js'),
@@ -160,6 +170,7 @@ export function apply(ctx: any, config?: any): void {
     try {
       reg('/api/chubby-whale/asset', misc.handleAsset)
       reg('/api/chubby-whale/chat', chat)
+  reg('/api/chubby-whale/chat-stream', chatStream)
       reg('/api/chubby-whale/status', misc.handleStatus)
       reg('/api/chubby-whale/state', misc.handleState)
       reg('/api/chubby-whale/balance', misc.handleBalance)
