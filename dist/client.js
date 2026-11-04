@@ -906,6 +906,7 @@
       const channels = createChannels();
       let chatEpoch = 0;
       let asrBusy = false;
+      let asrBusyAt = 0;
       const storyNarratingRef = { current: false };
       const latDiag = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 };
       const earDiag = {
@@ -1197,6 +1198,10 @@
         const epoch = ttsEpoch;
         const job = ttsQueue.shift();
         ttsPlaying = true;
+        try {
+          setStatus();
+        } catch (e) {
+        }
         muteMic();
         ttsCurrentJob = job;
         try {
@@ -1613,7 +1618,44 @@
           clearTimeout(el._t);
           el._t = setTimeout(() => {
             el.classList.remove("show");
+            try {
+              restoreIdleStatus();
+            } catch (e) {
+            }
           }, ms);
+        }
+        function statusText() {
+          if (ttsPlaying || ttsQueue.length > 0) return "\u5728\u8BF4\u2026";
+          if (busy) return "\u5728\u60F3\u2026";
+          if (asrBusy && Date.now() - asrBusyAt < 2e4) return "\u8BC6\u522B\u4E2D\u2026";
+          return "\u5728\u542C\u2026";
+        }
+        function setStatus2() {
+          try {
+            if (hidden) return;
+            if (!earOnRef.current) return;
+            const el = bubbleRef.current;
+            if (!el) return;
+            const p = posRef.current;
+            el.style.left = p.x + W / 2 + "px";
+            el.style.transform = "translateX(-50%)";
+            el.style.top = "auto";
+            el.style.right = "auto";
+            el.style.bottom = Math.max(70, window.innerHeight - p.y + 12) + "px";
+            if (bubbleTextRef.current) bubbleTextRef.current.textContent = statusText();
+            el.classList.add("show");
+            clearTimeout(el._t);
+            el._t = null;
+          } catch (e) {
+          }
+        }
+        function restoreIdleStatus() {
+          setTimeout(() => {
+            try {
+              setStatus2();
+            } catch (e) {
+            }
+          }, 600);
         }
         R.useEffect(() => {
           const insideFish = (x, y) => {
@@ -2153,6 +2195,10 @@
               }
               ;
               showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5F00\uFF0C\u672C\u9CB8\u53C8\u542C\u7740\u5566");
+              try {
+                restoreIdleStatus();
+              } catch (e) {
+              }
             } else {
               try {
                 earCtlRef.current.stop();
@@ -2160,6 +2206,10 @@
               }
               ;
               showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5173\uFF0C\u9EA6\u514B\u98CE\u505C\u5566");
+              try {
+                restoreIdleStatus();
+              } catch (e) {
+              }
             }
             return;
           }
@@ -2389,6 +2439,10 @@
             }
           }
           const myEpoch = ++chatEpoch;
+          try {
+            setStatus2();
+          } catch (e) {
+          }
           if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart();
           if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble("\u54FC\u2026\u672C\u9CB8\u751F\u6C14\u4E86");
           if (/胖|肥猪|肥嘟嘟/.test(text)) {
@@ -2402,12 +2456,18 @@
           setInput("");
           setMessages((m) => [...m, { who: "me", text }]);
           setBusy(true);
+          try {
+            setStatus2();
+          } catch (e) {
+          }
           animRef.current?.talkFor(1200);
           scrollBody();
           let data = null;
           try {
             const tChat = performance.now();
             const res = await fetch("/api/chubby-whale/chat", {
+              // 30 秒上限：请求卡住时别让状态永远停在「在想…」
+              signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(3e4) : void 0,
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ message: text, voice: true, lang: (() => {
@@ -2435,6 +2495,10 @@
             setMessages((m) => [...m, { who: "fish", text: "\u4E3B\u4EBA\uFF0C\u672C\u9CB8\u8FDE\u4E0D\u4E0A\u670D\u52A1\u5668\u2026\u2026" }]);
           } finally {
             setBusy(false);
+            try {
+              restoreIdleStatus();
+            } catch (e) {
+            }
             animRef.current?.talkFor(1500);
             try {
               if (data && data.reply && myEpoch === chatEpoch) {
@@ -2585,6 +2649,10 @@
               showBubble("\uFF08\u542C\u5230\uFF09" + t + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
               sendText(t, { voice: true });
               try {
+                setTimeout(() => setStatus2(), 50);
+              } catch (e) {
+              }
+              try {
                 earDiag.chunks.sent++;
               } catch (e) {
               }
@@ -2605,6 +2673,11 @@
               return;
             }
             asrBusy = true;
+            asrBusyAt = Date.now();
+            try {
+              setStatus2();
+            } catch (e) {
+            }
             try {
               if (stopped) return;
               const blob = new Blob(chunks, { type: "audio/webm" });
@@ -2640,6 +2713,8 @@
               } catch (e) {
               }
               const r = await fetch("/api/chubby-whale/asr", {
+                // 客户端也要有超时：服务端 60s 不代表浏览器会等，网络卡死会永久占着识别位（表现就是一直「识别中…」）
+                signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(15e3) : void 0,
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({ audio: b64, format: "webm" })
@@ -2872,6 +2947,10 @@
               detachGesture();
               showBubble("\u672C\u9CB8\u5728\u542C\uFF08\u5343\u95EE\u8BC6\u522B\uFF09\uFF0C\u8BF4\u5B8C\u5C31\u4F1A\u63A5\u8BDD\uFF5E", 3e3);
               try {
+                setTimeout(() => setStatus2(), 300);
+              } catch (e) {
+              }
+              try {
                 const ws = createWebSpeech({
                   onFinal: (text) => {
                     acceptHeard(text, "ws");
@@ -2927,6 +3006,18 @@
                     if (tr2 && tr2.enabled === false) {
                       tr2.enabled = true;
                       earDiag.revived = (earDiag.revived || 0) + 1;
+                    }
+                    if (asrBusy && Date.now() - asrBusyAt > 2e4) {
+                      asrBusy = false;
+                      try {
+                        earDiag.chunks.asrZombie = (earDiag.chunks.asrZombie || 0) + 1;
+                      } catch (e) {
+                      }
+                      ;
+                      try {
+                        setStatus2();
+                      } catch (e) {
+                      }
                     }
                     if (mr && mr.state === "recording") {
                       try {

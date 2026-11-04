@@ -64,6 +64,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     let chatEpoch = 0
     // asrBusy：识别请求同时只允许一个在途，避免多段音频的结果乱序返回
     let asrBusy = false
+    let asrBusyAt = 0   // 识别位占用的起始时刻（用于僵尸复位与状态显示）
     // 说书/讲古/念诗期间为 true：耳朵完全静音，避免本鱼自己的声音把自己打断
     const storyNarratingRef = { current: false }
     // 耳朵实时诊断：主人可在控制台看 __chubbyWhale.ear 了解当前音量/噪声底/阈值
@@ -252,6 +253,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       const epoch = ttsEpoch
       const job = ttsQueue.shift() as TtsJob
       ttsPlaying = true
+      try { setStatus() } catch (e) { }
       muteMic()   // 出声即闭麦（物理层，浏览器不再采样）
       ttsCurrentJob = job
       try {
@@ -549,7 +551,36 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (bubbleTextRef.current) bubbleTextRef.current.textContent = text
         el.classList.add('show')
         clearTimeout(el._t)
-        el._t = setTimeout(() => { el.classList.remove('show') }, ms)
+        el._t = setTimeout(() => { el.classList.remove('show'); try { restoreIdleStatus() } catch (e) { } }, ms)
+      }
+      // ===== 常驻状态行（照旧算法：闲时显示「在听…」，忙时显示当前在做什么）=====
+      // 普通气泡（听到/回复/提醒）是临时覆盖：到期后自动回到常驻状态。
+      function statusText(): string {
+        if (ttsPlaying || ttsQueue.length > 0) return '在说…'
+        if (busy) return '在想…'
+        if (asrBusy && Date.now() - asrBusyAt < 20000) return '识别中…'
+        return '在听…'
+      }
+      function setStatus(): void {
+        try {
+          if (hidden) return                    // 隐藏状态不显示
+          if (!earOnRef.current) return         // 语音待命关着也不显示"在听"
+          const el = bubbleRef.current
+          if (!el) return
+          const p = posRef.current
+          el.style.left = (p.x + W / 2) + 'px'
+          el.style.transform = 'translateX(-50%)'
+          el.style.top = 'auto'
+          el.style.right = 'auto'
+          el.style.bottom = Math.max(70, window.innerHeight - p.y + 12) + 'px'
+          if (bubbleTextRef.current) bubbleTextRef.current.textContent = statusText()
+          el.classList.add('show')
+          clearTimeout(el._t)
+          el._t = null                          // 常驻：不自动隐藏
+        } catch (e) { }
+      }
+      function restoreIdleStatus(): void {
+        setTimeout(() => { try { setStatus() } catch (e) { } }, 600)
       }
 
       // ===== 拖放：必须在【捕获阶段】抢在 HARNESS 自己的拖放处理之前 =====
@@ -952,8 +983,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           earOnRef.current = nowOn
           setEarOn(nowOn)
           try { localStorage.setItem('chubby-ear', nowOn ? 'on' : 'off') } catch (e) { }
-          if (nowOn) { try { earCtlRef.current.boot() } catch (e) { } ; showBubble('语音待命：开，本鲸又听着啦') }
-          else { try { earCtlRef.current.stop() } catch (e) { } ; showBubble('语音待命：关，麦克风停啦') }
+          if (nowOn) { try { earCtlRef.current.boot() } catch (e) { } ; showBubble('语音待命：开，本鲸又听着啦') ; try { restoreIdleStatus() } catch (e) { } }
+          else { try { earCtlRef.current.stop() } catch (e) { } ; showBubble('语音待命：关，麦克风停啦') ; try { restoreIdleStatus() } catch (e) { } }
           return
         }
         if (action === 'chatmode') {
@@ -1127,18 +1158,22 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try { storyBusyRef.current = false } catch (e) { }
         }
         const myEpoch = ++chatEpoch
+        try { setStatus() } catch (e) { }
         if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart()
         if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble('哼…本鲸生气了')
         if (/胖|肥猪|肥嘟嘟/.test(text)) { showBubble('人家不胖！是鲸鱼天生圆！'); const s0 = Math.min(1.4, scale + 0.12); setScale(s0); setTimeout(function () { setScale(Math.max(0.7, s0 - 0.12)) }, 600) }
         setInput('')
         setMessages((m: any[]) => [...m, { who: 'me', text }])
         setBusy(true)
+        try { setStatus() } catch (e) { }
         animRef.current?.talkFor(1200)
         scrollBody()
         let data: any = null
         try {
           const tChat = performance.now()
           const res = await fetch('/api/chubby-whale/chat', {
+            // 30 秒上限：请求卡住时别让状态永远停在「在想…」
+            signal: (typeof AbortSignal !== 'undefined' && (AbortSignal as any).timeout) ? (AbortSignal as any).timeout(30000) : undefined,
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ message: text, voice: true, lang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })() }),
@@ -1154,6 +1189,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           setMessages((m: any[]) => [...m, { who: 'fish', text: '主人，本鲸连不上服务器……' }])
         } finally {
           setBusy(false)
+          try { restoreIdleStatus() } catch (e) { }
           animRef.current?.talkFor(1500)
           // 聊天回复：长回复（≥80 字）按 C# 自动切叙述语调 -15%，短句 +0%
           try {
@@ -1262,6 +1298,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             playFiller()
             showBubble('（听到）' + t + '｜本鱼在想…', 3000)
             sendText(t, { voice: true })
+            try { setTimeout(() => setStatus(), 50) } catch (e) { }
             try { earDiag.chunks.sent++ } catch (e) { }
           } catch (e) { }
         }
@@ -1270,7 +1307,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         async function uploadChunk() {
         try { earDiag.chunks.uploadCalled = (earDiag.chunks.uploadCalled || 0) + 1 } catch (e) { }
         if (asrBusy) { try { earDiag.chunks.asrBusyDrop = (earDiag.chunks.asrBusyDrop || 0) + 1 } catch (e) { } ; return }
-        asrBusy = true                      // 兼容旧诊断字段
+        asrBusy = true
+        asrBusyAt = Date.now()
+            try { setStatus() } catch (e) { }
           // 所有 return 都走 finally → 录音循环一定会重启（不再因为「没叫唤醒词」装死）
           try {
             if (stopped) return
@@ -1284,6 +1323,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const t0 = performance.now()
             try { earDiag.chunks.uploaded++ } catch (e) { }
             const r = await fetch('/api/chubby-whale/asr', {
+              // 客户端也要有超时：服务端 60s 不代表浏览器会等，网络卡死会永久占着识别位（表现就是一直「识别中…」）
+              signal: (typeof AbortSignal !== 'undefined' && (AbortSignal as any).timeout) ? (AbortSignal as any).timeout(15000) : undefined,
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ audio: b64, format: 'webm' }),
@@ -1432,6 +1473,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             mr.onerror = (ev: any) => { try { earDiag.lastError = 'recorder: ' + String(ev && ev.error && ev.error.name) } catch (e) { } }
             detachGesture()                 // 麦克风真拿到了才摘监听
             showBubble('本鲸在听（千问识别），说完就会接话～', 3000)
+            try { setTimeout(() => setStatus(), 300) } catch (e) { }
             // ===== 优先用浏览器自带语音识别（Web Speech）=====
             // 它内部已做 VAD 与流式识别，不用我们判段；国内网络可能连不上，故失败即退回自建链路。
             try {
@@ -1471,6 +1513,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                   if (stopped) return
                   const tr = micTrackRef.current
                   if (tr && tr.enabled === false) { tr.enabled = true; earDiag.revived = (earDiag.revived || 0) + 1 }
+                  // 僵尸复位：识别位占了 20 秒还没回来说明请求卡死，强制释放
+                  if (asrBusy && Date.now() - asrBusyAt > 20000) { asrBusy = false; try { earDiag.chunks.asrZombie = (earDiag.chunks.asrZombie || 0) + 1 } catch (e) { } ; try { setStatus() } catch (e) { } }
                   if (mr && mr.state === ('recording' as any)) {
                     try { earDiag.chunks.watchdog = (earDiag.chunks.watchdog || 0) + 1 } catch (e) { }
                     try { mr.stop() } catch (e) { }
