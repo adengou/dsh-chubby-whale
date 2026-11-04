@@ -190,7 +190,7 @@
     const voiceChatOn = state && state.voiceChatOn ? true : false;
     const chatLang = state && state.chatLang ? String(state.chatLang) : "auto";
     const ttsVoice = state && state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
-    const chatCacheOn2 = !(state && state.chatCacheOn === false);
+    const chatCacheOn = !(state && state.chatCacheOn === false);
     const voiceTick = (voice) => ttsVoice === voice ? "\u2713 " : "";
     const balanceText = state && state.balance ? state.balance : "--";
     const growthText = state && state.growth ? state.growth : "--";
@@ -247,7 +247,7 @@
       ] },
       { type: "item", label: "\u6E05\u9664\u8BB0\u5FC6\u2026", action: "clear-memory" },
       { type: "item", label: "\u6E05\u7A7A\u804A\u5929\u7F13\u5B58\u2026", action: "cache-clear" },
-      { type: "item", label: chatCacheOn2 ? "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00" : "\u804A\u5929\u7F13\u5B58\uFF1A\u5173", action: "cache-toggle" },
+      { type: "item", label: chatCacheOn ? "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00" : "\u804A\u5929\u7F13\u5B58\uFF1A\u5173", action: "cache-toggle" },
       { type: "item", label: "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09", action: "hide" },
       { type: "sep" },
       { type: "item", label: "\u4F59\u989D\uFF1A" + balanceText, action: "balance" },
@@ -1013,6 +1013,17 @@
         }, boot: () => {
         } });
         const [balanceLabel, setBalanceLabel] = R.useState("--");
+        const chatCacheOnRef = R.useRef(true);
+        const [chatCacheOn, setChatCacheOn] = R.useState(true);
+        R.useEffect(() => {
+          fetch("/api/chubby-whale/cache-toggle").then((r) => r.json()).then((d) => {
+            if (d && typeof d.enabled === "boolean") {
+              chatCacheOnRef.current = d.enabled;
+              setChatCacheOn(d.enabled);
+            }
+          }).catch(() => {
+          });
+        }, []);
         const [growthLabel, setGrowthLabel] = R.useState("--");
         const WAKE_WORDS = ["\u5927\u80A5\u9C7C", "\u80A5\u9CB8", "\u80A5\u9C7C", "\u5C0F\u9C7C", "\u84DD\u9C7C", "\u5C0F\u84DD\u9C7C", "\u9C7C\u9C7C", "\u80A5\u80A5"];
         const dragRef = R.useRef({ dragging: false, lastX: 0, lastY: 0, vx: 0, vy: 0, moved: 0 });
@@ -2192,7 +2203,7 @@
               return;
             }
             const desc = { name: "shell.overlay", id: "chubby-whale-overlay", order: 999 };
-            const render = () => h(WhaleOverlay, {});
+            const render = () => h(PetBoundary, null, h(WhaleOverlay, {}));
             const doRegister = () => {
               try {
                 slots.register(desc, render);

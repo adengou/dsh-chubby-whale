@@ -306,6 +306,14 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       // 录音循环的启停句柄（由 VAD 的 effect 注入：关掉语音待命时真停麦克风）
       const earCtlRef = R.useRef({ stop: () => { }, boot: () => { } })
       const [balanceLabel, setBalanceLabel] = R.useState('--')
+      // 聊天缓存开关（服务端持久化；这里只用于菜单显示与即时切换）
+      const chatCacheOnRef = R.useRef(true)
+      const [chatCacheOn, setChatCacheOn] = R.useState(true)
+      R.useEffect(() => {
+        fetch('/api/chubby-whale/cache-toggle').then((r: any) => r.json()).then((d: any) => {
+          if (d && typeof d.enabled === 'boolean') { chatCacheOnRef.current = d.enabled; setChatCacheOn(d.enabled) }
+        }).catch(() => { })
+      }, [])
       const [growthLabel, setGrowthLabel] = R.useState('--')
       const WAKE_WORDS = ['大肥鱼', '肥鲸', '肥鱼', '小鱼', '蓝鱼', '小蓝鱼', '鱼鱼', '肥肥']
       const dragRef = R.useRef({ dragging: false, lastX: 0, lastY: 0, vx: 0, vy: 0, moved: 0 })
@@ -1213,7 +1221,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           }
           const desc = { name: 'shell.overlay', id: 'chubby-whale-overlay', order: 999 }
           // 第二个参数必须是「渲染函数」：直接传组件会在非渲染上下文调用，触发 Invalid hook call
-          const render = () => h(WhaleOverlay, {})
+          const render = () => h(PetBoundary, null, h(WhaleOverlay, {}))
           const doRegister = () => {
             try {
               slots.register(desc, render)
