@@ -24,6 +24,8 @@ export function createStoryHandlers(opts) {
     const STORY_DIR = join(opts.dataDir, 'story');
     const PROGRESS = join(opts.runtimeDir || opts.dataDir, 'story_progress.json');
     const bookCache = new Map();
+    /** 内存里最多留几本书：一本 JSON 可能几 MB，无限缓存会一直涨 */
+    const BOOK_CACHE_MAX = 2;
     const progress = loadProgress();
     // 每个客户端一条连播队列：{ queue: 本书剩余未读段, book: 书名 }
     const clientQueues = new Map();
@@ -152,6 +154,13 @@ export function createStoryHandlers(opts) {
                         done = true;
                         const list = normalizeBook(book, msg.chunks);
                         bookCache.set(book, list);
+                        // LRU：超上限就丢最早的那本（Map 保持插入顺序）
+                        while (bookCache.size > BOOK_CACHE_MAX) {
+                            const oldest = bookCache.keys().next().value;
+                            if (oldest === undefined)
+                                break;
+                            bookCache.delete(oldest);
+                        }
                         resolve(list);
                     }
                     else

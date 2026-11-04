@@ -98,9 +98,9 @@ export function apply(ctx: any, config?: any): void {
     const p = loadPrefs(); p.chatCache = on; savePrefs(p)
   }
   const store = createStore(RUNTIME_DIR)
-  const ttsCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'tts') })
-  const chatCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'chat') })
-  const asrCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'asr') })
+  const ttsCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'tts'), memBytes: 12 * 1024 * 1024 })   // 音频内存上限 12MB（磁盘不限）
+  const chatCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'chat'), memBytes: 3 * 1024 * 1024 })  // 聊天回复很小
+  const asrCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'asr'), memBytes: 3 * 1024 * 1024 })     // 识别结果很小
   const getKey = () => readApiKey(PLUGIN_DIR)
 
   const chat = createChatHandler({
