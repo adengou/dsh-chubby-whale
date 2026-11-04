@@ -379,17 +379,28 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
     cur.then((buf) => {
       if (myToken !== speakToken) { ttsBusy = false; return }
       if (!buf) {
-        // 失败：先重试一次；仍失败就用系统语音把这段念完，绝不跳过（跳过就是"少内容"）
-        if (job.attempts < 1) {
+        // 失败：最多重试 3 次（每次间隔递增）。绝不静默跳过——跳过就是'少内容'。
+        if (job.attempts < 3) {
           job.attempts++
           ttsQ.unshift(job)
           ttsBusy = false
-          pumpTts()
+          const backoff = 300 * job.attempts
+          try { (window as any).__chubbyWhale.ttsRetry = ((window as any).__chubbyWhale.ttsRetry || 0) + 1 } catch (e) { }
+          setTimeout(() => { try { pumpTts() } catch (e) { } }, backoff)
           return
         }
         stats.ttsFail++
         try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
-        speakViaBrowser(job.text).then(() => finishJob(job))
+        try {
+          const w: any = (window as any).__chubbyWhale
+          w.ttsLost = w.ttsLost || []
+          w.ttsLost.push(job.text.slice(0, 16))
+          if (w.ttsLost.length > 10) w.ttsLost.shift()
+        } catch (e) { }
+        // 系统语音兜底：只有真的有可用语音时才用（没语音就当场静音，等于丢内容）
+        const canBrowser = (() => { try { const s: any = (window as any).speechSynthesis; return !!(s && s.getVoices && s.getVoices().length > 0) } catch (e) { return false } })()
+        if (canBrowser) speakViaBrowser(job.text).then(() => finishJob(job))
+        else finishJob(job)
         return
       }
       const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
@@ -411,7 +422,17 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
         try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
         try { a.onended = null; a.onerror = null; URL.revokeObjectURL(url) } catch (e) { }
         ttsAudio = null
-        speakViaBrowser(job.text).then(() => finishJob(job))
+        // 播放被拒绝：先重试一次（换新音频元素），仍不行才用系统语音；没语音说明当场静音，记为丢失
+        if (job.attempts < 1) {
+          job.attempts++
+          ttsQ.unshift(job)
+          ttsBusy = false
+          setTimeout(() => { try { pumpTts() } catch (e) { } }, 250)
+          return
+        }
+        const canBrowser2 = (() => { try { const s: any = (window as any).speechSynthesis; return !!(s && s.getVoices && s.getVoices().length > 0) } catch (e) { return false } })()
+        if (canBrowser2) speakViaBrowser(job.text).then(() => finishJob(job))
+        else finishJob(job)
       })
     })
   }

@@ -1002,11 +1002,21 @@
           return;
         }
         if (!buf) {
-          if (job.attempts < 1) {
+          if (job.attempts < 3) {
             job.attempts++;
             ttsQ.unshift(job);
             ttsBusy = false;
-            pumpTts();
+            const backoff = 300 * job.attempts;
+            try {
+              window.__chubbyWhale.ttsRetry = (window.__chubbyWhale.ttsRetry || 0) + 1;
+            } catch (e) {
+            }
+            setTimeout(() => {
+              try {
+                pumpTts();
+              } catch (e) {
+              }
+            }, backoff);
             return;
           }
           stats.ttsFail++;
@@ -1014,7 +1024,23 @@
             lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
           } catch (e) {
           }
-          speakViaBrowser(job.text).then(() => finishJob(job));
+          try {
+            const w = window.__chubbyWhale;
+            w.ttsLost = w.ttsLost || [];
+            w.ttsLost.push(job.text.slice(0, 16));
+            if (w.ttsLost.length > 10) w.ttsLost.shift();
+          } catch (e) {
+          }
+          const canBrowser = (() => {
+            try {
+              const s = window.speechSynthesis;
+              return !!(s && s.getVoices && s.getVoices().length > 0);
+            } catch (e) {
+              return false;
+            }
+          })();
+          if (canBrowser) speakViaBrowser(job.text).then(() => finishJob(job));
+          else finishJob(job);
           return;
         }
         const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
@@ -1060,7 +1086,28 @@
           } catch (e) {
           }
           ttsAudio = null;
-          speakViaBrowser(job.text).then(() => finishJob(job));
+          if (job.attempts < 1) {
+            job.attempts++;
+            ttsQ.unshift(job);
+            ttsBusy = false;
+            setTimeout(() => {
+              try {
+                pumpTts();
+              } catch (e) {
+              }
+            }, 250);
+            return;
+          }
+          const canBrowser2 = (() => {
+            try {
+              const s = window.speechSynthesis;
+              return !!(s && s.getVoices && s.getVoices().length > 0);
+            } catch (e) {
+              return false;
+            }
+          })();
+          if (canBrowser2) speakViaBrowser(job.text).then(() => finishJob(job));
+          else finishJob(job);
         });
       });
     }
