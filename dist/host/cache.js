@@ -61,9 +61,9 @@ export function createCache(opts) {
     }
     function remember(key, value, ttlMs = 0) {
         const size = sizeOf(value);
+        forget(key); // 先清旧条目：超大值也不能把旧值留在内存里
         if (size > MEM_BYTES)
             return; // 单个对象就超上限：不驻留内存
-        forget(key);
         mem.set(key, { v: value, size, at: Date.now(), ttl: ttlMs > 0 ? ttlMs : 0 });
         memBytes += size;
         while (mem.size > MEM_ITEMS || memBytes > MEM_BYTES) {
@@ -169,24 +169,23 @@ export function createCache(opts) {
             }
             entries.sort((a, b) => a.t - b.t);
             const toDelete = entries.slice(0, Math.floor(entries.length / 2));
+            const gone = new Set(); // 同名不同扩展名只扣一次内存
             for (const it of toDelete) {
                 try {
                     await unlink(join(opts.dir, it.f));
                 }
                 catch { }
-                try {
-                    const k = it.f.replace(/\.[^.]+$/, '');
-                    const hit = mem.get(k);
-                    if (hit) {
-                        memBytes -= hit.size;
-                        mem.delete(k);
-                    } // 同步扣减，避免内存计数漂移
-                }
-                catch { }
+                // 内存 key 不带扩展名：按「文件名去掉扩展名」精确删，forget 内部判存在才会扣 memBytes
+                const k = it.f.replace(/\.[^.]+$/, '');
+                if (!k || gone.has(k))
+                    continue;
+                gone.add(k);
+                forget(k);
             }
         }
         catch { }
     }
-    function memSet(key, value) { remember(key, value); }
+    // 内存直写：和 setJson 一样经 remember 打 at（可选 ttl），过期判定不会拿到没有时间的条目
+    function memSet(key, value, ttlMs = 0) { remember(key, value, ttlMs); }
     return { getJson, setJson, memGet, memSet };
 }

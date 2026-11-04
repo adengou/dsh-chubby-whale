@@ -884,8 +884,11 @@
         function applyPos(x, y) {
           const el = stageRef.current;
           if (!el) return;
-          x = Math.max(0, Math.min(window.innerWidth - W, x));
-          y = Math.max(0, Math.min(window.innerHeight - H, y));
+          const s = scaleRef.current || 1;
+          const w = W * s;
+          const h2 = H * s;
+          x = Math.max(0, Math.min(window.innerWidth - w, x));
+          y = Math.max(0, Math.min(window.innerHeight - h2, y));
           el.style.left = x + "px";
           el.style.top = y + "px";
           posRef.current = { x, y };
@@ -900,6 +903,41 @@
           applyPos(window.innerWidth - 24 - W, window.innerHeight - 150 - H);
           savePos();
         }
+        R.useEffect(() => {
+          const onResize = () => {
+            applyPos(posRef.current.x, posRef.current.y);
+            savePos();
+          };
+          window.addEventListener("resize", onResize);
+          return () => {
+            try {
+              window.removeEventListener("resize", onResize);
+            } catch {
+            }
+          };
+        }, []);
+        R.useEffect(() => {
+          return () => {
+            try {
+              if (dueTimerRef.current) {
+                clearTimeout(dueTimerRef.current);
+                dueTimerRef.current = null;
+              }
+            } catch {
+            }
+            dueQueueRef.current = [];
+            stopTts();
+            stopMelody();
+            try {
+              const el = bubbleRef.current;
+              if (el && el._t) {
+                clearTimeout(el._t);
+                el._t = null;
+              }
+            } catch {
+            }
+          };
+        }, []);
         function showBubble(text, ms = 2400) {
           const el = bubbleRef.current;
           if (!el) return;
@@ -976,6 +1014,25 @@
           }).catch(() => {
           });
         }
+        R.useEffect(() => {
+          if (!menu) return;
+          const onDocDown = (e) => {
+            try {
+              const t = e && e.target;
+              if (t && t.closest && t.closest("[data-menu-root]")) return;
+              setMenu(null);
+              setSubOpen("");
+            } catch {
+            }
+          };
+          document.addEventListener("pointerdown", onDocDown, true);
+          return () => {
+            try {
+              document.removeEventListener("pointerdown", onDocDown, true);
+            } catch {
+            }
+          };
+        }, [menu]);
         function playStoryPiece(d) {
           const text = String(d.text || "");
           const head = "\u8BF4\u4E66\xB7\u300A" + String(d.book || "") + "\u300B" + (d.title ? "\uFF5C" + d.title : "");
@@ -1140,12 +1197,13 @@
           }
           if (action === "poem") {
             fetch("/api/chubby-whale/poem").then((r) => r.json()).then((d) => {
-              if (d && d.ok) {
-                const body = String(d.text || "");
-                const author = String(d.author || "\u4F5A\u540D");
-                showBubble("\u5FF5\u8BD7\xB7" + d.title + "\uFF08" + author + "\uFF09\n" + body, 15e3);
+              const p = d && d.ok && d.item ? d.item : null;
+              if (p) {
+                const body = String(p.text || "");
+                const author = String(p.author || "\u4F5A\u540D");
+                showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + author + "\uFF09\n" + body, 15e3);
                 animRef.current?.talkFor(6e3);
-                const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + d.title + "\uFF0C" + (d.dynasty ? d.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
+                const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
                 speakText(speech, { rate: "-15%" });
               } else showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230");
             }).catch(() => showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230"));
@@ -1337,7 +1395,8 @@
               localStorage.setItem("chubby-tts-voice", v);
             } catch {
             }
-            showBubble("\u97F3\u8272\u6362\u597D\u5566\uFF1A" + v.split("-")[2]);
+            const shown = v === "auto" ? "\u81EA\u52A8" : v.split("-")[2] || v;
+            showBubble("\u97F3\u8272\u6362\u597D\u5566\uFF1A" + shown);
             try {
               const u = new window.SpeechSynthesisUtterance("\u4E3B\u4EBA\uFF0C\u8FD9\u4E2A\u58F0\u97F3\u597D\u542C\u5417\uFF1F");
               window.speechSynthesis.cancel();
@@ -1402,14 +1461,6 @@
           if (!text || busy) return;
           if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart();
           if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble("\u54FC\u2026\u672C\u9CB8\u751F\u6C14\u4E86");
-          if (/胖|肥猪|肥嘟嘟/.test(text)) {
-            showBubble("\u4EBA\u5BB6\u4E0D\u80D6\uFF01\u662F\u9CB8\u9C7C\u5929\u751F\u5706\uFF01");
-            const s0 = Math.min(1.4, scale + 0.12);
-            setScale(s0);
-            setTimeout(function() {
-              setScale(Math.max(0.7, s0 - 0.12));
-            }, 600);
-          }
           if (/胖|肥猪|肥嘟嘟/.test(text)) {
             showBubble("\u4EBA\u5BB6\u4E0D\u80D6\uFF01\u662F\u9CB8\u9C7C\u5929\u751F\u5706\uFF01");
             const s0 = Math.min(1.4, scale + 0.12);
@@ -1627,7 +1678,28 @@
               scheduleStart(1e3);
             }
           }
+          function detachGesture() {
+            try {
+              document.removeEventListener("pointerdown", onFirstGesture);
+            } catch {
+            }
+            try {
+              document.removeEventListener("keydown", onFirstGesture);
+            } catch {
+            }
+          }
+          function attachGesture() {
+            try {
+              document.addEventListener("pointerdown", onFirstGesture);
+            } catch {
+            }
+            try {
+              document.addEventListener("keydown", onFirstGesture);
+            } catch {
+            }
+          }
           async function boot() {
+            if (stopped) return;
             try {
               const s = await navigator.mediaDevices.getUserMedia({ audio: true });
               if (stopped) {
@@ -1650,20 +1722,20 @@
               };
               mr.onstop = () => {
               };
+              detachGesture();
               showBubble("\u672C\u9CB8\u5728\u542C\uFF08\u5343\u95EE\u8BC6\u522B\uFF09\uFF0C\u8BF4\u5B8C\u5C31\u4F1A\u63A5\u8BDD\uFF5E", 3e3);
               startChunk();
             } catch (e) {
+              started = false;
+              if (stopped) return;
+              attachGesture();
               showBubble("\u9EA6\u514B\u98CE\u6253\u4E0D\u5F00\uFF1A\u70B9\u5730\u5740\u680F\u5C0F\u9501\u5141\u8BB8\u9EA6\u514B\u98CE", 6e3);
             }
           }
           function onFirstGesture() {
-            if (started) return;
+            if (started || stopped) return;
             started = true;
-            try {
-              document.removeEventListener("pointerdown", onFirstGesture);
-              document.removeEventListener("keydown", onFirstGesture);
-            } catch {
-            }
+            detachGesture();
             if (!earOnRef.current) return;
             boot();
           }
@@ -1705,25 +1777,14 @@
             lastHeardText = "";
             lastHeardAt = 0;
             started = true;
-            try {
-              document.removeEventListener("pointerdown", onFirstGesture);
-              document.removeEventListener("keydown", onFirstGesture);
-            } catch {
-            }
+            detachGesture();
             boot();
           }
           earCtlRef.current.stop = stopEar;
           earCtlRef.current.boot = bootEar;
-          try {
-            document.addEventListener("pointerdown", onFirstGesture)(document).addEventListener("keydown", onFirstGesture);
-          } catch {
-          }
+          attachGesture();
           return () => {
-            try {
-              document.removeEventListener("pointerdown", onFirstGesture);
-              document.removeEventListener("keydown", onFirstGesture);
-            } catch {
-            }
+            detachGesture();
             stopEar();
             earCtlRef.current.stop = () => {
             };
@@ -1798,7 +1859,7 @@
           h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef })),
           menu ? h(
             "div",
-            { style: menuStyle(menu) },
+            { style: menuStyle(menu), "data-menu-root": "1" },
             h(
               "div",
               { style: { padding: "8px 14px", borderBottom: "1px solid #1f4a85", color: "#9FD8FF", fontSize: 12, display: "flex", justifyContent: "space-between" } },
@@ -1830,6 +1891,7 @@
                 value: input,
                 onChange: (e) => setInput(e.target.value),
                 onKeyDown: (e) => {
+                  if (e.nativeEvent && e.nativeEvent.isComposing) return;
                   if (e.key === "Enter" && input.trim()) {
                     sendText(input);
                     setInput("");

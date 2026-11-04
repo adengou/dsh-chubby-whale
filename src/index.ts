@@ -81,6 +81,7 @@ export function apply(ctx: any): void {
   ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/story/books', handler: story.handleBooks })
   ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/story/start', handler: story.handleStoryStart })
   ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/story/next', handler: story.handleStoryNext })
+  ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/story/reset', handler: story.handleStoryReset })
   const reminders = createReminderHandlers({
     loadReminders: store.loadReminders,
     addReminder: store.addReminder,

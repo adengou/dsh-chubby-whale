@@ -3,7 +3,10 @@
  * 选段：按数组顺序找第一个未读段（key = book|index，避免回目里 piece 重复导致误判）；
  * 一本读完自动下一本；17 本全读完才清空进度重来。
  * 进度文件：{"book|index": true, "_current": "书名"}
+ * 单本坏文件/超时不拖垮全局：loadBook 记日志后返回空数组，pickNext 继续试下一本；
+ * 全部书都读不出来时返回 no readable book。
  * 连播：每个客户端（x-client-id）一条队列，多标签页互不抢段；拿不到 id 时共用单队列。
+ * 菜单「从头讲这本书」：POST /story/reset?book=书名，清该书的 book|index 进度。
  */
 import { readdir } from 'node:fs/promises'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
@@ -105,25 +108,41 @@ export function createStoryHandlers(opts: {
     return out
   }
 
+  /**
+   * 读一本书。坏文件/超时都不抛：记 STORY-LOAD-FAIL 后返回空数组，
+   * 让 pickNext 继续试下一本（一本坏不能拖垮整个说书功能）。
+   */
   function loadBook(book: string): Promise<any[]> {
     const cached = bookCache.get(book)
     if (cached) return Promise.resolve(cached)
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
+      let done = false
+      const fail = (err: any): void => {
+        if (done) return
+        done = true
+        console.error('STORY-LOAD-FAIL book=' + book + ' err=' + String(err?.message || err))
+        resolve([])
+      }
       try {
         const w = new Worker(opts.workerPath)
-        const timer = setTimeout(() => { try { w.terminate() } catch { } reject(new Error('story load timeout')) }, 30000)
+        const timer = setTimeout(() => {
+          try { w.terminate() } catch { }
+          fail('timeout 30s')
+        }, 30000)
         w.once('message', (msg: any) => {
           clearTimeout(timer)
           try { w.terminate() } catch { }
+          if (done) return
           if (msg && msg.ok) {
+            done = true
             const list = normalizeBook(book, msg.chunks)
             bookCache.set(book, list)
             resolve(list)
-          } else reject(new Error(msg?.error || 'parse failed'))
+          } else fail(msg?.error || 'parse failed')
         })
-        w.once('error', (err: any) => { clearTimeout(timer); reject(err) })
+        w.once('error', (err: any) => { clearTimeout(timer); fail(err) })
         w.postMessage({ book, file: join(STORY_DIR, book + '.json') })
-      } catch (err) { reject(err) }
+      } catch (err) { fail(err) }
     })
   }
 
@@ -166,8 +185,10 @@ export function createStoryHandlers(opts: {
     if (books.length === 0) return null
     const resolved = resolveBook(books, want)
     let target = resolved || currentBook(books)
+    let anyReadable = false
     for (let attempt = 0; attempt < books.length; attempt++) {
       const chunks = await loadBook(target)
+      if (chunks.length > 0) anyReadable = true
       const hit = chunks.find((c: any) => !progress[storyKey(target, c.index)])
       if (hit) {
         progress[storyKey(target, hit.index)] = true
@@ -178,19 +199,25 @@ export function createStoryHandlers(opts: {
       const idx = books.indexOf(target)
       target = books[(idx + 1) % books.length]
     }
-    // 整整一轮都没找到未读：17 本都讲完了，清空进度从头再来
+    // 一本书都读不出来：上层据此返回 no readable book，别再假装「讲完了」
+    if (!anyReadable) return null
+    // 整整一轮都没找到未读：都讲完了，清空进度从头再来
     for (const k of Object.keys(progress)) {
       if (k !== '_current') delete progress[k]
     }
     saveProgress()
-    const firstBook = books[0]
-    const chunks = await loadBook(firstBook)
-    const hit = chunks.find((c: any) => !progress[storyKey(firstBook, c.index)])
-    if (!hit) return null
-    progress[storyKey(firstBook, hit.index)] = true
-    progress['_current'] = firstBook
-    saveProgress()
-    return { piece: hit, chunks, book: firstBook }
+    // 从头再来也要跳过坏书：按顺序找第一本能读的
+    for (let i = 0; i < books.length; i++) {
+      const book = books[i]
+      const chunks = await loadBook(book)
+      const hit = chunks.find((c: any) => !progress[storyKey(book, c.index)])
+      if (!hit) continue
+      progress[storyKey(book, hit.index)] = true
+      progress['_current'] = book
+      saveProgress()
+      return { piece: hit, chunks, book }
+    }
+    return null
   }
 
   function clientId(req: any): string {
@@ -235,7 +262,7 @@ export function createStoryHandlers(opts: {
       const url = new URL(req.url, 'http://x')
       const hint = url.searchParams.get('hint') || ''
       const picked = await pickNext(books, hint)
-      if (!picked) { send(res, { ok: false, error: 'no chunk' }); return }
+      if (!picked) { send(res, { ok: false, error: 'no readable book' }); return }
       const st = stateFor(clientId(req))
       st.book = picked.book
       st.queue = queueAfter(picked.chunks, picked.book, picked.piece)
@@ -259,11 +286,13 @@ export function createStoryHandlers(opts: {
         piece = st.queue.shift()
       } else {
         const picked = await pickNext(books, '')
-        if (!picked) { send(res, { ok: true, done: true }); return }
+        if (!picked) { send(res, { ok: false, error: 'no readable book' }); return }
+        // 队列空后重新挑段：还是同一本书就不重复插开场白，真换书才开口
+        const switched = !st.book || picked.book !== st.book
         piece = picked.piece
         st.book = picked.book
         st.queue = queueAfter(picked.chunks, picked.book, piece)
-        isFirst = true
+        isFirst = switched
       }
       const bk = st.book || String(piece.book || books[0])
       progress[storyKey(bk, piece.index)] = true
@@ -276,5 +305,28 @@ export function createStoryHandlers(opts: {
     }
   }
 
-  return { handleBooks, handleStoryStart, handleStoryNext }
+  /** 从头讲这本书：清掉该书全部进度（book|index 前缀），并把「当前书」指过去 */
+  async function handleStoryReset(req: any, res: any): Promise<void> {
+    try {
+      const books = await listBooks()
+      const url = new URL(req.url, 'http://x')
+      const want = String(url.searchParams.get('book') || '').trim()
+      const book = resolveBook(books, want) || want
+      if (!book) { send(res, { ok: false, error: 'no book' }); return }
+      let cleared = 0
+      for (const k of Object.keys(progress)) {
+        if (k !== '_current' && k.startsWith(book + '|')) { delete progress[k]; cleared++ }
+      }
+      progress['_current'] = book
+      saveProgress()
+      // 该客户端的连播队列里若还排着这本书的段，也一起丢掉，免得 reset 后又接着念旧的
+      const st = stateFor(clientId(req))
+      if (st.book === book) st.queue = []
+      send(res, { ok: true, book })
+    } catch (err: any) {
+      send(res, { ok: false, error: String(err?.message || err) })
+    }
+  }
+
+  return { handleBooks, handleStoryStart, handleStoryNext, handleStoryReset }
 }

@@ -237,8 +237,12 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       function applyPos(x: number, y: number): void {
         const el = stageRef.current
         if (!el) return
-        x = Math.max(0, Math.min(window.innerWidth - W, x))
-        y = Math.max(0, Math.min(window.innerHeight - H, y))
+        // 缩放后实际占位是 W*scale / H*scale：窗口缩小时也要把整只鱼留在可视区里
+        const s = scaleRef.current || 1
+        const w = W * s
+        const h = H * s
+        x = Math.max(0, Math.min(window.innerWidth - w, x))
+        y = Math.max(0, Math.min(window.innerHeight - h, y))
         el.style.left = x + 'px'
         el.style.top = y + 'px'
         posRef.current = { x, y }
@@ -250,6 +254,35 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         applyPos(window.innerWidth - 24 - W, window.innerHeight - 150 - H)
         savePos()
       }
+
+      // 窗口尺寸变化：按当前缩放重新钳制位置，别让鱼停在可视区外
+      R.useEffect(() => {
+        const onResize = (): void => {
+          applyPos(posRef.current.x, posRef.current.y)
+          savePos()
+        }
+        window.addEventListener('resize', onResize)
+        return () => {
+          try { window.removeEventListener('resize', onResize) } catch { }
+        }
+      }, [])
+
+      // 卸载收尾：提醒链 / 朗读音频 / 琴声 AudioContext / 气泡定时器都别留着
+      // （SpeechRecognition 当前没用到；VAD 的 MediaRecorder 由下面语音待命的 effect 自己 stopEar）
+      R.useEffect(() => {
+        return () => {
+          try {
+            if (dueTimerRef.current) { clearTimeout(dueTimerRef.current); dueTimerRef.current = null }
+          } catch { }
+          dueQueueRef.current = []
+          stopTts()
+          stopMelody()
+          try {
+            const el = bubbleRef.current
+            if (el && el._t) { clearTimeout(el._t); el._t = null }
+          } catch { }
+        }
+      }, [])
 
       // 气泡
       function showBubble(text: string, ms = 2400): void {
@@ -315,6 +348,23 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (d && d.ok) setGrowthLabel(d.stage + '（' + d.exp + '）')
         }).catch(() => { })
       }
+
+      // 点菜单外面就关掉（菜单根节点带 data-menu-root 标记，closest 判断）
+      R.useEffect(() => {
+        if (!menu) return
+        const onDocDown = (e: any): void => {
+          try {
+            const t = e && e.target
+            if (t && t.closest && t.closest('[data-menu-root]')) return
+            setMenu(null)
+            setSubOpen('')
+          } catch { }
+        }
+        (document as any).addEventListener('pointerdown', onDocDown, true)
+        return () => {
+          try { (document as any).removeEventListener('pointerdown', onDocDown, true) } catch { }
+        }
+      }, [menu])
 
       // ===== 说书（连载）=====
       function playStoryPiece(d: any): void {
@@ -405,12 +455,13 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }
         if (action === 'poem') {
           fetch('/api/chubby-whale/poem').then((r: any) => r.json()).then((d: any) => {
-            if (d && d.ok) {
-              const body = String(d.text || '')
-              const author = String(d.author || '佚名')
-              showBubble('念诗·' + d.title + '（' + author + '）\n' + body, 15000)
+            const p = (d && d.ok && d.item) ? d.item : null
+            if (p) {
+              const body = String(p.text || '')
+              const author = String(p.author || '佚名')
+              showBubble('念诗·' + p.title + '（' + author + '）\n' + body, 15000)
               animRef.current?.talkFor(6000)
-              const speech = '念首诗——' + d.title + '，' + (d.dynasty ? d.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
+              const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
               speakText(speech, { rate: '-15%' })
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
@@ -552,7 +603,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }        if (action.startsWith('voice:')) {
           const v = action.slice(6)
           try { localStorage.setItem('chubby-tts-voice', v) } catch { }
-          showBubble('音色换好啦：' + v.split('-')[2])
+          // 「自动」没有第三段音色名，别把 undefined 冒给主人看
+          const shown = v === 'auto' ? '自动' : (v.split('-')[2] || v)
+          showBubble('音色换好啦：' + shown)
           try { const u = new (window as any).SpeechSynthesisUtterance('主人，这个声音好听吗？'); (window as any).speechSynthesis.cancel(); (window as any).speechSynthesis.speak(u) } catch (e) { }
           return
         }        if (action === 'remind-add') {
@@ -609,7 +662,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (!text || busy) return
         if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart()
         if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble('哼…本鲸生气了')
-        if (/胖|肥猪|肥嘟嘟/.test(text)) { showBubble('人家不胖！是鲸鱼天生圆！'); const s0 = Math.min(1.4, scale + 0.12); setScale(s0); setTimeout(function () { setScale(Math.max(0.7, s0 - 0.12)) }, 600) }
         if (/胖|肥猪|肥嘟嘟/.test(text)) { showBubble('人家不胖！是鲸鱼天生圆！'); const s0 = Math.min(1.4, scale + 0.12); setScale(s0); setTimeout(function () { setScale(Math.max(0.7, s0 - 0.12)) }, 600) }
         setInput('')
         setMessages((m: any[]) => [...m, { who: 'me', text }])
@@ -778,7 +830,17 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             scheduleWatch(100)
           } catch (e) { scheduleStart(1000) }
         }
+        // 首次手势监听：两个分开摘，一个抛错不能把另一个漏在页面上
+        function detachGesture(): void {
+          try { (document as any).removeEventListener('pointerdown', onFirstGesture) } catch { }
+          try { (document as any).removeEventListener('keydown', onFirstGesture) } catch { }
+        }
+        function attachGesture(): void {
+          try { (document as any).addEventListener('pointerdown', onFirstGesture) } catch { }
+          try { (document as any).addEventListener('keydown', onFirstGesture) } catch { }
+        }
         async function boot() {
+          if (stopped) return
           try {
             const s = await (navigator as any).mediaDevices.getUserMedia({ audio: true })
             // 拿麦期间被「语音待命：关」了：别再把麦克风挂着
@@ -792,16 +854,21 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             mr = new (window as any).MediaRecorder(stream)
             mr.ondataavailable = (e: any) => { if (e && e.data && e.data.size > 0) chunks.push(e.data) }
             mr.onstop = () => { }
+            detachGesture()                 // 麦克风真拿到了才摘监听
             showBubble('本鲸在听（千问识别），说完就会接话～', 3000)
             startChunk()
           } catch (e) {
+            // 拿麦失败（没授权/没有设备）：允许下一次手势再试，别把开始标志焊死
+            started = false
+            if (stopped) return             // 卸载/关待命期间失败：监听不能再加回去
+            attachGesture()
             showBubble('麦克风打不开：点地址栏小锁允许麦克风', 6000)
           }
         }
         function onFirstGesture() {
-          if (started) return
+          if (started || stopped) return
           started = true
-          try { (document as any).removeEventListener('pointerdown', onFirstGesture); (document as any).removeEventListener('keydown', onFirstGesture) } catch { }
+          detachGesture()
           if (!earOnRef.current) return
           boot()
         }
@@ -821,17 +888,15 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           lastHeardText = ''
           lastHeardAt = 0
           started = true
-          try { (document as any).removeEventListener('pointerdown', onFirstGesture); (document as any).removeEventListener('keydown', onFirstGesture) } catch { }
+          detachGesture()
           boot()
         }
         earCtlRef.current.stop = stopEar
         earCtlRef.current.boot = bootEar
-        try {
-          (document as any).addEventListener('pointerdown', onFirstGesture)
-          (document as any).addEventListener('keydown', onFirstGesture)
-        } catch { }
+        attachGesture()
         return () => {
-          try { (document as any).removeEventListener('pointerdown', onFirstGesture); (document as any).removeEventListener('keydown', onFirstGesture) } catch { }
+          // 卸载必须无条件摘监听：否则页面里点一下还会去开麦
+          detachGesture()
           stopEar()
           earCtlRef.current.stop = () => { }
           earCtlRef.current.boot = () => { }
@@ -892,7 +957,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           h('canvas', { ref: canvasRef, width: CW, height: CH, style: canvasStyle }),
         ),
         h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef })),
-        menu ? h('div', { style: menuStyle(menu) },
+        menu ? h('div', { style: menuStyle(menu), 'data-menu-root': '1' },
           h('div', { style: { padding: '8px 14px', borderBottom: '1px solid #1f4a85', color: '#9FD8FF', fontSize: 12, display: 'flex', justifyContent: 'space-between' } },
             h('span', null, (lang === 'en' ? 'Fat Whale · v' : '肥鲸 · v') + VERSION),
             h('span', { style: { color: '#FFD166' } }, balanceText)),
@@ -912,7 +977,11 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             h('input', {
               style: inputStyle, placeholder: lang === 'en' ? 'Say something…' : '跟肥鲸说两句…', value: input,
               onChange: (e: any) => setInput(e.target.value),
-              onKeyDown: (e: any) => { if (e.key === 'Enter' && input.trim()) { sendText(input); setInput('') } },
+              onKeyDown: (e: any) => {
+                // 中文输入法选词时按回车不算发送（isComposing 期间放行给输入法）
+                if (e.nativeEvent && e.nativeEvent.isComposing) return
+                if (e.key === 'Enter' && input.trim()) { sendText(input); setInput('') }
+              },
             }),
             h('button', { style: sendStyle, onClick: () => { if (input.trim()) sendText(input); setInput('') } }, busy ? '…' : (lang === 'en' ? 'Send' : '发送')),
           ),

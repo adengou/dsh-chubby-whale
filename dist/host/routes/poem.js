@@ -1,7 +1,8 @@
 /**
  * host/routes/poem.ts —— 念诗路由
  * 数据：data/poems.json（739 首，结构 {poems:[{type,dynasty,title,author,lines,sources}]}）
- * 去重：data/poem-seen.json（["标题|作者", ...]），一轮念完自动清空重来。
+ * 去重：data/poem-seen.json（["标题|作者|首句", ...]），一轮念完自动清空重来。
+ * 文件缺失/损坏只记 POEM-LOAD-FAIL，按空诗册处理；空时返回 {ok:true,item:null,reason:'no-data'}。
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,39 +11,53 @@ export function createPoemHandler(opts) {
     const SEEN_FILE = join(opts.dataDir, 'poem-seen.json');
     let poems = null;
     let seen = null;
-    function loadPoems() {
-        if (poems)
-            return poems;
-        const out = [];
-        try {
-            const data = JSON.parse(readFileSync(POEMS_FILE, 'utf8'));
-            const arr = Array.isArray(data) ? data : (Array.isArray(data?.poems) ? data.poems : []);
-            for (const p of arr) {
-                if (!p || typeof p !== 'object')
-                    continue;
-                const title = String(p.title || '').trim();
-                if (!title)
-                    continue;
-                const lines = Array.isArray(p.lines) ? p.lines.map((x) => String(x || '').trim()).filter(Boolean) : [];
-                if (lines.length === 0)
-                    continue;
-                out.push({
-                    type: String(p.type || ''),
-                    dynasty: String(p.dynasty || ''),
-                    title,
-                    author: String(p.author || ''),
-                    lines,
-                });
-            }
-        }
-        catch { }
-        poems = out;
-        return poems;
-    }
     function keyOf(p) {
         // 同题不同作很多（蝶恋花/浣溪沙 等），键里加上首句前 12 字
         const first = Array.isArray(p.lines) ? String(p.lines[0] || '') : String(p.text || '');
         return String(p.title || '') + '|' + String(p.author || '') + '|' + first.slice(0, 12);
+    }
+    function loadPoems() {
+        if (poems)
+            return poems;
+        const out = [];
+        const keys = new Set();
+        try {
+            const data = JSON.parse(readFileSync(POEMS_FILE, 'utf8'));
+            const arr = Array.isArray(data) ? data : (Array.isArray(data?.poems) ? data.poems : null);
+            if (!arr) {
+                console.error('POEM-LOAD-FAIL file=' + POEMS_FILE + ' err=bad structure');
+            }
+            else {
+                for (const p of arr) {
+                    if (!p || typeof p !== 'object')
+                        continue;
+                    const title = String(p.title || '').trim();
+                    if (!title)
+                        continue;
+                    const lines = Array.isArray(p.lines) ? p.lines.map((x) => String(x || '').trim()).filter(Boolean) : [];
+                    if (lines.length === 0)
+                        continue;
+                    const item = {
+                        type: String(p.type || ''),
+                        dynasty: String(p.dynasty || ''),
+                        title,
+                        author: String(p.author || ''),
+                        lines,
+                    };
+                    // 按 key 去重：同一首只留第一条
+                    const k = keyOf(item);
+                    if (keys.has(k))
+                        continue;
+                    keys.add(k);
+                    out.push(item);
+                }
+            }
+        }
+        catch (err) {
+            console.error('POEM-LOAD-FAIL file=' + POEMS_FILE + ' err=' + String(err?.message || err));
+        }
+        poems = out;
+        return poems;
     }
     function loadSeen() {
         if (seen)
@@ -72,7 +87,7 @@ export function createPoemHandler(opts) {
             const list = loadPoems();
             if (list.length === 0) {
                 res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-                res.end(JSON.stringify({ ok: false, error: 'no poems' }));
+                res.end(JSON.stringify({ ok: true, item: null, reason: 'no-data' }));
                 return;
             }
             const sn = loadSeen();
@@ -89,10 +104,12 @@ export function createPoemHandler(opts) {
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
             res.end(JSON.stringify({
                 ok: true,
-                title: p.title,
-                author: p.author,
-                dynasty: p.dynasty,
-                text: p.lines.join('\n'),
+                item: {
+                    title: p.title,
+                    author: p.author,
+                    dynasty: p.dynasty,
+                    text: p.lines.join('\n'),
+                },
             }));
         }
         catch (err) {
