@@ -888,7 +888,17 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               playMelody(notes, bpm, () => {
                 showBubble('弹完啦～《' + songName + '》', 6000)
                 animRef.current?.talkFor(1500)
-                try { speakText('弹完啦～') } catch (e) { }
+                try {
+                  (window as any).__chubbyWhale.melodyVoice = { at: Date.now(), requested: true, ok: false, err: '' }
+                  speakText('弹完啦～')
+                  // 300ms 后还没进入播放就记一笔（供主人用 __chubbyWhale.melodyVoice 自查）
+                  setTimeout(() => {
+                    try {
+                      const d = (window as any).__chubbyWhale.melodyVoice
+                      if (d && !ttsPlaying && ttsQueue.length === 0) d.err = 'TTS 未开始（可能被浏览器拦或合成失败）'
+                    } catch (e) { }
+                  }, 1200)
+                } catch (e: any) { try { (window as any).__chubbyWhale.melodyVoice = { requested: false, err: String(e) } } catch (e2) { } }
               })
             } else showBubble('这首曲子没找到')
           }).catch(() => showBubble('弹琴失败'))

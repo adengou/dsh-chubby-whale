@@ -1905,8 +1905,20 @@
                   showBubble("\u5F39\u5B8C\u5566\uFF5E\u300A" + songName + "\u300B", 6e3);
                   animRef.current?.talkFor(1500);
                   try {
+                    window.__chubbyWhale.melodyVoice = { at: Date.now(), requested: true, ok: false, err: "" };
                     speakText("\u5F39\u5B8C\u5566\uFF5E");
+                    setTimeout(() => {
+                      try {
+                        const d2 = window.__chubbyWhale.melodyVoice;
+                        if (d2 && !ttsPlaying && ttsQueue.length === 0) d2.err = "TTS \u672A\u5F00\u59CB\uFF08\u53EF\u80FD\u88AB\u6D4F\u89C8\u5668\u62E6\u6216\u5408\u6210\u5931\u8D25\uFF09";
+                      } catch (e) {
+                      }
+                    }, 1200);
                   } catch (e) {
+                    try {
+                      window.__chubbyWhale.melodyVoice = { requested: false, err: String(e) };
+                    } catch (e2) {
+                    }
                   }
                 });
               } else showBubble("\u8FD9\u9996\u66F2\u5B50\u6CA1\u627E\u5230");
