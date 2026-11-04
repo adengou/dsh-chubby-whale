@@ -7,6 +7,7 @@ import { buildMenu, tr } from './client/menu.js'
 import { handleFileDrop, VISION_PROMPT } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { createVoice } from './client/voice.js'
+import { createPersona } from './client/persona.js'
 import { splitTtsSegments, normalizeRate, cleanTtsText } from './shared/tts.js'
 import { parseDue, cleanReminderText } from './shared/time.js'
 ;(window as any).__ModuleLoader__.load({
@@ -42,6 +43,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     let asrBusy = false
     let asrBusyAt = 0   // 识别位占用的起始时刻（用于僵尸复位与状态显示）
     const storyNarratingRef = { current: false }
+    const persona = createPersona()   // 饭团人设：情绪状态机 + 台词库（data/persona.json）
     const latDiag: any = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 }
     // 音符表：覆盖 C3–E6（含升降号），与 data/melodies.json 实际用到的音名对齐
     /** 民间故事标题在 culture 路由里是「书名·标题」拼一起的：拆开还原 C# TaleBubble 的拼法 */
@@ -372,6 +374,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       // 启动后拉一次余额，菜单还没打开时标题也能显示真实金额
       R.useEffect(() => {
         const t0 = setTimeout(() => { try { refreshBalance() } catch (e) { } }, 2000)
+        // 饭团：进门先打个招呼（按当前时段挑台词），3 秒后出现，不抢首屏
+        const tGreet = setTimeout(() => { try { const g = persona.greeting(); if (g) sayLine(g, 5000) } catch (e) { } }, 3000)
+        try { const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {}); w.persona = persona; w.sayLine = sayLine } catch (e) { }
         // 状态行 2 秒周期刷新：常驻气泡只会在被调用时更新，靠事件驱动容易漏（就曾卡在「识别中…」）
         const tStatus = setInterval(() => {
           // 占线自愈：一次请求异常不能让后续提问永远被「还在想上一句」挡住
@@ -386,6 +391,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         const tF = setTimeout(() => { try { prefetchFiller() } catch (e) { } }, 3000)
         return () => {
           clearTimeout(t0)
+          try { clearTimeout(tGreet) } catch (e) { }
           try { clearTimeout(tF) } catch (e) { }
           clearStatus()
           try { const el = bubbleRef.current; if (el) el.classList.remove('show') } catch (e) { }
@@ -523,7 +529,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
 
       async function runAction(action: string): Promise<void> {
         setMenu(null)
-        if (action === 'feed') { showBubble('好吃！谢谢主人～'); animRef.current?.pushHeart(); try { fetch('/api/chubby-whale/pet?action=feed') } catch (e) { } ; return }
+        if (action === 'feed') { const r = persona.feed(); sayLine(r.text + (r.stageUp ? '（' + r.stage + '）' : ''), r.stageUp ? 6000 : 3500); animRef.current?.pushHeart(); try { fetch('/api/chubby-whale/pet?action=feed') } catch (e) { } ; return }
         if (action === 'home') { homePos(); showBubble('回到角落啦'); return }
         if (action === 'bigger') { const s = Math.min(1.4, scale + 0.1); setScale(s); scaleRef.current = s; return }
         if (action === 'smaller') { const s = Math.max(0.7, scale - 0.1); setScale(s); scaleRef.current = s; return }
@@ -854,9 +860,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try { storyBusyRef.current = false } catch (e) { }
         }
         const myEpoch = ++chatEpoch
-        if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart()
-        if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble('哼…本鲸生气了')
-        if (/胖|肥猪|肥嘟嘟/.test(text)) { showBubble('人家不胖！是鲸鱼天生圆！'); const s0 = Math.min(1.4, scale + 0.12); setScale(s0); setTimeout(function () { setScale(Math.max(0.7, s0 - 0.12)) }, 600) }
+        try { const hit = persona.reactTo(text); if (hit) { sayLine(hit.text, 4000); if (hit.event === 'praise') animRef.current?.pushHeart() } } catch (e) { }
         setInput('')
         setMessages((m: any[]) => [...m, { who: 'me', text }])
         setBusy(true)
@@ -959,6 +963,17 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       function unmuteMic(): void { try { if (voiceRef.current) voiceRef.current.mute(false) } catch (e) { } }
       function prefetchFiller(): void { }
       function prefetchNextTts(): void { }
+
+      /** 人设台词：气泡 + 语音一起出（语音朗读关着时只出气泡；正在说别的话时不打断） */
+      function sayLine(text: string, ms = 3500): void {
+        if (!text) return
+        try { showBubble(text, ms) } catch (e) { }
+        try {
+          if (localStorage.getItem('chubby-voice') === 'off') return
+          const v: any = voiceRef.current
+          if (v && v.speak && !v.speaking()) v.speak(text, { rate: '+0%' })
+        } catch (e) { }
+      }
       // Canvas 动画
       R.useEffect(() => {
         const canvas = canvasRef.current

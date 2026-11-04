@@ -114,13 +114,13 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
   const balanceText = (state && state.balance) ? state.balance : '--'
   const growthText = (state && state.growth) ? state.growth : '--'
   return [
-    { type: 'item', label: '喂它一口', action: 'feed' },
+    { type: 'item', label: '投喂一碗', action: 'feed' },
     { type: 'item', label: '看张图…', action: 'vision' },
     { type: 'sep' },
     { type: 'sub', label: '弹首曲子 ▸', items: MELODIES.map((m) => ({ type: 'item' as const, label: '弹《' + m + '》', action: 'music:' + m })) },
     { type: 'item', label: '停止弹奏', action: 'music-stop' },
     { type: 'sep' },
-    { type: 'item', label: '打字说两句', action: 'type' },
+    { type: 'item', label: '跟她说两句', action: 'type' },
     { type: 'item', label: voiceOn ? '语音朗读：开' : '语音朗读：关', action: 'voice' },
     { type: 'item', label: '停止说话', action: 'tts-stop' },
     { type: 'item', label: '端点检测：经典/自适应', action: 'endpoint' },
@@ -149,12 +149,12 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
     { type: 'item', label: '语音待命：' + (earOn ? '开' : '关'), action: 'wake' },
     { type: 'item', label: '语音聊天：' + (voiceChatOn ? '开' : '关'), action: 'chatmode' },
     
-    { type: 'item', label: '停下歇会儿', action: 'pause' },
-    { type: 'item', label: '回到右下角', action: 'home' },
+    { type: 'item', label: '让她歇会儿', action: 'pause' },
+    { type: 'item', label: '回碗里待着', action: 'home' },
     { type: 'item', label: '长大一点', action: 'bigger' },
     { type: 'item', label: '变小一点', action: 'smaller' },
     { type: 'sep' },
-    { type: 'item', label: '加个提醒…', action: 'remind-add' },
+    { type: 'item', label: '记个饭点…', action: 'remind-add' },
     { type: 'item', label: '提醒清单…', action: 'remind-list' },
     { type: 'sep' },
     { type: 'sub', label: '文化气 ▸', items: [

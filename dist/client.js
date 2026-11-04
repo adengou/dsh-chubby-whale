@@ -200,13 +200,13 @@
     const balanceText = state && state.balance ? state.balance : "--";
     const growthText = state && state.growth ? state.growth : "--";
     return [
-      { type: "item", label: "\u5582\u5B83\u4E00\u53E3", action: "feed" },
+      { type: "item", label: "\u6295\u5582\u4E00\u7897", action: "feed" },
       { type: "item", label: "\u770B\u5F20\u56FE\u2026", action: "vision" },
       { type: "sep" },
       { type: "sub", label: "\u5F39\u9996\u66F2\u5B50 \u25B8", items: MELODIES.map((m) => ({ type: "item", label: "\u5F39\u300A" + m + "\u300B", action: "music:" + m })) },
       { type: "item", label: "\u505C\u6B62\u5F39\u594F", action: "music-stop" },
       { type: "sep" },
-      { type: "item", label: "\u6253\u5B57\u8BF4\u4E24\u53E5", action: "type" },
+      { type: "item", label: "\u8DDF\u5979\u8BF4\u4E24\u53E5", action: "type" },
       { type: "item", label: voiceOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173", action: "voice" },
       { type: "item", label: "\u505C\u6B62\u8BF4\u8BDD", action: "tts-stop" },
       { type: "item", label: "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94", action: "endpoint" },
@@ -234,12 +234,12 @@
       { type: "sep" },
       { type: "item", label: "\u8BED\u97F3\u5F85\u547D\uFF1A" + (earOn ? "\u5F00" : "\u5173"), action: "wake" },
       { type: "item", label: "\u8BED\u97F3\u804A\u5929\uFF1A" + (voiceChatOn ? "\u5F00" : "\u5173"), action: "chatmode" },
-      { type: "item", label: "\u505C\u4E0B\u6B47\u4F1A\u513F", action: "pause" },
-      { type: "item", label: "\u56DE\u5230\u53F3\u4E0B\u89D2", action: "home" },
+      { type: "item", label: "\u8BA9\u5979\u6B47\u4F1A\u513F", action: "pause" },
+      { type: "item", label: "\u56DE\u7897\u91CC\u5F85\u7740", action: "home" },
       { type: "item", label: "\u957F\u5927\u4E00\u70B9", action: "bigger" },
       { type: "item", label: "\u53D8\u5C0F\u4E00\u70B9", action: "smaller" },
       { type: "sep" },
-      { type: "item", label: "\u52A0\u4E2A\u63D0\u9192\u2026", action: "remind-add" },
+      { type: "item", label: "\u8BB0\u4E2A\u996D\u70B9\u2026", action: "remind-add" },
       { type: "item", label: "\u63D0\u9192\u6E05\u5355\u2026", action: "remind-list" },
       { type: "sep" },
       { type: "sub", label: "\u6587\u5316\u6C14 \u25B8", items: [
@@ -1238,6 +1238,191 @@
     };
   }
 
+  // data/persona.json
+  var persona_default = {
+    name: "\u996D\u56E2",
+    fullName: "\u9CB8\xB7\u996D\u56E2",
+    tagline: "\u4E00\u6761\u628A\u809A\u5B50\u5F53\u7C73\u4ED3\u3001\u62A4\u98DF\u53C8\u820D\u5F97\u3001\u88AB\u5938\u5C31\u6570\u7C73\u7C92\u7684\u84DD\u9CB8",
+    catchphrases: ["\u5F00\u996D\uFF01", "\u4E00\u7C92\u90FD\u4E0D\u8BB8\u5269", "\u2026\u2026\u6211\u6570\u4E00\u4E0B", "\u4E0D\u8BB8\u50AC", "\u90A3\u4E2A\u3001\u90A3\u4E2A\u2026\u2026"],
+    menus: {
+      feed: "\u6295\u5582\u4E00\u7897",
+      type: "\u8DDF\u5979\u8BF4\u4E24\u53E5",
+      pause: "\u8BA9\u5979\u6B47\u4F1A\u513F",
+      home: "\u56DE\u7897\u91CC\u5F85\u7740",
+      "remind-add": "\u8BB0\u4E2A\u996D\u70B9",
+      music: "\u542C\u5979\u6572\u7897\u5531",
+      vision: "\u7ED9\u5979\u770B\u5F20\u56FE",
+      "ear-check": "\u8033\u6735\u81EA\u68C0",
+      endpoint: "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94"
+    },
+    lines: {
+      greetMorning: ["\u65E9\u5440\u3002\u2026\u2026\u65E9\u996D\u5403\u4E86\u5417\uFF1F", "\u65E9\u3002\u9505\u91CC\u7684\u7C73\u6211\u66FF\u4F60\u770B\u7740\u3002"],
+      greetNoon: ["\u4E2D\u5348\u4E86\u3002\u4ECA\u5929\u8FD9\u7897\uFF0C\u6211\u76DB\u5F97\u7279\u522B\u5706\u3002", "\u4E2D\u5348\u4E86\uFF0C\u5148\u5403\uFF0C\u522B\u62D6\u3002"],
+      greetEvening: ["\u5929\u9ED1\u5566\u3002\u665A\u996D\u522B\u5BF9\u4ED8\u3002", "\u665A\u4E0A\u4E86\u3002\u54EA\u6015\u53EA\u52A0\u4E00\u4E2A\u86CB\u3002"],
+      greetLate: ["\u8FD8\u4E0D\u7761\uFF1F\u90A3\u6211\u62B1\u7740\u7897\u966A\u4F60\u3002", "\u8FD9\u4E48\u665A\u2026\u2026\u6211\u6570\u7C73\u7C92\u7B49\u4F60\u3002"],
+      feed: [
+        "\u4F60\u3001\u4F60\u771F\u7684\u7ED9\u6211\uFF1F\u90A3\u6211\u4E0D\u5BA2\u6C14\u4E86\u2026\u2026\u5F00\u996D\uFF01",
+        "\u4ECA\u5929\u7684\u7C73\u6709\u70B9\u751C\uFF0C\u662F\u65B0\u7C73\u5427\uFF1F\u6211\u5C1D\u5F97\u51FA\u6765\u3002",
+        "\u54B3\u54B3\u2026\u2026\u6CA1\u4E8B\uFF0C\u6211\u53EA\u662F\u564E\u4E86\u4E00\u4E0B\uFF0C\u8FD8\u80FD\u5403\u3002",
+        "\u4E00\u7C92\u90FD\u4E0D\u8BB8\u5269\u3002\u8FD9\u662F\u89C4\u77E9\u3002"
+      ],
+      feedFirst: ["\u7B2C\u4E00\u6B21\u6709\u4EBA\u7ED9\u6211\u76DB\u996D\u3002\u6211\u8BB0\u4E0B\u6765\u4E86\u3002"],
+      praise: ["\u2026\u2026\u54E6\u3002\uFF08\u628A\u8138\u57CB\u8FDB\u7897\u91CC\uFF09", "\u6211\u6570\u4E00\u4E0B\u7C73\u7C92\u3002", "\u4F60\u3001\u4F60\u4ECA\u5929\u600E\u4E48\u8FD9\u4E48\u4F1A\u8BF4\u8BDD\u2026\u2026"],
+      scold: ["\u2026\u2026\u54E6\u3002", "\u90A3\u6211\u5C11\u8BF4\u4E24\u53E5\u3002", "\u2026\u2026\uFF08\u5446\u6BDB\u5782\u4E0B\u6765\uFF09"],
+      hungry: ["\u90A3\u4E2A\u2026\u2026\u996D\u70B9\u5230\u4E86\u5417\uFF1F", "\u6211\u95FB\u5230\u7C73\u5473\u4E86\u3002\u662F\u4F60\u5403\u7684\u90A3\u7897\u5417\uFF1F", "\u4E0D\u50AC\u3002\u5C31\u662F\u7897\u6709\u70B9\u7A7A\u3002"],
+      sleepy: ["\u672C\u9CB8\u8981\u62B1\u7740\u7897\u7761\u4E86\u2026\u2026", "\u6253\u4E2A\u54C8\u6B20\u2026\u2026\u4F60\u4E5F\u65E9\u70B9\u7761\u3002"],
+      guard: ["\u522B\u3001\u522B\u62A2\uFF01", "\u6478\u5934\u53EF\u4EE5\uFF0C\u522B\u6478\u809A\u5B50\uFF0C\u90A3\u91CC\u6709\u5B58\u8D27\u3002"],
+      excited: ["\u65B0\u7C73\uFF1F\uFF01\u54EA\u91CC\u54EA\u91CC\u54EA\u91CC\uFF01", "\u5F00\u996D\uFF01\u5F00\u996D\uFF01", "\u9505\u5DF4\uFF01\u9505\u5DF4\u662F\u7C73\u996D\u7684\u9752\u6625\u671F\uFF01"],
+      waiting: ["\u7B49\u4E00\u4F1A\u513F\uFF0C\u6211\u5728\u56BC\u7C73\u3002\uFF08\u4E0D\u8BB8\u50AC\uFF09", "\u8BA9\u6211\u628A\u8FD9\u7C92\u56BC\u5B8C\u3002"],
+      retry: ["\u8FD9\u7897\u6CA1\u76DB\u597D\uFF0C\u6211\u91CD\u6765\u4E00\u6B21\u3002"],
+      poemStart: ["\u8FD9\u9996\u6211\u80CC\u5F97\u4E0B\u6765\uFF0C\u56E0\u4E3A\u5403\u996D\u7684\u65F6\u5019\u9ED8\u5FF5\u8FC7\u3002"],
+      poemDone: ["\u2026\u2026\u5FF5\u5B8C\u4E86\u3002\u54EA\u53E5\u6CA1\u542C\u6E05\uFF0C\u6211\u518D\u5FF5\u4E00\u904D\u3002"],
+      poemMissed: ["\u521A\u624D\u6709\u4E00\u53E5\u6211\u6F0F\u4E86\uFF0C\u91CD\u65B0\u6765\u3002"],
+      leftover: ["\u7B49\u4E00\u4E0B\uFF01\u518D\u653E\u4E00\u5929\u5427\uFF0C\u660E\u5929\u6211\u5403\u3002"],
+      fatTalk: ["\u2026\u2026\u90A3\u3001\u90A3\u6211\u660E\u5929\u5C11\u5403\u534A\u7897\u3002"],
+      instantNoodle: ["\u8FD9\u4E2A\u4E0D\u7B97\u996D\u3002\u771F\u7684\u4E0D\u7B97\u3002"],
+      idleLong: ["\u6211\u628A\u7897\u653E\u7740\uFF0C\u4F60\u5FD9\u5B8C\u518D\u5403\u3002", "\u6211\u5728\u8FD9\u513F\u3002\u4F60\u4E0D\u7528\u7406\u6211\u3002"],
+      dragEdge: ["\u8FD9\u91CC\u6CA1\u684C\u5B50\u3002", "\u2026\u2026\u6643\u5F97\u6211\u7C73\u90FD\u60F3\u5410\u51FA\u6765\u3002"],
+      error: ["\u8FD9\u7897\u6CA1\u76DB\u597D\uFF0C\u6211\u91CD\u6765\u4E00\u6B21\u3002"],
+      stageUp: ["\u642D\u4F19\u4E86\uFF01\u4EE5\u540E\u4E00\u8D77\u5403\u996D\u5427\u3002", "\u8001\u642D\u5B50\u4E86\uFF0C\u6211\u7684\u7897\u6709\u4F60\u4E00\u534A\u3002", "\u4E00\u8F88\u5B50\u7684\u996D\u642D\u5B50\u3002\u8BF4\u5230\u505A\u5230\u3002"]
+    },
+    stages: [
+      { bowls: 0, name: "\u521A\u8BA4\u8BC6" },
+      { bowls: 10, name: "\u642D\u4F19" },
+      { bowls: 30, name: "\u8001\u642D\u5B50" },
+      { bowls: 100, name: "\u4E00\u8F88\u5B50\u7684\u996D\u642D\u5B50" }
+    ],
+    riceSayings: [
+      "\u4E00\u7C92\u4E0D\u5269",
+      "\u4E0D\u8BB8\u6572\u7897\uFF08\u6211\u662F\u4F8B\u5916\uFF09",
+      "\u65B0\u7C73\u5148\u656C\u4E00\u53E3\u767D\u996D"
+    ]
+  };
+
+  // src/client/persona.ts
+  var LS = "chubby-persona-v1";
+  function loadState() {
+    const base = { bowls: 0, stageIndex: 0, stageName: "\u521A\u8BA4\u8BC6", mood: "idle", lastFeedAt: 0, lastInteractAt: 0 };
+    try {
+      const raw = localStorage.getItem(LS);
+      if (!raw) return base;
+      const s = JSON.parse(raw);
+      return {
+        ...base,
+        bowls: Number(s.bowls) || 0,
+        stageIndex: Number(s.stageIndex) || 0,
+        lastFeedAt: Number(s.lastFeedAt) || 0,
+        lastInteractAt: Number(s.lastInteractAt) || 0,
+        mood: "idle"
+      };
+    } catch (e) {
+      return base;
+    }
+  }
+  function saveState(s) {
+    try {
+      localStorage.setItem(LS, JSON.stringify({ bowls: s.bowls, stageIndex: s.stageIndex, lastFeedAt: s.lastFeedAt, lastInteractAt: s.lastInteractAt }));
+    } catch (e) {
+    }
+  }
+  function createPersona() {
+    const data = persona_default;
+    const state = loadState();
+    state.stageIndex = stageIndexOf(state.bowls);
+    state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "\u521A\u8BA4\u8BC6";
+    function stageIndexOf(bowls) {
+      let idx = 0;
+      for (let i = 0; i < data.stages.length; i++) if (bowls >= data.stages[i].bowls) idx = i;
+      return idx;
+    }
+    function pick(arr) {
+      if (!arr || !arr.length) return "";
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+    function touch() {
+      state.lastInteractAt = Date.now();
+      saveState(state);
+    }
+    function refreshMood(now = Date.now()) {
+      const hour = new Date(now).getHours();
+      const sinceFeed = state.lastFeedAt ? now - state.lastFeedAt : Infinity;
+      if (state.mood === "excited" || state.mood === "sulk" || state.mood === "shy" || state.mood === "guard") return state.mood;
+      if (sinceFeed > 6 * 3600 * 1e3) state.mood = "hungry";
+      else if (hour >= 23 || hour < 5) state.mood = "sleepy";
+      else state.mood = "idle";
+      return state.mood;
+    }
+    function setMood(m, holdMs = 5e3) {
+      state.mood = m;
+      setTimeout(() => {
+        try {
+          state.mood = "idle";
+          refreshMood();
+        } catch (e) {
+        }
+      }, holdMs);
+    }
+    function line(event) {
+      const lines = data.lines[event];
+      return pick(lines);
+    }
+    function greeting(now = Date.now()) {
+      const h = new Date(now).getHours();
+      if (h >= 23 || h < 5) return line("greetLate");
+      if (h < 11) return line("greetMorning");
+      if (h < 17) return line("greetNoon");
+      return line("greetEvening");
+    }
+    function feed() {
+      const before = state.stageIndex;
+      state.bowls += 1;
+      state.lastFeedAt = Date.now();
+      state.lastInteractAt = state.lastFeedAt;
+      state.stageIndex = stageIndexOf(state.bowls);
+      state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "\u521A\u8BA4\u8BC6";
+      saveState(state);
+      const stageUp = state.stageIndex > before;
+      const text = stageUp ? line("stageUp") : state.bowls === 1 ? line("feedFirst") : line("feed");
+      if (!stageUp) setMood("shy", 4e3);
+      return { text, bowls: state.bowls, stage: state.stageName, stageUp };
+    }
+    function reactTo(text) {
+      const t = String(text || "");
+      if (!t) return null;
+      if (/新米|开饭|锅巴/.test(t)) {
+        setMood("excited", 6e3);
+        return { event: "excited", text: line("excited"), mood: "excited" };
+      }
+      if (/乖|可爱|好鱼|棒|喜欢你|真聪明|厉害/.test(t)) {
+        setMood("shy", 5e3);
+        return { event: "praise", text: line("praise"), mood: "shy" };
+      }
+      if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(t)) {
+        setMood("sulk", 6e3);
+        return { event: "scold", text: line("scold"), mood: "sulk" };
+      }
+      if (/剩饭|倒掉|扔了/.test(t)) return { event: "leftover", text: line("leftover"), mood: "sulk" };
+      if (/胖|减肥|会长胖/.test(t)) return { event: "fatTalk", text: line("fatTalk"), mood: "sulk" };
+      if (/泡面|方便面/.test(t)) return { event: "instantNoodle", text: line("instantNoodle"), mood: "sulk" };
+      return null;
+    }
+    return {
+      state,
+      refreshMood,
+      setMood,
+      line,
+      greeting,
+      feed,
+      reactTo,
+      touch,
+      /** 把 data/persona.json 里的菜单文案取出来（没配就返回原文） */
+      menuLabel: (key, fallback) => {
+        const m = data.menus[key];
+        return m ? String(m) : fallback;
+      }
+    };
+  }
+
   // src/shared/tts.ts
   function isValidRate(s) {
     return typeof s === "string" && /^[+-]\d{1,2}%$/.test(s.trim());
@@ -1373,6 +1558,7 @@
       let asrBusy = false;
       let asrBusyAt = 0;
       const storyNarratingRef = { current: false };
+      const persona = createPersona();
       const latDiag = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 };
       function taleParts(rawTitle) {
         const t = String(rawTitle || "").trim();
@@ -1828,6 +2014,19 @@
             } catch (e) {
             }
           }, 2e3);
+          const tGreet = setTimeout(() => {
+            try {
+              const g = persona.greeting();
+              if (g) sayLine(g, 5e3);
+            } catch (e) {
+            }
+          }, 3e3);
+          try {
+            const w = window.__chubbyWhale || (window.__chubbyWhale = {});
+            w.persona = persona;
+            w.sayLine = sayLine;
+          } catch (e) {
+          }
           const tStatus = setInterval(() => {
             try {
               if (busyRef.current && Date.now() - busyAtRef.current > 35e3) {
@@ -1856,6 +2055,10 @@
           }, 3e3);
           return () => {
             clearTimeout(t0);
+            try {
+              clearTimeout(tGreet);
+            } catch (e) {
+            }
             try {
               clearTimeout(tF);
             } catch (e) {
@@ -2003,7 +2206,8 @@
         async function runAction(action) {
           setMenu(null);
           if (action === "feed") {
-            showBubble("\u597D\u5403\uFF01\u8C22\u8C22\u4E3B\u4EBA\uFF5E");
+            const r = persona.feed();
+            sayLine(r.text + (r.stageUp ? "\uFF08" + r.stage + "\uFF09" : ""), r.stageUp ? 6e3 : 3500);
             animRef.current?.pushHeart();
             try {
               fetch("/api/chubby-whale/pet?action=feed");
@@ -2501,15 +2705,13 @@
             }
           }
           const myEpoch = ++chatEpoch;
-          if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart();
-          if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble("\u54FC\u2026\u672C\u9CB8\u751F\u6C14\u4E86");
-          if (/胖|肥猪|肥嘟嘟/.test(text)) {
-            showBubble("\u4EBA\u5BB6\u4E0D\u80D6\uFF01\u662F\u9CB8\u9C7C\u5929\u751F\u5706\uFF01");
-            const s0 = Math.min(1.4, scale + 0.12);
-            setScale(s0);
-            setTimeout(function() {
-              setScale(Math.max(0.7, s0 - 0.12));
-            }, 600);
+          try {
+            const hit = persona.reactTo(text);
+            if (hit) {
+              sayLine(hit.text, 4e3);
+              if (hit.event === "praise") animRef.current?.pushHeart();
+            }
+          } catch (e) {
           }
           setInput("");
           setMessages((m) => [...m, { who: "me", text }]);
@@ -2690,6 +2892,19 @@
         function prefetchFiller() {
         }
         function prefetchNextTts() {
+        }
+        function sayLine(text, ms = 3500) {
+          if (!text) return;
+          try {
+            showBubble(text, ms);
+          } catch (e) {
+          }
+          try {
+            if (localStorage.getItem("chubby-voice") === "off") return;
+            const v = voiceRef.current;
+            if (v && v.speak && !v.speaking()) v.speak(text, { rate: "+0%" });
+          } catch (e) {
+          }
         }
         R.useEffect(() => {
           const canvas = canvasRef.current;
