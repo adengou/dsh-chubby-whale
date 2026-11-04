@@ -1,0 +1,53 @@
+{
+  "name": "dsh-chubby-whale",
+  "version": "0.1.0",
+  "description": "DSH 网页版桌面宠物「肥鲸」——蓝发女仆鲸鱼娘，固定显示在 harness 页面右下角；会眨眼、能拖拽（带惯性）、点击可聊天。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "chubby-whale",
+    "desktop-pet",
+    "companion"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "cordis.patch.yml",
+    "assets",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && esbuild src/client.ts --bundle --format=iife --external:react --outfile=dist/client.js",
+    "prepare": "npm run build"
+  }
+}

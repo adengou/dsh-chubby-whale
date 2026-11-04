@@ -1,0 +1,9 @@
+node_modules/
+data/memory.json
+data/state.json
+data/growth.json
+data/fishfood.json
+data/story_progress.json
+*.log
+config.json
+data/cache/
