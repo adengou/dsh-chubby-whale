@@ -1196,25 +1196,46 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     }
 
     return {
+      name: 'dsh-chubby-whale-client',
       inject: ['slots'],
       apply(ctx: any) {
-        // 关键：register 的第二个参数必须是「渲染函数」，不能直接传组件。
-        // 直接传组件会被当成普通函数调用（不在 React 渲染上下文里），
-        // 组件内的 useState/useEffect 会立刻抛 "Invalid hook call"，把整个 harness 页面带崩。
-        const registerOverlay = () => {
-          try {
-            ctx.slots.register(
-              { name: 'shell.overlay', id: 'chubby-whale-overlay', order: 999 },
-              () => h(WhaleOverlay, {}),
-            )
-          } catch (e) {
-            try { console.error('[chubby-whale] overlay 注册失败：', e) } catch (e2) { }
-          }
+        // 诊断对象：出问题时在浏览器控制台输入 __chubbyWhale 就能看到卡在哪一步
+        const diag: any = (window as any).__chubbyWhale = {
+          version: VERSION, applied: true, hasCtx: !!ctx, hasSlots: !!(ctx && ctx.slots),
+          registered: false, error: null,
         }
         try {
-          ctx.slots.inject('shell.overlay', registerOverlay)
+          const slots = ctx && ctx.slots
+          if (!slots) {
+            diag.error = 'ctx.slots 不存在（inject 未生效）'
+            console.warn('[chubby-whale]', diag.error)
+            return
+          }
+          const desc = { name: 'shell.overlay', id: 'chubby-whale-overlay', order: 999 }
+          // 第二个参数必须是「渲染函数」：直接传组件会在非渲染上下文调用，触发 Invalid hook call
+          const render = () => h(WhaleOverlay, {})
+          const doRegister = () => {
+            try {
+              slots.register(desc, render)
+              diag.registered = true
+              console.log('[chubby-whale] overlay 已注册')
+            } catch (e) {
+              diag.error = 'register 失败: ' + String(e)
+              console.error('[chubby-whale] overlay 注册失败：', e)
+            }
+          }
+          try {
+            slots.inject('shell.overlay', doRegister)
+            // 有些版本 inject 只登记不立即执行：兜一次延迟注册（重复注册会被内部 try/catch 吃掉）
+            setTimeout(() => { if (!diag.registered) doRegister() }, 1200)
+          } catch (e) {
+            diag.error = 'inject 失败: ' + String(e)
+            console.error('[chubby-whale] overlay 注入失败：', e)
+            doRegister()
+          }
         } catch (e) {
-          try { console.error('[chubby-whale] overlay 注入失败：', e) } catch (e2) { }
+          diag.error = 'apply 异常: ' + String(e)
+          console.error('[chubby-whale] apply 异常：', e)
         }
       },
     }

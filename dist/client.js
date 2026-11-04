@@ -2173,28 +2173,49 @@
         );
       }
       return {
+        name: "dsh-chubby-whale-client",
         inject: ["slots"],
         apply(ctx) {
-          const registerOverlay = () => {
-            try {
-              ctx.slots.register(
-                { name: "shell.overlay", id: "chubby-whale-overlay", order: 999 },
-                () => h(WhaleOverlay, {})
-              );
-            } catch (e) {
-              try {
-                console.error("[chubby-whale] overlay \u6CE8\u518C\u5931\u8D25\uFF1A", e);
-              } catch (e2) {
-              }
-            }
+          const diag = window.__chubbyWhale = {
+            version: VERSION,
+            applied: true,
+            hasCtx: !!ctx,
+            hasSlots: !!(ctx && ctx.slots),
+            registered: false,
+            error: null
           };
           try {
-            ctx.slots.inject("shell.overlay", registerOverlay);
-          } catch (e) {
-            try {
-              console.error("[chubby-whale] overlay \u6CE8\u5165\u5931\u8D25\uFF1A", e);
-            } catch (e2) {
+            const slots = ctx && ctx.slots;
+            if (!slots) {
+              diag.error = "ctx.slots \u4E0D\u5B58\u5728\uFF08inject \u672A\u751F\u6548\uFF09";
+              console.warn("[chubby-whale]", diag.error);
+              return;
             }
+            const desc = { name: "shell.overlay", id: "chubby-whale-overlay", order: 999 };
+            const render = () => h(WhaleOverlay, {});
+            const doRegister = () => {
+              try {
+                slots.register(desc, render);
+                diag.registered = true;
+                console.log("[chubby-whale] overlay \u5DF2\u6CE8\u518C");
+              } catch (e) {
+                diag.error = "register \u5931\u8D25: " + String(e);
+                console.error("[chubby-whale] overlay \u6CE8\u518C\u5931\u8D25\uFF1A", e);
+              }
+            };
+            try {
+              slots.inject("shell.overlay", doRegister);
+              setTimeout(() => {
+                if (!diag.registered) doRegister();
+              }, 1200);
+            } catch (e) {
+              diag.error = "inject \u5931\u8D25: " + String(e);
+              console.error("[chubby-whale] overlay \u6CE8\u5165\u5931\u8D25\uFF1A", e);
+              doRegister();
+            }
+          } catch (e) {
+            diag.error = "apply \u5F02\u5E38: " + String(e);
+            console.error("[chubby-whale] apply \u5F02\u5E38\uFF1A", e);
           }
         }
       };
