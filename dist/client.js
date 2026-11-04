@@ -209,6 +209,7 @@
       { type: "item", label: "\u6253\u5B57\u8BF4\u4E24\u53E5", action: "type" },
       { type: "item", label: voiceOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173", action: "voice" },
       { type: "item", label: "\u505C\u6B62\u8BF4\u8BDD", action: "tts-stop" },
+      { type: "item", label: "\u8BF4\u4E00\u53E5\uFF08\u5F55 4 \u79D2\uFF09", action: "ptt" },
       { type: "item", label: "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09", action: "ear-check" },
       { type: "sub", label: "\u6362\u4E2A\u58F0\u97F3 \u25B8", items: [
         { type: "item", label: voiceTick("zh-CN-XiaoyiNeural") + "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoyiNeural" },
@@ -1704,6 +1705,92 @@
             pumpDueReminders();
           }, 3e3);
         }
+        async function pushToTalk(seconds = 4) {
+          const diag = window.__chubbyWhale.ptt = { step: "start", err: "" };
+          try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+              diag.err = "no-mediaDevices";
+              showBubble("\u6D4F\u89C8\u5668\u6CA1\u63D0\u4F9B\u9EA6\u514B\u98CE\u63A5\u53E3\uFF08\u9700\u8981 https \u6216 localhost\uFF09", 8e3);
+              return;
+            }
+            showBubble("\u51C6\u5907\u5F55\u97F3\u2026\uFF08" + seconds + " \u79D2\uFF09", 2e3);
+            diag.step = "getUserMedia";
+            const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+            diag.step = "recording";
+            const rec = new window.MediaRecorder(s);
+            const parts = [];
+            rec.ondataavailable = (e) => {
+              if (e && e.data && e.data.size > 0) parts.push(e.data);
+            };
+            const stopped = new Promise((resolve) => {
+              rec.onstop = () => resolve();
+            });
+            rec.start();
+            showBubble("\u5728\u542C\u2026\u8BF4\u4E00\u53E5\u5C31\u597D\uFF08" + seconds + " \u79D2\uFF09", seconds * 1e3);
+            playFiller();
+            await new Promise((r2) => setTimeout(r2, seconds * 1e3));
+            rec.stop();
+            await stopped;
+            try {
+              s.getTracks().forEach((t) => t.stop());
+            } catch (e) {
+            }
+            diag.step = "encode";
+            const blob = new Blob(parts, { type: "audio/webm" });
+            diag.bytes = blob.size;
+            if (blob.size < 800) {
+              diag.err = "too-small:" + blob.size;
+              showBubble("\u8FD9\u6BB5\u6CA1\u5F55\u5230\u58F0\u97F3\uFF08" + blob.size + " \u5B57\u8282\uFF09", 6e3);
+              return;
+            }
+            const b64 = await new Promise((resolve) => {
+              try {
+                const fr = new FileReader();
+                fr.onloadend = () => {
+                  const str = String(fr.result || "");
+                  resolve(str.indexOf(",") >= 0 ? str.slice(str.indexOf(",") + 1) : str);
+                };
+                fr.readAsDataURL(blob);
+              } catch (e) {
+                resolve("");
+              }
+            });
+            if (!b64) {
+              diag.err = "b64-empty";
+              showBubble("\u5F55\u97F3\u8F6C\u7801\u5931\u8D25", 6e3);
+              return;
+            }
+            diag.step = "asr";
+            const t0 = performance.now();
+            const r = await fetch("/api/chubby-whale/asr", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ audio: b64, format: "webm" })
+            });
+            const d = await r.json();
+            diag.asrMs = Math.round(performance.now() - t0);
+            diag.step = "asr-done";
+            if (!d || !d.ok) {
+              diag.err = "asr:" + String(d && d.error || "failed");
+              showBubble("\u8BC6\u522B\u5931\u8D25\uFF1A" + String(d && d.error || "\u672A\u77E5"), 8e3);
+              return;
+            }
+            const text = String(d.text || "").trim();
+            diag.text = text;
+            if (!text) {
+              diag.err = "asr-empty";
+              showBubble("\u6CA1\u542C\u6E05\uFF08\u8BC6\u522B\u7ED3\u679C\u4E3A\u7A7A\uFF09", 6e3);
+              return;
+            }
+            showBubble("\uFF08\u542C\u5230\uFF09" + text + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
+            diag.step = "chat";
+            await sendText(text, { voice: true });
+            diag.step = "done";
+          } catch (e) {
+            diag.err = "exception:" + String(e && e.name || e) + " " + String(e && e.message || "");
+            showBubble("\u8BF4\u4E00\u53E5\u5931\u8D25\uFF1A" + String(e && e.message || e), 8e3);
+          }
+        }
         async function runAction(action) {
           setMenu(null);
           if (action === "feed") {
@@ -1924,6 +2011,10 @@
                 });
               } else showBubble("\u8FD9\u9996\u66F2\u5B50\u6CA1\u627E\u5230");
             }).catch(() => showBubble("\u5F39\u7434\u5931\u8D25"));
+            return;
+          }
+          if (action === "ptt") {
+            pushToTalk(4);
             return;
           }
           if (action === "ear-check") {

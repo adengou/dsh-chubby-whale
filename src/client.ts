@@ -764,6 +764,67 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       }
 
       // 菜单动作（async：里面要用 await，比如剪贴板；onClick 直接调用即可）
+      /**
+       * 「说一句」：绕开 VAD，直接录固定时长再送识别。
+       * 为什么要有它：自动判定一旦失灵（阈值/权限/设备任何一环），主人就完全没法用；
+       * 这条链路只有三步（拿麦 → 录 N 秒 → 上传），每一步失败都把原因写进气泡和 __chubbyWhale.ptt。
+       */
+      async function pushToTalk(seconds = 4): Promise<void> {
+        const diag: any = (window as any).__chubbyWhale.ptt = { step: 'start', err: '' }
+        try {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            diag.err = 'no-mediaDevices'; showBubble('浏览器没提供麦克风接口（需要 https 或 localhost）', 8000); return
+          }
+          showBubble('准备录音…（' + seconds + ' 秒）', 2000)
+          diag.step = 'getUserMedia'
+          const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+          diag.step = 'recording'
+          const rec = new (window as any).MediaRecorder(s)
+          const parts: any[] = []
+          rec.ondataavailable = (e: any) => { if (e && e.data && e.data.size > 0) parts.push(e.data) }
+          const stopped = new Promise<void>((resolve) => { rec.onstop = () => resolve() })
+          rec.start()
+          showBubble('在听…说一句就好（' + seconds + ' 秒）', seconds * 1000)
+          playFiller()
+          await new Promise<void>((r) => setTimeout(r, seconds * 1000))
+          rec.stop()
+          await stopped
+          try { s.getTracks().forEach((t: any) => t.stop()) } catch (e) { }
+          diag.step = 'encode'
+          const blob = new Blob(parts, { type: 'audio/webm' })
+          diag.bytes = blob.size
+          if (blob.size < 800) { diag.err = 'too-small:' + blob.size; showBubble('这段没录到声音（' + blob.size + ' 字节）', 6000); return }
+          const b64 = await new Promise<string>((resolve) => {
+            try {
+              const fr = new FileReader()
+              fr.onloadend = () => { const str = String(fr.result || ''); resolve(str.indexOf(',') >= 0 ? str.slice(str.indexOf(',') + 1) : str) }
+              fr.readAsDataURL(blob)
+            } catch (e) { resolve('') }
+          })
+          if (!b64) { diag.err = 'b64-empty'; showBubble('录音转码失败', 6000); return }
+          diag.step = 'asr'
+          const t0 = performance.now()
+          const r = await fetch('/api/chubby-whale/asr', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ audio: b64, format: 'webm' }),
+          })
+          const d = await r.json()
+          diag.asrMs = Math.round(performance.now() - t0)
+          diag.step = 'asr-done'
+          if (!d || !d.ok) { diag.err = 'asr:' + String((d && d.error) || 'failed'); showBubble('识别失败：' + String((d && d.error) || '未知'), 8000); return }
+          const text = String(d.text || '').trim()
+          diag.text = text
+          if (!text) { diag.err = 'asr-empty'; showBubble('没听清（识别结果为空）', 6000); return }
+          showBubble('（听到）' + text + '｜本鱼在想…', 3000)
+          diag.step = 'chat'
+          await sendText(text, { voice: true })
+          diag.step = 'done'
+        } catch (e: any) {
+          diag.err = 'exception:' + String((e && e.name) || e) + ' ' + String((e && e.message) || '')
+          showBubble('说一句失败：' + String((e && e.message) || e), 8000)
+        }
+      }
+
       async function runAction(action: string): Promise<void> {
         setMenu(null)
         if (action === 'feed') { showBubble('好吃！谢谢主人～'); animRef.current?.pushHeart(); try { fetch('/api/chubby-whale/pet?action=feed') } catch (e) { } ; return }
@@ -897,6 +958,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           }).catch(() => showBubble('弹琴失败'))
           return
         }
+        if (action === 'ptt') { pushToTalk(4); return }
         if (action === 'ear-check') {
           // 耳朵自检：把 __chubbyWhale.ear 的关键数字直接摆到气泡里，不用开控制台
           try {
