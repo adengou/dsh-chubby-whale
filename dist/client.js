@@ -1601,6 +1601,9 @@
       })();
       const storyNarratingRef = { current: false };
       const persona = createPersona();
+      let lastLineNorm = "";
+      let lastLineAt = 0;
+      let greetedOnce = false;
       let lastReplyText = "";
       let lastReplyAt = 0;
       const latDiag = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 };
@@ -2060,6 +2063,8 @@
           }, 2e3);
           const tGreet = setTimeout(() => {
             try {
+              if (greetedOnce) return;
+              greetedOnce = true;
               const g = persona.greeting();
               if (g) sayLine(g, 5e3);
             } catch (e) {
@@ -2949,6 +2954,18 @@
         function prefetchNextTts() {
         }
         function sayLine(text, ms = 3500) {
+          const norm = String(text || "").replace(/[\\s。，！？,.!?、…~～]/g, "");
+          const nowL = Date.now();
+          if (norm && norm === lastLineNorm && nowL - lastLineAt < 25e3) {
+            try {
+              window.__chubbyWhale.dupLine = (window.__chubbyWhale.dupLine || 0) + 1;
+            } catch (e) {
+            }
+            ;
+            return;
+          }
+          lastLineNorm = norm;
+          lastLineAt = nowL;
           if (!text) return;
           try {
             showBubble(text, ms);

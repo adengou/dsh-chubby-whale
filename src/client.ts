@@ -46,6 +46,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-narration-rate'); return (s && /^[+-]\\d{1,2}%$/.test(s)) ? s : '-25%' } catch (e) { return '-25%' } })()
     const storyNarratingRef = { current: false }
     const persona = createPersona()
+    let lastLineNorm = ''   // 人设台词去重：上一句台词的规范化文本
+    let lastLineAt = 0
+    let greetedOnce = false   // 打招呼只打一次（防挂载重复）
     let lastReplyText = ''   // 输出侧去重：上一句回复（30 秒窗口）
     let lastReplyAt = 0   // 饭团人设：情绪状态机 + 台词库（data/persona.json）
     const latDiag: any = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 }
@@ -379,7 +382,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       R.useEffect(() => {
         const t0 = setTimeout(() => { try { refreshBalance() } catch (e) { } }, 2000)
         // 饭团：进门先打个招呼（按当前时段挑台词），3 秒后出现，不抢首屏
-        const tGreet = setTimeout(() => { try { const g = persona.greeting(); if (g) sayLine(g, 5000) } catch (e) { } }, 3000)
+        const tGreet = setTimeout(() => { try { if (greetedOnce) return; greetedOnce = true; const g = persona.greeting(); if (g) sayLine(g, 5000) } catch (e) { } }, 3000)
         try { const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {}); w.persona = persona; w.sayLine = sayLine } catch (e) { }
         // 状态行 2 秒周期刷新：常驻气泡只会在被调用时更新，靠事件驱动容易漏（就曾卡在「识别中…」）
         const tStatus = setInterval(() => {
@@ -980,6 +983,12 @@ import { parseDue, cleanReminderText } from './shared/time.js'
 
       /** 人设台词：气泡 + 语音一起出（语音朗读关着时只出气泡；正在说别的话时不打断） */
       function sayLine(text: string, ms = 3500): void {
+        // 同一句台词 25 秒内只说一次：挂载重复/事件连发时不会连着说两遍
+        const norm = String(text || '').replace(/[\\s。，！？,.!?、…~～]/g, '')
+        const nowL = Date.now()
+        if (norm && norm === lastLineNorm && nowL - lastLineAt < 25000) { try { (window as any).__chubbyWhale.dupLine = ((window as any).__chubbyWhale.dupLine || 0) + 1 } catch (e) { } ; return }
+        lastLineNorm = norm
+        lastLineAt = nowL
         if (!text) return
         try { showBubble(text, ms) } catch (e) { }
         try {
