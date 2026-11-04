@@ -2,7 +2,7 @@
  * host/routes/chat.ts —— 聊天路由（可复用模块）
  * 外呼统一走 host/http.ts：主聊天 30 秒、记忆摘要 20 秒（后台跑，不吊住回复）；请求体上限 6MB
  */
-import { hashKey, shortHash } from '../cache.js';
+import { hashKey } from '../cache.js';
 import { readBody, fetchJson, isBodyTooLarge, isTimeoutError, sendTooLarge } from '../http.js';
 const CHAT_URL = 'https://api.deepseek.com/chat/completions';
 const CHAT_TIMEOUT = 30 * 1000; // 主聊天：30 秒
@@ -30,6 +30,23 @@ async function summarizeMemory(key, convo, oldSummary, save) {
         else
             console.error('[chat] SUMMARY-ERR ' + String(err?.message || err));
     }
+}
+/**
+ * 聊天缓存的规范化：语音闲聊要"同一句话就命中"，所以
+ *   - 去掉标点/空白/大小写差异（「你好吗？」「你好吗」「你好嗎?」→ 同一个键）
+ *   - 不把历史长度/记忆摘要放进键（否则每聊一句键就变，缓存等于没有）
+ * 代价：同一句话在不同上下文会得到同一条回复——对语音闲聊这正是省 token 的关键。
+ */
+export function normalizeChatText(s) {
+    return String(s || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s\u3000]+/g, '')
+        .replace(/[，。！？、；：,.!?;:"'”’“”（）()【】\[\]<>《》~`@#$%^&*_+=|\\/-]/g, '');
+}
+/** 缓存键：语言 + 规范化文本 + 是否语音（语音和打字分开存，避免互相串） */
+export function chatCacheKey(lang, message, isVoice) {
+    return hashKey('v1|' + lang + '|' + (isVoice ? 'voice' : 'text') + '|' + normalizeChatText(message));
 }
 export function createChatHandler(opts) {
     let summaryCount = 0;
@@ -65,7 +82,9 @@ export function createChatHandler(opts) {
             const effLang = chatLang === 'auto' ? detected : chatLang;
             const imageMime = typeof body?.imageMime === 'string' ? body.imageMime : 'image/jpeg';
             // 短句（<6 字）不进缓存：不然「在吗」「好的」会被复读机式复用（照 C# 的修法）
-            const cacheable = message.trim().length >= 6;
+            const isVoice = body?.voice === true || body?.voice === 'true';
+            // 语音闲聊门槛降到 2 个字（"在吗""讲个笑话"也要能命中）；打字仍要 ≥6 字
+            const cacheable = message.trim().length >= (isVoice ? 2 : 6);
             if (!message) {
                 res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
                 res.end(JSON.stringify({ ok: false, error: 'empty message' }));
@@ -80,7 +99,7 @@ export function createChatHandler(opts) {
             catch { }
             // 缓存 key 必须带上上下文：prompt 里拼了完整 history 和长期记忆摘要，
             // 只按「语言|问题」算 key 会让同一句话永远命中第一条回复；这里加 history 长度 + 摘要短指纹
-            const cacheKey = hashKey(effLang + '|' + message + '|h' + history.length + '|s' + shortHash(memSummary) + (imageB64 ? '|img' : ''));
+            const cacheKey = chatCacheKey(effLang, message, isVoice);
             // 缓存查找排在 Key 检查之前：没配 Key 时本地缓存照样能用
             if (opts.cache && !imageB64 && cacheable) {
                 const cached = await opts.cache.getJson(cacheKey, 'json', CHAT_CACHE_TTL);

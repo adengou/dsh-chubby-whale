@@ -852,7 +852,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           const res = await fetch('/api/chubby-whale/chat', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ message: text, lang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })() }),
+            body: JSON.stringify({ message: text, voice: true, lang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })() }),
           })
           data = await res.json()
           const reply = data?.reply || '主人……本鲸走神了。'

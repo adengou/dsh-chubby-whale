@@ -1703,7 +1703,7 @@
             const res = await fetch("/api/chubby-whale/chat", {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ message: text, lang: (() => {
+              body: JSON.stringify({ message: text, voice: true, lang: (() => {
                 try {
                   return localStorage.getItem("chubby-chatlang") || "auto";
                 } catch (e) {
