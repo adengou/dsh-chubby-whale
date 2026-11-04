@@ -150,6 +150,11 @@
     "\u4E2D\u6587": "\u4E2D\u6587",
     "English": "English",
     "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09": "Auto (by language)",
+    "\u81EA\u52A8": "Auto",
+    "\u2713 \u81EA\u52A8": "\u2713 Auto",
+    "\u4E2D\u6587": "Chinese",
+    "\u2713 \u4E2D\u6587": "\u2713 Chinese",
+    "\u2713 English": "\u2713 English",
     "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaoyi (CN F)",
     "\u97F3\u8272\uFF1A\u6653\u6653\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaoxiao (CN F)",
     "\u97F3\u8272\uFF1A\u6653\u8FB0\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaochen (CN F)",
@@ -216,7 +221,7 @@
         { type: "item", label: voiceTick("auto") + "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09", action: "voice:auto" }
       ] },
       { type: "sub", label: "\u804A\u5929\u8BED\u8A00 \u25B8", items: [
-        { type: "item", label: (chatLang === "auto" ? "\u2713 " : "") + "\u81EA\u52A8\uFF08\u8DDF\u968F\u63D0\u95EE\u8BED\u8A00\uFF09", action: "chat-lang:auto" },
+        { type: "item", label: (chatLang === "auto" ? "\u2713 " : "") + "\u81EA\u52A8", action: "chat-lang:auto" },
         { type: "item", label: (chatLang === "zh" ? "\u2713 " : "") + "\u4E2D\u6587", action: "chat-lang:zh" },
         { type: "item", label: (chatLang === "en" ? "\u2713 " : "") + "English", action: "chat-lang:en" }
       ] },
