@@ -1956,6 +1956,10 @@
               started = false;
               if (stopped) return;
               attachGesture();
+              try {
+                if (earOnRef.current) onFirstGesture();
+              } catch (e2) {
+              }
               showBubble("\u9EA6\u514B\u98CE\u6253\u4E0D\u5F00\uFF1A\u70B9\u5730\u5740\u680F\u5C0F\u9501\u5141\u8BB8\u9EA6\u514B\u98CE", 6e3);
             }
           }

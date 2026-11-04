@@ -1047,6 +1047,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             started = false
             if (stopped) return             // 卸载/关待命期间失败：监听不能再加回去
             attachGesture()
+        // 「语音聊天随时待命」：挂载后立刻尝试开麦（浏览器已授权时无需手势），
+        // 失败会自动退回「首次点击/按键再开」，不改变用户可关闭的语义
+        try { if (earOnRef.current) onFirstGesture() } catch (e) { }
             showBubble('麦克风打不开：点地址栏小锁允许麦克风', 6000)
           }
         }
