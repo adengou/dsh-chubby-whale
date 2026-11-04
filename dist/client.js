@@ -1937,7 +1937,10 @@
               const rec = c.recorded || 0;
               const sent = c.sent || 0;
               let verdict = "";
-              if (!e.ticks) verdict = "\u2192 \u91C7\u6837\u6CA1\u8DD1\uFF08\u94FE\u8DEF\u672A\u542F\u52A8\uFF09";
+              if (e.earOn === false) verdict = "\u2192 \u8BED\u97F3\u5F85\u547D\u662F\u5173\u7684\uFF08\u53F3\u952E\u83DC\u5355\u70B9\u300C\u8BED\u97F3\u5F85\u547D\u300D\u6253\u5F00\uFF09";
+              else if (!e.hasMediaDevices) verdict = "\u2192 \u6D4F\u89C8\u5668\u6CA1\u63D0\u4F9B\u9EA6\u514B\u98CE\u63A5\u53E3\uFF08\u975E https/localhost\uFF1F\uFF09";
+              else if (e.bootFail > 0) verdict = "\u2192 \u5F00\u9EA6\u5931\u8D25\uFF1A" + String(e.lastError || "\u672A\u77E5") + "\uFF08\u70B9\u5730\u5740\u680F\u5C0F\u9501\u5141\u8BB8\u9EA6\u514B\u98CE\uFF09";
+              else if (!e.ticks) verdict = "\u2192 \u91C7\u6837\u6CA1\u8DD1\uFF08\u94FE\u8DEF\u672A\u542F\u52A8\uFF09";
               else if (!e.micEnabled) verdict = "\u2192 \u9EA6\u514B\u98CE\u88AB\u9759\u97F3\uFF08\u70B9\u4E00\u4E0B\u9C7C\u8EAB\u6062\u590D\uFF09";
               else if (e.db < -60) verdict = "\u2192 \u9EA6\u514B\u98CE\u6536\u4E0D\u5230\u58F0\u97F3\uFF08\u67E5\u7CFB\u7EDF\u8F93\u5165\u8BBE\u5907/\u6743\u9650\uFF09";
               else if (rec === 0) verdict = "\u2192 \u6CA1\u5F00\u59CB\u5F55\u97F3";
@@ -1946,7 +1949,7 @@
               else if ((c.uploaded || 0) > 0 && (c.recognized || 0) === 0) verdict = "\u2192 \u8BC6\u522B\u670D\u52A1\u6CA1\u8FD4\u56DE\u6587\u5B57";
               else if (sent === 0 && (c.recognized || 0) > 0) verdict = "\u2192 \u8BC6\u522B\u6210\u529F\u4F46\u88AB\u5524\u9192\u8BCD/\u56DE\u58F0\u62E6\u4E86";
               else if (sent > 0) verdict = "\u2192 \u94FE\u8DEF\u5DF2\u901A\uFF08\u5DF2\u4EA4\u7ED9\u5BF9\u8BDD\uFF09";
-              const line = "\u8033\u6735\u81EA\u68C0\uFF1A\u97F3\u91CF " + Math.round(e.db) + "dB\uFF5C\u5E95\u566A " + Math.round(e.noiseDb) + "dB\uFF5C\u9608\u503C " + Math.round(e.onsetDb) + "dB\n\u9EA6\u514B\u98CE " + (e.micEnabled ? "\u5F00" : "\u5173") + "\uFF5C\u91C7\u6837 " + (e.ticks || 0) + " \u6B21\uFF5C\u542F\u52A8 " + (e.ctxState || "?") + "\n\u5F55\u97F3\u6BB5 " + rec + "\uFF5C\u4E0A\u4F20 " + (c.uploaded || 0) + "\uFF5C\u8BC6\u522B " + (c.recognized || 0) + "\uFF5C\u53D1\u9001 " + sent + "\n\u4E22\uFF1A\u592A\u77ED " + (c.small || 0) + "\uFF5C\u9759\u97F3\u7A97 " + (c.muted || 0) + "\uFF5C\u5360\u7EBF " + (c.asrBusyDrop || 0) + "\uFF5C\u56DE\u58F0 " + (c.echo || 0) + "\uFF5C\u672A\u5524\u9192 " + (c.nowake || 0) + "\n" + verdict;
+              const line = "\u8033\u6735\u81EA\u68C0\uFF1A\u97F3\u91CF " + Math.round(e.db) + "dB\uFF5C\u5E95\u566A " + Math.round(e.noiseDb) + "dB\uFF5C\u9608\u503C " + Math.round(e.onsetDb) + "dB\n\u9EA6\u514B\u98CE " + (e.micEnabled ? "\u5F00" : "\u5173") + "\uFF5C\u5F85\u547D " + (e.earOn === false ? "\u5173" : "\u5F00") + "\uFF5C\u6743\u9650 " + (e.perm || "?") + "\n\u91C7\u6837 " + (e.ticks || 0) + " \u6B21\uFF5C\u542F\u52A8 " + (e.ctxState || "?") + "\uFF5C\u5F00\u9EA6\u5C1D\u8BD5 " + (e.bootAttempts || 0) + " \u6B21\uFF08\u5931\u8D25 " + (e.bootFail || 0) + "\uFF09\n\u5F55\u97F3\u6BB5 " + rec + "\uFF5C\u4E0A\u4F20 " + (c.uploaded || 0) + "\uFF5C\u8BC6\u522B " + (c.recognized || 0) + "\uFF5C\u53D1\u9001 " + sent + "\n\u4E22\uFF1A\u592A\u77ED " + (c.small || 0) + "\uFF5C\u9759\u97F3\u7A97 " + (c.muted || 0) + "\uFF5C\u5360\u7EBF " + (c.asrBusyDrop || 0) + "\uFF5C\u56DE\u58F0 " + (c.echo || 0) + "\uFF5C\u672A\u5524\u9192 " + (c.nowake || 0) + "\n" + verdict;
               showBubble(line, 15e3);
               try {
                 navigator.clipboard.writeText(JSON.stringify(e));
@@ -2281,6 +2284,19 @@
         }, []);
         R.useEffect(() => {
           let stopped = false;
+          try {
+            earDiag.earOn = !!earOnRef.current;
+            earDiag.hasMediaDevices = !!(navigator && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+            earDiag.secure = !!window.isSecureContext;
+            if (navigator && navigator.permissions && navigator.permissions.query) {
+              navigator.permissions.query({ name: "microphone" }).then((p) => {
+                earDiag.perm = String(p.state);
+              }).catch(() => {
+                earDiag.perm = "query-failed";
+              });
+            }
+          } catch (e) {
+          }
           let lastHeardText = "";
           let lastHeardAt = 0;
           let stream = null;
@@ -2592,6 +2608,10 @@
             }
           }
           async function boot() {
+            try {
+              earDiag.bootAttempts = (earDiag.bootAttempts || 0) + 1;
+            } catch (e) {
+            }
             if (stopped) return;
             try {
               const s = await navigator.mediaDevices.getUserMedia({
@@ -2611,6 +2631,11 @@
                 return;
               }
               stream = s;
+              try {
+                earDiag.bootOk = true;
+                earDiag.lastError = "";
+              } catch (e) {
+              }
               try {
                 const tr2 = s.getAudioTracks && s.getAudioTracks()[0];
                 if (tr2) micTrackRef.current = tr2;
@@ -2670,7 +2695,9 @@
               if (stopped) return;
               attachGesture();
               try {
-                if (earOnRef.current) onFirstGesture();
+                earDiag.bootFail = (earDiag.bootFail || 0) + 1;
+                earDiag.lastError = "getUserMedia: " + String(e && e.name || e);
+                earDiag.ctxState = "boot-failed";
               } catch (e2) {
               }
               showBubble("\u9EA6\u514B\u98CE\u6253\u4E0D\u5F00\uFF1A\u70B9\u5730\u5740\u680F\u5C0F\u9501\u5141\u8BB8\u9EA6\u514B\u98CE", 6e3);
@@ -2727,6 +2754,10 @@
           earCtlRef.current.stop = stopEar;
           earCtlRef.current.boot = bootEar;
           attachGesture();
+          try {
+            if (earOnRef.current) onFirstGesture();
+          } catch (e) {
+          }
           return () => {
             detachGesture();
             stopEar();

@@ -906,7 +906,10 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const rec = c.recorded || 0
             const sent = c.sent || 0
             let verdict = ''
-            if (!e.ticks) verdict = '→ 采样没跑（链路未启动）'
+            if (e.earOn === false) verdict = '→ 语音待命是关的（右键菜单点「语音待命」打开）'
+            else if (!e.hasMediaDevices) verdict = '→ 浏览器没提供麦克风接口（非 https/localhost？）'
+            else if (e.bootFail > 0) verdict = '→ 开麦失败：' + String(e.lastError || '未知') + '（点地址栏小锁允许麦克风）'
+            else if (!e.ticks) verdict = '→ 采样没跑（链路未启动）'
             else if (!e.micEnabled) verdict = '→ 麦克风被静音（点一下鱼身恢复）'
             else if (e.db < -60) verdict = '→ 麦克风收不到声音（查系统输入设备/权限）'
             else if (rec === 0) verdict = '→ 没开始录音'
@@ -917,7 +920,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             else if (sent > 0) verdict = '→ 链路已通（已交给对话）'
             const line = '耳朵自检：音量 ' + Math.round(e.db) + 'dB｜底噪 ' + Math.round(e.noiseDb)
               + 'dB｜阈值 ' + Math.round(e.onsetDb) + 'dB\n'
-              + '麦克风 ' + (e.micEnabled ? '开' : '关') + '｜采样 ' + (e.ticks || 0) + ' 次｜启动 ' + (e.ctxState || '?') + '\n'
+              + '麦克风 ' + (e.micEnabled ? '开' : '关') + '｜待命 ' + (e.earOn === false ? '关' : '开') + '｜权限 ' + (e.perm || '?') + '\n'
+              + '采样 ' + (e.ticks || 0) + ' 次｜启动 ' + (e.ctxState || '?') + '｜开麦尝试 ' + (e.bootAttempts || 0) + ' 次（失败 ' + (e.bootFail || 0) + '）\n'
               + '录音段 ' + rec + '｜上传 ' + (c.uploaded || 0) + '｜识别 ' + (c.recognized || 0) + '｜发送 ' + sent + '\n'
               + '丢：太短 ' + (c.small || 0) + '｜静音窗 ' + (c.muted || 0) + '｜占线 ' + (c.asrBusyDrop || 0) + '｜回声 ' + (c.echo || 0) + '｜未唤醒 ' + (c.nowake || 0) + '\n'
               + verdict
@@ -1162,6 +1166,14 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       // 语音待命（VAD 版，照 C# 版）：连续录音，静音 700ms 判定说完，立即上传识别
       R.useEffect(() => {
         let stopped = false
+        try {
+          earDiag.earOn = !!earOnRef.current
+          earDiag.hasMediaDevices = !!(navigator && navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+          earDiag.secure = !!window.isSecureContext
+          if (navigator && navigator.permissions && navigator.permissions.query) {
+            navigator.permissions.query({ name: 'microphone' }).then((p: any) => { earDiag.perm = String(p.state) }).catch(() => { earDiag.perm = 'query-failed' })
+          }
+        } catch (e) { }
         let lastHeardText = ''
         let lastHeardAt = 0
         let stream: any = null
@@ -1370,6 +1382,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try { (document as any).addEventListener('keydown', onFirstGesture) } catch { }
         }
         async function boot() {
+          try { earDiag.bootAttempts = (earDiag.bootAttempts || 0) + 1 } catch (e) { }
           if (stopped) return
           try {
             // 关键：开启浏览器自带的回声消除/降噪/自动增益。
@@ -1385,6 +1398,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             // 拿麦期间被「语音待命：关」了：别再把麦克风挂着
             if (stopped) { try { s.getTracks().forEach((t: any) => t.stop()) } catch (e) { } ; return }
             stream = s
+            try { earDiag.bootOk = true; earDiag.lastError = '' } catch (e) { }
             try { const tr = s.getAudioTracks && s.getAudioTracks()[0]; if (tr) micTrackRef.current = tr } catch (e) { }
             try { const tr2 = micTrackRef.current; if (tr2) { tr2.enabled = true; earDiag.micEnabled = true } } catch (e) { }
             actx = new (window as any).AudioContext()
@@ -1412,9 +1426,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             started = false
             if (stopped) return             // 卸载/关待命期间失败：监听不能再加回去
             attachGesture()
-        // 「语音聊天随时待命」：挂载后立刻尝试开麦（浏览器已授权时无需手势），
-        // 失败会自动退回「首次点击/按键再开」，不改变用户可关闭的语义
-        try { if (earOnRef.current) onFirstGesture() } catch (e) { }
+            try { earDiag.bootFail = (earDiag.bootFail || 0) + 1; earDiag.lastError = 'getUserMedia: ' + String((e && (e as any).name) || e) ; earDiag.ctxState = 'boot-failed' } catch (e2) { }
             showBubble('麦克风打不开：点地址栏小锁允许麦克风', 6000)
           }
         }
@@ -1447,6 +1459,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         earCtlRef.current.stop = stopEar
         earCtlRef.current.boot = bootEar
         attachGesture()
+        // 「语音随时待命」：挂载后立刻尝试开麦（已授权时无需手势）；失败会自动退回首次点击再试
+        try { if (earOnRef.current) onFirstGesture() } catch (e) { }
         return () => {
           // 卸载必须无条件摘监听：否则页面里点一下还会去开麦
           detachGesture()
