@@ -1770,13 +1770,43 @@
             } catch (e) {
             }
           }, 2e3);
+          const tStatus = setInterval(() => {
+            try {
+              setStatus2();
+            } catch (e) {
+            }
+          }, 2e3);
+          setTimeout(() => {
+            try {
+              setStatus2();
+            } catch (e) {
+            }
+          }, 1200);
+          const clearStatus = () => {
+            try {
+              clearInterval(tStatus);
+            } catch (e) {
+            }
+          };
           const tF = setTimeout(() => {
             try {
               prefetchFiller();
             } catch (e) {
             }
           }, 3e3);
-          return () => clearTimeout(t0);
+          return () => {
+            clearTimeout(t0);
+            try {
+              clearTimeout(tF);
+            } catch (e) {
+            }
+            clearStatus();
+            try {
+              const el = bubbleRef.current;
+              if (el) el.classList.remove("show");
+            } catch (e) {
+            }
+          };
         }, []);
         function onContextMenu(e) {
           e.preventDefault();
@@ -2742,6 +2772,10 @@
             } catch (e) {
             } finally {
               asrBusy = false;
+              try {
+                setStatus2();
+              } catch (e) {
+              }
               if (!stopped) scheduleStart(350);
             }
           }

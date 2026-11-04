@@ -664,8 +664,17 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       // 启动后拉一次余额，菜单还没打开时标题也能显示真实金额
       R.useEffect(() => {
         const t0 = setTimeout(() => { try { refreshBalance() } catch (e) { } }, 2000)
+        // 状态行 2 秒周期刷新：常驻气泡只会在被调用时更新，靠事件驱动容易漏（就曾卡在「识别中…」）
+        const tStatus = setInterval(() => { try { setStatus() } catch (e) { } }, 2000)
+        setTimeout(() => { try { setStatus() } catch (e) { } }, 1200)   // 挂载后先亮一次
+        const clearStatus = () => { try { clearInterval(tStatus) } catch (e) { } }
         const tF = setTimeout(() => { try { prefetchFiller() } catch (e) { } }, 3000)
-        return () => clearTimeout(t0)
+        return () => {
+          clearTimeout(t0)
+          try { clearTimeout(tF) } catch (e) { }
+          clearStatus()
+          try { const el = bubbleRef.current; if (el) el.classList.remove('show') } catch (e) { }
+        }
       }, [])
       // 右键菜单
       function onContextMenu(e: any): void {
@@ -1343,6 +1352,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             }
           } catch (e) { } finally {
             asrBusy = false        // 释放识别位（无论成功失败都要放，否则耳朵永久占线）
+            try { setStatus() } catch (e) { }   // 常驻状态行必须重算，否则一直停在「识别中…」
             if (!stopped) scheduleStart(350)
           }
         }
