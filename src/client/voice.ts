@@ -13,6 +13,8 @@
  *   ⑦ 每个可能"静默失败"的地方都有计数（stats），出问题看数字就知道卡在哪
  */
 
+import { Ape } from './ape.js'
+
 export type VoiceStatus = 'idle' | 'listening' | 'recognizing' | 'thinking' | 'speaking'
 
 export type VoiceStats = {
@@ -77,6 +79,12 @@ const NOISE_TEXTS = ['嗯', '呃', '啊', '哦', '嗯嗯', '谢谢观看', '谢�
 export function createVoice(opts: VoiceOptions): Voice {
   const apiBase = opts.apiBase || '/api/chubby-whale'
   let voiceName = opts.voiceName || 'zh-CN-XiaoyiNeural'
+  // 端点检测模式：ape（自适应，默认）/ classic（经典绝对阈值，可一键切回）
+  // 默认 classic（经典绝对阈值）：实测 APE 在真实麦克风下会提前切句，前半句丢失。
+  // 想试自适应可在菜单里切换，随时能切回来。
+  let epMode: 'ape' | 'classic' = (() => { try { return localStorage.getItem('chubby-endpoint') === 'ape' ? 'ape' : 'classic' } catch (e) { return 'classic' } })()
+  const ape = new Ape()
+  let lastApe: any = null
 
   const stats: VoiceStats = {
     windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrTexts: 0, heard: 0,
@@ -152,6 +160,8 @@ export function createVoice(opts: VoiceOptions): Voice {
       speechMs = 0
       quietMs = 0
       winStart = performance.now()
+      ape.resetSegment()
+      lastApe = null
       rec.start()
       scheduleNext(0)  // 占位：下面立刻换成 tick 循环
       if (restartTimer) { clearTimeout(restartTimer); restartTimer = null }
@@ -166,6 +176,19 @@ export function createVoice(opts: VoiceOptions): Voice {
     if (!running || !rec || rec.state !== 'recording') return
     try {
       const db = level()
+      if (epMode === 'ape') {
+        // APE 路径：判定全部交给 client/ape.ts（已用 10 个合成场景单测）
+        const st = ape.step(db)
+        lastApe = st
+        if (db > winPeak) winPeak = db
+        if (st.commit && rec && rec.state === 'recording') {
+          try { rec.stop() } catch (e) { }
+          try { opts.onDiag && opts.onDiag({ stage: 'window-end', why: st.commitReason, floor: Math.round(st.floorDb) }) } catch (e) { }
+          return
+        }
+        tickTimer = setTimeout(tick, 60)
+        return
+      }
       if (db > winPeak) winPeak = db
       const now = performance.now()
       const elapsed = now - winStart
@@ -187,7 +210,10 @@ export function createVoice(opts: VoiceOptions): Voice {
   async function onWindowDone(blob: Blob): Promise<void> {
     stats.windows++
     // 太安静：直接丢（识别服务对静音会编词，浪费钱还制造幻觉）
-    if (winPeak < SILENT_PEAK_DB) { stats.skippedSilent++; scheduleNext(150); return }
+    if (epMode === 'ape') {
+      const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150)
+      if (!okSpeech) { stats.skippedSilent++; scheduleNext(150); return }
+    } else if (winPeak < SILENT_PEAK_DB) { stats.skippedSilent++; scheduleNext(150); return }
     if (Date.now() < mutedUntil) { stats.skippedSilent++; scheduleNext(150); return }
     if (blob.size < 1200) { stats.skippedSilent++; scheduleNext(150); return }
 
@@ -445,6 +471,8 @@ export function createVoice(opts: VoiceOptions): Voice {
     stopSpeaking,
     speaking: () => ttsBusy,
     recognizing: () => status === 'recognizing',
+    setEndpointMode: (m: 'ape' | 'classic') => { epMode = m; try { localStorage.setItem('chubby-endpoint', m) } catch (e) { } },
+    endpointInfo: () => ({ mode: epMode, apex: lastApe ? { floorDb: Math.round(lastApe.floorDb), onsetTh: Math.round(lastApe.onsetTh), offsetTh: Math.round(lastApe.offsetTh), quietTargetMs: lastApe.quietTargetMs, speechMs: lastApe.speechMs, quietMs: lastApe.quietMs } : null }),
     setVoiceName: (n: string) => { voiceName = n || voiceName },
     mute: (on: boolean) => { muted = on; micOn(!on) },
     stats,

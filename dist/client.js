@@ -209,6 +209,7 @@
       { type: "item", label: "\u6253\u5B57\u8BF4\u4E24\u53E5", action: "type" },
       { type: "item", label: voiceOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173", action: "voice" },
       { type: "item", label: "\u505C\u6B62\u8BF4\u8BDD", action: "tts-stop" },
+      { type: "item", label: "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94", action: "endpoint" },
       { type: "item", label: "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09", action: "ear-check" },
       { type: "sub", label: "\u6362\u4E2A\u58F0\u97F3 \u25B8", items: [
         { type: "item", label: voiceTick("zh-CN-XiaoyiNeural") + "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoyiNeural" },
@@ -470,6 +471,140 @@
     return { start, stop, talkFor, pushHeart };
   }
 
+  // src/client/ape.ts
+  var APE_DEFAULTS = {
+    frameMs: 60,
+    floorDownAlpha: 0.25,
+    floorUpAlpha: 0.03,
+    quietMarginDb: 6,
+    offsetMarginDb: 6,
+    marginRatio: 0.45,
+    marginMinDb: 4,
+    marginMaxDb: 14,
+    peakDecayDb: 0.3,
+    driftAfterMs: 1e3,
+    shortRunMs: 1200,
+    longRunMs: 3e3,
+    quietShortMs: 300,
+    quietMidMs: 450,
+    quietLongMs: 600,
+    minSpeechMs: 150,
+    maxSegmentMs: 6e3,
+    steadyWindowFrames: 25,
+    // 25 帧 × 60ms = 1.5s
+    steadySpreadDb: 3,
+    steadyMs: 900
+  };
+  var Ape = class {
+    p;
+    floorDb = null;
+    peakDb = -160;
+    speechMs = 0;
+    quietMs = 0;
+    elapsedMs = 0;
+    runMs = 0;
+    hadSpeech = false;
+    bandMs = 0;
+    steadyHist = [];
+    steadyMs = 0;
+    steadyCooldownMs = 0;
+    // 平稳噪声确认后的冷却期：这段时间不把电平算成说话
+    constructor(params) {
+      this.p = { ...APE_DEFAULTS, ...params || {} };
+    }
+    resetSegment() {
+      this.steadyHist = [];
+      this.steadyMs = 0;
+      this.speechMs = 0;
+      this.quietMs = 0;
+      this.elapsedMs = 0;
+      this.runMs = 0;
+      this.hadSpeech = false;
+      this.bandMs = 0;
+    }
+    resetNoise() {
+      this.floorDb = null;
+      this.peakDb = -160;
+    }
+    floor() {
+      return this.floorDb === null ? -70 : this.floorDb;
+    }
+    step(db) {
+      const p = this.p;
+      if (this.floorDb === null) this.floorDb = db;
+      if (db > this.peakDb) this.peakDb = db;
+      else this.peakDb = Math.max(-160, this.peakDb - p.peakDecayDb);
+      const range = this.peakDb - this.floorDb;
+      const margin = Math.max(p.marginMinDb, Math.min(p.marginMaxDb, range * p.marginRatio));
+      const onsetTh = this.floorDb + margin;
+      const offsetTh = this.floorDb + p.offsetMarginDb;
+      this.elapsedMs += p.frameMs;
+      if (db > onsetTh) {
+        this.steadyHist.push(db);
+        while (this.steadyHist.length > p.steadyWindowFrames) this.steadyHist.shift();
+        const spread = this.steadyHist.length >= 8 ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist) : 99;
+        let justConfirmedNoise = false;
+        if (spread < p.steadySpreadDb) {
+          this.steadyMs += p.frameMs;
+          if (this.steadyMs >= p.steadyMs) {
+            this.floorDb = this.floorDb * 0.7 + db * 0.3;
+            this.speechMs = 0;
+            this.runMs = 0;
+            this.hadSpeech = false;
+            this.steadyHist.length = 0;
+            this.steadyMs = 0;
+            this.steadyCooldownMs = 2e3;
+            justConfirmedNoise = true;
+          }
+        } else {
+          this.steadyMs = 0;
+        }
+        if (this.steadyCooldownMs > 0) {
+          this.steadyCooldownMs -= p.frameMs;
+        } else if (!justConfirmedNoise) {
+          this.speechMs += p.frameMs;
+          this.runMs += p.frameMs;
+          this.hadSpeech = true;
+        }
+        this.quietMs = 0;
+        this.bandMs = 0;
+      } else if (db <= offsetTh) {
+        this.quietMs += p.frameMs;
+        this.bandMs = 0;
+        this.floorDb = this.floorDb * (1 - p.floorDownAlpha) + db * p.floorDownAlpha;
+      } else {
+        this.bandMs += p.frameMs;
+        if (this.bandMs >= p.driftAfterMs) {
+          this.floorDb = this.floorDb * (1 - p.floorUpAlpha) + db * p.floorUpAlpha;
+        }
+      }
+      const quietTargetMs = this.runMs < p.shortRunMs ? p.quietShortMs : this.runMs < p.longRunMs ? p.quietMidMs : p.quietLongMs;
+      const validSpeech = this.speechMs >= p.minSpeechMs;
+      let commit = false;
+      let commitReason = "";
+      if (validSpeech && this.quietMs >= quietTargetMs) {
+        commit = true;
+        commitReason = "quiet";
+      } else if (this.elapsedMs >= p.maxSegmentMs) {
+        commit = true;
+        commitReason = "overflow";
+      }
+      return {
+        db,
+        floorDb: this.floorDb,
+        onsetTh,
+        offsetTh,
+        speechMs: this.speechMs,
+        quietMs: this.quietMs,
+        elapsedMs: this.elapsedMs,
+        hadSpeech: this.hadSpeech,
+        quietTargetMs,
+        commit,
+        commitReason
+      };
+    }
+  };
+
   // src/client/voice.ts
   var WINDOW_MS = 6e3;
   var EARLY_STOP_QUIET = 700;
@@ -485,6 +620,15 @@
   function createVoice(opts) {
     const apiBase = opts.apiBase || "/api/chubby-whale";
     let voiceName = opts.voiceName || "zh-CN-XiaoyiNeural";
+    let epMode = (() => {
+      try {
+        return localStorage.getItem("chubby-endpoint") === "ape" ? "ape" : "classic";
+      } catch (e) {
+        return "classic";
+      }
+    })();
+    const ape = new Ape();
+    let lastApe = null;
     const stats = {
       windows: 0,
       skippedSilent: 0,
@@ -572,6 +716,8 @@
         speechMs = 0;
         quietMs = 0;
         winStart = performance.now();
+        ape.resetSegment();
+        lastApe = null;
         rec.start();
         scheduleNext(0);
         if (restartTimer) {
@@ -588,6 +734,24 @@
       if (!running || !rec || rec.state !== "recording") return;
       try {
         const db = level();
+        if (epMode === "ape") {
+          const st = ape.step(db);
+          lastApe = st;
+          if (db > winPeak) winPeak = db;
+          if (st.commit && rec && rec.state === "recording") {
+            try {
+              rec.stop();
+            } catch (e) {
+            }
+            try {
+              opts.onDiag && opts.onDiag({ stage: "window-end", why: st.commitReason, floor: Math.round(st.floorDb) });
+            } catch (e) {
+            }
+            return;
+          }
+          tickTimer = setTimeout(tick, 60);
+          return;
+        }
         if (db > winPeak) winPeak = db;
         const now = performance.now();
         const elapsed = now - winStart;
@@ -618,7 +782,14 @@
     }
     async function onWindowDone(blob) {
       stats.windows++;
-      if (winPeak < SILENT_PEAK_DB) {
+      if (epMode === "ape") {
+        const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150);
+        if (!okSpeech) {
+          stats.skippedSilent++;
+          scheduleNext(150);
+          return;
+        }
+      } else if (winPeak < SILENT_PEAK_DB) {
         stats.skippedSilent++;
         scheduleNext(150);
         return;
@@ -969,6 +1140,14 @@
       stopSpeaking,
       speaking: () => ttsBusy,
       recognizing: () => status === "recognizing",
+      setEndpointMode: (m) => {
+        epMode = m;
+        try {
+          localStorage.setItem("chubby-endpoint", m);
+        } catch (e) {
+        }
+      },
+      endpointInfo: () => ({ mode: epMode, apex: lastApe ? { floorDb: Math.round(lastApe.floorDb), onsetTh: Math.round(lastApe.onsetTh), offsetTh: Math.round(lastApe.offsetTh), quietTargetMs: lastApe.quietTargetMs, speechMs: lastApe.speechMs, quietMs: lastApe.quietMs } : null }),
       setVoiceName: (n) => {
         voiceName = n || voiceName;
       },
@@ -1964,6 +2143,24 @@
             }).catch(() => showBubble("\u5F39\u7434\u5931\u8D25"));
             return;
           }
+          if (action === "endpoint") {
+            try {
+              const cur = (() => {
+                try {
+                  return localStorage.getItem("chubby-endpoint") === "ape" ? "ape" : "classic";
+                } catch (e) {
+                  return "classic";
+                }
+              })();
+              const next = cur === "ape" ? "classic" : "ape";
+              localStorage.setItem("chubby-endpoint", next);
+              if (voiceRef.current && voiceRef.current.setEndpointMode) voiceRef.current.setEndpointMode(next);
+              showBubble(next === "ape" ? "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u81EA\u9002\u5E94\uFF08\u8BD5\u7528\uFF09" : "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178\uFF08\u7A33\u5B9A\uFF09", 4e3);
+            } catch (e) {
+              showBubble("\u5207\u6362\u5931\u8D25", 3e3);
+            }
+            return;
+          }
           if (action === "ear-check") {
             try {
               const v = window.__chubbyWhale && window.__chubbyWhale.voice;
@@ -1972,7 +2169,7 @@
                 showBubble("\u8BED\u97F3\u6A21\u5757\u8FD8\u6CA1\u8D77\u6765\uFF08\u8BED\u97F3\u5F85\u547D\u53EF\u80FD\u662F\u5173\u7684\uFF09", 6e3);
                 return;
               }
-              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
+              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u7AEF\u70B9\u68C0\u6D4B\uFF1A" + (voiceRef.current && voiceRef.current.endpointInfo ? voiceRef.current.endpointInfo().mode === "ape" ? "\u81EA\u9002\u5E94" : "\u7ECF\u5178" : "?") + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
               showBubble(line, 15e3);
               try {
                 navigator.clipboard.writeText(JSON.stringify(st));

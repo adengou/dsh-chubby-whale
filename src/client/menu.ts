@@ -123,6 +123,7 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
     { type: 'item', label: '打字说两句', action: 'type' },
     { type: 'item', label: voiceOn ? '语音朗读：开' : '语音朗读：关', action: 'voice' },
     { type: 'item', label: '停止说话', action: 'tts-stop' },
+    { type: 'item', label: '端点检测：经典/自适应', action: 'endpoint' },
     { type: 'item', label: '耳朵自检（听力诊断）', action: 'ear-check' },
     { type: 'sub', label: '换个声音 ▸', items: [
       { type: 'item', label: voiceTick('zh-CN-XiaoyiNeural') + '音色：晓伊（中·女）', action: 'voice:zh-CN-XiaoyiNeural' },

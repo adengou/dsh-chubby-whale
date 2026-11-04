@@ -653,6 +653,17 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           }).catch(() => showBubble('弹琴失败'))
           return
         }
+        if (action === 'endpoint') {
+          // 端点检测模式切换：经典（默认）/ 自适应（APE）
+          try {
+            const cur = (() => { try { return localStorage.getItem('chubby-endpoint') === 'ape' ? 'ape' : 'classic' } catch (e) { return 'classic' } })()
+            const next = cur === 'ape' ? 'classic' : 'ape'
+            localStorage.setItem('chubby-endpoint', next)
+            if (voiceRef.current && voiceRef.current.setEndpointMode) voiceRef.current.setEndpointMode(next)
+            showBubble(next === 'ape' ? '端点检测：自适应（试用）' : '端点检测：经典（稳定）', 4000)
+          } catch (e) { showBubble('切换失败', 3000) }
+          return
+        }
         if (action === 'ear-check') {
           // 语音自检：直接读新语音模块（client/voice.ts）的统计，不用开控制台
           try {
@@ -662,6 +673,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const line = '语音自检（新模块）：' + String(v.status())
               + '\n录音段 ' + st.windows + '｜上传 ' + st.uploaded + '｜识别出字 ' + st.asrTexts + '｜交给对话 ' + st.heard
               + '\n丢：太安静 ' + st.skippedSilent + '｜回声/重复 ' + st.echoDropped + '｜识别失败 ' + st.asrFail
+              + '\n端点检测：' + ((voiceRef.current && voiceRef.current.endpointInfo) ? (voiceRef.current.endpointInfo().mode === 'ape' ? '自适应' : '经典') : '?')
               + '\n朗读：请求 ' + st.ttsRequests + '｜开播 ' + st.ttsPlayed + '｜失败 ' + st.ttsFail + '｜僵尸复位 ' + st.ttsZombie
               + (st.lastError ? '\n最近错误：' + st.lastError : '')
             showBubble(line, 15000)
