@@ -650,6 +650,8 @@
       const ttsQueue = [];
       const ttsPrefetch = /* @__PURE__ */ new Map();
       let ttsPlaying = false;
+      let chatEpoch = 0;
+      let asrBusy = false;
       const storyNarratingRef = { current: false };
       const earDiag = { db: 0, noiseDb: -60, onsetDb: -50, speechMs: 0, quietMs: 0, calibrating: true, drops: 0, echoDrops: 0, asrMs: 0 };
       const ECHO_MUTE_MS = 700;
@@ -1212,8 +1214,16 @@
           const h2 = H * s;
           x = Math.max(0, Math.min(window.innerWidth - w, x));
           y = Math.max(0, Math.min(window.innerHeight - h2, y));
-          el.style.left = x + "px";
-          el.style.top = y + "px";
+          const d = dragRef.current;
+          if (d && d.dragging) {
+            const bx = typeof d.baseX === "number" ? d.baseX : x;
+            const by = typeof d.baseY === "number" ? d.baseY : y;
+            el.style.transform = "translate3d(" + (x - bx) + "px," + (y - by) + "px,0)";
+          } else {
+            el.style.left = x + "px";
+            el.style.top = y + "px";
+            el.style.transform = "";
+          }
           posRef.current = { x, y };
         }
         function savePos() {
@@ -1286,6 +1296,16 @@
           d.vx = 0;
           d.vy = 0;
           d.moved = 0;
+          d.baseX = posRef.current.x;
+          d.baseY = posRef.current.y;
+          try {
+            const el = stageRef.current;
+            if (el && el.style) {
+              el.style.filter = "none";
+              el.style.willChange = "transform";
+            }
+          } catch (e2) {
+          }
           try {
             e.currentTarget.setPointerCapture(e.pointerId);
           } catch {
@@ -1306,6 +1326,15 @@
           const d = dragRef.current;
           if (!d.dragging) return;
           d.dragging = false;
+          try {
+            const el = stageRef.current;
+            if (el && el.style) {
+              el.style.filter = "";
+              el.style.willChange = "";
+            }
+          } catch (e2) {
+          }
+          applyPos(posRef.current.x, posRef.current.y);
           savePos();
           let vx = Math.max(-14, Math.min(14, d.vx));
           let vy = Math.max(-14, Math.min(14, d.vy));
@@ -1449,6 +1478,13 @@
         function pumpDueReminders() {
           if (dueTimerRef.current) return;
           if (dueQueueRef.current.length === 0) return;
+          if (ttsPlaying || ttsQueue.length > 0 || storyNarratingRef.current || busy) {
+            dueTimerRef.current = setTimeout(() => {
+              dueTimerRef.current = null;
+              pumpDueReminders();
+            }, 2e3);
+            return;
+          }
           const item = dueQueueRef.current.shift();
           const body = String(item.text || "").trim() || "\u65F6\u95F4\u5230\u4E86";
           const line = "\u4E3B\u4EBA\uFF0C\u63D0\u9192\u4F60\uFF1A" + body;
@@ -1881,9 +1917,25 @@
             if (el) el.scrollTop = el.scrollHeight;
           }, 0);
         }
-        async function sendText(rawText) {
+        async function sendText(rawText, opts) {
           const text = String(rawText || "").trim();
-          if (!text || busy) return;
+          if (!text) return;
+          if (busy) {
+            if (opts && opts.voice) showBubble("\u672C\u9CB8\u8FD8\u5728\u60F3\u4E0A\u4E00\u53E5\u5462\uFF0C\u7A0D\u7B49\uFF5E", 2500);
+            return;
+          }
+          if (storyNarratingRef.current || ttsPlaying || ttsQueue.length > 0) {
+            try {
+              stopTts();
+            } catch (e) {
+            }
+            storyNarratingRef.current = false;
+            try {
+              storyBusyRef.current = false;
+            } catch (e) {
+            }
+          }
+          const myEpoch = ++chatEpoch;
           if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart();
           if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble("\u54FC\u2026\u672C\u9CB8\u751F\u6C14\u4E86");
           if (/胖|肥猪|肥嘟嘟/.test(text)) {
@@ -1914,6 +1966,7 @@
               })() })
             });
             data = await res.json();
+            if (myEpoch !== chatEpoch) return;
             const reply = data?.reply || "\u4E3B\u4EBA\u2026\u2026\u672C\u9CB8\u8D70\u795E\u4E86\u3002";
             setMessages((m) => [...m, { who: "fish", text: reply }]);
             if (voiceModeRef.current) {
@@ -1926,7 +1979,7 @@
             setBusy(false);
             animRef.current?.talkFor(1500);
             try {
-              if (data && data.reply) {
+              if (data && data.reply && myEpoch === chatEpoch) {
                 const rp = String(data.reply);
                 noteSpoken(rp);
                 speakText(rp, { rate: rp.length >= 80 ? "-15%" : "+0%" });
@@ -1990,6 +2043,8 @@
             }, delay);
           }
           async function uploadChunk() {
+            if (asrBusy) return;
+            asrBusy = true;
             try {
               if (stopped) return;
               const blob = new Blob(chunks, { type: "audio/webm" });
@@ -2056,6 +2111,7 @@
               }
             } catch (e) {
             } finally {
+              asrBusy = false;
               if (!stopped) scheduleStart(350);
             }
           }

@@ -54,6 +54,11 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     /** 预取缓存：段 id → 已发出的合成请求（当前段开播时就把下一段压上去） */
     const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
     let ttsPlaying = false
+    // ===== 并发纪律（防串线/占线/插队）=====
+    // chatEpoch：每次发起对话 +1；回来的响应若纪元已变，一律丢弃（旧答案绝不能盖掉新问题）
+    let chatEpoch = 0
+    // asrBusy：识别请求同时只允许一个在途，避免多段音频的结果乱序返回
+    let asrBusy = false
     // 说书/讲古/念诗期间为 true：耳朵完全静音，避免本鱼自己的声音把自己打断
     const storyNarratingRef = { current: false }
     // 耳朵实时诊断：主人可在控制台看 __chubbyWhale.ear 了解当前音量/噪声底/阈值
@@ -462,8 +467,17 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         const h = H * s
         x = Math.max(0, Math.min(window.innerWidth - w, x))
         y = Math.max(0, Math.min(window.innerHeight - h, y))
-        el.style.left = x + 'px'
-        el.style.top = y + 'px'
+        const d = dragRef.current
+        if (d && d.dragging) {
+          // 拖动中走 transform：合成层位移，不触发布局与整树重绘
+          const bx = typeof d.baseX === 'number' ? d.baseX : x
+          const by = typeof d.baseY === 'number' ? d.baseY : y
+          el.style.transform = 'translate3d(' + (x - bx) + 'px,' + (y - by) + 'px,0)'
+        } else {
+          el.style.left = x + 'px'
+          el.style.top = y + 'px'
+          el.style.transform = ''
+        }
         posRef.current = { x, y }
       }
       function savePos(): void {
@@ -526,6 +540,12 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         d.dragging = true
         d.lastX = e.clientX; d.lastY = e.clientY
         d.vx = 0; d.vy = 0; d.moved = 0
+        d.baseX = posRef.current.x; d.baseY = posRef.current.y
+        try {
+          const el = stageRef.current
+          // 拖动期间关掉投影滤镜：大滤镜每帧重算是拖拽卡死/闪退的主因之一
+          if (el && el.style) { el.style.filter = 'none'; el.style.willChange = 'transform' }
+        } catch (e2) { }
         try { e.currentTarget.setPointerCapture(e.pointerId) } catch { }
       }
       function onPointerMove(e: any): void {
@@ -541,6 +561,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         const d = dragRef.current
         if (!d.dragging) return
         d.dragging = false
+        // 恢复滤镜，并把 transform 位移提交成 left/top（否则鱼停在原位）
+        try { const el = stageRef.current; if (el && el.style) { el.style.filter = ""; el.style.willChange = "" } } catch (e2) { }
+        applyPos(posRef.current.x, posRef.current.y)
         savePos()
         let vx = Math.max(-14, Math.min(14, d.vx))
         let vy = Math.max(-14, Math.min(14, d.vy))
@@ -668,6 +691,14 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       function pumpDueReminders(): void {
         if (dueTimerRef.current) return
         if (dueQueueRef.current.length === 0) return
+        // 提醒是低优先级：本鱼正在说/在想/在说书时排队等，绝不插队抢话筒
+        if (ttsPlaying || ttsQueue.length > 0 || storyNarratingRef.current || busy) {
+          dueTimerRef.current = setTimeout(() => {
+            dueTimerRef.current = null
+            pumpDueReminders()
+          }, 2000)
+          return
+        }
         const item = dueQueueRef.current.shift()
         // 照 C# FishForm：气泡与朗读都用「主人，提醒你：」+ 正文；正文为空兜底「时间到了」
         const body = String(item.text || '').trim() || '时间到了'
@@ -959,9 +990,18 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (el) el.scrollTop = el.scrollHeight
         }, 0)
       }
-      async function sendText(rawText: string): Promise<void> {
+      async function sendText(rawText: string, opts?: { voice?: boolean }): Promise<void> {
         const text = String(rawText || '').trim()
-        if (!text || busy) return
+        if (!text) return
+        // 占线保护：上一条还在想就拒绝（不排队），避免两条回复抢同一个话筒
+        if (busy) { if (opts && opts.voice) showBubble('本鲸还在想上一句呢，稍等～', 2500); return }
+        // 用户提问永远优先：先打断正在播的旁白（说书/念诗）再回答
+        if (storyNarratingRef.current || ttsPlaying || ttsQueue.length > 0) {
+          try { stopTts() } catch (e) { }
+          storyNarratingRef.current = false
+          try { storyBusyRef.current = false } catch (e) { }
+        }
+        const myEpoch = ++chatEpoch
         if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart()
         if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble('哼…本鲸生气了')
         if (/胖|肥猪|肥嘟嘟/.test(text)) { showBubble('人家不胖！是鲸鱼天生圆！'); const s0 = Math.min(1.4, scale + 0.12); setScale(s0); setTimeout(function () { setScale(Math.max(0.7, s0 - 0.12)) }, 600) }
@@ -979,6 +1019,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             body: JSON.stringify({ message: text, voice: true, lang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })() }),
           })
           data = await res.json()
+          if (myEpoch !== chatEpoch) return   // 主人已经问了新问题：这条旧回复作废（防串线）
           const reply = data?.reply || '主人……本鲸走神了。'
           setMessages((m: any[]) => [...m, { who: 'fish', text: reply }])
           if (voiceModeRef.current) { showBubble('（说）' + reply, 8000) }
@@ -990,7 +1031,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           animRef.current?.talkFor(1500)
           // 聊天回复：长回复（≥80 字）按 C# 自动切叙述语调 -15%，短句 +0%
           try {
-            if (data && data.reply) {
+            if (data && data.reply && myEpoch === chatEpoch) {
               const rp = String(data.reply)
               noteSpoken(rp)
       speakText(rp, { rate: rp.length >= 80 ? '-15%' : '+0%' })
@@ -1048,6 +1089,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           startTimer = setTimeout(() => { startTimer = null; startChunk() }, delay)
         }
         async function uploadChunk() {
+        if (asrBusy) return          // 上一段识别还没回来：直接放弃这段，避免结果乱序
+        asrBusy = true
           // 所有 return 都走 finally → 录音循环一定会重启（不再因为「没叫唤醒词」装死）
           try {
             if (stopped) return
@@ -1105,6 +1148,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               sendText(t)
             }
           } catch (e) { } finally {
+            asrBusy = false        // 释放识别位（无论成功失败都要放，否则耳朵永久占线）
             if (!stopped) scheduleStart(350)
           }
         }
