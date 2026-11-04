@@ -180,11 +180,14 @@
     }
     return label;
   }
+  var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
   function buildMenu(version, state) {
     const voiceOn = state && state.voiceOn ? true : false;
     const earOn = state && state.earOn ? true : false;
     const voiceChatOn = state && state.voiceChatOn ? true : false;
     const chatLang = state && state.chatLang ? String(state.chatLang) : "auto";
+    const ttsVoice = state && state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
+    const voiceTick = (voice) => ttsVoice === voice ? "\u2713 " : "";
     const balanceText = state && state.balance ? state.balance : "--";
     const growthText = state && state.growth ? state.growth : "--";
     return [
@@ -198,15 +201,15 @@
       { type: "item", label: voiceOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173", action: "voice" },
       { type: "item", label: "\u505C\u6B62\u8BF4\u8BDD", action: "tts-stop" },
       { type: "sub", label: "\u6362\u4E2A\u58F0\u97F3 \u25B8", items: [
-        { type: "item", label: "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09", action: "voice:auto" },
-        { type: "item", label: "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoyiNeural" },
-        { type: "item", label: "\u97F3\u8272\uFF1A\u6653\u6653\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoxiaoNeural" },
-        { type: "item", label: "\u97F3\u8272\uFF1A\u6653\u8FB0\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaochenNeural" },
-        { type: "item", label: "\u97F3\u8272\uFF1A\u4E91\u5E0C\uFF08\u4E2D\xB7\u7537\uFF09", action: "voice:zh-CN-YunxiNeural" },
-        { type: "item", label: "\u97F3\u8272\uFF1A\u4E91\u626C\uFF08\u4E2D\xB7\u7537\uFF09", action: "voice:zh-CN-YunyangNeural" },
-        { type: "item", label: "\u97F3\u8272\uFF1AAna\uFF08\u82F1\xB7\u5973\uFF09", action: "voice:en-US-AnaNeural" },
-        { type: "item", label: "\u97F3\u8272\uFF1AJenny\uFF08\u82F1\xB7\u5973\uFF09", action: "voice:en-US-JennyNeural" },
-        { type: "item", label: "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09", action: "voice:en-GB-SoniaNeural" }
+        { type: "item", label: voiceTick("zh-CN-XiaoyiNeural") + "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoyiNeural" },
+        { type: "item", label: voiceTick("zh-CN-XiaoxiaoNeural") + "\u97F3\u8272\uFF1A\u6653\u6653\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoxiaoNeural" },
+        { type: "item", label: voiceTick("zh-CN-XiaochenNeural") + "\u97F3\u8272\uFF1A\u6653\u8FB0\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaochenNeural" },
+        { type: "item", label: voiceTick("zh-CN-YunxiNeural") + "\u97F3\u8272\uFF1A\u4E91\u5E0C\uFF08\u4E2D\xB7\u7537\uFF09", action: "voice:zh-CN-YunxiNeural" },
+        { type: "item", label: voiceTick("zh-CN-YunyangNeural") + "\u97F3\u8272\uFF1A\u4E91\u626C\uFF08\u4E2D\xB7\u7537\uFF09", action: "voice:zh-CN-YunyangNeural" },
+        { type: "item", label: voiceTick("en-US-AnaNeural") + "\u97F3\u8272\uFF1AAna\uFF08\u82F1\xB7\u5973\uFF09", action: "voice:en-US-AnaNeural" },
+        { type: "item", label: voiceTick("en-US-JennyNeural") + "\u97F3\u8272\uFF1AJenny\uFF08\u82F1\xB7\u5973\uFF09", action: "voice:en-US-JennyNeural" },
+        { type: "item", label: voiceTick("en-GB-SoniaNeural") + "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09", action: "voice:en-GB-SoniaNeural" },
+        { type: "item", label: voiceTick("auto") + "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09", action: "voice:auto" }
       ] },
       { type: "sub", label: "\u804A\u5929\u8BED\u8A00 \u25B8", items: [
         { type: "item", label: (chatLang === "auto" ? "\u2713 " : "") + "\u81EA\u52A8\uFF08\u8DDF\u968F\u63D0\u95EE\u8BED\u8A00\uFF09", action: "chat-lang:auto" },
@@ -624,9 +627,9 @@
       let ttsPauseTimer = null;
       function currentVoice() {
         try {
-          return localStorage.getItem("chubby-tts-voice") || "auto";
+          return localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
         } catch (e) {
-          return "auto";
+          return "zh-CN-XiaoyiNeural";
         }
       }
       function finishTtsJob(job) {
@@ -2090,7 +2093,13 @@
               h("span", null, (lang === "en" ? "Fat Whale \xB7 v" : "\u80A5\u9CB8 \xB7 v") + VERSION),
               h("span", { style: { color: "#FFD166" } }, balanceText)
             ),
-            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, chatLang: (() => {
+            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, ttsVoice: (() => {
+              try {
+                return localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
+              } catch (e) {
+                return "zh-CN-XiaoyiNeural";
+              }
+            })(), chatLang: (() => {
               try {
                 return localStorage.getItem("chubby-chatlang") || "auto";
               } catch (e) {

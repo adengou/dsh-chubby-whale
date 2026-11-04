@@ -93,11 +93,15 @@ export function tr(label: string, lang: string): string {
   return label
 }
 
+/** 默认音色：晓伊（与 C# 版一致） */
+const DEFAULT_VOICE = 'zh-CN-XiaoyiNeural'
 export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: boolean; voiceChatOn?: boolean; balance?: string; growth?: string }): MenuItem[] {
   const voiceOn = state && state.voiceOn ? true : false
   const earOn = state && state.earOn ? true : false
   const voiceChatOn = state && state.voiceChatOn ? true : false
   const chatLang = (state && state.chatLang) ? String(state.chatLang) : 'auto'
+  const ttsVoice = (state && state.ttsVoice) ? String(state.ttsVoice) : DEFAULT_VOICE
+  const voiceTick = (voice: string): string => (ttsVoice === voice ? '✓ ' : '')
   const balanceText = (state && state.balance) ? state.balance : '--'
   const growthText = (state && state.growth) ? state.growth : '--'
   return [
@@ -111,15 +115,15 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
     { type: 'item', label: voiceOn ? '语音朗读：开' : '语音朗读：关', action: 'voice' },
     { type: 'item', label: '停止说话', action: 'tts-stop' },
     { type: 'sub', label: '换个声音 ▸', items: [
-      { type: 'item', label: '自动（按语言选音色）', action: 'voice:auto' },
-      { type: 'item', label: '音色：晓伊（中·女）', action: 'voice:zh-CN-XiaoyiNeural' },
-      { type: 'item', label: '音色：晓晓（中·女）', action: 'voice:zh-CN-XiaoxiaoNeural' },
-      { type: 'item', label: '音色：晓辰（中·女）', action: 'voice:zh-CN-XiaochenNeural' },
-      { type: 'item', label: '音色：云希（中·男）', action: 'voice:zh-CN-YunxiNeural' },
-      { type: 'item', label: '音色：云扬（中·男）', action: 'voice:zh-CN-YunyangNeural' },
-      { type: 'item', label: '音色：Ana（英·女）', action: 'voice:en-US-AnaNeural' },
-      { type: 'item', label: '音色：Jenny（英·女）', action: 'voice:en-US-JennyNeural' },
-      { type: 'item', label: '音色：Sonia（英·女·英式）', action: 'voice:en-GB-SoniaNeural' },
+      { type: 'item', label: voiceTick('zh-CN-XiaoyiNeural') + '音色：晓伊（中·女）', action: 'voice:zh-CN-XiaoyiNeural' },
+      { type: 'item', label: voiceTick('zh-CN-XiaoxiaoNeural') + '音色：晓晓（中·女）', action: 'voice:zh-CN-XiaoxiaoNeural' },
+      { type: 'item', label: voiceTick('zh-CN-XiaochenNeural') + '音色：晓辰（中·女）', action: 'voice:zh-CN-XiaochenNeural' },
+      { type: 'item', label: voiceTick('zh-CN-YunxiNeural') + '音色：云希（中·男）', action: 'voice:zh-CN-YunxiNeural' },
+      { type: 'item', label: voiceTick('zh-CN-YunyangNeural') + '音色：云扬（中·男）', action: 'voice:zh-CN-YunyangNeural' },
+      { type: 'item', label: voiceTick('en-US-AnaNeural') + '音色：Ana（英·女）', action: 'voice:en-US-AnaNeural' },
+      { type: 'item', label: voiceTick('en-US-JennyNeural') + '音色：Jenny（英·女）', action: 'voice:en-US-JennyNeural' },
+      { type: 'item', label: voiceTick('en-GB-SoniaNeural') + '音色：Sonia（英·女·英式）', action: 'voice:en-GB-SoniaNeural' },
+      { type: 'item', label: voiceTick('auto') + '自动（按语言选音色）', action: 'voice:auto' },
     ] },
     { type: 'sub', label: '聊天语言 ▸', items: [
       { type: 'item', label: (chatLang === 'auto' ? '✓ ' : '') + '自动（跟随提问语言）', action: 'chat-lang:auto' },
