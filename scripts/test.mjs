@@ -148,6 +148,40 @@ try {
   ok('能加载 sim.ts', false, String(e.message))
 }
 
+
+// ---------- ⑤ 点播意图（本地路由关键词） ----------
+console.log('\n[5] 点播意图 client/intent.ts')
+try {
+  const it = await import('../src/client/intent.ts')
+  const cases = [
+    ['讲个聊斋', 'story', '聊斋志异'],
+    ['讲聊斋', 'story', '聊斋志异'],
+    ['讲三国', 'story', '三国演义'],
+    ['讲个故事', 'story', ''],
+    ['说书', 'story', ''],
+    ['背首诗', 'poem', ''],
+    ['念首诗', 'poem', ''],
+    ['讲个典故', 'culture', ''],
+    ['来个成语', 'culture', ''],
+    ['为什么天是蓝的', null, ''],
+    ['讲个故事吗？', null, ''],
+    ['今天天气怎么样', null, ''],
+  ]
+  let bad = []
+  for (const [text, kind, book] of cases) {
+    const r = it.detectIntent(text)
+    const gotKind = r ? r.kind : null
+    const gotBook = r && r.kind === 'story' ? r.book : ''
+    if (gotKind !== kind) bad.push(text + ' → ' + gotKind + '（应为 ' + kind + '）')
+    else if (kind === 'story' && book && gotBook !== book) bad.push(text + ' 书名 ' + gotBook + '（应为 ' + book + '）')
+  }
+  ok('12 条关键词用例', bad.length === 0, bad.slice(0, 3).join(' / '))
+  ok('提问不劫持', it.detectIntent('讲个故事吗？') === null && it.detectIntent('为什么天是蓝的') === null)
+  ok('超长句不劫持', it.detectIntent('讲故事'.repeat(20)) === null)
+} catch (e) {
+  ok('能加载 intent.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

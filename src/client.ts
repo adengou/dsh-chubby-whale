@@ -8,6 +8,7 @@ import { handleFileDrop, VISION_PROMPT } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { createVoice } from './client/voice.js'
 import { createPersona } from './client/persona.js'
+import { detectIntent, BOOK_ALIAS } from './client/intent.js'
 import { splitTtsSegments, normalizeRate, cleanTtsText } from './shared/tts.js'
 import { parseDue, cleanReminderText } from './shared/time.js'
 ;(window as any).__ModuleLoader__.load({
@@ -857,33 +858,25 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }, 0)
       }
       // ===== 点播本地路由：讲故事 / 背诗 / 讲典故 直接读本地素材，不调模型（省 token、内容完整）=====
-      const BOOK_ALIAS: Array<[RegExp, string]> = [
-        [/聊斋/, '聊斋志异'], [/三国/, '三国演义'], [/西游/, '西游记'], [/水浒/, '水浒传'],
-        [/红楼/, '红楼梦'], [/封神/, '封神演义'], [/隋唐/, '隋唐演义'], [/杨家将/, '杨家将演义'],
-        [/世说/, '世说新语'], [/三言|二拍/, '三言二拍'], [/儒林/, '儒林外史'], [/官场/, '官场现形记'],
-        [/老残/, '老残游记'], [/说岳|岳传/, '说岳全传'], [/东周/, '东周列国志'], [/三侠五义/, '三侠五义'], [/镜花缘/, '镜花缘'],
-      ]
+      // 点播路由：关键词与书名别名表已抽到 client/intent.ts（纯函数，npm test 覆盖）
       function tryLocalRoute(text: string): boolean {
-        const t = String(text || '').trim()
-        if (!t || t.length > 30) return false
-        // 真提问（为什么/怎么/吗）交给模型，不劫持
-        if (/[?？]|为什么|怎么|如何|为什么呀/.test(t)) return false
-        // ① 背诗 / 念诗
-        if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) {
+        const hit = detectIntent(text)
+        if (!hit) return false
+        if (hit.kind === 'poem') {
           showBubble('（点播）好，念一首', 3000)
           fetch('/api/chubby-whale/poem').then((r: any) => r.json()).then((d: any) => {
             const p = (d && d.ok && d.item) ? d.item : null
             if (!p) { showBubble('诗册没读到', 4000); return }
             const body = String(p.text || '')
             showBubble('念诗·' + p.title + '（' + String(p.author || '佚名') + '）', 15000)
-            const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + String(p.author || '佚名') + '。' + body.replace(/\\n/g, '，')
-            speakText(speech, { rate: NARRATION_RATE, onDone: () => sayLine(persona.line('poemDone'), 6000) })
+            const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + String(p.author || '佚名') + '。' + body.replace(/\n/g, '，')
+            sayLine(persona.line('poemStart'), 4000)
+            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => sayLine(persona.line('poemDone'), 6000) }) } catch (e) { } }, 600)
           }).catch(() => showBubble('诗册没读到', 4000))
           return true
         }
-        // ② 典故 / 成语
-        if (/典故|成语|讲个故事里的事/.test(t)) {
-          const type = /成语/.test(t) ? 'chengyu' : 'idiom'
+        if (hit.kind === 'culture') {
+          const type = hit.sub
           showBubble(type === 'chengyu' ? '（点播）讲个成语' : '（点播）讲个典故', 3000)
           fetch('/api/chubby-whale/culture?type=' + type).then((r: any) => r.json()).then((d: any) => {
             const it = (d && d.ok && d.item) ? d.item : null
@@ -894,16 +887,11 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           }).catch(() => showBubble('这个没读到', 4000))
           return true
         }
-        // ③ 讲故事 / 说书（可带书名）
-        if (/讲故事|讲个故事|说书|来段|讲一段|讲个聊斋|讲聊斋/.test(t) || BOOK_ALIAS.some((p) => p[0].test(t))) {
-          let book = ''
-          for (const [re, name] of BOOK_ALIAS) { if (re.test(t)) { book = name; break } }
-          showBubble('（点播）' + (book ? '讲《' + book + '》' : '讲一段书'), 4000)
-          storyAutoRef.current = true
-          startStory(book)
-          return true
-        }
-        return false
+        const book = hit.book || ''
+        showBubble('（点播）' + (book ? '讲《' + book + '》' : '讲一段书'), 4000)
+        storyAutoRef.current = true
+        startStory(book)
+        return true
       }
 
 
