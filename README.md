@@ -60,6 +60,20 @@ dsh plugin --profile web add link:<本目录>
 
 Key 读取优先级：`~/.dsh/.credentials.yaml` → 环境变量 → `config.json`。
 
+### 插件开关
+
+`cordis.patch.yml` 里的 `config.enabled` 是本插件的总开关（默认 `true`）：
+
+```yaml
+- insert:
+    - id: chubby-whale
+      name: dsh-chubby-whale
+      config:
+        enabled: false
+```
+
+改成 `false` 后重启 `dsh web`：宿主端不再注册任何 `/api/chubby-whale/*` 路由（聊天、说书、语音、提醒等全部停用），启动日志会打印 `[chubby-whale] disabled by config`。它只停宿主端；要连前端 bundle 一起停用，用条目自带的 `disabled: true`（`dsh-client-modules` 只扫描启用的 entry）。
+
 ## 常见问题
 
 - **没有声音**：检查本机是否装了 `python` 与 `edge-tts`（`python -m edge_tts --help` 能跑通即可）

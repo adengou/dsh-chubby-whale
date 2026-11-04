@@ -43,6 +43,7 @@ export const EN_MAP: Record<string, string> = {
   '文化气 ▸': 'Culture ▸',
   '说书（连载）': 'Storytelling',
   '接着说': 'Continue story',
+  '从头讲这本书': 'Restart this book',
   '念首诗': 'Recite a poem',
   '讲个民间故事': 'Folk tale',
   '讲个典故': 'Classic allusion',
@@ -142,6 +143,7 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
     { type: 'sub', label: '文化气 ▸', items: [
       { type: 'item', label: '说书（连载）', action: 'culture-story' },
       { type: 'item', label: '接着说', action: 'culture-story-next' },
+      { type: 'item', label: '从头讲这本书', action: 'story-reset' },
       { type: 'item', label: '念首诗', action: 'poem' },
       { type: 'item', label: '讲个民间故事', action: 'culture-tale' },
       { type: 'item', label: '讲个典故', action: 'culture-allusion' },

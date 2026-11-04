@@ -31,7 +31,15 @@ const SYSTEM_PROMPT = [
     '主人用什么语言问，就用什么语言答：中文问用中文答，英文问用英文答。',
     '不要说自己是大模型或 AI。',
 ].join('');
-export function apply(ctx) {
+/**
+ * 插件入口。config 来自 cordis.patch.yml 的 config 段（DSH 按 apply(ctx, config) 传入）。
+ * 总开关：config.enabled === false 时整个宿主端不注册任何路由。
+ */
+export function apply(ctx, config) {
+    if (config && config.enabled === false) {
+        console.log('[chubby-whale] disabled by config');
+        return;
+    }
     const store = createStore(DATA_DIR);
     const ttsCache = createCache({ dir: join(DATA_DIR, 'cache', 'tts') });
     const chatCache = createCache({ dir: join(DATA_DIR, 'cache', 'chat') });
@@ -64,37 +72,76 @@ export function apply(ctx) {
         feedPet: store.feedPet,
         clearMemory: store.clearMemory,
     });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/asset', handler: misc.handleAsset });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/chat', handler: chat });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/status', handler: misc.handleStatus });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/state', handler: misc.handleState });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/balance', handler: misc.handleBalance });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/growth', handler: misc.handleGrowth });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/fishfood', handler: misc.handleFishfood });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/pet', handler: misc.handlePet });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/clear-memory', handler: misc.handleClearMemory });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/story/books', handler: story.handleBooks });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/story/start', handler: story.handleStoryStart });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/story/next', handler: story.handleStoryNext });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/story/reset', handler: story.handleStoryReset });
     const reminders = createReminderHandlers({
         loadReminders: store.loadReminders,
         addReminder: store.addReminder,
         dueReminders: store.dueReminders,
         removeReminder: store.removeReminder,
     });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/reminders', handler: reminders.handleReminders });
     const culture = createCultureHandlers({ dataDir: DATA_DIR });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/culture', handler: culture.handleCulture });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/melodies', handler: culture.handleMelodies });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/melody', handler: culture.handleMelody });
     const poem = createPoemHandler({ dataDir: DATA_DIR });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/poem', handler: poem.handlePoem });
     const briefing = createBriefingHandlers({
         loadGrowth: store.loadGrowth,
         loadReminders: store.loadReminders,
     });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/briefing', handler: briefing.handleBriefing });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/tts', handler: createTtsHandler({ cache: ttsCache }) });
-    ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/asr', handler: createAsrHandler({ pluginDir: PLUGIN_DIR, cache: asrCache }) });
+    const tts = createTtsHandler({ cache: ttsCache });
+    const asr = createAsrHandler({ pluginDir: PLUGIN_DIR, cache: asrCache });
+    // 21 条路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，
+    // 第二次 apply 才不会撞 dsh-host-webserver 的 duplicate 检查，旧 store/cache 闭包也不会留在路由表里。
+    const registerRoutes = () => {
+        const disposers = [];
+        const reg = (path, handler) => {
+            const dispose = ctx.webServer.register({ kind: 'exact', path, handler });
+            if (typeof dispose === 'function')
+                disposers.push(dispose);
+        };
+        try {
+            reg('/api/chubby-whale/asset', misc.handleAsset);
+            reg('/api/chubby-whale/chat', chat);
+            reg('/api/chubby-whale/status', misc.handleStatus);
+            reg('/api/chubby-whale/state', misc.handleState);
+            reg('/api/chubby-whale/balance', misc.handleBalance);
+            reg('/api/chubby-whale/growth', misc.handleGrowth);
+            reg('/api/chubby-whale/fishfood', misc.handleFishfood);
+            reg('/api/chubby-whale/pet', misc.handlePet);
+            reg('/api/chubby-whale/clear-memory', misc.handleClearMemory);
+            reg('/api/chubby-whale/story/books', story.handleBooks);
+            reg('/api/chubby-whale/story/start', story.handleStoryStart);
+            reg('/api/chubby-whale/story/next', story.handleStoryNext);
+            reg('/api/chubby-whale/story/reset', story.handleStoryReset);
+            reg('/api/chubby-whale/reminders', reminders.handleReminders);
+            reg('/api/chubby-whale/culture', culture.handleCulture);
+            reg('/api/chubby-whale/melodies', culture.handleMelodies);
+            reg('/api/chubby-whale/melody', culture.handleMelody);
+            reg('/api/chubby-whale/poem', poem.handlePoem);
+            reg('/api/chubby-whale/briefing', briefing.handleBriefing);
+            reg('/api/chubby-whale/tts', tts);
+            reg('/api/chubby-whale/asr', asr);
+            return () => {
+                for (const dispose of disposers) {
+                    try {
+                        dispose();
+                    }
+                    catch { }
+                }
+                disposers.length = 0;
+            };
+        }
+        catch (err) {
+            // 中途抛错（比如撞上别的 owner）时先摘掉已注册的，别留半套路由
+            for (const dispose of disposers) {
+                try {
+                    dispose();
+                }
+                catch { }
+            }
+            disposers.length = 0;
+            throw err;
+        }
+    };
+    // cordis 的 ctx.effect(setup) 会把 setup 返回的清理函数挂到当前 fiber，卸载时自动执行
+    if (typeof ctx.effect === 'function')
+        ctx.effect(registerRoutes, 'chubby-whale: routes');
+    else
+        registerRoutes();
 }

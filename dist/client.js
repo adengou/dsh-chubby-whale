@@ -135,6 +135,7 @@
     "\u6587\u5316\u6C14 \u25B8": "Culture \u25B8",
     "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09": "Storytelling",
     "\u63A5\u7740\u8BF4": "Continue story",
+    "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66": "Restart this book",
     "\u5FF5\u9996\u8BD7": "Recite a poem",
     "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B": "Folk tale",
     "\u8BB2\u4E2A\u5178\u6545": "Classic allusion",
@@ -228,6 +229,7 @@
       { type: "sub", label: "\u6587\u5316\u6C14 \u25B8", items: [
         { type: "item", label: "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09", action: "culture-story" },
         { type: "item", label: "\u63A5\u7740\u8BF4", action: "culture-story-next" },
+        { type: "item", label: "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66", action: "story-reset" },
         { type: "item", label: "\u5FF5\u9996\u8BD7", action: "poem" },
         { type: "item", label: "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B", action: "culture-tale" },
         { type: "item", label: "\u8BB2\u4E2A\u5178\u6545", action: "culture-allusion" },
@@ -972,6 +974,7 @@
         const scaleRef = R.useRef(1);
         const animRef = R.useRef(null);
         const storyBusyRef = R.useRef(false);
+        const storyBookRef = R.useRef("");
         const dueQueueRef = R.useRef([]);
         const dueTimerRef = R.useRef(null);
         const [scale, setScale] = R.useState(1);
@@ -1169,6 +1172,7 @@
         }, [menu]);
         function playStoryPiece(d) {
           const text = String(d.text || "");
+          if (d && d.book) storyBookRef.current = String(d.book);
           const head = "\u8BF4\u4E66\xB7\u300A" + String(d.book || "") + "\u300B" + (d.title ? "\uFF5C" + d.title : "");
           let voiceOff = false;
           try {
@@ -1329,6 +1333,23 @@
           }
           if (action === "culture-story-next") {
             nextStory();
+            return;
+          }
+          if (action === "story-reset") {
+            const book = storyBookRef.current;
+            if (!book) {
+              showBubble("\u8FD8\u6CA1\u8BB2\u4E66\u5462", 3e3);
+              return;
+            }
+            const headers = CLIENT_ID ? { "x-client-id": CLIENT_ID } : {};
+            fetch("/api/chubby-whale/story/reset?book=" + encodeURIComponent(book), { method: "POST", headers }).then((r) => r.json()).then((d) => {
+              if (!d || !d.ok) {
+                showBubble("\u6CA1\u91CD\u7F6E\u6210\uFF1A" + (d && d.error || "\u63A5\u53E3\u6CA1\u5E94"), 4e3);
+                return;
+              }
+              storyBookRef.current = String(d.book || book);
+              showBubble("\u8FD9\u672C\u4E66\u4ECE\u5934\u8BB2\uFF5E", 3e3);
+            }).catch(() => showBubble("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
             return;
           }
           if (action === "poem") {

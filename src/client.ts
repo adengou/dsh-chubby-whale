@@ -284,6 +284,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       const scaleRef = R.useRef(1)
       const animRef = R.useRef(null as any)
       const storyBusyRef = R.useRef(false)
+      // 最近一次说书的书名（「从头讲这本书」要按它重置进度）
+      const storyBookRef = R.useRef('')
       const dueQueueRef = R.useRef([] as any[])
       const dueTimerRef = R.useRef(null as any)
 
@@ -462,6 +464,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       // ===== 说书（连载）=====
       function playStoryPiece(d: any): void {
         const text = String(d.text || '')
+        if (d && d.book) storyBookRef.current = String(d.book)
         const head = '说书·《' + String(d.book || '') + '》' + (d.title ? '｜' + d.title : '')
         let voiceOff = false
         try { voiceOff = localStorage.getItem('chubby-voice') === 'off' } catch (e) { }
@@ -547,6 +550,21 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }
         if (action === 'culture-story-next') {
           nextStory()
+          return
+        }
+        if (action === 'story-reset') {
+          // 「从头讲这本书」：按最近一次说过的书名清进度（后端会清该书全部 book|index）
+          const book = storyBookRef.current
+          if (!book) { showBubble('还没讲书呢', 3000); return }
+          const headers: any = CLIENT_ID ? { 'x-client-id': CLIENT_ID } : {}
+          fetch('/api/chubby-whale/story/reset?book=' + encodeURIComponent(book), { method: 'POST', headers })
+            .then((r: any) => r.json())
+            .then((d: any) => {
+              if (!d || !d.ok) { showBubble('没重置成：' + ((d && d.error) || '接口没应'), 4000); return }
+              storyBookRef.current = String(d.book || book)
+              showBubble('这本书从头讲～', 3000)
+            })
+            .catch(() => showBubble('说书连不上'))
           return
         }
         if (action === 'poem') {
