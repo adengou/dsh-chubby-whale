@@ -3451,13 +3451,6 @@
           try {
             const w = window.__chubbyWhale || (window.__chubbyWhale = {});
             w.voice = v;
-            w.say = (t) => {
-              try {
-                sendText(String(t || ""), { voice: true });
-              } catch (e) {
-              }
-            };
-            w.busyNow = () => ({ busy: busyRef.current, age: Date.now() - busyAtRef.current, tts: ttsPlaying });
           } catch (e) {
           }
           void v.start();

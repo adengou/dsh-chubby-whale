@@ -1115,8 +1115,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         try {
           const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
           w.voice = v
-          w.say = (t: string) => { try { sendText(String(t || ''), { voice: true }) } catch (e) { } }
-          w.busyNow = () => ({ busy: busyRef.current, age: Date.now() - busyAtRef.current, tts: ttsPlaying })
         } catch (e) { }
         void v.start()
         return () => { try { v.stop() } catch (e) { } ; voiceRef.current = null }
