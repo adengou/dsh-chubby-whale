@@ -652,6 +652,7 @@
       const ttsPrefetch = /* @__PURE__ */ new Map();
       let ttsPlaying = false;
       const storyNarratingRef = { current: false };
+      const earDiag = { db: 0, noiseDb: -60, onsetDb: -50, speechMs: 0, quietMs: 0, calibrating: true, drops: 0, echoDrops: 0, asrMs: 0 };
       const ECHO_MUTE_MS = 700;
       const echoMuteUntil = { t: 0 };
       const spokenRecent = [];
@@ -1936,14 +1937,11 @@
           let chunks = [];
           let raf = 0;
           let started = false;
-          let voicedMs = 0;
-          let silenceMs = 0;
           let peak = 0;
           let chunkStartedAt = 0;
           let lastTickAt = 0;
           let watchTimer = null;
           let startTimer = null;
-          const SILENCE_GATE = 5;
           const SILENCE_LIMIT = 450;
           const VOICE_LIMIT = 5e3;
           function blobToBase64(blob) {
@@ -2038,27 +2036,59 @@
               if (!stopped) scheduleStart(350);
             }
           }
+          const timeBuf = new Float32Array(1024);
+          let noiseDb = null;
+          let speechMs = 0;
+          let quietMs = 0;
+          const ONSET_DB = 9;
+          const OFFSET_DB = 5;
+          const MIN_SPEECH_MS = 150;
+          const CALIB_MS = 400;
+          const calibStart = performance.now();
+          function readDb() {
+            analyser.getFloatTimeDomainData(timeBuf);
+            let sum = 0;
+            for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
+            const rms = Math.sqrt(sum / timeBuf.length);
+            return 20 * Math.log10(rms + 1e-8);
+          }
           function watch() {
             try {
               if (stopped || !analyser) return;
-              const buf = new Uint8Array(analyser.fftSize);
-              analyser.getByteFrequencyData(buf);
-              let sum = 0;
-              for (let i = 0; i < buf.length; i++) sum += buf[i];
-              const avg = sum / buf.length;
-              if (avg > peak) peak = avg;
+              const db = readDb();
               const now = performance.now();
               const dt = Math.min(250, Math.max(0, now - lastTickAt));
               lastTickAt = now;
-              if (avg > SILENCE_GATE) {
-                voicedMs += dt;
-                silenceMs = 0;
-              } else {
-                silenceMs += dt;
-              }
               const elapsed = now - chunkStartedAt;
-              const done = voicedMs > 200 && silenceMs >= SILENCE_LIMIT || elapsed >= VOICE_LIMIT + 1e3 || peak > 90 && silenceMs >= 400;
-              if (done && mr.state === "recording") {
+              const calibrating = now - calibStart < CALIB_MS;
+              const inSpeech = speechMs > 0 && quietMs < SILENCE_LIMIT;
+              if (noiseDb === null) noiseDb = db;
+              else if (!inSpeech) noiseDb = noiseDb * 0.95 + db * 0.05;
+              if (noiseDb < -95) noiseDb = -95;
+              if (noiseDb > -20) noiseDb = -20;
+              const onsetTh = noiseDb + ONSET_DB;
+              const offsetTh = noiseDb + OFFSET_DB;
+              if (!calibrating) {
+                if (db > onsetTh) {
+                  speechMs += dt;
+                  quietMs = 0;
+                  if (db > peak) peak = db;
+                } else if (db <= offsetTh) {
+                  quietMs += dt;
+                }
+              }
+              try {
+                earDiag.db = Math.round(db * 10) / 10;
+                earDiag.noiseDb = Math.round(noiseDb * 10) / 10;
+                earDiag.onsetDb = Math.round(onsetTh * 10) / 10;
+                earDiag.speechMs = Math.round(speechMs);
+                earDiag.quietMs = Math.round(quietMs);
+                earDiag.calibrating = calibrating;
+              } catch (e) {
+              }
+              const ended = speechMs >= MIN_SPEECH_MS && quietMs >= SILENCE_LIMIT;
+              const tooLong = elapsed >= VOICE_LIMIT + 1e3;
+              if ((ended || tooLong) && mr.state === "recording") {
                 try {
                   mr.stop();
                 } catch {
@@ -2066,7 +2096,7 @@
                 setTimeout(uploadChunk, 100);
                 return;
               }
-              if (!stopped) scheduleWatch(100);
+              if (!stopped) scheduleWatch(60);
             } catch (e) {
               if (!stopped) scheduleWatch(100);
             }
@@ -2091,8 +2121,6 @@
                 return;
               }
               chunks = [];
-              voicedMs = 0;
-              silenceMs = 0;
               peak = 0;
               chunkStartedAt = performance.now();
               lastTickAt = chunkStartedAt;
@@ -2125,7 +2153,14 @@
           async function boot() {
             if (stopped) return;
             try {
-              const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+              const s = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                  echoCancellation: true,
+                  noiseSuppression: true,
+                  autoGainControl: true,
+                  channelCount: 1
+                }
+              });
               if (stopped) {
                 try {
                   s.getTracks().forEach((t) => t.stop());
@@ -2138,7 +2173,8 @@
               actx = new window.AudioContext();
               const src = actx.createMediaStreamSource(stream);
               analyser = actx.createAnalyser();
-              analyser.fftSize = 512;
+              analyser.fftSize = 1024;
+              analyser.smoothingTimeConstant = 0;
               src.connect(analyser);
               mr = new window.MediaRecorder(stream);
               mr.ondataavailable = (e) => {
@@ -2355,6 +2391,7 @@
             applied: true,
             hasCtx: !!ctx,
             hasSlots: !!(ctx && ctx.slots),
+            ear: earDiag,
             registered: false,
             error: null
           };

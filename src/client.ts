@@ -56,6 +56,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     let ttsPlaying = false
     // 说书/讲古/念诗期间为 true：耳朵完全静音，避免本鱼自己的声音把自己打断
     const storyNarratingRef = { current: false }
+    // 耳朵实时诊断：主人可在控制台看 __chubbyWhale.ear 了解当前音量/噪声底/阈值
+    const earDiag: any = { db: 0, noiseDb: -60, onsetDb: -50, speechMs: 0, quietMs: 0, calibrating: true, drops: 0, echoDrops: 0, asrMs: 0 }
     // ===== 回声抑制：本鱼刚说过的话，别被自己的麦克风再听一遍 =====
     const ECHO_MUTE_MS = 700          // TTS 结束后这段时间内一律不听（让混响散掉）
     const echoMuteUntil = { t: 0 }    // 时间戳：到点之前忽略麦克风
@@ -1023,14 +1025,12 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         let chunks: any[] = []
         let raf = 0
         let started = false
-        let voicedMs = 0
-        let silenceMs = 0
         let peak = 0
         let chunkStartedAt = 0
         let lastTickAt = 0
         let watchTimer: any = null
         let startTimer: any = null
-        const SILENCE_GATE = 5        // 原来 8：说话声小一点就检不出来
+        // SILENCE_GATE 已被 dBFS 自适应阈值取代（见 readDb / ONSET_DB），保留常量仅做兼容
         const SILENCE_LIMIT = 450      // 原来 700：说完要等太久才收尾
         const VOICE_LIMIT = 5000   // 原来 6000：录音越长 ASR 越慢
         function blobToBase64(blob: any): Promise<string> {
@@ -1108,28 +1108,67 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (!stopped) scheduleStart(350)
           }
         }
+        // ===== 耳朵算法：RMS(dBFS) + 自适应噪声底 + 双阈值滞回 + 最短语音 =====
+        // 设计理由：
+        //  ① 用 dBFS 而非频谱平均值：振幅与人耳感知近似对数，固定线性阈值在安静/嘈杂环境都不可用
+        //  ② 噪声底用指数滑动平均跟随环境：风扇、空调一开一变，阈值自动跟着变
+        //  ③ 双阈值滞回：起判用高阈值（明显高于噪声）防误触发，停判用低阈值防句子被中途切断
+        //  ④ 最短语音 150ms：咳嗽、键盘、关门声不会触发一次识别
+        const timeBuf = new Float32Array(1024)
+        let noiseDb: number | null = null
+        let speechMs = 0
+        let quietMs = 0
+        const ONSET_DB = 9
+        const OFFSET_DB = 5
+        const MIN_SPEECH_MS = 150
+        const CALIB_MS = 400
+        const calibStart = performance.now()
+
+        function readDb(): number {
+          analyser.getFloatTimeDomainData(timeBuf)
+          let sum = 0
+          for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i]
+          const rms = Math.sqrt(sum / timeBuf.length)
+          return 20 * Math.log10(rms + 1e-8)
+        }
+
         function watch() {
           try {
             if (stopped || !analyser) return
-            const buf = new Uint8Array(analyser.fftSize)
-            analyser.getByteFrequencyData(buf)
-            let sum = 0
-            for (let i = 0; i < buf.length; i++) sum += buf[i]
-            const avg = sum / buf.length
-            if (avg > peak) peak = avg
-            // 用真实时间戳算，后台标签页被节流时也不会低估（旧版 totalMs += 100 会漂移）
+            const db = readDb()
             const now = performance.now()
             const dt = Math.min(250, Math.max(0, now - lastTickAt))
             lastTickAt = now
-            if (avg > SILENCE_GATE) { voicedMs += dt; silenceMs = 0 } else { silenceMs += dt }
             const elapsed = now - chunkStartedAt
-            const done = (voicedMs > 200 && silenceMs >= SILENCE_LIMIT) || elapsed >= VOICE_LIMIT + 1000 || (peak > 90 && silenceMs >= 400)
-            if (done && mr.state === 'recording') {
+            const calibrating = now - calibStart < CALIB_MS
+            // 噪声底：安静时慢速跟随（0.05），避免把说话声当成噪声
+            const inSpeech = speechMs > 0 && quietMs < SILENCE_LIMIT
+            if (noiseDb === null) noiseDb = db
+            else if (!inSpeech) noiseDb = noiseDb * 0.95 + db * 0.05
+            if (noiseDb < -95) noiseDb = -95
+            if (noiseDb > -20) noiseDb = -20
+            const onsetTh = noiseDb + ONSET_DB
+            const offsetTh = noiseDb + OFFSET_DB
+            if (!calibrating) {
+              if (db > onsetTh) { speechMs += dt; quietMs = 0; if (db > peak) peak = db }
+              else if (db <= offsetTh) { quietMs += dt }
+            }
+            try {
+              earDiag.db = Math.round(db * 10) / 10
+              earDiag.noiseDb = Math.round(noiseDb * 10) / 10
+              earDiag.onsetDb = Math.round(onsetTh * 10) / 10
+              earDiag.speechMs = Math.round(speechMs)
+              earDiag.quietMs = Math.round(quietMs)
+              earDiag.calibrating = calibrating
+            } catch (e) { }
+            const ended = speechMs >= MIN_SPEECH_MS && quietMs >= SILENCE_LIMIT
+            const tooLong = elapsed >= VOICE_LIMIT + 1000
+            if ((ended || tooLong) && mr.state === 'recording') {
               try { mr.stop() } catch { }
               setTimeout(uploadChunk, 100)
               return
             }
-            if (!stopped) scheduleWatch(100)
+            if (!stopped) scheduleWatch(60)
           } catch (e) { if (!stopped) scheduleWatch(100) }
         }
         function scheduleWatch(delay: number): void {
@@ -1147,7 +1186,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               return
             }
             chunks = []
-            voicedMs = 0; silenceMs = 0; peak = 0
+            peak = 0
             chunkStartedAt = performance.now()
             lastTickAt = chunkStartedAt
             mr.start()
@@ -1166,14 +1205,24 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         async function boot() {
           if (stopped) return
           try {
-            const s = await (navigator as any).mediaDevices.getUserMedia({ audio: true })
+            // 关键：开启浏览器自带的回声消除/降噪/自动增益。
+            // 这是抑制"本鱼听见自己"最根本的一层（浏览器 AEC 比任何后处理都准）
+            const s = await (navigator as any).mediaDevices.getUserMedia({
+              audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                channelCount: 1,
+              },
+            })
             // 拿麦期间被「语音待命：关」了：别再把麦克风挂着
             if (stopped) { try { s.getTracks().forEach((t: any) => t.stop()) } catch (e) { } ; return }
             stream = s
             actx = new (window as any).AudioContext()
             const src = actx.createMediaStreamSource(stream)
             analyser = actx.createAnalyser()
-            analyser.fftSize = 512
+            analyser.fftSize = 1024      // 时域 1024 点 ≈ 21ms @48k：够算 RMS，又不会太钝
+            analyser.smoothingTimeConstant = 0
             src.connect(analyser)
             mr = new (window as any).MediaRecorder(stream)
             mr.ondataavailable = (e: any) => { if (e && e.data && e.data.size > 0) chunks.push(e.data) }
@@ -1323,7 +1372,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       apply(ctx: any) {
         // 诊断对象：出问题时在浏览器控制台输入 __chubbyWhale 就能看到卡在哪一步
         const diag: any = (window as any).__chubbyWhale = {
-          version: VERSION, applied: true, hasCtx: !!ctx, hasSlots: !!(ctx && ctx.slots),
+          version: VERSION, applied: true, hasCtx: !!ctx, hasSlots: !!(ctx && ctx.slots), ear: earDiag,
           registered: false, error: null,
         }
         try {
