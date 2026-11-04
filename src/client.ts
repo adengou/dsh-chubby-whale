@@ -457,18 +457,44 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         requestAnimationFrame(step)
       }
 
+      // 启动后拉一次余额，菜单还没打开时标题也能显示真实金额
+      R.useEffect(() => {
+        const t0 = setTimeout(() => { try { refreshBalance() } catch (e) { } }, 2000)
+        return () => clearTimeout(t0)
+      }, [])
       // 右键菜单
       function onContextMenu(e: any): void {
         e.preventDefault()
         setMenu({ x: e.clientX, y: e.clientY })
         setSubOpen('')
-        fetch('/api/chubby-whale/balance').then((r: any) => r.json()).then((d: any) => {
-          if (d && d.ok && d.balance != null) { setBalanceText('余额 ¥' + d.balance); setBalanceLabel('¥' + d.balance) }
-          else setBalanceText('余额 --')
-        }).catch(() => setBalanceText('余额 --'))
+        // 每次开菜单都拉一次实时余额：菜单上的「余额：…」要显示当前金额，不能停在 --
+        refreshBalance()
         fetch('/api/chubby-whale/growth').then((r: any) => r.json()).then((d: any) => {
           if (d && d.ok) setGrowthLabel(d.stage + '（' + d.exp + '）')
         }).catch(() => { })
+      }
+
+      /** 拉实时余额，并把菜单标题与「余额：…」一起更新；没配 Key 时明确说出来 */
+      function refreshBalance(): void {
+        fetch('/api/chubby-whale/balance', { cache: 'no-store' })
+          .then((r: any) => r.json())
+          .then((d: any) => {
+            if (d && d.ok && d.balance != null) {
+              const v = String(d.balance)
+              setBalanceText('余额 ¥' + v)
+              setBalanceLabel('¥' + v)
+            } else if (d && (d.error === 'NO_KEY' || d.error === 'no key')) {
+              setBalanceText('余额（未配置密钥）')
+              setBalanceLabel('未配置密钥')
+            } else {
+              setBalanceText('余额（查询失败）')
+              setBalanceLabel('查询失败')
+            }
+          })
+          .catch(() => {
+            setBalanceText('余额（查询失败）')
+            setBalanceLabel('查询失败')
+          })
       }
 
       // 点菜单外面就关掉（菜单根节点带 data-menu-root 标记，closest 判断）
@@ -1150,11 +1176,24 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     return {
       inject: ['slots'],
       apply(ctx: any) {
-        ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-          name: 'shell.overlay',
-          id: 'chubby-whale',
-          order: 100,
-        }, WhaleOverlay))
+        // 关键：register 的第二个参数必须是「渲染函数」，不能直接传组件。
+        // 直接传组件会被当成普通函数调用（不在 React 渲染上下文里），
+        // 组件内的 useState/useEffect 会立刻抛 "Invalid hook call"，把整个 harness 页面带崩。
+        const registerOverlay = () => {
+          try {
+            ctx.slots.register(
+              { name: 'shell.overlay', id: 'chubby-whale-overlay', order: 999 },
+              () => h(WhaleOverlay, {}),
+            )
+          } catch (e) {
+            try { console.error('[chubby-whale] overlay 注册失败：', e) } catch (e2) { }
+          }
+        }
+        try {
+          ctx.slots.inject('shell.overlay', registerOverlay)
+        } catch (e) {
+          try { console.error('[chubby-whale] overlay 注入失败：', e) } catch (e2) { }
+        }
       },
     }
   },

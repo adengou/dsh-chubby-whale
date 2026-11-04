@@ -1170,19 +1170,41 @@
           };
           requestAnimationFrame(step);
         }
+        R.useEffect(() => {
+          const t0 = setTimeout(() => {
+            try {
+              refreshBalance();
+            } catch (e) {
+            }
+          }, 2e3);
+          return () => clearTimeout(t0);
+        }, []);
         function onContextMenu(e) {
           e.preventDefault();
           setMenu({ x: e.clientX, y: e.clientY });
           setSubOpen("");
-          fetch("/api/chubby-whale/balance").then((r) => r.json()).then((d) => {
-            if (d && d.ok && d.balance != null) {
-              setBalanceText("\u4F59\u989D \xA5" + d.balance);
-              setBalanceLabel("\xA5" + d.balance);
-            } else setBalanceText("\u4F59\u989D --");
-          }).catch(() => setBalanceText("\u4F59\u989D --"));
+          refreshBalance();
           fetch("/api/chubby-whale/growth").then((r) => r.json()).then((d) => {
             if (d && d.ok) setGrowthLabel(d.stage + "\uFF08" + d.exp + "\uFF09");
           }).catch(() => {
+          });
+        }
+        function refreshBalance() {
+          fetch("/api/chubby-whale/balance", { cache: "no-store" }).then((r) => r.json()).then((d) => {
+            if (d && d.ok && d.balance != null) {
+              const v = String(d.balance);
+              setBalanceText("\u4F59\u989D \xA5" + v);
+              setBalanceLabel("\xA5" + v);
+            } else if (d && (d.error === "NO_KEY" || d.error === "no key")) {
+              setBalanceText("\u4F59\u989D\uFF08\u672A\u914D\u7F6E\u5BC6\u94A5\uFF09");
+              setBalanceLabel("\u672A\u914D\u7F6E\u5BC6\u94A5");
+            } else {
+              setBalanceText("\u4F59\u989D\uFF08\u67E5\u8BE2\u5931\u8D25\uFF09");
+              setBalanceLabel("\u67E5\u8BE2\u5931\u8D25");
+            }
+          }).catch(() => {
+            setBalanceText("\u4F59\u989D\uFF08\u67E5\u8BE2\u5931\u8D25\uFF09");
+            setBalanceLabel("\u67E5\u8BE2\u5931\u8D25");
           });
         }
         R.useEffect(() => {
@@ -2109,11 +2131,27 @@
       return {
         inject: ["slots"],
         apply(ctx) {
-          ctx.slots.inject("shell.overlay", () => ctx.slots.register({
-            name: "shell.overlay",
-            id: "chubby-whale",
-            order: 100
-          }, WhaleOverlay));
+          const registerOverlay = () => {
+            try {
+              ctx.slots.register(
+                { name: "shell.overlay", id: "chubby-whale-overlay", order: 999 },
+                () => h(WhaleOverlay, {})
+              );
+            } catch (e) {
+              try {
+                console.error("[chubby-whale] overlay \u6CE8\u518C\u5931\u8D25\uFF1A", e);
+              } catch (e2) {
+              }
+            }
+          };
+          try {
+            ctx.slots.inject("shell.overlay", registerOverlay);
+          } catch (e) {
+            try {
+              console.error("[chubby-whale] overlay \u6CE8\u5165\u5931\u8D25\uFF1A", e);
+            } catch (e2) {
+            }
+          }
         }
       };
     }
