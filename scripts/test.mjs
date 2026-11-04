@@ -182,6 +182,34 @@ try {
   ok('能加载 intent.ts', false, String(e.message))
 }
 
+
+// ---------- ⑥ SSE 解析（流式对话） ----------
+console.log('\n[6] SSE 解析 src/shared/sse.ts')
+try {
+  const sse = await import('../src/shared/sse.ts')
+  const one = sse.parseSseBuffer('data: {"delta":"你"}\n\n')
+  ok('单条事件', one.events.length === 1 && one.events[0].delta === '你', 'rest=[' + one.rest + ']')
+
+  const split = sse.parseSseBuffer('data: {"delta":"你')
+  ok('半条事件留在 rest', split.events.length === 0 && split.rest.indexOf('你') >= 0)
+  const joined = sse.parseSseBuffer(split.rest + '"}\n')
+  ok('拼回后续可解析', joined.events.length === 1 && joined.events[0].delta === '你')
+
+  const crlf = sse.parseSseBuffer('data: {"a":1}\r\ndata: {"b":2}\r\n')
+  ok('CRLF 换行', crlf.events.length === 2, 'got=' + crlf.events.length)
+
+  const done = sse.parseSseBuffer('data: {"delta":"x"}\ndata: [DONE]\n')
+  ok('[DONE] 被忽略', done.events.length === 1)
+
+  const bad = sse.parseSseBuffer('data: {坏JSON}\ndata: {"ok":1}\n')
+  ok('坏行计数且不影响好行', bad.invalid === 1 && bad.events.length === 1, 'invalid=' + bad.invalid)
+
+  const noise = sse.parseSseBuffer(': keep-alive\nevent: ping\ndata: {"ok":1}\n')
+  ok('注释/事件名行被跳过', noise.events.length === 1)
+} catch (e) {
+  ok('能加载 sse.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

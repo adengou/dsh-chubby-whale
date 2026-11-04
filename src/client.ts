@@ -8,7 +8,8 @@ import { handleFileDrop, VISION_PROMPT } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { createVoice } from './client/voice.js'
 import { createPersona } from './client/persona.js'
-import { detectIntent, BOOK_ALIAS } from './client/intent.js'
+import { detectIntent } from './client/intent.js'
+import { parseSseBuffer } from './shared/sse.js'
 import { splitTtsSegments, normalizeRate, cleanTtsText } from './shared/tts.js'
 import { parseDue, cleanReminderText } from './shared/time.js'
 ;(window as any).__ModuleLoader__.load({
@@ -944,15 +945,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const { value, done } = await reader.read()
             if (done) break
             buf += dec.decode(value, { stream: true })
-            let idx = buf.indexOf('\n')
-            while (idx >= 0) {
-              const line = buf.slice(0, idx).trim()
-              buf = buf.slice(idx + 1)
-              idx = buf.indexOf('\n')
-              if (!line.startsWith('data:')) continue
-              let obj: any = null
-              try { obj = JSON.parse(line.slice(5).trim()) } catch (e) { obj = null }
-              if (!obj) continue
+            const parsed = parseSseBuffer(buf)
+            buf = parsed.rest
+            for (const obj of parsed.events) {
               if (obj.error) { throw new Error(String(obj.error)) }
               if (typeof obj.delta === 'string' && obj.delta) {
                 full += obj.delta

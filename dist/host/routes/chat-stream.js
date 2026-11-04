@@ -15,6 +15,7 @@
  */
 import { readBody, isBodyTooLarge, sendTooLarge } from '../http.js';
 import { chatCacheKey } from './chat.js';
+import { parseSseBuffer } from '../../shared/sse.js';
 const CHAT_URL = 'https://api.deepseek.com/chat/completions';
 const CHAT_TIMEOUT = 30 * 1000;
 const CHAT_CACHE_TTL = 7 * 24 * 3600 * 1000;
@@ -156,30 +157,18 @@ export function createChatStreamHandler(opts) {
                     if (done)
                         break;
                     buf += dec.decode(value, { stream: true });
-                    // SSE：按行解析，只取 data: 行
-                    let idx = buf.indexOf('\n');
-                    while (idx >= 0) {
-                        const line = buf.slice(0, idx).trim();
-                        buf = buf.slice(idx + 1);
-                        idx = buf.indexOf('\n');
-                        if (!line.startsWith('data:'))
-                            continue;
-                        const payload = line.slice(5).trim();
-                        if (!payload || payload === '[DONE]')
-                            continue;
-                        try {
-                            const j = JSON.parse(payload);
-                            const delta = j?.choices?.[0]?.delta?.content;
-                            if (typeof delta === 'string' && delta) {
-                                if (!firstDeltaAt)
-                                    firstDeltaAt = Date.now();
-                                reply += delta;
-                                send({ delta });
-                            }
-                            if (j?.usage)
-                                usage = j.usage;
+                    const parsed = parseSseBuffer(buf);
+                    buf = parsed.rest;
+                    for (const j of parsed.events) {
+                        const delta = j?.choices?.[0]?.delta?.content;
+                        if (typeof delta === 'string' && delta) {
+                            if (!firstDeltaAt)
+                                firstDeltaAt = Date.now();
+                            reply += delta;
+                            send({ delta });
                         }
-                        catch { }
+                        if (j?.usage)
+                            usage = j.usage;
                     }
                 }
             }

@@ -1762,6 +1762,29 @@
     return null;
   }
 
+  // src/shared/sse.ts
+  function parseSseBuffer(buffer) {
+    const events = [];
+    let invalid = 0;
+    let rest = String(buffer || "");
+    rest = rest.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    let idx = rest.indexOf("\n");
+    while (idx >= 0) {
+      const line = rest.slice(0, idx).trim();
+      rest = rest.slice(idx + 1);
+      idx = rest.indexOf("\n");
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      try {
+        events.push(JSON.parse(payload));
+      } catch (e) {
+        invalid++;
+      }
+    }
+    return { events, rest, invalid };
+  }
+
   // src/shared/tts.ts
   function isValidRate(s) {
     return typeof s === "string" && /^[+-]\d{1,2}%$/.test(s.trim());
@@ -3172,19 +3195,9 @@
               const { value, done } = await reader.read();
               if (done) break;
               buf += dec.decode(value, { stream: true });
-              let idx = buf.indexOf("\n");
-              while (idx >= 0) {
-                const line = buf.slice(0, idx).trim();
-                buf = buf.slice(idx + 1);
-                idx = buf.indexOf("\n");
-                if (!line.startsWith("data:")) continue;
-                let obj = null;
-                try {
-                  obj = JSON.parse(line.slice(5).trim());
-                } catch (e) {
-                  obj = null;
-                }
-                if (!obj) continue;
+              const parsed = parseSseBuffer(buf);
+              buf = parsed.rest;
+              for (const obj of parsed.events) {
                 if (obj.error) {
                   throw new Error(String(obj.error));
                 }
