@@ -558,7 +558,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       function statusText(): string {
         if (ttsPlaying || ttsQueue.length > 0) return '在说…'
         if (busy) return '在想…'
-        if (asrBusy && Date.now() - asrBusyAt < 20000) return '识别中…'
         return '在听…'
       }
       function setStatus(): void {
@@ -1167,7 +1166,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try { storyBusyRef.current = false } catch (e) { }
         }
         const myEpoch = ++chatEpoch
-        try { setStatus() } catch (e) { }
+            try { showBubble('识别中…', 1200) } catch (e) { }   // 临时提示，不做常驻状态（常驻会被卡住）
         if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart()
         if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble('哼…本鲸生气了')
         if (/胖|肥猪|肥嘟嘟/.test(text)) { showBubble('人家不胖！是鲸鱼天生圆！'); const s0 = Math.min(1.4, scale + 0.12); setScale(s0); setTimeout(function () { setScale(Math.max(0.7, s0 - 0.12)) }, 600) }
@@ -1321,8 +1320,11 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             try { setStatus() } catch (e) { }
           // 所有 return 都走 finally → 录音循环一定会重启（不再因为「没叫唤醒词」装死）
           try {
-            if (stopped) return
+            // stopped 只影响"是否排下一段录音"，绝不阻止把已录好的音频传出去。
+            // （原来这里静默 return，导致「上传被调用 36 次、上传 0、所有丢弃计数都是 0」的怪现象）
+            if (stopped) { try { earDiag.chunks.stoppedSkip = (earDiag.chunks.stoppedSkip || 0) + 1 } catch (e) { } }
             const blob = new Blob(chunks, { type: 'audio/webm' })
+            try { earDiag.chunks.lastBlobBytes = blob.size } catch (e) { }
             chunks = []
             if (blob.size < 1200) { try { earDiag.chunks.small++ } catch (e) { } ; return }
             // 本鱼刚说完话的 700ms 里听到的多半是自己的回声/混响：直接丢，别上传浪费钱
@@ -1492,10 +1494,11 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 onError: (code: string) => {
                   earDiag.wsError = code
                   // 云端不可达 / 无权限：立刻切回自建 ASR（MediaRecorder + 硅基流动）
-                  if (code === 'network' || code === 'not-allowed' || code === 'service-not-allowed') {
+                  // aborted / no-speech / audio-capture 等也一律退回自建链路：宁可多录，也别哑巴
+                  if (code !== 'no-speech') {
                     try { earDiag.mode = 'asr-fallback' } catch (e) { }
                     try { if (wsCtl) wsCtl.stop() } catch (e) { }
-                    try { startChunk() } catch (e) { }
+                    try { if (!mr) { } else { startChunk() } } catch (e) { }
                   }
                 },
               })
@@ -1520,7 +1523,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               if (forceTimer) clearInterval(forceTimer)
               forceTimer = setInterval(() => {
                 try {
-                  if (stopped) return
+            if (stopped) return
                   const tr = micTrackRef.current
                   if (tr && tr.enabled === false) { tr.enabled = true; earDiag.revived = (earDiag.revived || 0) + 1 }
                   // 僵尸复位：识别位占了 20 秒还没回来说明请求卡死，强制释放

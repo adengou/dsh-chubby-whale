@@ -1627,7 +1627,6 @@
         function statusText() {
           if (ttsPlaying || ttsQueue.length > 0) return "\u5728\u8BF4\u2026";
           if (busy) return "\u5728\u60F3\u2026";
-          if (asrBusy && Date.now() - asrBusyAt < 2e4) return "\u8BC6\u522B\u4E2D\u2026";
           return "\u5728\u542C\u2026";
         }
         function setStatus2() {
@@ -2470,7 +2469,7 @@
           }
           const myEpoch = ++chatEpoch;
           try {
-            setStatus2();
+            showBubble("\u8BC6\u522B\u4E2D\u2026", 1200);
           } catch (e) {
           }
           if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart();
@@ -2709,8 +2708,17 @@
             } catch (e) {
             }
             try {
-              if (stopped) return;
+              if (stopped) {
+                try {
+                  earDiag.chunks.stoppedSkip = (earDiag.chunks.stoppedSkip || 0) + 1;
+                } catch (e) {
+                }
+              }
               const blob = new Blob(chunks, { type: "audio/webm" });
+              try {
+                earDiag.chunks.lastBlobBytes = blob.size;
+              } catch (e) {
+              }
               chunks = [];
               if (blob.size < 1200) {
                 try {
@@ -2991,7 +2999,7 @@
                   },
                   onError: (code) => {
                     earDiag.wsError = code;
-                    if (code === "network" || code === "not-allowed" || code === "service-not-allowed") {
+                    if (code !== "no-speech") {
                       try {
                         earDiag.mode = "asr-fallback";
                       } catch (e) {
@@ -3001,7 +3009,10 @@
                       } catch (e) {
                       }
                       try {
-                        startChunk();
+                        if (!mr) {
+                        } else {
+                          startChunk();
+                        }
                       } catch (e) {
                       }
                     }
