@@ -2107,7 +2107,7 @@
                 }
                 playFiller();
                 showBubble("\uFF08\u542C\u5230\uFF09" + t + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
-                sendText(t);
+                sendText(t, { voice: true });
               }
             } catch (e) {
             } finally {

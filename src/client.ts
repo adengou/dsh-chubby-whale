@@ -1145,7 +1145,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               }
               playFiller()   // 立刻「嗯」一声，别让主人干等
               showBubble('（听到）' + t + '｜本鱼在想…', 3000)
-              sendText(t)
+              sendText(t, { voice: true })
             }
           } catch (e) { } finally {
             asrBusy = false        // 释放识别位（无论成功失败都要放，否则耳朵永久占线）
