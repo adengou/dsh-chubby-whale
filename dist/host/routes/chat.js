@@ -38,7 +38,7 @@ export function createChatHandler(opts) {
             const cacheKey = hashKey(chatLang + '|' + message + (imageB64 ? '|img' : ''));
             if (opts.cache && !imageB64 && cacheable) {
                 const cached = await opts.cache.getJson(cacheKey);
-                if (cached && typeof cached.reply === 'string') {
+                if (cached && typeof cached.reply === 'string' && cached.reply.trim().length > 0) {
                     try {
                         const st0 = opts.loadState();
                         st0.intimacy = Math.min(100, (Number(st0.intimacy) || 0) + 1);
@@ -98,7 +98,11 @@ export function createChatHandler(opts) {
                 return;
             }
             const data = await resp.json();
-            const reply = String(data?.choices?.[0]?.message?.content || '').trim();
+            // content 为空时回退取 reasoning_content（照 C#）；两者都空就是真的走神了
+            const content = String(data?.choices?.[0]?.message?.content || '').trim();
+            const reasoning = String(data?.choices?.[0]?.message?.reasoning_content || '').trim();
+            const blank = !content && !reasoning;
+            const reply = content || reasoning || '主人……本鲸刚刚走神了。';
             // 鱼粮：token 统计
             try {
                 const u = data?.usage;
@@ -106,14 +110,15 @@ export function createChatHandler(opts) {
                     opts.addTokens('chat', u.total_tokens);
             }
             catch { }
-            if (opts.cache && !imageB64 && cacheable) {
+            // 空回复不写缓存（否则下次 '' 会被当成命中，一直复读空话）
+            if (opts.cache && !imageB64 && cacheable && !blank) {
                 try {
                     await opts.cache.setJson(cacheKey, { reply });
                 }
                 catch { }
             }
             history.push({ role: 'user', content: message });
-            history.push({ role: 'assistant', content: reply || '主人……本鲸刚刚走神了。' });
+            history.push({ role: 'assistant', content: reply });
             opts.saveHistory(history);
             // 亲密度 +1
             const st = opts.loadState();

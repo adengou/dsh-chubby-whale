@@ -1,6 +1,7 @@
 /**
  * host/routes/briefing.ts —— 今日简报路由（可复用模块）
  * 内容：日期/星期 + 北海天气（wttr.in）+ 提醒数 + 成长阶段
+ * 注意：当前前端未使用，保留备查（C# 版已砍掉每日简报，菜单不再调用）
  */
 import { growthStage } from '../store.js';
 export function createBriefingHandlers(opts) {

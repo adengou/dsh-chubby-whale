@@ -868,7 +868,13 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp,
           onContextMenu,
           onDragOver: (e: any) => { e.preventDefault(); e.stopPropagation() },
-          onDrop: (e: any) => { onFileDrop(e); },
+          onDrop: (e: any) => {
+            // 拖进来的文件：图片识别 / 文档总结（逻辑在 client/dropzone.ts）
+            e.preventDefault()
+            e.stopPropagation()
+            const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]
+            handleFileDrop(file, { showBubble, speakText })
+          },
           onClick: () => { if (dragRef.current.moved > 8) return; animRef.current?.talkFor(1200) },
         },
           h('canvas', { ref: canvasRef, width: CW, height: CH, style: canvasStyle }),
@@ -878,7 +884,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           h('div', { style: { padding: '8px 14px', borderBottom: '1px solid #1f4a85', color: '#9FD8FF', fontSize: 12, display: 'flex', justifyContent: 'space-between' } },
             h('span', null, (lang === 'en' ? 'Fat Whale · v' : '肥鲸 · v') + VERSION),
             h('span', { style: { color: '#FFD166' } }, balanceText)),
-          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, balance: balanceLabel, growth: growthLabel })),
+          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, balance: balanceLabel, growth: growthLabel })),
         ) : null,
         h('div', { style: chatPanelStyle(chatOpen) },
           h('div', { style: headStyle },

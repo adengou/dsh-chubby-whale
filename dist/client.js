@@ -113,17 +113,16 @@
     "\u804A\u5929\u8BED\u8A00 \u25B8": "Chat language \u25B8",
     "\u754C\u9762\u8BED\u8A00 \u25B8": "Interface language \u25B8",
     "\u8BED\u97F3\u5F85\u547D\uFF1A\u5F00": "Voice standby: on",
+    "\u8BED\u97F3\u5F85\u547D\uFF1A\u5173": "Voice standby: off",
     "\u8BED\u97F3\u804A\u5929\uFF1A\u5F00": "Voice chat: on",
+    "\u8BED\u97F3\u804A\u5929\uFF1A\u5173": "Voice chat: off",
+    "\u770B\u5F20\u56FE\u2026": "Look at a picture\u2026",
+    "\u505C\u6B62\u8BF4\u8BDD": "Stop talking",
     "\u4F59\u989D\uFF1A--": "Balance: --",
     "\u505C\u4E0B\u6B47\u4F1A\u513F": "Take a break",
     "\u56DE\u5230\u53F3\u4E0B\u89D2": "Back to corner",
     "\u957F\u5927\u4E00\u70B9": "Grow bigger",
     "\u53D8\u5C0F\u4E00\u70B9": "Shrink",
-    "\u4ECA\u65E5\u7B80\u62A5\uFF1A\u5F00": "Daily briefing: on",
-    "\u73B0\u5728\u7B80\u62A5\u4E00\u6B21": "Brief me now",
-    "\u6700\u8FD1\u7B80\u62A5 \u25B8": "Recent briefings \u25B8",
-    "\u53E3\u8FF0\u516C\u6587\uFF1A\u5F00\u59CB": "Dictate: start",
-    "\u4EA4\u7ED9 DSH \u52A9\u624B\u2026": "Send to DSH\u2026",
     "\u52A0\u4E2A\u63D0\u9192\u2026": "Add reminder\u2026",
     "\u63D0\u9192\u6E05\u5355\u2026": "Reminders\u2026",
     "\u6587\u5316\u6C14 \u25B8": "Culture \u25B8",
@@ -148,8 +147,7 @@
     "\u97F3\u8272\uFF1A\u4E91\u626C\uFF08\u4E2D\xB7\u7537\uFF09": "Voice: Yunyang (CN M)",
     "\u97F3\u8272\uFF1AAna\uFF08\u82F1\xB7\u5973\uFF09": "Voice: Ana (EN F)",
     "\u97F3\u8272\uFF1AJenny\uFF08\u82F1\xB7\u5973\uFF09": "Voice: Jenny (EN F)",
-    "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09": "Voice: Sonia (EN-GB F)",
-    "\u6682\u65E0\u7B80\u62A5": "No briefings yet"
+    "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09": "Voice: Sonia (EN-GB F)"
   };
   function tr(label, lang) {
     if (lang !== "en") return label;
@@ -157,16 +155,20 @@
   }
   function buildMenu(version, state) {
     const voiceOn = state && state.voiceOn ? true : false;
+    const earOn = state && state.earOn ? true : false;
+    const voiceChatOn = state && state.voiceChatOn ? true : false;
     const balanceText = state && state.balance ? state.balance : "--";
     const growthText = state && state.growth ? state.growth : "--";
     return [
       { type: "item", label: "\u5582\u5B83\u4E00\u53E3", action: "feed" },
+      { type: "item", label: "\u770B\u5F20\u56FE\u2026", action: "vision" },
       { type: "sep" },
       { type: "sub", label: "\u5F39\u9996\u66F2\u5B50 \u25B8", items: MELODIES.map((m) => ({ type: "item", label: "\u5F39\u300A" + m + "\u300B", action: "music:" + m })) },
       { type: "item", label: "\u505C\u6B62\u5F39\u594F", action: "music-stop" },
       { type: "sep" },
       { type: "item", label: "\u6253\u5B57\u8BF4\u4E24\u53E5", action: "type" },
       { type: "item", label: voiceOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173", action: "voice" },
+      { type: "item", label: "\u505C\u6B62\u8BF4\u8BDD", action: "tts-stop" },
       { type: "sub", label: "\u6362\u4E2A\u58F0\u97F3 \u25B8", items: [
         { type: "item", label: "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09", action: "voice:auto" },
         { type: "item", label: "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoyiNeural" },
@@ -187,21 +189,13 @@
         { type: "item", label: "English", action: "lang:en" }
       ] },
       { type: "sep" },
-      { type: "item", label: "\u8BED\u97F3\u5F85\u547D\uFF1A\u5F00", action: "wake" },
-      { type: "item", label: "\u8BED\u97F3\u804A\u5929\uFF1A\u5F00", action: "chatmode" },
+      { type: "item", label: "\u8BED\u97F3\u5F85\u547D\uFF1A" + (earOn ? "\u5F00" : "\u5173"), action: "wake" },
+      { type: "item", label: "\u8BED\u97F3\u804A\u5929\uFF1A" + (voiceChatOn ? "\u5F00" : "\u5173"), action: "chatmode" },
       { type: "item", label: "\u505C\u4E0B\u6B47\u4F1A\u513F", action: "pause" },
       { type: "item", label: "\u56DE\u5230\u53F3\u4E0B\u89D2", action: "home" },
       { type: "item", label: "\u957F\u5927\u4E00\u70B9", action: "bigger" },
       { type: "item", label: "\u53D8\u5C0F\u4E00\u70B9", action: "smaller" },
       { type: "sep" },
-      { type: "item", label: "\u4ECA\u65E5\u7B80\u62A5\uFF1A\u5F00", action: "briefing" },
-      { type: "item", label: "\u73B0\u5728\u7B80\u62A5\u4E00\u6B21", action: "briefing-now" },
-      { type: "sub", label: "\u6700\u8FD1\u7B80\u62A5 \u25B8", items: [
-        { type: "item", label: "\u6682\u65E0\u7B80\u62A5", action: "briefing-recent" }
-      ] },
-      { type: "sep" },
-      { type: "item", label: "\u53E3\u8FF0\u516C\u6587\uFF1A\u5F00\u59CB", action: "dictate" },
-      { type: "item", label: "\u4EA4\u7ED9 DSH \u52A9\u624B\u2026", action: "dsh" },
       { type: "item", label: "\u52A0\u4E2A\u63D0\u9192\u2026", action: "remind-add" },
       { type: "item", label: "\u63D0\u9192\u6E05\u5355\u2026", action: "remind-list" },
       { type: "sep" },
@@ -217,10 +211,117 @@
       { type: "item", label: "\u6E05\u9664\u8BB0\u5FC6\u2026", action: "clear-memory" },
       { type: "item", label: "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09", action: "hide" },
       { type: "sep" },
+      { type: "item", label: "\u4F59\u989D\uFF1A" + balanceText, action: "balance" },
       { type: "item", label: "\u9C7C\u7CAE\u8D26\u672C", action: "fishfood" },
       { type: "item", label: "\u6210\u957F\uFF1A" + growthText, action: "growth" },
       { type: "item", label: "\u7248\u672C\uFF1Av" + version, action: "version" }
     ];
+  }
+
+  // src/client/dropzone.ts
+  var MAX_DROP_BYTES = 4 * 1024 * 1024;
+  var MAX_TEXT_CHARS = 8e3;
+  var VISION_PROMPT = "\u770B\u770B\u8FD9\u5F20\u56FE\uFF0C\u8BF4\u8BF4\u4F60\u770B\u5230\u4E86\u4EC0\u4E48";
+  var TEXT_EXTS = [".txt", ".md", ".json", ".log", ".csv"];
+  function isImageFile(file) {
+    return Boolean(file && typeof file.type === "string" && file.type.indexOf("image/") === 0);
+  }
+  function isTextFile(file) {
+    const name = String(file && file.name || "").toLowerCase();
+    for (const ext of TEXT_EXTS) {
+      if (name.slice(-ext.length) === ext) return true;
+    }
+    return false;
+  }
+  function buildTextPrompt(text) {
+    return "\u603B\u7ED3\u4E00\u4E0B\u8FD9\u7BC7\u6587\u6863\uFF1A\n" + String(text || "").slice(0, MAX_TEXT_CHARS);
+  }
+  function readFileAsBase64(file) {
+    return new Promise((resolve) => {
+      try {
+        const fr = new FileReader();
+        fr.onloadend = () => {
+          const s = String(fr.result || "");
+          resolve(s.indexOf(",") >= 0 ? s.slice(s.indexOf(",") + 1) : s);
+        };
+        fr.onerror = () => resolve("");
+        fr.readAsDataURL(file);
+      } catch (e) {
+        resolve("");
+      }
+    });
+  }
+  async function handleFileDrop(file, deps) {
+    const d = deps || {};
+    const bubble = typeof d.showBubble === "function" ? d.showBubble : () => {
+    };
+    const speak = typeof d.speakText === "function" ? d.speakText : null;
+    const doFetch = d.fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
+    if (!file) {
+      bubble("\u6CA1\u62FF\u5230\u6587\u4EF6\uFF0C\u518D\u62D6\u4E00\u6B21\u8BD5\u8BD5", 4e3);
+      return { ok: false, kind: "empty", error: "no file" };
+    }
+    const size = Number(file.size) || 0;
+    if (size > MAX_DROP_BYTES) {
+      bubble("\u6587\u4EF6\u592A\u5927\u5566\uFF08\u8D85\u8FC7 4MB\uFF09\uFF0C\u672C\u9C7C\u4E00\u53E3\u5403\u4E0D\u4E0B", 5e3);
+      return { ok: false, kind: "too-large", error: "too large" };
+    }
+    if (!doFetch) {
+      bubble("\u672C\u9C7C\u8FDE\u4E0D\u4E0A\u670D\u52A1\u5668", 4e3);
+      return { ok: false, kind: "error", error: "no fetch" };
+    }
+    const post = async (body) => {
+      const r = await doFetch("/api/chubby-whale/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      return r.json();
+    };
+    if (isImageFile(file)) {
+      bubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
+      const b64 = await readFileAsBase64(file);
+      if (!b64) {
+        bubble("\u56FE\u7247\u8BFB\u4E0D\u51FA\u6765\uFF0C\u518D\u62D6\u4E00\u6B21\u8BD5\u8BD5", 4e3);
+        return { ok: false, kind: "error", error: "empty image" };
+      }
+      try {
+        const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: file.type || "image/jpeg" });
+        const reply = String(reply0 && reply0.reply || "").trim() || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
+        bubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
+        if (speak) speak(reply);
+        return { ok: true, kind: "image", message: VISION_PROMPT, reply };
+      } catch (e) {
+        bubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
+        return { ok: false, kind: "error", error: String(e && e.message || e) };
+      }
+    }
+    if (isTextFile(file)) {
+      let text = "";
+      try {
+        text = String(await file.text());
+      } catch (e) {
+        text = "";
+      }
+      if (!text.trim()) {
+        bubble("\u8FD9\u4E2A\u6587\u4EF6\u91CC\u6CA1\u8BFB\u5230\u5B57", 4e3);
+        return { ok: false, kind: "error", error: "empty text" };
+      }
+      const message = buildTextPrompt(text);
+      bubble("\u672C\u9CB8\u770B\u770B\u8FD9\u4EFD\u6587\u6863\u2026", 3e3);
+      try {
+        const reply0 = await post({ message });
+        const reply = String(reply0 && reply0.reply || "").trim() || "\u8FD9\u4EFD\u6587\u6863\u672C\u9CB8\u6CA1\u770B\u61C2\u2026\u2026";
+        bubble("\uFF08\u6587\u6863\uFF09" + reply, 12e3);
+        if (speak) speak(reply);
+        return { ok: true, kind: "text", message, reply };
+      } catch (e) {
+        bubble("\u6587\u6863\u5904\u7406\u5931\u8D25", 4e3);
+        return { ok: false, kind: "error", error: String(e && e.message || e) };
+      }
+    }
+    bubble("\u8FD9\u4E2A\u683C\u5F0F\u672C\u9C7C\u8FD8\u4E0D\u4F1A\u770B", 4e3);
+    return { ok: false, kind: "unsupported", error: "unsupported type" };
   }
 
   // src/client/anim.ts
@@ -447,7 +548,9 @@
           return "";
         }
       })();
-      let ttsAudio = null;
+      let ttsAudioRef = null;
+      let ttsUrl = "";
+      let ttsEpoch = 0;
       const ttsQueue = [];
       let ttsPlaying = false;
       function currentVoice() {
@@ -464,6 +567,45 @@
         try {
           cb();
         } catch (e) {
+        }
+      }
+      function stopTts() {
+        try {
+          ttsEpoch++;
+          while (ttsQueue.length > 0) finishTtsJob(ttsQueue.shift());
+          const a = ttsAudioRef;
+          ttsAudioRef = null;
+          if (a) {
+            try {
+              a.onended = null;
+              a.onerror = null;
+            } catch (e) {
+            }
+            try {
+              a.pause();
+            } catch (e) {
+            }
+            try {
+              a.currentTime = 0;
+            } catch (e) {
+            }
+          }
+          if (ttsUrl) {
+            try {
+              URL.revokeObjectURL(ttsUrl);
+            } catch (e) {
+            }
+            ;
+            ttsUrl = "";
+          }
+          ttsPlaying = false;
+          try {
+            const ss = window.speechSynthesis;
+            if (ss && ss.speaking) ss.cancel();
+          } catch (e) {
+          }
+        } catch (e) {
+          ttsPlaying = false;
         }
       }
       function speakText(text, opts) {
@@ -486,6 +628,7 @@
         if (ttsPlaying) return;
         if (ttsQueue.length === 0) return;
         let job = null;
+        const epoch = ttsEpoch;
         try {
           ttsPlaying = true;
           job = ttsQueue.shift();
@@ -498,6 +641,7 @@
             if (!r.ok) throw new Error("tts http " + r.status);
             return r.arrayBuffer();
           }).then((buf) => {
+            if (epoch !== ttsEpoch) return;
             const jobRef = job;
             let settled = false;
             const settle = () => {
@@ -509,14 +653,16 @@
             };
             const blob = new Blob([buf], { type: "audio/mpeg" });
             const url = URL.createObjectURL(blob);
+            ttsUrl = url;
             const audio = new Audio(url);
-            ttsAudio = audio;
+            ttsAudioRef = audio;
             audio.onended = () => {
               try {
                 URL.revokeObjectURL(url);
               } catch {
               }
               ;
+              if (ttsUrl === url) ttsUrl = "";
               settle();
             };
             audio.onerror = () => {
@@ -542,38 +688,6 @@
         } catch (e) {
           ttsPlaying = false;
           if (job) finishTtsJob(job);
-        }
-      }
-      let recognition = null;
-      function startVoiceChat(onText) {
-        try {
-          const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-          if (!SR) {
-            showBubble("\u8FD9\u4E2A\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u8BED\u97F3\u542C\u5199\uFF0C\u6362 Edge \u6216 Chrome \u8BD5\u8BD5", 5e3);
-            return;
-          }
-          if (recognition) {
-            try {
-              recognition.stop();
-            } catch {
-            }
-          }
-          recognition = new SR();
-          recognition.lang = "zh-CN";
-          recognition.interimResults = false;
-          recognition.maxAlternatives = 1;
-          recognition.onresult = (e) => {
-            try {
-              const t = e.results[0][0].transcript;
-              if (t) onText(t);
-            } catch {
-            }
-          };
-          recognition.onend = () => {
-            recognition = null;
-          };
-          recognition.start();
-        } catch (e) {
         }
       }
       const NOTE_FREQ = { "C4": 261.63, "D4": 293.66, "E4": 329.63, "F4": 349.23, "G4": 392, "A4": 440, "B4": 493.88, "C5": 523.25, "D5": 587.33, "E5": 659.25, "F5": 698.46, "G5": 783.99, "A5": 880, "B5": 987.77 };
@@ -656,6 +770,25 @@
             return true;
           }
         })());
+        const earOnRef = R.useRef((() => {
+          try {
+            return localStorage.getItem("chubby-ear") !== "off";
+          } catch (e) {
+            return true;
+          }
+        })());
+        const [earOn, setEarOn] = R.useState(earOnRef.current);
+        const voiceChatOnRef = R.useRef((() => {
+          try {
+            return localStorage.getItem("chubby-voicechat") !== "off";
+          } catch (e) {
+            return true;
+          }
+        })());
+        const [voiceChatOn, setVoiceChatOn] = R.useState(voiceChatOnRef.current);
+        const earCtlRef = R.useRef({ stop: () => {
+        }, boot: () => {
+        } });
         const [balanceLabel, setBalanceLabel] = R.useState("--");
         const [growthLabel, setGrowthLabel] = R.useState("--");
         const WAKE_WORDS = ["\u5927\u80A5\u9C7C", "\u80A5\u9CB8", "\u80A5\u9C7C", "\u5C0F\u9C7C", "\u84DD\u9C7C", "\u5C0F\u84DD\u9C7C", "\u9C7C\u9C7C", "\u80A5\u80A5"];
@@ -677,9 +810,6 @@
             return "zh";
           }
         })());
-        const dictateRef = R.useRef({ on: false, text: "" });
-        const [dictateOn, setDictateOn] = R.useState(false);
-        const [dictText, setDictText] = R.useState("");
         const [chatOpen, setChatOpen] = R.useState(false);
         const [messages, setMessages] = R.useState([]);
         const [input, setInput] = R.useState("");
@@ -728,7 +858,7 @@
           applyPos(window.innerWidth - 24 - W, window.innerHeight - 150 - H);
           savePos();
         }
-        function showBubble2(text, ms = 2400) {
+        function showBubble(text, ms = 2400) {
           const el = bubbleRef.current;
           if (!el) return;
           const p = posRef.current;
@@ -812,11 +942,11 @@
             voiceOff = localStorage.getItem("chubby-voice") === "off";
           } catch (e) {
           }
-          showBubble2(head + "\uFF1A" + text.slice(0, 100) + (text.length > 100 ? "\u2026" : ""), 12e3);
+          showBubble(head + "\uFF1A" + text.slice(0, 100) + (text.length > 100 ? "\u2026" : ""), 12e3);
           animRef.current?.talkFor(8e3);
           if (voiceOff) {
             storyBusyRef.current = false;
-            showBubble2(head + "\uFF1A" + text.slice(0, 300) + "\u2026", 2e4);
+            showBubble(head + "\uFF1A" + text.slice(0, 300) + "\u2026", 2e4);
             return;
           }
           storyBusyRef.current = true;
@@ -824,48 +954,48 @@
             rate: normalizeRate(d.rate, "-15%"),
             onDone: () => {
               storyBusyRef.current = false;
-              showBubble2("\u8FD9\u6BB5\u8BB2\u5B8C\u5566\uFF5E\u70B9\u83DC\u5355\u300C\u63A5\u7740\u8BF4\u300D\u542C\u4E0B\u4E00\u6BB5", 6e3);
+              showBubble("\u8FD9\u6BB5\u8BB2\u5B8C\u5566\uFF5E\u70B9\u83DC\u5355\u300C\u63A5\u7740\u8BF4\u300D\u542C\u4E0B\u4E00\u6BB5", 6e3);
             }
           });
         }
         function startStory(hint) {
           if (storyBusyRef.current) {
-            showBubble2("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+            showBubble("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
             return;
           }
           const headers = CLIENT_ID ? { "x-client-id": CLIENT_ID } : {};
           fetch("/api/chubby-whale/story/start" + (hint ? "?hint=" + encodeURIComponent(hint) : ""), { headers }).then((r) => r.json()).then((d) => {
             if (!d || !d.ok) {
-              showBubble2("\u8BF4\u4E66\u6CA1\u5F00\u6210\uFF1A" + (d && d.error || "\u6CA1\u8BFB\u5230\u4E66"), 5e3);
+              showBubble("\u8BF4\u4E66\u6CA1\u5F00\u6210\uFF1A" + (d && d.error || "\u6CA1\u8BFB\u5230\u4E66"), 5e3);
               return;
             }
             playStoryPiece(d);
-          }).catch(() => showBubble2("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
+          }).catch(() => showBubble("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
         }
         function nextStory() {
           if (storyBusyRef.current) {
-            showBubble2("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+            showBubble("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
             return;
           }
           const headers = CLIENT_ID ? { "x-client-id": CLIENT_ID } : {};
           fetch("/api/chubby-whale/story/next", { headers }).then((r) => r.json()).then((d) => {
             if (!d || !d.ok) {
-              showBubble2("\u8BF4\u4E66\u5361\u4F4F\u4E86", 4e3);
+              showBubble("\u8BF4\u4E66\u5361\u4F4F\u4E86", 4e3);
               return;
             }
             if (d.done) {
-              showBubble2("\u4E00\u8F6E\u90FD\u8BB2\u5B8C\u5566\uFF0C\u672C\u9C7C\u4ECE\u5934\u518D\u8BB2\uFF5E", 5e3);
+              showBubble("\u4E00\u8F6E\u90FD\u8BB2\u5B8C\u5566\uFF0C\u672C\u9C7C\u4ECE\u5934\u518D\u8BB2\uFF5E", 5e3);
               startStory("");
               return;
             }
             playStoryPiece(d);
-          }).catch(() => showBubble2("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
+          }).catch(() => showBubble("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
         }
         function pumpDueReminders() {
           if (dueTimerRef.current) return;
           if (dueQueueRef.current.length === 0) return;
           const item = dueQueueRef.current.shift();
-          showBubble2("\u63D0\u9192\uFF1A" + String(item.text || ""), 8e3);
+          showBubble("\u63D0\u9192\uFF1A" + String(item.text || ""), 8e3);
           animRef.current?.talkFor(3e3);
           try {
             speakText("\u63D0\u9192\uFF1A" + String(item.text || ""));
@@ -876,10 +1006,10 @@
             pumpDueReminders();
           }, 3e3);
         }
-        function runAction(action) {
+        async function runAction(action) {
           setMenu(null);
           if (action === "feed") {
-            showBubble2("\u597D\u5403\uFF01\u8C22\u8C22\u4E3B\u4EBA\uFF5E");
+            showBubble("\u597D\u5403\uFF01\u8C22\u8C22\u4E3B\u4EBA\uFF5E");
             animRef.current?.pushHeart();
             try {
               fetch("/api/chubby-whale/pet?action=feed");
@@ -890,7 +1020,7 @@
           }
           if (action === "home") {
             homePos();
-            showBubble2("\u56DE\u5230\u89D2\u843D\u5566");
+            showBubble("\u56DE\u5230\u89D2\u843D\u5566");
             return;
           }
           if (action === "bigger") {
@@ -910,7 +1040,7 @@
             return;
           }
           if (action === "version") {
-            showBubble2("\u80A5\u9CB8 v" + VERSION);
+            showBubble("\u80A5\u9CB8 v" + VERSION);
             return;
           }
           if (action === "type") {
@@ -919,20 +1049,27 @@
             return;
           }
           if (action === "pause") {
-            showBubble2("\u6B47\u4F1A\u513F\u2026");
+            stopTts();
+            stopMelody();
+            showBubble("\u6B47\u4F1A\u513F\u2026");
             return;
           }
           if (action === "music-stop") {
             stopMelody();
-            showBubble2("\u505C\u4E0B\u5566");
+            showBubble("\u505C\u4E0B\u5566");
+            return;
+          }
+          if (action === "tts-stop") {
+            stopTts();
+            showBubble("\u597D\uFF0C\u4E0D\u8BF4\u4E86");
             return;
           }
           if (action === "fishfood") {
             fetch("/api/chubby-whale/fishfood").then((r) => r.json()).then((d) => {
               if (d && d.ok) {
-                showBubble2("\u9C7C\u7CAE\u8D26\u672C\uFF1A\u804A\u5929 " + d.chatTokens + " tokens\uFF0C\u8BF4\u4E66 " + d.storyTokens + " tokens\uFF0C\u5171 " + d.total, 5e3);
-              } else showBubble2("\u9C7C\u7CAE\u67E5\u4E0D\u5230");
-            }).catch(() => showBubble2("\u9C7C\u7CAE\u67E5\u4E0D\u5230"));
+                showBubble("\u9C7C\u7CAE\u8D26\u672C\uFF1A\u804A\u5929 " + d.chatTokens + " tokens\uFF0C\u8BF4\u4E66 " + d.storyTokens + " tokens\uFF0C\u5171 " + d.total, 5e3);
+              } else showBubble("\u9C7C\u7CAE\u67E5\u4E0D\u5230");
+            }).catch(() => showBubble("\u9C7C\u7CAE\u67E5\u4E0D\u5230"));
             return;
           }
           if (action === "growth") {
@@ -940,15 +1077,15 @@
               if (g && g.ok) {
                 const nx = g.nextExp > 0 ? "\uFF08\u7ECF\u9A8C " + g.exp + "/" + g.nextExp + "\uFF09" : "\uFF08\u6EE1\u7EA7\uFF09";
                 const it = s && s.intimacy || 0;
-                showBubble2("\u6210\u957F\uFF1A" + g.stage + nx + " \xB7 \u4EB2\u5BC6\u5EA6 " + it + "/100", 5e3);
-              } else showBubble2("\u6210\u957F\u67E5\u4E0D\u5230");
-            }).catch(() => showBubble2("\u6210\u957F\u67E5\u4E0D\u5230"));
+                showBubble("\u6210\u957F\uFF1A" + g.stage + nx + " \xB7 \u4EB2\u5BC6\u5EA6 " + it + "/100", 5e3);
+              } else showBubble("\u6210\u957F\u67E5\u4E0D\u5230");
+            }).catch(() => showBubble("\u6210\u957F\u67E5\u4E0D\u5230"));
             return;
           }
           if (action === "intimacy") {
             fetch("/api/chubby-whale/state").then((r) => r.json()).then((d) => {
-              showBubble2("\u4EB2\u5BC6\u5EA6\uFF1A" + (d && d.intimacy || 0) + " / 100");
-            }).catch(() => showBubble2("\u4EB2\u5BC6\u5EA6\u67E5\u4E0D\u5230"));
+              showBubble("\u4EB2\u5BC6\u5EA6\uFF1A" + (d && d.intimacy || 0) + " / 100");
+            }).catch(() => showBubble("\u4EB2\u5BC6\u5EA6\u67E5\u4E0D\u5230"));
             return;
           }
           if (action === "culture-story") {
@@ -964,77 +1101,93 @@
               if (d && d.ok) {
                 const body = String(d.text || "");
                 const author = String(d.author || "\u4F5A\u540D");
-                showBubble2("\u5FF5\u8BD7\xB7" + d.title + "\uFF08" + author + "\uFF09\n" + body, 15e3);
+                showBubble("\u5FF5\u8BD7\xB7" + d.title + "\uFF08" + author + "\uFF09\n" + body, 15e3);
                 animRef.current?.talkFor(6e3);
                 const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + d.title + "\uFF0C" + (d.dynasty ? d.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
                 speakText(speech, { rate: "-15%" });
-              } else showBubble2("\u8BD7\u518C\u6CA1\u8BFB\u5230");
-            }).catch(() => showBubble2("\u8BD7\u518C\u6CA1\u8BFB\u5230"));
+              } else showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230");
+            }).catch(() => showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230"));
             return;
           }
           if (action === "culture-tale") {
             fetch("/api/chubby-whale/culture?type=minsu").then((r) => r.json()).then((d) => {
               if (d && d.ok && d.item) {
-                showBubble2(String(d.item.text || "").slice(0, 120) + "\u2026", 9e3);
+                showBubble(String(d.item.text || "").slice(0, 120) + "\u2026", 9e3);
                 animRef.current?.talkFor(5e3);
                 speakText("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + String(d.item.title || "") + "\u3002" + String(d.item.text || "").slice(0, 6e3), { rate: "-15%" });
-              } else showBubble2("\u6545\u4E8B\u6CA1\u8BB2\u6210");
-            }).catch(() => showBubble2("\u6545\u4E8B\u6CA1\u8BB2\u6210"));
+              } else showBubble("\u6545\u4E8B\u6CA1\u8BB2\u6210");
+            }).catch(() => showBubble("\u6545\u4E8B\u6CA1\u8BB2\u6210"));
             return;
           }
           if (action === "culture-allusion") {
             fetch("/api/chubby-whale/culture?type=chengyu").then((r) => r.json()).then((d) => {
               if (d && d.ok && d.item) {
-                showBubble2("\u300A" + d.item.title + "\u300B\uFF08" + (d.item.src || "") + "\uFF09" + String(d.item.text || "").slice(0, 100) + "\u2026", 9e3);
+                showBubble("\u300A" + d.item.title + "\u300B\uFF08" + (d.item.src || "") + "\uFF09" + String(d.item.text || "").slice(0, 100) + "\u2026", 9e3);
                 animRef.current?.talkFor(5e3);
                 speakText("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + String(d.item.text || ""), { rate: "-15%" });
-              } else showBubble2("\u5178\u6545\u6CA1\u8BB2\u6210");
-            }).catch(() => showBubble2("\u5178\u6545\u6CA1\u8BB2\u6210"));
+              } else showBubble("\u5178\u6545\u6CA1\u8BB2\u6210");
+            }).catch(() => showBubble("\u5178\u6545\u6CA1\u8BB2\u6210"));
             return;
           }
           if (action === "culture-idiom") {
             fetch("/api/chubby-whale/culture?type=idiom").then((r) => r.json()).then((d) => {
               if (d && d.ok && d.item) {
-                showBubble2(d.item.title + "\uFF1A" + String(d.item.text || "").slice(0, 100), 8e3);
+                showBubble(d.item.title + "\uFF1A" + String(d.item.text || "").slice(0, 100), 8e3);
                 const sp = String(d.item.title || "") + "\uFF1A" + String(d.item.text || "");
                 speakText(sp, { rate: sp.length >= 80 ? "-15%" : "+0%" });
-              } else showBubble2("\u6CA1\u67E5\u5230");
-            }).catch(() => showBubble2("\u6CA1\u67E5\u5230"));
+              } else showBubble("\u6CA1\u67E5\u5230");
+            }).catch(() => showBubble("\u6CA1\u67E5\u5230"));
             return;
           }
           if (action === "culture-couplet") {
-            showBubble2("\u5BF9\u8054\u5C0F\u9CB8\u8FD8\u5728\u6574\u7406\uFF0C\u56DE\u5934\u7ED9\u4F60\u51FA\u4E00\u5BF9\uFF5E");
+            showBubble("\u5BF9\u8054\u5C0F\u9CB8\u8FD8\u5728\u6574\u7406\uFF0C\u56DE\u5934\u7ED9\u4F60\u51FA\u4E00\u5BF9\uFF5E");
             return;
           }
           if (action.startsWith("music:")) {
             const name = action.slice(6);
+            stopTts();
             fetch("/api/chubby-whale/melody?name=" + encodeURIComponent(name)).then((r) => r.json()).then((d) => {
               if (d && d.ok && d.song) {
                 playMelody(d.song.notes, d.song.bpm);
-                showBubble2("\u5F39\u300A" + d.song.name + "\u300B\u266A");
-              } else showBubble2("\u8FD9\u9996\u66F2\u5B50\u6CA1\u627E\u5230");
-            }).catch(() => showBubble2("\u5F39\u7434\u5931\u8D25"));
+                showBubble("\u5F39\u300A" + d.song.name + "\u300B\u266A");
+              } else showBubble("\u8FD9\u9996\u66F2\u5B50\u6CA1\u627E\u5230");
+            }).catch(() => showBubble("\u5F39\u7434\u5931\u8D25"));
             return;
           }
-          if (action === "briefing-now") {
-            fetch("/api/chubby-whale/briefing").then((r) => r.json()).then((d) => {
-              if (d && d.ok) {
-                showBubble2(d.text, 12e3);
-                animRef.current?.talkFor(6e3);
-              } else showBubble2("\u7B80\u62A5\u6CA1\u505A\u51FA\u6765");
-            }).catch(() => showBubble2("\u7B80\u62A5\u8FDE\u4E0D\u4E0A"));
+          if (action === "wake") {
+            const nowOn = !earOnRef.current;
+            earOnRef.current = nowOn;
+            setEarOn(nowOn);
+            try {
+              localStorage.setItem("chubby-ear", nowOn ? "on" : "off");
+            } catch (e) {
+            }
+            if (nowOn) {
+              try {
+                earCtlRef.current.boot();
+              } catch (e) {
+              }
+              ;
+              showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5F00\uFF0C\u672C\u9CB8\u53C8\u542C\u7740\u5566");
+            } else {
+              try {
+                earCtlRef.current.stop();
+              } catch (e) {
+              }
+              ;
+              showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5173\uFF0C\u9EA6\u514B\u98CE\u505C\u5566");
+            }
             return;
           }
-          if (action === "briefing") {
-            showBubble2("\u7B80\u62A5\u662F\u5F00\u7740\u7684\uFF0C\u70B9\u300C\u73B0\u5728\u7B80\u62A5\u4E00\u6B21\u300D\u5C31\u80FD\u770B\uFF5E");
-            return;
-          }
-          if (action === "chatmode" || action === "wake") {
-            setChatOpen(true);
-            startVoiceChat((t) => {
-              setInput(t);
-            });
-            showBubble2("\u6211\u5728\u542C\uFF0C\u8BF4\u5B8C\u6309\u53D1\u9001\u5C31\u597D\uFF5E");
+          if (action === "chatmode") {
+            const nowOn = !voiceChatOnRef.current;
+            voiceChatOnRef.current = nowOn;
+            setVoiceChatOn(nowOn);
+            try {
+              localStorage.setItem("chubby-voicechat", nowOn ? "on" : "off");
+            } catch (e) {
+            }
+            showBubble(nowOn ? "\u8BED\u97F3\u804A\u5929\uFF1A\u5F00\uFF0C\u672C\u9CB8\u4F1A\u63A5\u8BDD" : "\u8BED\u97F3\u804A\u5929\uFF1A\u5173\uFF0C\u53EA\u542C\u4E0D\u63A5\u8BDD");
             return;
           }
           if (action === "voice") {
@@ -1045,7 +1198,8 @@
               localStorage.setItem("chubby-voice", nowOn ? "on" : "off");
             } catch (e) {
             }
-            showBubble2(nowOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173\uFF08\u7701\u7740\u70B9\u7528\uFF09");
+            if (!nowOn) stopTts();
+            showBubble(nowOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173\uFF08\u7701\u7740\u70B9\u7528\uFF09");
             return;
           }
           if (action === "clear-memory") {
@@ -1054,18 +1208,21 @@
               fetch("/api/chubby-whale/clear-memory", { method: "POST" }).then((r) => r.json()).then((d) => {
                 if (d && d.ok) {
                   setMessages([]);
-                  showBubble2("\u8BB0\u5FC6\u6E05\u7A7A\u5566\uFF0C\u6211\u4EEC\u91CD\u65B0\u8BA4\u8BC6\u5427\uFF5E", 4e3);
-                } else showBubble2("\u6E05\u9664\u5931\u8D25");
-              }).catch(() => showBubble2("\u6E05\u9664\u5931\u8D25"));
+                  showBubble("\u8BB0\u5FC6\u6E05\u7A7A\u5566\uFF0C\u6211\u4EEC\u91CD\u65B0\u8BA4\u8BC6\u5427\uFF5E", 4e3);
+                } else showBubble("\u6E05\u9664\u5931\u8D25");
+              }).catch(() => showBubble("\u6E05\u9664\u5931\u8D25"));
             } catch (e) {
             }
             return;
           }
           if (action === "balance") {
             fetch("/api/chubby-whale/balance").then((r) => r.json()).then((d) => {
-              if (d && d.ok && d.balance != null) showBubble2("\u4F59\u989D\uFF1A\xA5" + d.balance, 5e3);
-              else showBubble2("\u4F59\u989D\u67E5\u4E0D\u5230");
-            }).catch(() => showBubble2("\u4F59\u989D\u67E5\u4E0D\u5230"));
+              if (d && d.ok && d.balance != null) {
+                setBalanceText("\u4F59\u989D \xA5" + d.balance);
+                setBalanceLabel("\xA5" + d.balance);
+                showBubble("\u4F59\u989D\u8FD8\u6709 " + d.balance + " \u5143", 5e3);
+              } else showBubble("\u4F59\u989D\u67E5\u4E0D\u5230");
+            }).catch(() => showBubble("\u4F59\u989D\u67E5\u4E0D\u5230"));
             return;
           }
           if (action === "chat-lang:zh" || action === "chat-lang:en") {
@@ -1074,11 +1231,7 @@
               localStorage.setItem("chubby-chatlang", cl);
             } catch {
             }
-            showBubble2(cl === "en" ? "\u804A\u5929\u8BED\u8A00\uFF1AEnglish" : "\u804A\u5929\u8BED\u8A00\uFF1A\u4E2D\u6587");
-            return;
-          }
-          if (action === "briefing-recent") {
-            showBubble2("\u6700\u8FD1\u7B80\u62A5\uFF1A\u8FD8\u6CA1\u5B58\u6863\uFF08\u7B80\u62A5\u4E0D\u4FDD\u5B58\u5386\u53F2\uFF09", 4e3);
+            showBubble(cl === "en" ? "\u804A\u5929\u8BED\u8A00\uFF1AEnglish" : "\u804A\u5929\u8BED\u8A00\uFF1A\u4E2D\u6587");
             return;
           }
           if (action === "lang:zh" || action === "lang:en") {
@@ -1088,20 +1241,7 @@
             } catch {
             }
             setLang(l);
-            showBubble2(l === "en" ? "Language: English" : "\u754C\u9762\u8BED\u8A00\uFF1A\u4E2D\u6587");
-            return;
-          }
-          if (action === "dsh") {
-            try {
-              const q = window.prompt("\u8981\u628A\u4EC0\u4E48\u95EE\u9898\u4EA4\u7ED9 DSH \u52A9\u624B\uFF1F\uFF08\u4F1A\u590D\u5236\u5230\u526A\u8D34\u677F\uFF09");
-              if (!q) return;
-              try {
-                await(navigator).clipboard.writeText(q);
-              } catch (e) {
-              }
-              showBubble2("\u5DF2\u590D\u5236\uFF1A\u300C" + String(q).slice(0, 40) + "\u300D\u2014 \u53BB DSH \u4F1A\u8BDD\u91CC\u7C98\u8D34\u5C31\u884C\uFF5E", 5e3);
-            } catch (e) {
-            }
+            showBubble(l === "en" ? "Language: English" : "\u754C\u9762\u8BED\u8A00\uFF1A\u4E2D\u6587");
             return;
           }
           if (action === "vision") {
@@ -1114,7 +1254,7 @@
                   const file = input2.files && input2.files[0];
                   if (!file) return;
                   if (file.size > 4 * 1024 * 1024) {
-                    showBubble2("\u56FE\u7247\u592A\u5927\uFF08\u8D85\u8FC7 4MB\uFF09", 4e3);
+                    showBubble("\u56FE\u7247\u592A\u5927\uFF08\u8D85\u8FC7 4MB\uFF09", 4e3);
                     return;
                   }
                   const b64 = await new Promise((resolve) => {
@@ -1126,58 +1266,26 @@
                     fr.readAsDataURL(file);
                   });
                   if (!b64) return;
-                  showBubble2("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
+                  showBubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
                   setChatOpen(false);
                   const hdr = file.type || "image/jpeg";
-                  const res = await fetch("/api/chubby-whale/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: "", image: b64, imageMime: hdr }) });
+                  const res = await fetch("/api/chubby-whale/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: VISION_PROMPT, image: b64, imageMime: hdr }) });
                   const d = await res.json();
                   const reply = d && d.reply || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
-                  showBubble2("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
+                  showBubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
                   speakText(reply);
                 } catch (e) {
-                  showBubble2("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
+                  showBubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
                 }
               };
               input2.click();
             } catch (e) {
-              showBubble2("\u6253\u4E0D\u5F00\u6587\u4EF6\u9009\u62E9", 4e3);
-            }
-            return;
-          }
-          if (action === "dictate") {
-            if (!dictateRef.current.on) {
-              dictateRef.current.on = true;
-              dictateRef.current.text = "";
-              setDictateOn(true);
-              setDictText("");
-              startDictation((t) => {
-                dictateRef.current.text += t;
-                setDictText(dictateRef.current.text);
-                showBubble2("\uFF08\u53E3\u8FF0\uFF09" + t, 2500);
-              });
-              showBubble2("\u53E3\u8FF0\u5F00\u59CB\uFF0C\u8BF4\u8BDD\u5C31\u4F1A\u8F6C\u6210\u6587\u5B57\uFF5E", 3e3);
-            } else {
-              dictateRef.current.on = false;
-              setDictateOn(false);
-              const body = dictateRef.current.text || "\uFF08\u8FD8\u6CA1\u5F55\u5230\u5185\u5BB9\uFF09";
-              try {
-                const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "\u53E3\u8FF0\u516C\u6587-" + (/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".txt";
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-              } catch (e) {
-              }
-              showBubble2("\u53E3\u8FF0\u7ED3\u675F\uFF0C\u5DF2\u5BFC\u51FA txt\uFF08" + body.length + " \u5B57\uFF09", 4e3);
+              showBubble("\u6253\u4E0D\u5F00\u6587\u4EF6\u9009\u62E9", 4e3);
             }
             return;
           }
           if (action === "test-tts") {
-            showBubble2("\u6D4B\u8BD5\u8BED\u97F3\uFF1A\u4E3B\u4EBA\u542C\u5F97\u5230\u5417\uFF1F", 4e3);
+            showBubble("\u6D4B\u8BD5\u8BED\u97F3\uFF1A\u4E3B\u4EBA\u542C\u5F97\u5230\u5417\uFF1F", 4e3);
             speakText("\u6D4B\u8BD5\u8BED\u97F3\uFF0C\u4E3B\u4EBA\u542C\u5F97\u5230\u5417\uFF1F");
             return;
           }
@@ -1187,7 +1295,7 @@
               localStorage.setItem("chubby-tts-voice", v);
             } catch {
             }
-            showBubble2("\u97F3\u8272\u6362\u597D\u5566\uFF1A" + v.split("-")[2]);
+            showBubble("\u97F3\u8272\u6362\u597D\u5566\uFF1A" + v.split("-")[2]);
             try {
               const u = new window.SpeechSynthesisUtterance("\u4E3B\u4EBA\uFF0C\u8FD9\u4E2A\u58F0\u97F3\u597D\u542C\u5417\uFF1F");
               window.speechSynthesis.cancel();
@@ -1205,7 +1313,7 @@
               if (!ans) return;
               parsed = parseDue(ans);
               if (!parsed) {
-                showBubble2("\u8FD9\u4E2A\u65F6\u95F4\u672C\u9C7C\u6CA1\u542C\u61C2\u2026\u2026\u8BD5\u8BD5\u300C9\u70B9\u300D\u300C\u660E\u59299\u70B9\u300D\u300C\u534A\u5C0F\u65F6\u540E\u300D", 5e3);
+                showBubble("\u8FD9\u4E2A\u65F6\u95F4\u672C\u9C7C\u6CA1\u542C\u61C2\u2026\u2026\u8BD5\u8BD5\u300C9\u70B9\u300D\u300C\u660E\u59299\u70B9\u300D\u300C\u534A\u5C0F\u65F6\u540E\u300D", 5e3);
                 return;
               }
             }
@@ -1217,16 +1325,16 @@
                 const hh = String(dueAt.getHours()).padStart(2, "0");
                 const mm = String(dueAt.getMinutes()).padStart(2, "0");
                 const whenText = repeat > 0 ? "\u6BCF\u5929 " + hh + ":" + mm : dueAt.getMonth() + 1 + "\u6708" + dueAt.getDate() + "\u65E5 " + hh + ":" + mm;
-                showBubble2("\u597D\uFF0C" + whenText + " \u63D0\u9192\u4F60\uFF1A" + text, 6e3);
-              } else showBubble2("\u63D0\u9192\u6CA1\u52A0\u4E0A");
-            }).catch(() => showBubble2("\u63D0\u9192\u6CA1\u52A0\u4E0A"));
+                showBubble("\u597D\uFF0C" + whenText + " \u63D0\u9192\u4F60\uFF1A" + text, 6e3);
+              } else showBubble("\u63D0\u9192\u6CA1\u52A0\u4E0A");
+            }).catch(() => showBubble("\u63D0\u9192\u6CA1\u52A0\u4E0A"));
             return;
           }
           if (action === "remind-list") {
             fetch("/api/chubby-whale/reminders").then((r) => r.json()).then((d) => {
               const arr = d && d.reminders || [];
               if (!arr.length) {
-                showBubble2("\u8FD8\u6CA1\u6709\u63D0\u9192\uFF5E");
+                showBubble("\u8FD8\u6CA1\u6709\u63D0\u9192\uFF5E");
                 return;
               }
               const txt = arr.map((x) => {
@@ -1235,11 +1343,11 @@
                 const rep = Number(x.repeat) > 0 ? "\uFF08\u6BCF\u5929\uFF09" : "";
                 return "\xB7 " + x.text + "\uFF08" + stamp + "\uFF09" + rep;
               }).join("\n");
-              showBubble2(txt, 8e3);
-            }).catch(() => showBubble2("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230"));
+              showBubble(txt, 8e3);
+            }).catch(() => showBubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230"));
             return;
           }
-          showBubble2("\u8FD9\u4E2A\u529F\u80FD\u5C0F\u9CB8\u8FD8\u5728\u5B66\uFF0C\u7A0D\u540E\u52A0\u4E0A\uFF5E");
+          showBubble("\u8FD9\u4E2A\u529F\u80FD\u5C0F\u9CB8\u8FD8\u5728\u5B66\uFF0C\u7A0D\u540E\u52A0\u4E0A\uFF5E");
         }
         function scrollBody() {
           setTimeout(() => {
@@ -1251,9 +1359,9 @@
           const text = String(rawText || "").trim();
           if (!text || busy) return;
           if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart();
-          if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble2("\u54FC\u2026\u672C\u9CB8\u751F\u6C14\u4E86");
+          if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble("\u54FC\u2026\u672C\u9CB8\u751F\u6C14\u4E86");
           if (/胖|肥猪|肥嘟嘟/.test(text)) {
-            showBubble2("\u4EBA\u5BB6\u4E0D\u80D6\uFF01\u662F\u9CB8\u9C7C\u5929\u751F\u5706\uFF01");
+            showBubble("\u4EBA\u5BB6\u4E0D\u80D6\uFF01\u662F\u9CB8\u9C7C\u5929\u751F\u5706\uFF01");
             const s0 = Math.min(1.4, scale + 0.12);
             setScale(s0);
             setTimeout(function() {
@@ -1261,7 +1369,7 @@
             }, 600);
           }
           if (/胖|肥猪|肥嘟嘟/.test(text)) {
-            showBubble2("\u4EBA\u5BB6\u4E0D\u80D6\uFF01\u662F\u9CB8\u9C7C\u5929\u751F\u5706\uFF01");
+            showBubble("\u4EBA\u5BB6\u4E0D\u80D6\uFF01\u662F\u9CB8\u9C7C\u5929\u751F\u5706\uFF01");
             const s0 = Math.min(1.4, scale + 0.12);
             setScale(s0);
             setTimeout(function() {
@@ -1290,9 +1398,9 @@
             const reply = data?.reply || "\u4E3B\u4EBA\u2026\u2026\u672C\u9CB8\u8D70\u795E\u4E86\u3002";
             setMessages((m) => [...m, { who: "fish", text: reply }]);
             if (voiceModeRef.current) {
-              showBubble2("\uFF08\u8BF4\uFF09" + reply, 8e3);
+              showBubble("\uFF08\u8BF4\uFF09" + reply, 8e3);
             }
-            if (data && data.upgraded) showBubble2("\u672C\u9CB8\u53C8\u957F\u5927\u4E00\u70B9\u5566\uFF01", 4e3);
+            if (data && data.upgraded) showBubble("\u672C\u9CB8\u53C8\u957F\u5927\u4E00\u70B9\u5566\uFF01", 4e3);
           } catch {
             setMessages((m) => [...m, { who: "fish", text: "\u4E3B\u4EBA\uFF0C\u672C\u9CB8\u8FDE\u4E0D\u4E0A\u670D\u52A1\u5668\u2026\u2026" }]);
           } finally {
@@ -1392,7 +1500,7 @@
                   } catch (e) {
                   }
                   if (!t) {
-                    showBubble2("\u6211\u5728\uFF5E\u4E3B\u4EBA\u8BF4\uFF5E", 3e3);
+                    showBubble("\u6211\u5728\uFF5E\u4E3B\u4EBA\u8BF4\uFF5E", 3e3);
                     return;
                   }
                 } else {
@@ -1401,7 +1509,11 @@
                 }
                 voiceModeRef.current = true;
                 setChatOpen(false);
-                showBubble2("\uFF08\u542C\u5230\uFF09" + t, 3e3);
+                if (!voiceChatOnRef.current) {
+                  showBubble("\uFF08\u542C\u5230\uFF09" + t + "\uFF5C\u8BED\u97F3\u804A\u5929\u5173\u7740\uFF0C\u5148\u4E0D\u63A5\u8BDD", 4e3);
+                  return;
+                }
+                showBubble("\uFF08\u542C\u5230\uFF09" + t, 3e3);
                 sendText(t);
               }
             } catch (e) {
@@ -1487,10 +1599,10 @@
               };
               mr.onstop = () => {
               };
-              showBubble2("\u672C\u9CB8\u5728\u542C\uFF08\u5343\u95EE\u8BC6\u522B\uFF09\uFF0C\u8BF4\u5B8C\u5C31\u4F1A\u63A5\u8BDD\uFF5E", 3e3);
+              showBubble("\u672C\u9CB8\u5728\u542C\uFF08\u5343\u95EE\u8BC6\u522B\uFF09\uFF0C\u8BF4\u5B8C\u5C31\u4F1A\u63A5\u8BDD\uFF5E", 3e3);
               startChunk();
             } catch (e) {
-              showBubble2("\u9EA6\u514B\u98CE\u6253\u4E0D\u5F00\uFF1A\u70B9\u5730\u5740\u680F\u5C0F\u9501\u5141\u8BB8\u9EA6\u514B\u98CE", 6e3);
+              showBubble("\u9EA6\u514B\u98CE\u6253\u4E0D\u5F00\uFF1A\u70B9\u5730\u5740\u680F\u5C0F\u9501\u5141\u8BB8\u9EA6\u514B\u98CE", 6e3);
             }
           }
           function onFirstGesture() {
@@ -1501,13 +1613,10 @@
               document.removeEventListener("keydown", onFirstGesture);
             } catch {
             }
+            if (!earOnRef.current) return;
             boot();
           }
-          try {
-            document.addEventListener("pointerdown", onFirstGesture)(document).addEventListener("keydown", onFirstGesture);
-          } catch {
-          }
-          return () => {
+          function stopEar() {
             stopped = true;
             if (watchTimer) {
               try {
@@ -1524,7 +1633,7 @@
               startTimer = null;
             }
             try {
-              if (mr && mr.state === "recording") mr.stop();
+              if (mr && mr.state !== "inactive") mr.stop();
             } catch {
             }
             try {
@@ -1535,6 +1644,40 @@
               if (stream) stream.getTracks().forEach((t) => t.stop());
             } catch {
             }
+            mr = null;
+            actx = null;
+            stream = null;
+            analyser = null;
+          }
+          function bootEar() {
+            stopped = false;
+            lastHeardText = "";
+            lastHeardAt = 0;
+            started = true;
+            try {
+              document.removeEventListener("pointerdown", onFirstGesture);
+              document.removeEventListener("keydown", onFirstGesture);
+            } catch {
+            }
+            boot();
+          }
+          earCtlRef.current.stop = stopEar;
+          earCtlRef.current.boot = bootEar;
+          try {
+            document.addEventListener("pointerdown", onFirstGesture)(document).addEventListener("keydown", onFirstGesture);
+          } catch {
+          }
+          return () => {
+            try {
+              document.removeEventListener("pointerdown", onFirstGesture);
+              document.removeEventListener("keydown", onFirstGesture);
+            } catch {
+            }
+            stopEar();
+            earCtlRef.current.stop = () => {
+            };
+            earCtlRef.current.boot = () => {
+            };
           };
         }, []);
         R.useEffect(() => {
@@ -1588,7 +1731,10 @@
                 e.stopPropagation();
               },
               onDrop: (e) => {
-                onFileDrop(e);
+                e.preventDefault();
+                e.stopPropagation();
+                const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                handleFileDrop(file, { showBubble, speakText });
               },
               onClick: () => {
                 if (dragRef.current.moved > 8) return;
@@ -1607,7 +1753,7 @@
               h("span", null, (lang === "en" ? "Fat Whale \xB7 v" : "\u80A5\u9CB8 \xB7 v") + VERSION),
               h("span", { style: { color: "#FFD166" } }, balanceText)
             ),
-            renderItems(buildMenu(VERSION, { voiceOn, balance: balanceLabel, growth: growthLabel }))
+            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, balance: balanceLabel, growth: growthLabel }))
           ) : null,
           h(
             "div",
