@@ -7,6 +7,7 @@ import { buildMenu, tr } from './client/menu.js'
 import { handleFileDrop, VISION_PROMPT } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { createChannels } from './client/channel.js'
+import { createVadState, resetVadSegment, stepVad, simulate as simulateVad } from './client/vad.js'
 import { splitTtsSegments, normalizeRate, cleanTtsText } from './shared/tts.js'
 import { parseDue, cleanReminderText } from './shared/time.js'
 ;(window as any).__ModuleLoader__.load({
@@ -927,7 +928,16 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               + '录音段 ' + rec + '｜上传 ' + (c.uploaded || 0) + '｜识别 ' + (c.recognized || 0) + '｜发送 ' + sent + '\n'
               + '丢：太短 ' + (c.small || 0) + '｜静音窗 ' + (c.muted || 0) + '｜占线 ' + (c.asrBusyDrop || 0) + '｜回声 ' + (c.echo || 0) + '｜未唤醒 ' + (c.nowake || 0) + '\n'
               + verdict
-            showBubble(line, 15000)
+            // VAD 现场自检：用合成电平序列跑一遍被测过的判定逻辑，证明算法本机可用
+            let vadOk = ''
+            try {
+              const quiet = simulateVad(new Array(30).fill(-65), 60)
+              const speak = simulateVad([...new Array(17).fill(-65), ...new Array(17).fill(-35), ...new Array(20).fill(-65)], 60)
+              const ok1 = quiet.events.length === 0
+              const ok2 = speak.events.length === 1 && speak.events[0].why === 'ended'
+              vadOk = '\nVAD 自检：静音不误触 ' + (ok1 ? '✅' : '❌') + '｜说一句能收尾 ' + (ok2 ? '✅' : '❌') + '（' + (speak.events[0] ? Math.round(speak.events[0].atMs) + 'ms' : '无') + '）'
+            } catch (e) { vadOk = '\nVAD 自检：异常 ' + String(e) }
+            showBubble(line + vadOk, 15000)
             try { navigator.clipboard.writeText(JSON.stringify(e)) } catch (e2) { }
           } catch (e: any) { showBubble('自检失败：' + String(e && e.message), 5000) }
           return
@@ -1185,13 +1195,10 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         let chunks: any[] = []
         let raf = 0
         let started = false
-        let peak = 0
         let chunkStartedAt = 0
         let lastTickAt = 0
         let watchTimer: any = null
         let startTimer: any = null
-        const SILENCE_LIMIT = 350      // 原来 700：说完要等太久才收尾（350 是短句不断、又不拖沓的折中）
-        const VOICE_LIMIT = 5000   // 原来 6000：录音越长 ASR 越慢
         function blobToBase64(blob: any): Promise<string> {
           return new Promise((resolve) => {
             try {
@@ -1292,12 +1299,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         //  ③ 双阈值滞回：起判用高阈值（明显高于噪声）防误触发，停判用低阈值防句子被中途切断
         //  ④ 最短语音 150ms：咳嗽、键盘、关门声不会触发一次识别
         const timeBuf = new Float32Array(1024)
-        let noiseDb: number | null = null
-        let speechMs = 0
-        let quietMs = 0
-        const ONSET_DB = 9
-        const OFFSET_DB = 5
-        const MIN_SPEECH_MS = 150
+        // 判定逻辑在 client/vad.ts（纯函数，已用合成序列单测 5 个场景），这里只持状态
+        const vad = createVadState()
         const CALIB_MS = 400
         const calibStart = performance.now()
 
@@ -1317,34 +1320,22 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const now = performance.now()
             const dt = Math.min(250, Math.max(0, now - lastTickAt))
             lastTickAt = now
+            if (!chunkStartedAt) chunkStartedAt = now   // 防御：为 0 时自愈，别让 elapsed 变成天文数字
             const elapsed = now - chunkStartedAt
             const calibrating = now - calibStart < CALIB_MS
-            // 噪声底：安静时慢速跟随（0.05），避免把说话声当成噪声
-            const inSpeech = speechMs > 0 && quietMs < SILENCE_LIMIT
-            if (noiseDb === null) noiseDb = Math.min(db, -35)   // 初值别直接吃进说话声
-            // 只在「当前电平明显低于噪声底+4dB」时更新：否则说话声会把底噪一路带高，
-            // 导致 onset 永远追不上人声（这就是"说话它听不见"的经典失灵）
-            else if (!inSpeech && db < noiseDb + 4) noiseDb = db < noiseDb ? (noiseDb * 0.7 + db * 0.3) : (noiseDb * 0.98 + db * 0.02)
-            if (noiseDb < -95) noiseDb = -95
-            if (noiseDb > -20) noiseDb = -20
-            const onsetTh = noiseDb + ONSET_DB
-            const offsetTh = noiseDb + OFFSET_DB
-            if (!calibrating) {
-            const aboveOnsetAbs = db > -45                        // 绝对门槛兜底
-            if (db > onsetTh || aboveOnsetAbs) { speechMs += dt; quietMs = 0; if (db > peak) peak = db }
-              else if (db <= offsetTh) { quietMs += dt }
-            }
+            // 一切判定交给 client/vad.ts 的 stepVad（纯函数，单测覆盖 5 个场景）
+            const step = stepVad(vad, db, dt)
             try {
               earDiag.db = Math.round(db * 10) / 10
-              earDiag.noiseDb = Math.round(noiseDb * 10) / 10
-              earDiag.onsetDb = Math.round(onsetTh * 10) / 10
-              earDiag.speechMs = Math.round(speechMs)
-              earDiag.quietMs = Math.round(quietMs)
+              earDiag.noiseDb = Math.round((vad.noiseDb ?? -60) * 10) / 10
+              earDiag.onsetDb = Math.round(step.onsetDb * 10) / 10
+              earDiag.speechMs = Math.round(vad.speechMs)
+              earDiag.quietMs = Math.round(vad.quietMs)
               earDiag.calibrating = calibrating
-              try { earDiag.micEnabled = !!(micTrackRef.current && micTrackRef.current.enabled) } catch (e) { }
+              earDiag.micEnabled = !!(micTrackRef.current && micTrackRef.current.enabled)
             } catch (e) { }
-            const ended = speechMs >= MIN_SPEECH_MS && quietMs >= SILENCE_LIMIT
-            const tooLong = elapsed >= VOICE_LIMIT + 1000
+            const ended = !calibrating && step.ended
+            const tooLong = step.tooLong
             if ((ended || tooLong) && mr.state === 'recording') {
               try { mr.stop() } catch { }
               setTimeout(uploadChunk, 100)
@@ -1369,14 +1360,12 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               return
             }
             chunks = []
-            peak = 0
-            // 关键：每段必须重置语音/静音计数，否则第一段之后 ended 永远为真，
-            // 记录器每 60ms 就被切一次 → 音频太短被丢弃 → 表现为「完全听不到」
-            speechMs = 0
-            quietMs = 0
+            // 每段开始复位判定状态（噪声底保留：环境是连续的）
+            resetVadSegment(vad)
             asrBusy = false   // 兜底：每段开始强制释放识别位，避免异常遗留导致永久占线
             try { const tr3 = micTrackRef.current; if (tr3 && tr3.enabled === false) { tr3.enabled = true; earDiag.micEnabled = true; earDiag.revived = (earDiag.revived || 0) + 1 } } catch (e) { }
             try { earDiag.chunks.recorded++ } catch (e) { }
+            chunkStartedAt = performance.now()   // ← 之前丢了这一行：elapsed 恒为巨大数，第一拍就判"太长"
             lastTickAt = chunkStartedAt
             mr.start()
             scheduleWatch(100)

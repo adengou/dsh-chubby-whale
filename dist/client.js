@@ -557,6 +557,57 @@
     };
   }
 
+  // src/client/vad.ts
+  var ONSET_DB = 9;
+  var OFFSET_DB = 5;
+  var MIN_SPEECH_MS = 150;
+  var SILENCE_LIMIT = 350;
+  var VOICE_LIMIT = 5e3;
+  var ABS_ON_DB = -45;
+  function createVadState() {
+    return { noiseDb: null, speechMs: 0, quietMs: 0, peakDb: -160, elapsedMs: 0 };
+  }
+  function resetVadSegment(s) {
+    s.speechMs = 0;
+    s.quietMs = 0;
+    s.peakDb = -160;
+    s.elapsedMs = 0;
+  }
+  function stepVad(s, db, dtMs) {
+    const dt = Math.max(0, Math.min(250, dtMs));
+    s.elapsedMs += dt;
+    if (s.noiseDb === null) s.noiseDb = Math.min(db, -35);
+    else if (db < s.noiseDb + 4) s.noiseDb = db < s.noiseDb ? s.noiseDb * 0.7 + db * 0.3 : s.noiseDb * 0.98 + db * 0.02;
+    if (s.noiseDb < -95) s.noiseDb = -95;
+    if (s.noiseDb > -20) s.noiseDb = -20;
+    const onsetTh = s.noiseDb + ONSET_DB;
+    const offsetTh = s.noiseDb + OFFSET_DB;
+    if (db > onsetTh || db > ABS_ON_DB) {
+      s.speechMs += dt;
+      s.quietMs = 0;
+      if (db > s.peakDb) s.peakDb = db;
+    } else if (db <= offsetTh) {
+      s.quietMs += dt;
+    }
+    const ended = s.speechMs >= MIN_SPEECH_MS && s.quietMs >= SILENCE_LIMIT;
+    const tooLong = s.elapsedMs >= VOICE_LIMIT + 1e3;
+    return { db, dtMs: dt, onsetDb: onsetTh, offsetDb: offsetTh, ended, tooLong };
+  }
+  function simulate(samples, dtMs = 60) {
+    const s = createVadState();
+    const events = [];
+    let t = 0;
+    for (const db of samples) {
+      t += dtMs;
+      const r = stepVad(s, db, dtMs);
+      if (r.ended || r.tooLong) {
+        events.push({ atMs: t, why: r.ended ? "ended" : "tooLong" });
+        resetVadSegment(s);
+      }
+    }
+    return { events, peakDb: Math.round(s.peakDb * 10) / 10 };
+  }
+
   // src/shared/tts.ts
   function isValidRate(s) {
     return typeof s === "string" && /^[+-]\d{1,2}%$/.test(s.trim());
@@ -1951,7 +2002,17 @@
               else if (sent === 0 && (c.recognized || 0) > 0) verdict = "\u2192 \u8BC6\u522B\u6210\u529F\u4F46\u88AB\u56DE\u58F0/\u5524\u9192\u5224\u5B9A\u62E6\u4E86";
               else if (sent > 0) verdict = "\u2192 \u94FE\u8DEF\u5DF2\u901A\uFF08\u5DF2\u4EA4\u7ED9\u5BF9\u8BDD\uFF09";
               const line = "\u8033\u6735\u81EA\u68C0\uFF1A\u97F3\u91CF " + Math.round(e.db) + "dB\uFF5C\u5E95\u566A " + Math.round(e.noiseDb) + "dB\uFF5C\u9608\u503C " + Math.round(e.onsetDb) + "dB\n\u9EA6\u514B\u98CE " + (e.micEnabled ? "\u5F00" : "\u5173") + "\uFF5C\u5F85\u547D " + (e.earOn === false ? "\u5173" : "\u5F00") + "\uFF5C\u6743\u9650 " + (e.perm || "?") + "\n\u91C7\u6837 " + (e.ticks || 0) + " \u6B21\uFF5C\u542F\u52A8 " + (e.ctxState || "?") + "\uFF5C\u5F00\u9EA6\u5C1D\u8BD5 " + (e.bootAttempts || 0) + " \u6B21\uFF08\u5931\u8D25 " + (e.bootFail || 0) + "\uFF09\n\u5F55\u97F3\u6BB5 " + rec + "\uFF5C\u4E0A\u4F20 " + (c.uploaded || 0) + "\uFF5C\u8BC6\u522B " + (c.recognized || 0) + "\uFF5C\u53D1\u9001 " + sent + "\n\u4E22\uFF1A\u592A\u77ED " + (c.small || 0) + "\uFF5C\u9759\u97F3\u7A97 " + (c.muted || 0) + "\uFF5C\u5360\u7EBF " + (c.asrBusyDrop || 0) + "\uFF5C\u56DE\u58F0 " + (c.echo || 0) + "\uFF5C\u672A\u5524\u9192 " + (c.nowake || 0) + "\n" + verdict;
-              showBubble(line, 15e3);
+              let vadOk = "";
+              try {
+                const quiet = simulate(new Array(30).fill(-65), 60);
+                const speak = simulate([...new Array(17).fill(-65), ...new Array(17).fill(-35), ...new Array(20).fill(-65)], 60);
+                const ok1 = quiet.events.length === 0;
+                const ok2 = speak.events.length === 1 && speak.events[0].why === "ended";
+                vadOk = "\nVAD \u81EA\u68C0\uFF1A\u9759\u97F3\u4E0D\u8BEF\u89E6 " + (ok1 ? "\u2705" : "\u274C") + "\uFF5C\u8BF4\u4E00\u53E5\u80FD\u6536\u5C3E " + (ok2 ? "\u2705" : "\u274C") + "\uFF08" + (speak.events[0] ? Math.round(speak.events[0].atMs) + "ms" : "\u65E0") + "\uFF09";
+              } catch (e2) {
+                vadOk = "\nVAD \u81EA\u68C0\uFF1A\u5F02\u5E38 " + String(e2);
+              }
+              showBubble(line + vadOk, 15e3);
               try {
                 navigator.clipboard.writeText(JSON.stringify(e));
               } catch (e2) {
@@ -2307,13 +2368,10 @@
           let chunks = [];
           let raf = 0;
           let started = false;
-          let peak = 0;
           let chunkStartedAt = 0;
           let lastTickAt = 0;
           let watchTimer = null;
           let startTimer = null;
-          const SILENCE_LIMIT = 350;
-          const VOICE_LIMIT = 5e3;
           function blobToBase64(blob) {
             return new Promise((resolve) => {
               try {
@@ -2475,12 +2533,7 @@
             }
           }
           const timeBuf = new Float32Array(1024);
-          let noiseDb = null;
-          let speechMs = 0;
-          let quietMs = 0;
-          const ONSET_DB = 9;
-          const OFFSET_DB = 5;
-          const MIN_SPEECH_MS = 150;
+          const vad = createVadState();
           const CALIB_MS = 400;
           const calibStart = performance.now();
           function readDb() {
@@ -2502,40 +2555,22 @@
               const now = performance.now();
               const dt = Math.min(250, Math.max(0, now - lastTickAt));
               lastTickAt = now;
+              if (!chunkStartedAt) chunkStartedAt = now;
               const elapsed = now - chunkStartedAt;
               const calibrating = now - calibStart < CALIB_MS;
-              const inSpeech = speechMs > 0 && quietMs < SILENCE_LIMIT;
-              if (noiseDb === null) noiseDb = Math.min(db, -35);
-              else if (!inSpeech && db < noiseDb + 4) noiseDb = db < noiseDb ? noiseDb * 0.7 + db * 0.3 : noiseDb * 0.98 + db * 0.02;
-              if (noiseDb < -95) noiseDb = -95;
-              if (noiseDb > -20) noiseDb = -20;
-              const onsetTh = noiseDb + ONSET_DB;
-              const offsetTh = noiseDb + OFFSET_DB;
-              if (!calibrating) {
-                const aboveOnsetAbs = db > -45;
-                if (db > onsetTh || aboveOnsetAbs) {
-                  speechMs += dt;
-                  quietMs = 0;
-                  if (db > peak) peak = db;
-                } else if (db <= offsetTh) {
-                  quietMs += dt;
-                }
-              }
+              const step = stepVad(vad, db, dt);
               try {
                 earDiag.db = Math.round(db * 10) / 10;
-                earDiag.noiseDb = Math.round(noiseDb * 10) / 10;
-                earDiag.onsetDb = Math.round(onsetTh * 10) / 10;
-                earDiag.speechMs = Math.round(speechMs);
-                earDiag.quietMs = Math.round(quietMs);
+                earDiag.noiseDb = Math.round((vad.noiseDb ?? -60) * 10) / 10;
+                earDiag.onsetDb = Math.round(step.onsetDb * 10) / 10;
+                earDiag.speechMs = Math.round(vad.speechMs);
+                earDiag.quietMs = Math.round(vad.quietMs);
                 earDiag.calibrating = calibrating;
-                try {
-                  earDiag.micEnabled = !!(micTrackRef.current && micTrackRef.current.enabled);
-                } catch (e) {
-                }
+                earDiag.micEnabled = !!(micTrackRef.current && micTrackRef.current.enabled);
               } catch (e) {
               }
-              const ended = speechMs >= MIN_SPEECH_MS && quietMs >= SILENCE_LIMIT;
-              const tooLong = elapsed >= VOICE_LIMIT + 1e3;
+              const ended = !calibrating && step.ended;
+              const tooLong = step.tooLong;
               if ((ended || tooLong) && mr.state === "recording") {
                 try {
                   mr.stop();
@@ -2573,9 +2608,7 @@
                 return;
               }
               chunks = [];
-              peak = 0;
-              speechMs = 0;
-              quietMs = 0;
+              resetVadSegment(vad);
               asrBusy = false;
               try {
                 const tr3 = micTrackRef.current;
@@ -2590,6 +2623,7 @@
                 earDiag.chunks.recorded++;
               } catch (e) {
               }
+              chunkStartedAt = performance.now();
               lastTickAt = chunkStartedAt;
               mr.start();
               scheduleWatch(100);
