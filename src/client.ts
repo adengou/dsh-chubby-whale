@@ -54,6 +54,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     /** 预取缓存：段 id → 已发出的合成请求（当前段开播时就把下一段压上去） */
     const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
     let ttsPlaying = false
+    // 说书/讲古/念诗期间为 true：耳朵完全静音，避免本鱼自己的声音把自己打断
+    const storyNarratingRef = { current: false }
     let ttsCurrentJob: TtsJob | null = null
     /** 叙述段间的换气停顿截止时刻（C# NarrationPauseMs = 260） */
     let ttsPauseUntil = 0
@@ -551,18 +553,22 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         const head = '说书·《' + String(d.book || '') + '》' + (d.title ? '｜' + d.title : '')
         let voiceOff = false
         try { voiceOff = localStorage.getItem('chubby-voice') === 'off' } catch (e) { }
-        showBubble(head + '：' + text.slice(0, 100) + (text.length > 100 ? '…' : ''), 12000)
+        // 头顶只显示状态：不把整段古文糊上来
+        showBubble('正在讲《' + String(d.book || '') + '》' + (d.title ? '｜' + d.title : ''), 12000)
         animRef.current?.talkFor(8000)
         if (voiceOff) {
           storyBusyRef.current = false
-          showBubble(head + '：' + text.slice(0, 300) + '…', 20000)
+            storyNarratingRef.current = false
+          showBubble('正在讲《' + String(d.book || '') + '》' + (d.title ? '｜' + d.title : '') + '（语音朗读关着）', 12000)
           return
         }
         storyBusyRef.current = true
+        storyNarratingRef.current = true
         speakText(text, {
           rate: normalizeRate(d.rate, '-15%'),
           onDone: () => {
             storyBusyRef.current = false
+            storyNarratingRef.current = false
             showBubble('这段讲完啦～点菜单「接着说」听下一段', 6000)
           },
         })
@@ -656,7 +662,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (p) {
               const body = String(p.text || '')
               const author = String(p.author || '佚名')
-              showBubble('念诗·' + p.title + '（' + author + '）\n' + body, 15000)
+              showBubble('念诗·' + p.title + '（' + author + '）', 15000)
               animRef.current?.talkFor(6000)
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
               speakText(speech, { rate: '-15%' })
@@ -672,7 +678,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               const body = collapseText(d.item.text)
               const cut = body.length > 120
               const shown = cut ? body.slice(0, 120) + '…' : body
-              showBubble('民间故事·' + tp.title + (tp.book ? '（出自《' + tp.book + '》）：' : '：') + shown, 9000)
+              showBubble('讲民间故事·' + tp.title + (tp.book ? '（出自《' + tp.book + '》）' : ''), 9000)
               animRef.current?.talkFor(5000)
               // 照 C# Culture.TaleSpeech：标题 + 出处 + 整篇（超 6000 字才截），叙述一律 -15%
               speakText('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body.slice(0, 6000), { rate: '-15%' })
@@ -686,7 +692,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               // 气泡：《标题》（出处）：讲解 —— 不超长就不加省略号
               const body = collapseText(d.item.text)
               const cut = body.length > 100
-              showBubble('《' + d.item.title + '》（' + (d.item.src || '') + '）：' + (cut ? body.slice(0, 100) + '…' : body), 9000)
+              showBubble('讲典故·' + d.item.title + '（' + (d.item.src || '') + '）', 9000)
               animRef.current?.talkFor(5000)
               speakText('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + body, { rate: '-15%' })
             } else showBubble('典故没讲成')
@@ -696,7 +702,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (action === 'culture-idiom') {
           fetch('/api/chubby-whale/culture?type=idiom').then((r: any) => r.json()).then((d: any) => {
             if (d && d.ok && d.item) {
-              showBubble(d.item.title + '：' + String(d.item.text || '').slice(0, 100), 8000)
+              showBubble('成语辨析·' + d.item.title, 8000)
               const sp = String(d.item.title || '') + '：' + String(d.item.text || '')
               // 成语辨析属叙述：一律 -15%，不再按长度改语速
               speakText(sp, { rate: '-15%' })
@@ -954,8 +960,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         let lastTickAt = 0
         let watchTimer: any = null
         let startTimer: any = null
-        const SILENCE_GATE = 8
-        const SILENCE_LIMIT = 700
+        const SILENCE_GATE = 5        // 原来 8：说话声小一点就检不出来
+        const SILENCE_LIMIT = 550      // 原来 700：说完要等太久才收尾
         const VOICE_LIMIT = 6000
         function blobToBase64(blob: any): Promise<string> {
           return new Promise((resolve) => {
@@ -977,7 +983,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (stopped) return
             const blob = new Blob(chunks, { type: 'audio/webm' })
             chunks = []
-            if (blob.size < 2500) return
+            if (blob.size < 1200) return   // 原来 2500：短句常被丢掉
             const b64 = await blobToBase64(blob)
             if (!b64) return
             const r = await fetch('/api/chubby-whale/asr', {
@@ -987,9 +993,15 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             })
             const d = await r.json()
             if (d && d.ok && d.text && d.text.trim().length >= 2) {
+              // 说书/讲故事/念诗期间一律闭嘴：只要本鱼还在出声（正在播、队列里还有段落、
+              // 或说书中），麦克风听到的都是自己的声音，绝不能当成主人在说话去抢频道
               if (ttsPlaying) return
+              if (ttsQueue.length > 0) return
+              let narrating = false
+              try { narrating = storyNarratingRef.current } catch (e) { }
+              if (narrating) return
               let t = String(d.text).trim()
-              if (t === lastHeardText && Date.now() - lastHeardAt < 20000) return
+              if (t === lastHeardText && Date.now() - lastHeardAt < 6000) return   // 原来 20s 太狠，同一句话复查也被吞
               lastHeardText = t
               lastHeardAt = Date.now()
               if (/[。，！？,.!?]{3,}/.test(t) || t.length > 60) return
@@ -999,7 +1011,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 try { t = t.replace(/大肥鱼|肥鲸|肥鱼|小鱼|蓝鱼|小蓝鱼|鱼鱼|肥肥/g, '').trim() } catch (e) { }
                 if (!t) { showBubble('我在～主人说～', 3000); return }
               } else {
-                const wokeRecent = Date.now() - wokeRef.current.at < 30000
+                const wokeRecent = Date.now() - wokeRef.current.at < 120000   // 唤醒后 2 分钟内可以直接接着说
                 if (!wokeRecent) return
               }
               voiceModeRef.current = true

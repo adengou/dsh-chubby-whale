@@ -651,6 +651,7 @@
       const ttsQueue = [];
       const ttsPrefetch = /* @__PURE__ */ new Map();
       let ttsPlaying = false;
+      const storyNarratingRef = { current: false };
       let ttsCurrentJob = null;
       let ttsPauseUntil = 0;
       let ttsPauseTimer = null;
@@ -1295,18 +1296,21 @@
             voiceOff = localStorage.getItem("chubby-voice") === "off";
           } catch (e) {
           }
-          showBubble(head + "\uFF1A" + text.slice(0, 100) + (text.length > 100 ? "\u2026" : ""), 12e3);
+          showBubble("\u6B63\u5728\u8BB2\u300A" + String(d.book || "") + "\u300B" + (d.title ? "\uFF5C" + d.title : ""), 12e3);
           animRef.current?.talkFor(8e3);
           if (voiceOff) {
             storyBusyRef.current = false;
-            showBubble(head + "\uFF1A" + text.slice(0, 300) + "\u2026", 2e4);
+            storyNarratingRef.current = false;
+            showBubble("\u6B63\u5728\u8BB2\u300A" + String(d.book || "") + "\u300B" + (d.title ? "\uFF5C" + d.title : "") + "\uFF08\u8BED\u97F3\u6717\u8BFB\u5173\u7740\uFF09", 12e3);
             return;
           }
           storyBusyRef.current = true;
+          storyNarratingRef.current = true;
           speakText(text, {
             rate: normalizeRate(d.rate, "-15%"),
             onDone: () => {
               storyBusyRef.current = false;
+              storyNarratingRef.current = false;
               showBubble("\u8FD9\u6BB5\u8BB2\u5B8C\u5566\uFF5E\u70B9\u83DC\u5355\u300C\u63A5\u7740\u8BF4\u300D\u542C\u4E0B\u4E00\u6BB5", 6e3);
             }
           });
@@ -1474,7 +1478,7 @@
               if (p) {
                 const body = String(p.text || "");
                 const author = String(p.author || "\u4F5A\u540D");
-                showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + author + "\uFF09\n" + body, 15e3);
+                showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + author + "\uFF09", 15e3);
                 animRef.current?.talkFor(6e3);
                 const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
                 speakText(speech, { rate: "-15%" });
@@ -1489,7 +1493,7 @@
                 const body = collapseText(d.item.text);
                 const cut = body.length > 120;
                 const shown = cut ? body.slice(0, 120) + "\u2026" : body;
-                showBubble("\u6C11\u95F4\u6545\u4E8B\xB7" + tp.title + (tp.book ? "\uFF08\u51FA\u81EA\u300A" + tp.book + "\u300B\uFF09\uFF1A" : "\uFF1A") + shown, 9e3);
+                showBubble("\u8BB2\u6C11\u95F4\u6545\u4E8B\xB7" + tp.title + (tp.book ? "\uFF08\u51FA\u81EA\u300A" + tp.book + "\u300B\uFF09" : ""), 9e3);
                 animRef.current?.talkFor(5e3);
                 speakText("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + tp.title + (tp.book ? "\uFF0C\u51FA\u81EA\u300A" + tp.book + "\u300B" : "") + "\u3002" + body.slice(0, 6e3), { rate: "-15%" });
               } else showBubble("\u6545\u4E8B\u6CA1\u8BB2\u6210");
@@ -1501,7 +1505,7 @@
               if (d && d.ok && d.item) {
                 const body = collapseText(d.item.text);
                 const cut = body.length > 100;
-                showBubble("\u300A" + d.item.title + "\u300B\uFF08" + (d.item.src || "") + "\uFF09\uFF1A" + (cut ? body.slice(0, 100) + "\u2026" : body), 9e3);
+                showBubble("\u8BB2\u5178\u6545\xB7" + d.item.title + "\uFF08" + (d.item.src || "") + "\uFF09", 9e3);
                 animRef.current?.talkFor(5e3);
                 speakText("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + body, { rate: "-15%" });
               } else showBubble("\u5178\u6545\u6CA1\u8BB2\u6210");
@@ -1511,7 +1515,7 @@
           if (action === "culture-idiom") {
             fetch("/api/chubby-whale/culture?type=idiom").then((r) => r.json()).then((d) => {
               if (d && d.ok && d.item) {
-                showBubble(d.item.title + "\uFF1A" + String(d.item.text || "").slice(0, 100), 8e3);
+                showBubble("\u6210\u8BED\u8FA8\u6790\xB7" + d.item.title, 8e3);
                 const sp = String(d.item.title || "") + "\uFF1A" + String(d.item.text || "");
                 speakText(sp, { rate: "-15%" });
               } else showBubble("\u6CA1\u67E5\u5230");
@@ -1836,8 +1840,8 @@
           let lastTickAt = 0;
           let watchTimer = null;
           let startTimer = null;
-          const SILENCE_GATE = 8;
-          const SILENCE_LIMIT = 700;
+          const SILENCE_GATE = 5;
+          const SILENCE_LIMIT = 550;
           const VOICE_LIMIT = 6e3;
           function blobToBase64(blob) {
             return new Promise((resolve) => {
@@ -1866,7 +1870,7 @@
               if (stopped) return;
               const blob = new Blob(chunks, { type: "audio/webm" });
               chunks = [];
-              if (blob.size < 2500) return;
+              if (blob.size < 1200) return;
               const b64 = await blobToBase64(blob);
               if (!b64) return;
               const r = await fetch("/api/chubby-whale/asr", {
@@ -1877,8 +1881,15 @@
               const d = await r.json();
               if (d && d.ok && d.text && d.text.trim().length >= 2) {
                 if (ttsPlaying) return;
+                if (ttsQueue.length > 0) return;
+                let narrating = false;
+                try {
+                  narrating = storyNarratingRef.current;
+                } catch (e) {
+                }
+                if (narrating) return;
                 let t = String(d.text).trim();
-                if (t === lastHeardText && Date.now() - lastHeardAt < 2e4) return;
+                if (t === lastHeardText && Date.now() - lastHeardAt < 6e3) return;
                 lastHeardText = t;
                 lastHeardAt = Date.now();
                 if (/[。，！？,.!?]{3,}/.test(t) || t.length > 60) return;
@@ -1896,7 +1907,7 @@
                     return;
                   }
                 } else {
-                  const wokeRecent = Date.now() - wokeRef.current.at < 3e4;
+                  const wokeRecent = Date.now() - wokeRef.current.at < 12e4;
                   if (!wokeRecent) return;
                 }
                 voiceModeRef.current = true;
