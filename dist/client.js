@@ -2996,7 +2996,7 @@
                   const d = await res.json();
                   const reply = d && d.reply || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
                   showBubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
-                  speakText(reply, { rate: reply.length >= 80 ? NARRATION_RATE2 : "+0%" });
+                  speakReply(reply);
                 } catch (e) {
                   showBubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
                 }
@@ -3369,18 +3369,7 @@
                   window.__chubbyWhale.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now() };
                 } catch (e) {
                 }
-                const rNow = Date.now();
-                const rpPlain = rp.replace(/[\s。，！？,.!?、…~～]/g, "");
-                if (lastReplyText && lastReplyAt && rNow - lastReplyAt < 3e4 && rpPlain === lastReplyText) {
-                  try {
-                    window.__chubbyWhale.dupReply = (window.__chubbyWhale.dupReply || 0) + 1;
-                  } catch (e) {
-                  }
-                } else {
-                  lastReplyText = rpPlain;
-                  lastReplyAt = rNow;
-                  speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE2 : "+0%" });
-                }
+                speakReply(rp);
               }
             } catch {
             }
@@ -3526,6 +3515,22 @@
             if (v && v.speak && !v.speaking()) v.speak(text, { rate: "+0%" });
           } catch (e) {
           }
+        }
+        function speakReply(text) {
+          const rp = String(text || "");
+          if (!rp.trim()) return;
+          const rpPlain = rp.replace(/[\s。，！？,.!?、…~～]/g, "");
+          const now = Date.now();
+          if (lastReplyText && lastReplyAt && now - lastReplyAt < 3e4 && rpPlain === lastReplyText) {
+            try {
+              window.__chubbyWhale.dupReply = (window.__chubbyWhale.dupReply || 0) + 1;
+            } catch (e) {
+            }
+            return;
+          }
+          lastReplyText = rpPlain;
+          lastReplyAt = now;
+          speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE2 : "+0%" });
         }
         R.useEffect(() => {
           const canvas = canvasRef.current;

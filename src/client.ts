@@ -791,7 +791,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 const reply = (d && d.reply) || '这条鱼看不懂这张图……'
                 showBubble('（看图）' + reply, 10000)
                 // 聊天回复：长回复（≥80 字）按叙述 -15%，短句正常语速
-      speakText(reply, { rate: reply.length >= 80 ? NARRATION_RATE : '+0%' })
+                speakReply(reply)
               } catch (e) { showBubble('图片处理失败', 4000) }
             }
             input.click()
@@ -1055,16 +1055,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (data && data.reply && myEpoch === chatEpoch) {
               const rp = String(data.reply)
               try { (window as any).__chubbyWhale.lastChat = { stage: 'speak', reply: rp.slice(0, 40), at: Date.now() } } catch (e) { }
-              // 输出侧去重：同一句回复 30 秒内不再重复念（服务端缓存会让相同提问得到相同回复）
-              const rNow = Date.now()
-              const rpPlain = rp.replace(/[\s。，！？,.!?、…~～]/g, '')
-              if (lastReplyText && lastReplyAt && rNow - lastReplyAt < 30000 && rpPlain === lastReplyText) {
-                try { (window as any).__chubbyWhale.dupReply = ((window as any).__chubbyWhale.dupReply || 0) + 1 } catch (e) { }
-              } else {
-                lastReplyText = rpPlain
-                lastReplyAt = rNow
-                speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE : '+0%' })
-              }
+              speakReply(rp)
             }
           } catch { }
           scrollBody()
@@ -1147,6 +1138,21 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (v && v.speak && !v.speaking()) v.speak(text, { rate: '+0%' })
         } catch (e) { }
       }
+      /** 统一的回复朗读入口：长回复走叙述语速，同一句回复 30 秒内不重复念 */
+      function speakReply(text: string): void {
+        const rp = String(text || '')
+        if (!rp.trim()) return
+        const rpPlain = rp.replace(/[\s。，！？,.!?、…~～]/g, '')
+        const now = Date.now()
+        if (lastReplyText && lastReplyAt && now - lastReplyAt < 30000 && rpPlain === lastReplyText) {
+          try { (window as any).__chubbyWhale.dupReply = ((window as any).__chubbyWhale.dupReply || 0) + 1 } catch (e) { }
+          return
+        }
+        lastReplyText = rpPlain
+        lastReplyAt = now
+        speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE : '+0%' })
+      }
+
       // Canvas 动画
       R.useEffect(() => {
         const canvas = canvasRef.current
