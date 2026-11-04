@@ -103,22 +103,29 @@
 
   // src/client/menu.ts
   var MELODIES = ["\u5C0F\u661F\u661F", "\u4E24\u53EA\u8001\u864E", "\u751F\u65E5\u5FEB\u4E50", "\u6B22\u4E50\u9882", "\u94C3\u513F\u54CD\u53EE\u5F53", "\u4F26\u6566\u5927\u6865", "\u65AF\u5361\u5E03\u7F57\u96C6\u5E02", "\u601D\u541B\u9EEF\u7136", "\u7EFF\u8896\u5B50", "\u81F4\u7231\u4E3D\u4E1D", "\u53CB\u8C0A\u5929\u957F\u5730\u4E45"];
+  var SONG_EN = {
+    "\u5C0F\u661F\u661F": "Twinkle Twinkle Little Star",
+    "\u4E24\u53EA\u8001\u864E": "Two Tigers",
+    "\u751F\u65E5\u5FEB\u4E50": "Happy Birthday",
+    "\u6B22\u4E50\u9882": "Ode to Joy",
+    "\u94C3\u513F\u54CD\u53EE\u5F53": "Jingle Bells",
+    "\u4F26\u6566\u5927\u6865": "London Bridge",
+    "\u65AF\u5361\u5E03\u7F57\u96C6\u5E02": "Scarborough Fair",
+    "\u601D\u541B\u9EEF\u7136": "Longing for You",
+    "\u7EFF\u8896\u5B50": "Greensleeves",
+    "\u81F4\u7231\u4E3D\u4E1D": "Fur Elise",
+    "\u53CB\u8C0A\u5929\u957F\u5730\u4E45": "Auld Lang Syne"
+  };
   var EN_MAP = {
     "\u5582\u5B83\u4E00\u53E3": "Feed it",
     "\u5F39\u9996\u66F2\u5B50 \u25B8": "Play a song \u25B8",
     "\u505C\u6B62\u5F39\u594F": "Stop music",
     "\u6253\u5B57\u8BF4\u4E24\u53E5": "Type a message",
-    "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00": "Voice output: on",
     "\u6362\u4E2A\u58F0\u97F3 \u25B8": "Change voice \u25B8",
     "\u804A\u5929\u8BED\u8A00 \u25B8": "Chat language \u25B8",
     "\u754C\u9762\u8BED\u8A00 \u25B8": "Interface language \u25B8",
-    "\u8BED\u97F3\u5F85\u547D\uFF1A\u5F00": "Voice standby: on",
-    "\u8BED\u97F3\u5F85\u547D\uFF1A\u5173": "Voice standby: off",
-    "\u8BED\u97F3\u804A\u5929\uFF1A\u5F00": "Voice chat: on",
-    "\u8BED\u97F3\u804A\u5929\uFF1A\u5173": "Voice chat: off",
     "\u770B\u5F20\u56FE\u2026": "Look at a picture\u2026",
     "\u505C\u6B62\u8BF4\u8BDD": "Stop talking",
-    "\u4F59\u989D\uFF1A--": "Balance: --",
     "\u505C\u4E0B\u6B47\u4F1A\u513F": "Take a break",
     "\u56DE\u5230\u53F3\u4E0B\u89D2": "Back to corner",
     "\u957F\u5927\u4E00\u70B9": "Grow bigger",
@@ -136,7 +143,6 @@
     "\u6E05\u9664\u8BB0\u5FC6\u2026": "Clear memory\u2026",
     "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09": "Let it go (exit)",
     "\u9C7C\u7CAE\u8D26\u672C": "Token ledger",
-    "\u6210\u957F\uFF1A--": "Growth: --",
     "\u4E2D\u6587": "\u4E2D\u6587",
     "English": "English",
     "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09": "Auto (by language)",
@@ -149,9 +155,29 @@
     "\u97F3\u8272\uFF1AJenny\uFF08\u82F1\xB7\u5973\uFF09": "Voice: Jenny (EN F)",
     "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09": "Voice: Sonia (EN-GB F)"
   };
+  var TOGGLE_EN = {
+    "\u8BED\u97F3\u6717\u8BFB\uFF1A": ["Voice output: on", "Voice output: off"],
+    "\u8BED\u97F3\u5F85\u547D\uFF1A": ["Voice standby: on", "Voice standby: off"],
+    "\u8BED\u97F3\u804A\u5929\uFF1A": ["Voice chat: on", "Voice chat: off"]
+  };
   function tr(label, lang) {
     if (lang !== "en") return label;
-    return EN_MAP[label] || label;
+    const exact = EN_MAP[label];
+    if (exact) return exact;
+    if (label.startsWith("\u5F39\u300A") && label.endsWith("\u300B")) {
+      const song = label.slice(2, label.length - 1);
+      return SONG_EN[song] ? 'Play "' + SONG_EN[song] + '"' : "Play a song";
+    }
+    if (label.startsWith("\u6210\u957F\uFF1A")) return "Growth: " + label.slice(3);
+    if (label.startsWith("\u7248\u672C\uFF1Av")) return "Version: v" + label.slice(4);
+    if (label.startsWith("\u4F59\u989D\uFF1A")) return "Balance: " + label.slice(3);
+    for (const prefix of Object.keys(TOGGLE_EN)) {
+      if (label.startsWith(prefix)) {
+        const pair = TOGGLE_EN[prefix];
+        return label.slice(prefix.length) === "\u5F00" ? pair[0] : pair[1];
+      }
+    }
+    return label;
   }
   function buildMenu(version, state) {
     const voiceOn = state && state.voiceOn ? true : false;
@@ -366,19 +392,23 @@
       ctx.ellipse(p.x, p.y + rh * 0.5, rw * 0.6, rh * 0.55, 0, 0, Math.PI * 2);
       ctx.fill();
     }
-    function drawHearts() {
+    const HEART_LIFE = 1.4;
+    function drawHearts(dtSec) {
       const arr = state.hearts;
       for (let i = arr.length - 1; i >= 0; i--) {
         const hh = arr[i];
-        hh.age += 1 / 60;
-        if (hh.age > 1.4) {
+        hh.age += dtSec;
+        if (hh.age >= HEART_LIFE) {
           arr.splice(i, 1);
           continue;
         }
-        const x = 120 + Math.sin(hh.age * 6) * 30;
-        const y = 30 - hh.age * 40;
-        ctx.fillStyle = "rgba(255,120,150," + (1 - hh.age / 1.4) + ")";
-        ctx.font = "22px serif";
+        const p = hh.age / HEART_LIFE;
+        const x = cw * 0.42 + (hh.dx || 0) * cw * 0.12 + Math.sin(hh.age * 6) * cw * 0.01;
+        const y = ch * 0.26 - p * ch * 0.16 + Math.sin(hh.age * 5) * 2;
+        const alpha = Math.max(0, 1 - p);
+        const size = Math.max(12, Math.round(ch * 0.05 * (1 + p * 0.5)));
+        ctx.fillStyle = "rgba(255,120,150," + alpha.toFixed(3) + ")";
+        ctx.font = size + "px serif";
         ctx.fillText("\u2764", x, y);
       }
     }
@@ -404,7 +434,7 @@
         drawEye(EYE_R, true);
       }
       if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0);
-      drawHearts();
+      drawHearts(dt / 1e3);
       raf = requestAnimationFrame(loop);
     }
     function start() {
@@ -417,7 +447,7 @@
       state.talkUntil = performance.now() + ms;
     }
     function pushHeart() {
-      state.hearts.push({ age: 0 });
+      state.hearts.push({ age: 0, dx: Math.random() - 0.5 });
     }
     return { start, stop, talkFor, pushHeart };
   }
@@ -432,14 +462,16 @@
   function splitTtsSegments(text, maxLen = 80) {
     const t = String(text || "").trim();
     if (!t) return [];
-    if (t.length <= maxLen) return [t];
+    const limit = Math.max(8, Math.floor(Number(maxLen) || 80));
+    const firstMax = Math.min(limit, 14);
     const boundary = /[。！？!?；;…，,、\n\r]/;
-    const minCut = Math.max(20, Math.floor(maxLen / 2));
     const out = [];
     let start = 0;
     while (start < t.length) {
-      let end = Math.min(t.length, start + maxLen);
+      const cap = out.length === 0 ? firstMax : limit;
+      let end = Math.min(t.length, start + cap);
       if (end < t.length) {
+        const minCut = Math.max(2, Math.floor(cap / 3));
         let cut = -1;
         for (let i = end - 1; i >= start + minCut; i--) {
           if (boundary.test(t[i])) {
@@ -456,9 +488,30 @@
     }
     return out;
   }
+  function isEmojiCodePoint(code) {
+    return code >= 126976 && code <= 129791 || code >= 9728 && code <= 10175 || code >= 11008 && code <= 11263 || code >= 65024 && code <= 65039 || code === 8205 || code === 8419;
+  }
+  function cleanTtsText(raw) {
+    const s = String(raw == null ? "" : raw);
+    let out = "";
+    for (const ch of s) {
+      const code = ch.codePointAt(0) || 0;
+      if (code < 32 && code !== 10 && code !== 9 || code === 127) continue;
+      if (ch === "*" || ch === "#" || ch === "`" || ch === "~" || ch === ">" || ch === "|") continue;
+      if (isEmojiCodePoint(code)) continue;
+      out += ch === "\n" || ch === "	" || ch === "\r" ? " " : ch;
+    }
+    return out.replace(/\s+/g, " ").trim();
+  }
 
   // src/shared/time.ts
   var DAY_MS = 864e5;
+  function applyPeriod(hour, word) {
+    if (word === "\u4E0B\u5348") return hour === 12 ? 12 : hour < 12 ? hour + 12 : hour;
+    if (word === "\u508D\u665A" || word === "\u665A\u4E0A") return hour === 12 ? 0 : hour < 12 ? hour + 12 : hour;
+    if (word === "\u4E2D\u5348") return hour < 10 ? hour + 12 : hour;
+    return hour;
+  }
   function cleanReminderText(raw) {
     let t = String(raw || "").trim();
     const leads = ["\u63D0\u9192\u6211\u4E00\u4E0B", "\u63D0\u9192\u4E00\u4E0B", "\u63D0\u9192\u6211", "\u63D0\u9192", "\u53EB\u6211\u4E00\u4E0B", "\u53EB\u6211", "\u8BB0\u5F97\u8981", "\u8BB0\u5F97", "\u5230\u65F6\u5019"];
@@ -508,8 +561,11 @@
     const day = src.match(/(今天|明天|后天)/);
     const clock = src.match(/(\d{1,2})\s*(?:点|:|：)\s*(半|\d{2})?/);
     if (clock) {
-      const h = Number(clock[1]);
-      if (Number.isFinite(h) && h >= 0 && h <= 23) {
+      const rawH = Number(clock[1]);
+      if (Number.isFinite(rawH) && rawH >= 0 && rawH <= 23) {
+        const before = typeof clock.index === "number" ? src.slice(0, clock.index) : "";
+        const pm = before.match(/(凌晨|早上|上午|中午|下午|傍晚|晚上)[\s，,]*$/);
+        const h = applyPeriod(rawH, pm ? pm[1] : "");
         let minute = 0;
         const mm = clock[2] || "";
         if (mm === "\u534A") minute = 30;
@@ -523,6 +579,9 @@
         target.setHours(h, minute, 0, 0);
         if (!day && target.getTime() <= base.getTime()) target = new Date(target.getTime() + DAY_MS);
         let stripped = src.replace(clock[0], "").trim();
+        if (pm && typeof pm.index === "number") {
+          stripped = (stripped.slice(0, pm.index) + stripped.slice(pm.index + pm[1].length)).trim();
+        }
         if (day) stripped = stripped.replace(day[1], "").trim();
         return done(target, stripped);
       }
@@ -551,8 +610,14 @@
       let ttsAudioRef = null;
       let ttsUrl = "";
       let ttsEpoch = 0;
+      let ttsJobSeq = 0;
+      let ttsGroupSeq = 0;
       const ttsQueue = [];
+      const ttsPrefetch = /* @__PURE__ */ new Map();
       let ttsPlaying = false;
+      let ttsCurrentJob = null;
+      let ttsPauseUntil = 0;
+      let ttsPauseTimer = null;
       function currentVoice() {
         try {
           return localStorage.getItem("chubby-tts-voice") || "auto";
@@ -569,10 +634,43 @@
         } catch (e) {
         }
       }
+      function fetchTts(job) {
+        try {
+          return fetch("/api/chubby-whale/tts", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ text: job.text, voice: currentVoice(), rate: job.rate })
+          }).then((r) => {
+            if (!r.ok) throw new Error("tts http " + r.status);
+            return r.arrayBuffer();
+          }).catch(() => null);
+        } catch (e) {
+          return Promise.resolve(null);
+        }
+      }
+      function prefetchNextTts() {
+        const next = ttsQueue[0];
+        if (!next) return;
+        if (!ttsPrefetch.has(next.id)) ttsPrefetch.set(next.id, fetchTts(next));
+      }
       function stopTts() {
         try {
           ttsEpoch++;
+          ttsPauseUntil = 0;
+          if (ttsPauseTimer) {
+            try {
+              clearTimeout(ttsPauseTimer);
+            } catch (e) {
+            }
+            ;
+            ttsPauseTimer = null;
+          }
           while (ttsQueue.length > 0) finishTtsJob(ttsQueue.shift());
+          if (ttsCurrentJob) {
+            finishTtsJob(ttsCurrentJob);
+            ttsCurrentJob = null;
+          }
+          ttsPrefetch.clear();
           const a = ttsAudioRef;
           ttsAudioRef = null;
           if (a) {
@@ -615,11 +713,23 @@
             if (localStorage.getItem("chubby-voice") === "off") return;
           } catch (e) {
           }
+          const clean = cleanTtsText(text);
+          if (!clean) return;
           const rate = normalizeRate(opts && opts.rate, "+0%");
-          const segs = splitTtsSegments(text, 80);
+          const narration = opts && typeof opts.narration === "boolean" ? opts.narration : rate === "-15%";
+          const segs = splitTtsSegments(clean, 80);
+          const group = ++ttsGroupSeq;
           for (let i = 0; i < segs.length; i++) {
-            ttsQueue.push({ text: segs[i], rate, onDone: i === segs.length - 1 ? opts && opts.onDone : void 0 });
+            ttsQueue.push({
+              id: ++ttsJobSeq,
+              group,
+              text: segs[i],
+              rate,
+              narration,
+              onDone: i === segs.length - 1 ? opts && opts.onDone : void 0
+            });
           }
+          prefetchNextTts();
           playNextTts();
         } catch (e) {
         }
@@ -627,28 +737,50 @@
       function playNextTts() {
         if (ttsPlaying) return;
         if (ttsQueue.length === 0) return;
-        let job = null;
+        const wait = ttsPauseUntil - Date.now();
+        if (wait > 0) {
+          if (!ttsPauseTimer) {
+            ttsPauseTimer = setTimeout(() => {
+              ttsPauseTimer = null;
+              playNextTts();
+            }, wait);
+          }
+          return;
+        }
         const epoch = ttsEpoch;
+        const job = ttsQueue.shift();
+        ttsPlaying = true;
+        ttsCurrentJob = job;
         try {
-          ttsPlaying = true;
-          job = ttsQueue.shift();
-          const text = job.text;
-          fetch("/api/chubby-whale/tts", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ text, voice: currentVoice(), rate: job.rate })
-          }).then((r) => {
-            if (!r.ok) throw new Error("tts http " + r.status);
-            return r.arrayBuffer();
-          }).then((buf) => {
-            if (epoch !== ttsEpoch) return;
-            const jobRef = job;
+          const pending = ttsPrefetch.get(job.id) || fetchTts(job);
+          ttsPrefetch.delete(job.id);
+          prefetchNextTts();
+          pending.then((buf) => {
+            if (epoch !== ttsEpoch) {
+              finishTtsJob(job);
+              return;
+            }
+            if (!buf) {
+              if (ttsCurrentJob === job) ttsCurrentJob = null;
+              finishTtsJob(job);
+              ttsPlaying = false;
+              playNextTts();
+              return;
+            }
             let settled = false;
             const settle = () => {
               if (settled) return;
               settled = true;
-              finishTtsJob(jobRef);
+              if (ttsCurrentJob === job) ttsCurrentJob = null;
+              try {
+                URL.revokeObjectURL(url);
+              } catch {
+              }
+              if (ttsUrl === url) ttsUrl = "";
+              finishTtsJob(job);
               ttsPlaying = false;
+              const next = ttsQueue[0];
+              if (job.narration && next && next.group === job.group) ttsPauseUntil = Date.now() + 260;
               playNextTts();
             };
             const blob = new Blob([buf], { type: "audio/mpeg" });
@@ -656,22 +788,12 @@
             ttsUrl = url;
             const audio = new Audio(url);
             ttsAudioRef = audio;
-            audio.onended = () => {
-              try {
-                URL.revokeObjectURL(url);
-              } catch {
-              }
-              ;
-              if (ttsUrl === url) ttsUrl = "";
-              settle();
-            };
-            audio.onerror = () => {
-              settle();
-            };
+            audio.onended = settle;
+            audio.onerror = settle;
             audio.play().catch(() => {
               try {
-                const u = new window.SpeechSynthesisUtterance(text.slice(0, 300));
-                u.lang = /[\u4e00-\u9fa5]/.test(text) ? "zh-CN" : "en-US";
+                const u = new window.SpeechSynthesisUtterance(job.text.slice(0, 300));
+                u.lang = /[\u4e00-\u9fa5]/.test(job.text) ? "zh-CN" : "en-US";
                 u.onend = settle;
                 u.onerror = settle;
                 window.speechSynthesis.cancel();
@@ -681,14 +803,26 @@
               }
             });
           }).catch(() => {
+            if (ttsCurrentJob === job) ttsCurrentJob = null;
             finishTtsJob(job);
             ttsPlaying = false;
             playNextTts();
           });
         } catch (e) {
+          if (ttsCurrentJob === job) ttsCurrentJob = null;
           ttsPlaying = false;
-          if (job) finishTtsJob(job);
+          finishTtsJob(job);
+          playNextTts();
         }
+      }
+      function taleParts(rawTitle) {
+        const t = String(rawTitle || "").trim();
+        const i = t.indexOf("\xB7");
+        if (i > 0 && i < t.length - 1) return { book: t.slice(0, i), title: t.slice(i + 1) };
+        return { title: t, book: "" };
+      }
+      function collapseText(raw) {
+        return String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
       }
       const NOTE_FREQ = {
         "C3": 130.81,
@@ -1094,10 +1228,12 @@
           if (dueTimerRef.current) return;
           if (dueQueueRef.current.length === 0) return;
           const item = dueQueueRef.current.shift();
-          showBubble("\u63D0\u9192\uFF1A" + String(item.text || ""), 8e3);
+          const body = String(item.text || "").trim() || "\u65F6\u95F4\u5230\u4E86";
+          const line = "\u4E3B\u4EBA\uFF0C\u63D0\u9192\u4F60\uFF1A" + body;
+          showBubble(line, 8e3);
           animRef.current?.talkFor(3e3);
           try {
-            speakText("\u63D0\u9192\uFF1A" + String(item.text || ""));
+            speakText(line);
           } catch (e) {
           }
           dueTimerRef.current = setTimeout(() => {
@@ -1212,9 +1348,13 @@
           if (action === "culture-tale") {
             fetch("/api/chubby-whale/culture?type=minsu").then((r) => r.json()).then((d) => {
               if (d && d.ok && d.item) {
-                showBubble(String(d.item.text || "").slice(0, 120) + "\u2026", 9e3);
+                const tp = taleParts(d.item.title);
+                const body = collapseText(d.item.text);
+                const cut = body.length > 120;
+                const shown = cut ? body.slice(0, 120) + "\u2026" : body;
+                showBubble("\u6C11\u95F4\u6545\u4E8B\xB7" + tp.title + (tp.book ? "\uFF08\u51FA\u81EA\u300A" + tp.book + "\u300B\uFF09\uFF1A" : "\uFF1A") + shown, 9e3);
                 animRef.current?.talkFor(5e3);
-                speakText("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + String(d.item.title || "") + "\u3002" + String(d.item.text || "").slice(0, 6e3), { rate: "-15%" });
+                speakText("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + tp.title + (tp.book ? "\uFF0C\u51FA\u81EA\u300A" + tp.book + "\u300B" : "") + "\u3002" + body.slice(0, 6e3), { rate: "-15%" });
               } else showBubble("\u6545\u4E8B\u6CA1\u8BB2\u6210");
             }).catch(() => showBubble("\u6545\u4E8B\u6CA1\u8BB2\u6210"));
             return;
@@ -1222,9 +1362,11 @@
           if (action === "culture-allusion") {
             fetch("/api/chubby-whale/culture?type=chengyu").then((r) => r.json()).then((d) => {
               if (d && d.ok && d.item) {
-                showBubble("\u300A" + d.item.title + "\u300B\uFF08" + (d.item.src || "") + "\uFF09" + String(d.item.text || "").slice(0, 100) + "\u2026", 9e3);
+                const body = collapseText(d.item.text);
+                const cut = body.length > 100;
+                showBubble("\u300A" + d.item.title + "\u300B\uFF08" + (d.item.src || "") + "\uFF09\uFF1A" + (cut ? body.slice(0, 100) + "\u2026" : body), 9e3);
                 animRef.current?.talkFor(5e3);
-                speakText("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + String(d.item.text || ""), { rate: "-15%" });
+                speakText("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + body, { rate: "-15%" });
               } else showBubble("\u5178\u6545\u6CA1\u8BB2\u6210");
             }).catch(() => showBubble("\u5178\u6545\u6CA1\u8BB2\u6210"));
             return;
@@ -1234,7 +1376,7 @@
               if (d && d.ok && d.item) {
                 showBubble(d.item.title + "\uFF1A" + String(d.item.text || "").slice(0, 100), 8e3);
                 const sp = String(d.item.title || "") + "\uFF1A" + String(d.item.text || "");
-                speakText(sp, { rate: sp.length >= 80 ? "-15%" : "+0%" });
+                speakText(sp, { rate: "-15%" });
               } else showBubble("\u6CA1\u67E5\u5230");
             }).catch(() => showBubble("\u6CA1\u67E5\u5230"));
             return;
@@ -1373,7 +1515,7 @@
                   const d = await res.json();
                   const reply = d && d.reply || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
                   showBubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
-                  speakText(reply);
+                  speakText(reply, { rate: reply.length >= 80 ? "-15%" : "+0%" });
                 } catch (e) {
                   showBubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
                 }
@@ -1500,7 +1642,10 @@
             setBusy(false);
             animRef.current?.talkFor(1500);
             try {
-              if (data && data.reply) speakText(data.reply);
+              if (data && data.reply) {
+                const rp = String(data.reply);
+                speakText(rp, { rate: rp.length >= 80 ? "-15%" : "+0%" });
+              }
             } catch {
             }
             scrollBody();

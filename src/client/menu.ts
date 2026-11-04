@@ -8,23 +8,32 @@ export type MenuItem =
 
 export const MELODIES = ['小星星', '两只老虎', '生日快乐', '欢乐颂', '铃儿响叮当', '伦敦大桥', '斯卡布罗集市', '思君黯然', '绿袖子', '致爱丽丝', '友谊天长地久']
 
-// 中 -> 英 字典（菜单界面）
+// 简谱曲名 -> 英文（英文界面的「弹《X》」不能把中文曲名留在菜单里）
+export const SONG_EN: Record<string, string> = {
+  '小星星': 'Twinkle Twinkle Little Star',
+  '两只老虎': 'Two Tigers',
+  '生日快乐': 'Happy Birthday',
+  '欢乐颂': 'Ode to Joy',
+  '铃儿响叮当': 'Jingle Bells',
+  '伦敦大桥': 'London Bridge',
+  '斯卡布罗集市': 'Scarborough Fair',
+  '思君黯然': 'Longing for You',
+  '绿袖子': 'Greensleeves',
+  '致爱丽丝': 'Fur Elise',
+  '友谊天长地久': 'Auld Lang Syne',
+}
+
+// 中 -> 英 字典（菜单界面；只放固定文案，动态拼出来的标签走 tr() 的前缀模板）
 export const EN_MAP: Record<string, string> = {
   '喂它一口': 'Feed it',
   '弹首曲子 ▸': 'Play a song ▸',
   '停止弹奏': 'Stop music',
   '打字说两句': 'Type a message',
-  '语音朗读：开': 'Voice output: on',
   '换个声音 ▸': 'Change voice ▸',
   '聊天语言 ▸': 'Chat language ▸',
   '界面语言 ▸': 'Interface language ▸',
-  '语音待命：开': 'Voice standby: on',
-  '语音待命：关': 'Voice standby: off',
-  '语音聊天：开': 'Voice chat: on',
-  '语音聊天：关': 'Voice chat: off',
   '看张图…': 'Look at a picture…',
   '停止说话': 'Stop talking',
-  '余额：--': 'Balance: --',
   '停下歇会儿': 'Take a break',
   '回到右下角': 'Back to corner',
   '长大一点': 'Grow bigger',
@@ -42,7 +51,6 @@ export const EN_MAP: Record<string, string> = {
   '清除记忆…': 'Clear memory…',
   '让它游走（退出）': 'Let it go (exit)',
   '鱼粮账本': 'Token ledger',
-  '成长：--': 'Growth: --',
   '中文': '中文',
   'English': 'English',
   '自动（按语言选音色）': 'Auto (by language)',
@@ -56,9 +64,32 @@ export const EN_MAP: Record<string, string> = {
   '音色：Sonia（英·女·英式）': 'Voice: Sonia (EN-GB F)',
 }
 
+// 开关类菜单项：前缀 -> [开, 关]（标签是运行时拼的，精确字典永远匹配不到）
+const TOGGLE_EN: Record<string, [string, string]> = {
+  '语音朗读：': ['Voice output: on', 'Voice output: off'],
+  '语音待命：': ['Voice standby: on', 'Voice standby: off'],
+  '语音聊天：': ['Voice chat: on', 'Voice chat: off'],
+}
+
 export function tr(label: string, lang: string): string {
   if (lang !== 'en') return label
-  return EN_MAP[label] || label
+  const exact = EN_MAP[label]
+  if (exact) return exact
+  // 动态标签（曲名/成长/版本/余额/开关）用模板拼，别在 EN_MAP 里留永远匹配不到的死键
+  if (label.startsWith('弹《') && label.endsWith('》')) {
+    const song = label.slice(2, label.length - 1)
+    return SONG_EN[song] ? 'Play "' + SONG_EN[song] + '"' : 'Play a song'
+  }
+  if (label.startsWith('成长：')) return 'Growth: ' + label.slice(3)
+  if (label.startsWith('版本：v')) return 'Version: v' + label.slice(4)
+  if (label.startsWith('余额：')) return 'Balance: ' + label.slice(3)
+  for (const prefix of Object.keys(TOGGLE_EN)) {
+    if (label.startsWith(prefix)) {
+      const pair = TOGGLE_EN[prefix]
+      return label.slice(prefix.length) === '开' ? pair[0] : pair[1]
+    }
+  }
+  return label
 }
 
 export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: boolean; voiceChatOn?: boolean; balance?: string; growth?: string }): MenuItem[] {

@@ -8,7 +8,7 @@ export const MOUTH = { x: 779, y: 525, rw: 26, rh: 18 }
 
 export interface AnimState {
   talkUntil: number
-  hearts: { age: number }[]
+  hearts: { age: number; dx?: number }[]
 }
 
 export function createAnimator(opts: {
@@ -61,16 +61,23 @@ export function createAnimator(opts: {
     ctx.fill()
   }
 
-  function drawHearts(): void {
+  /** 爱心寿命（秒）：与透明度归零、上飘终点统一，避免飞出画布被裁掉 */
+  const HEART_LIFE = 1.4
+
+  function drawHearts(dtSec: number): void {
     const arr = state.hearts
     for (let i = arr.length - 1; i >= 0; i--) {
       const hh = arr[i]
-      hh.age += 1 / 60
-      if (hh.age > 1.4) { arr.splice(i, 1); continue }
-      const x = 120 + Math.sin(hh.age * 6) * 30
-      const y = 30 - hh.age * 40
-      ctx.fillStyle = 'rgba(255,120,150,' + (1 - hh.age / 1.4) + ')'
-      ctx.font = '22px serif'
+      hh.age += dtSec
+      if (hh.age >= HEART_LIFE) { arr.splice(i, 1); continue }
+      const p = hh.age / HEART_LIFE          // 0 → 1 的寿命进度
+      // 起点在鱼头附近（画布 42% / 26%），向上飘的位移按画布高度算：1.4 秒内不出画布
+      const x = cw * 0.42 + (hh.dx || 0) * cw * 0.12 + Math.sin(hh.age * 6) * cw * 0.01
+      const y = ch * 0.26 - p * ch * 0.16 + Math.sin(hh.age * 5) * 2
+      const alpha = Math.max(0, 1 - p)       // 寿命结束时透明度正好降到 0
+      const size = Math.max(12, Math.round(ch * 0.05 * (1 + p * 0.5)))
+      ctx.fillStyle = 'rgba(255,120,150,' + alpha.toFixed(3) + ')'
+      ctx.font = size + 'px serif'
       ctx.fillText('❤', x, y)
     }
   }
@@ -87,14 +94,14 @@ export function createAnimator(opts: {
     if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
     if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
     if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0)
-    drawHearts()
+    drawHearts(dt / 1000)
     raf = requestAnimationFrame(loop)
   }
 
   function start(): void { raf = requestAnimationFrame(loop) }
   function stop(): void { cancelAnimationFrame(raf) }
   function talkFor(ms: number): void { state.talkUntil = performance.now() + ms }
-  function pushHeart(): void { state.hearts.push({ age: 0 }) }
+  function pushHeart(): void { state.hearts.push({ age: 0, dx: Math.random() - 0.5 }) }
 
   return { start, stop, talkFor, pushHeart }
 }

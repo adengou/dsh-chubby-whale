@@ -129,7 +129,7 @@ export function createChatHandler(opts) {
                     body: JSON.stringify({
                         model: 'deepseek-flash',
                         messages,
-                        max_tokens: 300,
+                        max_tokens: 260,
                         temperature: 0.8,
                         thinking: { type: 'disabled' },
                     }),

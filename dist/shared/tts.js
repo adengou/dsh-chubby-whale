@@ -15,23 +15,25 @@ export function normalizeRate(s, defaultRate = '+0%') {
     return isValidRate(s) ? String(s).trim() : defaultRate;
 }
 /**
- * 按标点切段，每段不超过 maxLen 字。
+ * 按标点切段，每段不超过 maxLen 字；**首段更短**（照 C# TextTools.SplitForTts）：
+ * 第一段上限 min(maxLen, 14)——第一段越快合成完，开口越早，感知延迟主要来自等第一段。
  * 只切分、不丢字：返回值 join('') 必须等于入参 trim() 后原文。
  */
 export function splitTtsSegments(text, maxLen = 80) {
     const t = String(text || '').trim();
     if (!t)
         return [];
-    if (t.length <= maxLen)
-        return [t];
+    const limit = Math.max(8, Math.floor(Number(maxLen) || 80));
+    const firstMax = Math.min(limit, 14);
     const boundary = /[。！？!?；;…，,、\n\r]/;
-    const minCut = Math.max(20, Math.floor(maxLen / 2));
     const out = [];
     let start = 0;
     while (start < t.length) {
-        let end = Math.min(t.length, start + maxLen);
+        const cap = out.length === 0 ? firstMax : limit;
+        let end = Math.min(t.length, start + cap);
         if (end < t.length) {
-            // 从上限往前找标点，尽量在句子边界切
+            // 从上限往前找标点，尽量在句子边界切（首段太短就不硬切标点）
+            const minCut = Math.max(2, Math.floor(cap / 3));
             let cut = -1;
             for (let i = end - 1; i >= start + minCut; i--) {
                 if (boundary.test(t[i])) {
@@ -50,6 +52,36 @@ export function splitTtsSegments(text, maxLen = 80) {
         start = end;
     }
     return out;
+}
+/** emoji / 杂项符号 / 变体选择符：这些字符念出来很怪，清洗时直接丢掉 */
+function isEmojiCodePoint(code) {
+    return (code >= 0x1f000 && code <= 0x1faff) // 表情、交通、补充符号
+        || (code >= 0x2600 && code <= 0x27bf) // ☀❤✂ 等杂项符号与装饰符号
+        || (code >= 0x2b00 && code <= 0x2bff) // ⬛⭐ 等
+        || (code >= 0xfe00 && code <= 0xfe0f) // 变体选择符
+        || code === 0x200d // 零宽连接符
+        || code === 0x20e3; // 组合键帽
+}
+/**
+ * 清洗 TTS 文本（照 C# TextTools.Clean）：
+ * 去掉 markdown 标记（* # ` ~ > |）与 emoji，换行/连续空白压成单个空格，去首尾空白。
+ * 只用于朗读；气泡里显示的仍是原文。
+ */
+export function cleanTtsText(raw) {
+    const s = String(raw == null ? '' : raw);
+    let out = '';
+    for (const ch of s) {
+        const code = ch.codePointAt(0) || 0;
+        // 控制符丢掉（\n \t 下面换成空格）
+        if ((code < 0x20 && code !== 0x0a && code !== 0x09) || code === 0x7f)
+            continue;
+        if (ch === '*' || ch === '#' || ch === '`' || ch === '~' || ch === '>' || ch === '|')
+            continue;
+        if (isEmojiCodePoint(code))
+            continue;
+        out += (ch === '\n' || ch === '\t' || ch === '\r') ? ' ' : ch;
+    }
+    return out.replace(/\s+/g, ' ').trim();
 }
 /**
  * 构造 edge-tts 的参数数组。

@@ -6,7 +6,7 @@ import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chat
 import { buildMenu, tr } from './client/menu.js'
 import { handleFileDrop, VISION_PROMPT } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
-import { splitTtsSegments, normalizeRate } from './shared/tts.js'
+import { splitTtsSegments, normalizeRate, cleanTtsText } from './shared/tts.js'
 import { parseDue, cleanReminderText } from './shared/time.js'
 ;(window as any).__ModuleLoader__.load({
   id: 'dsh-chubby-whale',
@@ -25,13 +25,29 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       } catch (e) { return '' }
     })()
 
-    // ===== TTS：60~80 字分段队列，边播边请求下一段 =====
-    interface TtsJob { text: string; rate: string; onDone?: () => void }
+    // ===== TTS：首段更短 + 边播边预取下一段（照 C# Speech.cs 的流水线）=====
+    interface TtsJob {
+      id: number
+      /** 同一次 speakText 的段共享一个组号：组内叙述段之间才留换气停顿 */
+      group: number
+      text: string
+      rate: string
+      narration: boolean
+      onDone?: () => void
+    }
     let ttsAudioRef: any = null
     let ttsUrl = ''
     let ttsEpoch = 0
+    let ttsJobSeq = 0
+    let ttsGroupSeq = 0
     const ttsQueue: TtsJob[] = []
+    /** 预取缓存：段 id → 已发出的合成请求（当前段开播时就把下一段压上去） */
+    const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
     let ttsPlaying = false
+    let ttsCurrentJob: TtsJob | null = null
+    /** 叙述段间的换气停顿截止时刻（C# NarrationPauseMs = 260） */
+    let ttsPauseUntil = 0
+    let ttsPauseTimer: any = null
     function currentVoice(): string {
       try { return localStorage.getItem('chubby-tts-voice') || 'auto' } catch (e) { return 'auto' }
     }
@@ -41,11 +57,35 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       job.onDone = undefined
       try { cb() } catch (e) { }
     }
+    /** 合成一段音频；失败返回 null（播放端跳过这一段，绝不把整条队列卡死） */
+    function fetchTts(job: TtsJob): Promise<ArrayBuffer | null> {
+      try {
+        return fetch('/api/chubby-whale/tts', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: job.text, voice: currentVoice(), rate: job.rate }),
+        }).then((r: any) => {
+          if (!r.ok) throw new Error('tts http ' + r.status)
+          return r.arrayBuffer()
+        }).catch(() => null)
+      } catch (e) { return Promise.resolve(null) }
+    }
+    /** 把队首那段的合成先压上去（已在预取里就不重复发） */
+    function prefetchNextTts(): void {
+      const next = ttsQueue[0]
+      if (!next) return
+      if (!ttsPrefetch.has(next.id)) ttsPrefetch.set(next.id, fetchTts(next))
+    }
     // 停止说话：真的把当前音频停掉、清空队列、回收 URL（照 C# Speech.Stop）
     function stopTts(): void {
       try {
         ttsEpoch++
+        ttsPauseUntil = 0
+        if (ttsPauseTimer) { try { clearTimeout(ttsPauseTimer) } catch (e) { } ; ttsPauseTimer = null }
         while (ttsQueue.length > 0) finishTtsJob(ttsQueue.shift() as TtsJob)
+        // 正在播的那一段已经从队列里摘走了：这里补一次收尾，别让 onDone 永远不触发
+        if (ttsCurrentJob) { finishTtsJob(ttsCurrentJob); ttsCurrentJob = null }
+        ttsPrefetch.clear()
         const a = ttsAudioRef
         ttsAudioRef = null
         if (a) {
@@ -58,45 +98,77 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         try { const ss = (window as any).speechSynthesis; if (ss && ss.speaking) ss.cancel() } catch (e) { }
       } catch (e) { ttsPlaying = false }
     }
-    function speakText(text: string, opts?: { rate?: string; onDone?: () => void }): void {
+    function speakText(text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
       try {
         if (!text) return
         try { if (localStorage.getItem('chubby-voice') === 'off') return } catch (e) { }
+        // 模型回复里的 markdown/emoji 念出来很怪：入队前先清洗（照 C# TextTools.Clean）
+        const clean = cleanTtsText(text)
+        if (!clean) return
         const rate = normalizeRate(opts && opts.rate, '+0%')
-        // 说书一段 2000+ 字，按标点切 80 字内逐段请求，整段不会被砍
-        const segs = splitTtsSegments(text, 80)
+        // 叙述（-15%）段与段之间留 260ms 换气停顿（C# NarrationPauseMs）
+        const narration = (opts && typeof opts.narration === 'boolean') ? opts.narration : rate === '-15%'
+        // 说书一段 2000+ 字：首段 14 字内先开口，其余按标点切 80 字内逐段请求
+        const segs = splitTtsSegments(clean, 80)
+        const group = ++ttsGroupSeq
         for (let i = 0; i < segs.length; i++) {
-          ttsQueue.push({ text: segs[i], rate, onDone: (i === segs.length - 1) ? (opts && opts.onDone) : undefined })
+          ttsQueue.push({
+            id: ++ttsJobSeq,
+            group,
+            text: segs[i],
+            rate,
+            narration,
+            onDone: (i === segs.length - 1) ? (opts && opts.onDone) : undefined,
+          })
         }
+        // 队列本来是空的：先把第一段合成压上去，第一声更快
+        prefetchNextTts()
         playNextTts()
       } catch (e) { }
     }
     function playNextTts(): void {
       if (ttsPlaying) return
       if (ttsQueue.length === 0) return
-      let job: TtsJob | null = null
+      // 叙述段间的换气停顿：到点再起下一段（期间新来的句子排在后面一起等）
+      const wait = ttsPauseUntil - Date.now()
+      if (wait > 0) {
+        if (!ttsPauseTimer) {
+          ttsPauseTimer = setTimeout(() => { ttsPauseTimer = null; playNextTts() }, wait)
+        }
+        return
+      }
       const epoch = ttsEpoch
+      const job = ttsQueue.shift() as TtsJob
+      ttsPlaying = true
+      ttsCurrentJob = job
       try {
-        ttsPlaying = true
-        job = ttsQueue.shift() as TtsJob
-        const text = job.text
-        fetch('/api/chubby-whale/tts', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text, voice: currentVoice(), rate: job.rate }),
-        }).then((r: any) => {
-          if (!r.ok) throw new Error('tts http ' + r.status)
-          return r.arrayBuffer()
-        }).then((buf: ArrayBuffer) => {
-          // 取音频期间被「停止说话」了：这一段就别再响了
-          if (epoch !== ttsEpoch) return
-          const jobRef = job as TtsJob
+        const pending = ttsPrefetch.get(job.id) || fetchTts(job)
+        ttsPrefetch.delete(job.id)
+        // 关键：当前段刚开始取，就把下一段的合成压上去 —— 边播边合成，段间没有空档
+        prefetchNextTts()
+        pending.then((buf: ArrayBuffer | null) => {
+          // 取音频期间被「停止说话」了：这一段就别再响了（收尾已在 stopTts 里做过）
+          if (epoch !== ttsEpoch) { finishTtsJob(job); return }
+          if (!buf) {
+            // 合成失败：跳过这一段，接着播后面的
+            if (ttsCurrentJob === job) ttsCurrentJob = null
+            finishTtsJob(job)
+            ttsPlaying = false
+            playNextTts()
+            return
+          }
           let settled = false
           const settle = () => {
             if (settled) return
             settled = true
-            finishTtsJob(jobRef)
+            if (ttsCurrentJob === job) ttsCurrentJob = null
+            try { URL.revokeObjectURL(url) } catch { }
+            if (ttsUrl === url) ttsUrl = ''
+            finishTtsJob(job)
             ttsPlaying = false
+            // 叙述：同一组还有下一段时留 260ms 换气，别一口气念到底
+            const next = ttsQueue[0]
+            if (job.narration && next && next.group === job.group) ttsPauseUntil = Date.now() + 260
             playNextTts()
           }
           const blob = new Blob([buf], { type: 'audio/mpeg' })
@@ -104,23 +176,44 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           ttsUrl = url
           const audio = new Audio(url)
           ttsAudioRef = audio
-          audio.onended = () => { try { URL.revokeObjectURL(url) } catch { } ; if (ttsUrl === url) ttsUrl = '' ; settle() }
-          audio.onerror = () => { settle() }
+          audio.onended = settle
+          audio.onerror = settle
           audio.play().catch(() => {
             try {
-              const u = new (window as any).SpeechSynthesisUtterance(text.slice(0, 300))
-              u.lang = /[\u4e00-\u9fa5]/.test(text) ? 'zh-CN' : 'en-US'
+              const u = new (window as any).SpeechSynthesisUtterance(job.text.slice(0, 300))
+              u.lang = /[\u4e00-\u9fa5]/.test(job.text) ? 'zh-CN' : 'en-US'
               u.onend = settle
               u.onerror = settle
               ;(window as any).speechSynthesis.cancel()
               ;(window as any).speechSynthesis.speak(u)
             } catch (e) { settle() }
           })
-        }).catch(() => { finishTtsJob(job as TtsJob); ttsPlaying = false; playNextTts() })
-      } catch (e) { ttsPlaying = false; if (job) finishTtsJob(job) }
+        }).catch(() => {
+          if (ttsCurrentJob === job) ttsCurrentJob = null
+          finishTtsJob(job)
+          ttsPlaying = false
+          playNextTts()
+        })
+      } catch (e) {
+        if (ttsCurrentJob === job) ttsCurrentJob = null
+        ttsPlaying = false
+        finishTtsJob(job)
+        playNextTts()
+      }
     }
 
     // 音符表：覆盖 C3–E6（含升降号），与 data/melodies.json 实际用到的音名对齐
+    /** 民间故事标题在 culture 路由里是「书名·标题」拼一起的：拆开还原 C# TaleBubble 的拼法 */
+    function taleParts(rawTitle: string): { title: string; book: string } {
+      const t = String(rawTitle || '').trim()
+      const i = t.indexOf('·')
+      if (i > 0 && i < t.length - 1) return { book: t.slice(0, i), title: t.slice(i + 1) }
+      return { title: t, book: '' }
+    }
+    /** 正文换行/连续空白压成单空格（照 C# Culture.Collapse） */
+    function collapseText(raw: any): string {
+      return String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim()
+    }
     const NOTE_FREQ: any = {
       'C3': 130.81, 'C#3': 138.59, 'D3': 146.83, 'D#3': 155.56, 'E3': 164.81, 'F3': 174.61,
       'F#3': 185.00, 'G3': 196.00, 'G#3': 207.65, 'A3': 220.00, 'A#3': 233.08, 'B3': 246.94,
@@ -417,9 +510,12 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (dueTimerRef.current) return
         if (dueQueueRef.current.length === 0) return
         const item = dueQueueRef.current.shift()
-        showBubble('提醒：' + String(item.text || ''), 8000)
+        // 照 C# FishForm：气泡与朗读都用「主人，提醒你：」+ 正文；正文为空兜底「时间到了」
+        const body = String(item.text || '').trim() || '时间到了'
+        const line = '主人，提醒你：' + body
+        showBubble(line, 8000)
         animRef.current?.talkFor(3000)
-        try { speakText('提醒：' + String(item.text || '')) } catch (e) { }
+        try { speakText(line) } catch (e) { }
         dueTimerRef.current = setTimeout(() => {
           dueTimerRef.current = null
           pumpDueReminders()
@@ -470,9 +566,15 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (action === 'culture-tale') {
           fetch('/api/chubby-whale/culture?type=minsu').then((r: any) => r.json()).then((d: any) => {
             if (d && d.ok && d.item) {
-              showBubble(String(d.item.text || '').slice(0, 120) + '…', 9000)
+              // 照 C# Culture.TaleBubble：民间故事·标题（出自《书》）：前 120 字，只有真超长才加「…」
+              const tp = taleParts(d.item.title)
+              const body = collapseText(d.item.text)
+              const cut = body.length > 120
+              const shown = cut ? body.slice(0, 120) + '…' : body
+              showBubble('民间故事·' + tp.title + (tp.book ? '（出自《' + tp.book + '》）：' : '：') + shown, 9000)
               animRef.current?.talkFor(5000)
-              speakText('讲个民间故事——' + String(d.item.title || '') + '。' + String(d.item.text || '').slice(0, 6000), { rate: '-15%' })
+              // 照 C# Culture.TaleSpeech：标题 + 出处 + 整篇（超 6000 字才截），叙述一律 -15%
+              speakText('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body.slice(0, 6000), { rate: '-15%' })
             } else showBubble('故事没讲成')
           }).catch(() => showBubble('故事没讲成'))
           return
@@ -480,9 +582,12 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (action === 'culture-allusion') {
           fetch('/api/chubby-whale/culture?type=chengyu').then((r: any) => r.json()).then((d: any) => {
             if (d && d.ok && d.item) {
-              showBubble('《' + d.item.title + '》（' + (d.item.src || '') + '）' + String(d.item.text || '').slice(0, 100) + '…', 9000)
+              // 气泡：《标题》（出处）：讲解 —— 不超长就不加省略号
+              const body = collapseText(d.item.text)
+              const cut = body.length > 100
+              showBubble('《' + d.item.title + '》（' + (d.item.src || '') + '）：' + (cut ? body.slice(0, 100) + '…' : body), 9000)
               animRef.current?.talkFor(5000)
-              speakText('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + String(d.item.text || ''), { rate: '-15%' })
+              speakText('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + body, { rate: '-15%' })
             } else showBubble('典故没讲成')
           }).catch(() => showBubble('典故没讲成'))
           return
@@ -492,7 +597,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (d && d.ok && d.item) {
               showBubble(d.item.title + '：' + String(d.item.text || '').slice(0, 100), 8000)
               const sp = String(d.item.title || '') + '：' + String(d.item.text || '')
-              speakText(sp, { rate: sp.length >= 80 ? '-15%' : '+0%' })
+              // 成语辨析属叙述：一律 -15%，不再按长度改语速
+              speakText(sp, { rate: '-15%' })
             } else showBubble('没查到')
           }).catch(() => showBubble('没查到'))
           return
@@ -590,7 +696,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 const d = await res.json()
                 const reply = (d && d.reply) || '这条鱼看不懂这张图……'
                 showBubble('（看图）' + reply, 10000)
-                speakText(reply)
+                // 聊天回复：长回复（≥80 字）按叙述 -15%，短句正常语速
+                speakText(reply, { rate: reply.length >= 80 ? '-15%' : '+0%' })
               } catch (e) { showBubble('图片处理失败', 4000) }
             }
             input.click()
@@ -685,7 +792,13 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         } finally {
           setBusy(false)
           animRef.current?.talkFor(1500)
-          try { if (data && data.reply) speakText(data.reply) } catch { }
+          // 聊天回复：长回复（≥80 字）按 C# 自动切叙述语调 -15%，短句 +0%
+          try {
+            if (data && data.reply) {
+              const rp = String(data.reply)
+              speakText(rp, { rate: rp.length >= 80 ? '-15%' : '+0%' })
+            }
+          } catch { }
           scrollBody()
         }
       }

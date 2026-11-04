@@ -2,9 +2,25 @@
  * shared/time.ts —— 提醒口语时间解析（照 C# Reminders.cs 的 ParseDue / CleanText）
  * 纯函数，浏览器端调用、Node 端可单元验证。
  * 支持：9点 / 9:30 / 9点半 / 今天9点 / 明天9点 / 后天9点 /
+ *       上午9点 / 下午3点 / 中午12点 / 晚上8点 / 凌晨1点 /
  *       半小时后 / 20分钟后 / 一小时后 / 2小时后 / 2026-11-04 09:00 / 每天9点
  */
 const DAY_MS = 86400000;
+/**
+ * 时段词 → 24 小时制（照汉语口语习惯）：
+ *   下午 / 傍晚 / 晚上 → +12；下午12点 = 12:00，晚上12点 = 00:00（当天已过 → 顺延次日）
+ *   中午 → 12 点方向：中午12点 = 12:00，中午1点 = 13:00，中午11点仍是 11:00
+ *   凌晨 / 早上 / 上午 → 原值（上午9点 = 09:00）
+ */
+function applyPeriod(hour, word) {
+    if (word === '下午')
+        return hour === 12 ? 12 : (hour < 12 ? hour + 12 : hour);
+    if (word === '傍晚' || word === '晚上')
+        return hour === 12 ? 0 : (hour < 12 ? hour + 12 : hour);
+    if (word === '中午')
+        return hour < 10 ? hour + 12 : hour;
+    return hour;
+}
 /** 去掉「提醒我 / 叫我 / 记得」这类前缀和首尾标点 */
 export function cleanReminderText(raw) {
     let t = String(raw || '').trim();
@@ -62,12 +78,16 @@ export function parseDue(raw, now = new Date()) {
         const hours = Math.max(1, Math.min(24 * 7, Number(m[1]) || 1));
         return done(new Date(base.getTime() + hours * 3600000), src.replace(m[0], '').trim());
     }
-    // 3) 今天/明天/后天 + 9点 / 9:30 / 9点半
+    // 3) 时段词 + 今天/明天/后天 + 9点 / 9:30 / 9点半
     const day = src.match(/(今天|明天|后天)/);
     const clock = src.match(/(\d{1,2})\s*(?:点|:|：)\s*(半|\d{2})?/);
     if (clock) {
-        const h = Number(clock[1]);
-        if (Number.isFinite(h) && h >= 0 && h <= 23) {
+        const rawH = Number(clock[1]);
+        if (Number.isFinite(rawH) && rawH >= 0 && rawH <= 23) {
+            // 时段词必须紧挨在钟点前面（「明天下午3点」）；正文里的「晚上吃药」不参与换算
+            const before = typeof clock.index === 'number' ? src.slice(0, clock.index) : '';
+            const pm = before.match(/(凌晨|早上|上午|中午|下午|傍晚|晚上)[\s，,]*$/);
+            const h = applyPeriod(rawH, pm ? pm[1] : '');
             let minute = 0;
             const mm = clock[2] || '';
             if (mm === '半')
@@ -84,9 +104,14 @@ export function parseDue(raw, now = new Date()) {
             }
             target.setHours(h, minute, 0, 0);
             // 没说「今天/明天/后天」且时间已过 → 顺延到明天
+            // （晚上12点 = 00:00 今天已过 → 次日 00:00，正是想要的行为）
             if (!day && target.getTime() <= base.getTime())
                 target = new Date(target.getTime() + DAY_MS);
             let stripped = src.replace(clock[0], '').trim();
+            // 时段词与钟点一起算时间，也从正文里一起删掉
+            if (pm && typeof pm.index === 'number') {
+                stripped = (stripped.slice(0, pm.index) + stripped.slice(pm.index + pm[1].length)).trim();
+            }
             if (day)
                 stripped = stripped.replace(day[1], '').trim();
             return done(target, stripped);
