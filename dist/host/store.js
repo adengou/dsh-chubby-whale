@@ -277,12 +277,31 @@ export function createStore(dataDir) {
         }
         catch { }
     }
+    /** 跨天/跨月把"今日/本月"清零（总量 totalTokens 不动，照 C# 的 date/month 滚动） */
+    function rollFishfood(f) {
+        const now = new Date();
+        const day = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+        const month = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        if (f.day !== day) {
+            f.day = day;
+            f.chatTokens = 0;
+            f.storyTokens = 0;
+            f.dayTokens = 0;
+        }
+        if (f.month !== month) {
+            f.month = month;
+            f.monthTokens = 0;
+        }
+    }
     function addTokens(kind, n) {
         const f = loadFishfood();
+        rollFishfood(f);
         if (kind === 'story')
             f.storyTokens = (Number(f.storyTokens) || 0) + n;
         else
             f.chatTokens = (Number(f.chatTokens) || 0) + n;
+        f.totalTokens = (Number(f.totalTokens) || 0) + n;
+        f.monthTokens = (Number(f.monthTokens) || 0) + n;
         saveFishfood(f);
         return f;
     }
@@ -401,6 +420,7 @@ export function createStore(dataDir) {
         const p = tickPet();
         p.feeds = (Number(p.feeds) || 0) + 1;
         p.hunger = Math.max(0, (Number(p.hunger) || 0) - 30);
+        p.intimacy = Math.min(100, (Number(p.intimacy) || 0) + 2); // 照 C#：喂食亲密 +2
         p.mood = 'happy';
         savePet(p);
         return p;

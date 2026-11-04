@@ -36,10 +36,18 @@ export function createAsrHandler(opts) {
                 body = {};
             }
             const audioB64 = typeof body?.audio === 'string' ? body.audio : '';
-            const format = typeof body?.format === 'string' ? body.format : 'webm';
+            // format 会被拼进 multipart 头，必须白名单，否则可 CRLF 注入伪造表单段
+            const rawFormat = typeof body?.format === 'string' ? body.format : 'webm';
+            const format = /^(webm|wav|mp3)$/.test(rawFormat) ? rawFormat : 'webm';
             if (!audioB64) {
                 res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
                 res.end(JSON.stringify({ ok: false, error: 'empty audio' }));
+                return;
+            }
+            // base64 合法性：非法字符解码成空 buffer，会让所有坏音频共用同一个缓存 key
+            if (!/^[A-Za-z0-9+/=\r\n]+$/.test(audioB64)) {
+                res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
+                res.end(JSON.stringify({ ok: false, error: 'bad base64', text: '' }));
                 return;
             }
             // 先判 base64 长度（content-length 缺失时的兜底），再解码

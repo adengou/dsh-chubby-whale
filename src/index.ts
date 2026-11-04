@@ -111,7 +111,7 @@ export function apply(ctx: any, config?: any): void {
     loadState: store.loadState,
     loadGrowth: store.loadGrowth,
     loadFishfood: store.loadFishfood,
-    loadPet: store.loadPet,
+    loadPet: () => store.tickPet(),   // 读取时结算饥饿/离线时长（照 C#）
     feedPet: store.feedPet,
     clearMemory: store.clearMemory,
   })
