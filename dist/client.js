@@ -476,7 +476,6 @@
   var HARD_QUIET_MS = 450;
   var MIN_SPEECH_MS = 180;
   var TIMESLICE_MS = 250;
-  var SILENT_PEAK_DB = -45;
   var ECHO_MUTE_MS = 700;
   var ASR_TIMEOUT_MS = 15e3;
   var TTS_TIMEOUT_MS = 2e4;
@@ -503,6 +502,7 @@
       ttsFail: 0,
       ttsZombie: 0,
       lastError: "",
+      lastPeak: 0,
       timing: { endpointMs: 0, windowMs: 0, asrMs: 0, bytes: 0 }
     };
     let status = "idle";
@@ -528,6 +528,7 @@
     let speechMs = 0;
     let quietMs = 0;
     let floorDb = -70;
+    let gateDb = -50;
     let tickTimer = null;
     let pendingSpec = null;
     let lastText = "";
@@ -572,6 +573,11 @@
         if (floorDb < -95) floorDb = -95;
         if (floorDb > -25) floorDb = -25;
         const onTh = Math.min(-40, Math.max(-55, floorDb + 8));
+        gateDb = onTh;
+        try {
+          stats.gateDb = Math.round(onTh);
+        } catch (e) {
+        }
         if (db > (muted ? 0 : onTh)) {
           speechMs += 60;
           quietMs = 0;
@@ -614,7 +620,8 @@
       stats.timing.windowMs = winMs;
       stats.timing.endpointMs = endpointMs;
       stats.timing.bytes = blob.size;
-      if (segPeak < SILENT_PEAK_DB) {
+      stats.lastPeak = Math.round(segPeak);
+      if (segPeak < gateDb) {
         stats.skippedSilent++;
         return;
       }
@@ -1976,7 +1983,7 @@
                 showBubble("\u8BED\u97F3\u6A21\u5757\u8FD8\u6CA1\u8D77\u6765\uFF08\u8BED\u97F3\u5F85\u547D\u53EF\u80FD\u662F\u5173\u7684\uFF09", 6e3);
                 return;
               }
-              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.segments + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\uFF5C\u9884\u63D0\u4EA4 " + st.speculative + "\uFF0F\u64A4\u9500 " + st.cancelSpec + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + "\n\u8017\u65F6\uFF1A\u7B49\u7A97\u53E3 " + (st.timing && st.timing.windowMs || 0) + "ms\uFF5C\u8BC6\u522B " + (st.timing && st.timing.asrMs || 0) + "ms\uFF5C\u5BF9\u8BDD " + (window.__chubbyWhale.latMs || 0) + "ms" + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
+              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.segments + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\uFF5C\u9884\u63D0\u4EA4 " + st.speculative + "\uFF0F\u64A4\u9500 " + st.cancelSpec + "\n\u672C\u6BB5\uFF1A\u5CF0\u503C " + (st.lastPeak || 0) + "dB\uFF5C\u95E8\u9650 " + (st.gateDb || 0) + "dB\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + "\n\u8017\u65F6\uFF1A\u7B49\u7A97\u53E3 " + (st.timing && st.timing.windowMs || 0) + "ms\uFF5C\u8BC6\u522B " + (st.timing && st.timing.asrMs || 0) + "ms\uFF5C\u5BF9\u8BDD " + (window.__chubbyWhale.latMs || 0) + "ms" + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
               showBubble(line, 15e3);
               try {
                 navigator.clipboard.writeText(JSON.stringify(st));

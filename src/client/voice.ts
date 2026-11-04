@@ -50,6 +50,9 @@ export type VoiceStats = {
   ttsFail: number
   ttsZombie: number
   lastError: string
+  /** 最近一段的峰值 dBFS（判断"是不是被判成静音"） */
+  lastPeak: number
+  gateDb?: number
   timing: VoiceTiming
 }
 
@@ -103,6 +106,7 @@ export function createVoice(opts: VoiceOptions): Voice {
     segments: 0, skippedSilent: 0, speculative: 0, cancelSpec: 0, uploaded: 0,
     asrFail: 0, asrTexts: 0, heard: 0, echoDropped: 0,
     ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
+    lastPeak: 0,
     timing: { endpointMs: 0, windowMs: 0, asrMs: 0, bytes: 0 },
   }
 
@@ -131,6 +135,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   let speechMs = 0
   let quietMs = 0
   let floorDb = -70
+  let gateDb = -50   // 本段整段门限（= 起判阈值，跟着环境噪声走）
   let tickTimer: any = null
   let pendingSpec: { blob: Blob; at: number } | null = null
 
@@ -181,6 +186,8 @@ export function createVoice(opts: VoiceOptions): Voice {
       if (floorDb < -95) floorDb = -95
       if (floorDb > -25) floorDb = -25
       const onTh = Math.min(-40, Math.max(-55, floorDb + 8))
+      gateDb = onTh   // 整段门限跟随同一起判阈值，避免"起判通过、整段被丢"
+      try { stats.gateDb = Math.round(onTh) } catch (e) { }
 
       if (db > (muted ? 0 : onTh)) { speechMs += 60; quietMs = 0 }
       else { quietMs += 60 }
@@ -225,7 +232,8 @@ export function createVoice(opts: VoiceOptions): Voice {
     stats.timing.windowMs = winMs
     stats.timing.endpointMs = endpointMs
     stats.timing.bytes = blob.size
-    if (segPeak < SILENT_PEAK_DB) { stats.skippedSilent++; return }
+    stats.lastPeak = Math.round(segPeak)
+    if (segPeak < gateDb) { stats.skippedSilent++; return }   // 与起判统一：起判能过的话，整段就不该被判静音
     if (Date.now() < mutedUntil) { stats.skippedSilent++; return }
     if (blob.size < 1200) { stats.skippedSilent++; return }
 
