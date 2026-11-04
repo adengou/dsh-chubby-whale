@@ -1,47 +1,66 @@
 /**
- * client/voice.ts —— 语音模块（从零重写，替代原来的 VAD + WebSpeech + 通道 + 朗读队列）
+ * client/voice.ts —— 语音模块（2026-11 算法级重写）
  *
- * 设计原则（每一条都是被之前的 bug 教育的）：
- *   ① 只有一个状态机：idle → listening → recognizing → thinking → speaking → idle
- *      状态转移只有一处在改，杜绝"标志卡住没人清"
- *   ② 录音不靠"判句"：固定 6 秒窗口，窗口结束就上传；
- *      只在"已检测到说话且安静 400ms"时提前收尾（把它当加速，不当必要条件）
- *   ③ 每段必带电平信息：整段峰值 < -50dBFS 直接丢，不浪费识别额度
- *   ④ 所有网络请求都有硬超时（ASR 15s / TTS 20s / 对话由调用方负责）
- *   ⑤ 朗读队列有看门狗：不依赖 onended 回调，按音频元素真实状态复位
- *   ⑥ 回声防护三层：TTS 期间物理闭麦 + 说完 700ms 静音窗 + 文本回声比对
- *   ⑦ 每个可能"静默失败"的地方都有计数（stats），出问题看数字就知道卡在哪
+ * 参考算法：https://gitee.com/adengou/linyu → tools/asr-listener.ps1（MaxMs / SilenceMs / SilenceGate）
+ *
+ * 与上一版的区别（都是算法层面，不是调参）：
+ *
+ *   ① 采集与识别**彻底解耦**
+ *      上一版：停录 → await 识别 → 才重启录音（识别那 1~2 秒里说的话全丢）
+ *      现在：录音器常开（timeslice 250ms 滚动缓冲），每段用「webm 头部 + 本段数据块」拼装，
+ *            识别 / 对话 / 朗读 与下一段采集完全并行，主人可以连着说。
+ *
+ *   ② 两段式静音判停（原来是单阈值绝对静音时长，句尾换气就拖到最长窗口）
+ *      · 抖动窗 SOFT_QUIET=300ms：疑似说完 → 先把这段**预提交**（speculative）
+ *      · 确认窗 HARD_QUIET=450ms：仍无起声 → 正式提交；期间又说话 → 撤销预提交继续录
+ *      因为采集常开，误切也不丢字（最坏把一句切成两段）。
+ *
+ *   ③ 首段朗读更短：首段 16 字先合成先开口（原始 C# 版是 14 字），后面 90 字边播边合成。
+ *
+ *   ④ 自适应起判阈值：跟随环境噪声，夹在 -55…-40，避免小声说话被判静音而跑满窗口。
+ *
+ *   ⑤ 所有请求硬超时；朗读看门狗不依赖 onended；每一环都有计数与耗时。
  */
 
 export type VoiceStatus = 'idle' | 'listening' | 'recognizing' | 'thinking' | 'speaking'
 
+export type VoiceTiming = {
+  /** 从"疑似说完"到正式提交的等待（越小越跟得上） */
+  endpointMs: number
+  /** 本段采集时长 */
+  windowMs: number
+  /** 识别耗时 */
+  asrMs: number
+  /** 本段音频字节数 */
+  bytes: number
+}
+
 export type VoiceStats = {
-  windows: number          // 录过多少段
-  skippedSilent: number    // 因太安静被丢
-  uploaded: number         // 上传次数
-  asrFail: number          // 识别失败
-  asrTexts: number         // 识别出文字的段数
-  heard: number            // 通过过滤、真正交给上层的
-  echoDropped: number      // 被回声/重复过滤掉
-  ttsRequests: number      // 朗读请求数
-  ttsPlayed: number        // 真正开始播放
-  ttsFail: number          // 合成/播放失败
-  ttsZombie: number        // 僵尸复位次数
+  segments: number
+  skippedSilent: number
+  speculative: number
+  cancelSpec: number
+  uploaded: number
+  asrFail: number
+  asrTexts: number
+  heard: number
+  echoDropped: number
+  ttsRequests: number
+  ttsPlayed: number
+  ttsFail: number
+  ttsZombie: number
   lastError: string
-  /** 每段耗时：等窗口多久 / 识别多久（判断"为什么回答慢"用） */
-  timing: { windowMs: number; asrMs: number }
+  timing: VoiceTiming
 }
 
 export type VoiceOptions = {
-  /** 识别到一句有效的话（已过滤回声/重复/黑名单） */
+  /** 识别到一句有效的话（已过滤回声/重复/噪声） */
   onHeard: (text: string) => void
-  /** 状态变化（用来显示「在听…/在想…/在说…」） */
+  /** 状态变化 */
   onStatus?: (s: VoiceStatus) => void
-  /** 诊断信息（失败原因等） */
+  /** 启动失败等诊断 */
   onDiag?: (d: any) => void
-  /** 接口前缀，默认 /api/chubby-whale */
   apiBase?: string
-  /** 说话人音色 */
   voiceName?: string
 }
 
@@ -49,7 +68,6 @@ export type Voice = {
   start: () => Promise<void>
   stop: () => void
   speaking: () => boolean
-  recognizing: () => boolean
   speak: (text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }) => void
   stopSpeaking: () => void
   setVoiceName: (name: string) => void
@@ -58,37 +76,39 @@ export type Voice = {
   status: () => VoiceStatus
 }
 
-// ---- 参数对齐 C# 版 tools/asr-listener.ps1（MaxMs=6000, SilenceMs=700, SilenceGate=600）----
-// 参考仓库：https://gitee.com/adengou/linyu  →  tools/asr-listener.ps1
-//   原始语义：连续采集 → 静音 700ms 判说完 → 最长 6000ms
-//   丢弃条件：时长 < 400ms 或 峰值 < SilenceGate(600/32768 ≈ -34.7 dBFS)
-const WINDOW_MS = 4500           // MaxMs（原来 6000：等得更久）
-const EARLY_STOP_QUIET = 500     // SilenceMs（原来 700：多说 200ms 就收尾）
-const MIN_SPEECH_MS = 200        // 原来 400：短句也要能触发收尾
-const SILENT_PEAK_DB = -42       // 原来 -35：麦克风小声时整段被误判为静音
-const ECHO_MUTE_MS = 700         // 朗读结束后继续静音的时间
+// ---- 参数（注释里标出原始 C# 版对应值）----
+const MAX_SEG_MS = 6000          // MaxMs = 6000
+const SOFT_QUIET_MS = 300        // 抖动窗：疑似说完
+const HARD_QUIET_MS = 450        // 确认窗（原 SilenceMs = 700）
+const MIN_SPEECH_MS = 180        // 一段里至少这么多"像说话"
+const TIMESLICE_MS = 250         // 滚动缓冲粒度
+const SILENT_PEAK_DB = -45       // 整段峰值低于此值 = 没人说话（原 SilenceGate ≈ -34.7，放宽以适配小声）
+const ECHO_MUTE_MS = 700
 const ASR_TIMEOUT_MS = 15000
 const TTS_TIMEOUT_MS = 20000
-const TTS_SEG_MAX = 90           // 一段朗读最多多少字
-const TTS_WATCH_MS = 1000        // 朗读看门狗间隔
-const TTS_ZOMBIE_MS = 2500       // 这么久没在播就复位
+const TTS_FIRST_MAX = 16         // 首段 16 字先开口
+const TTS_SEG_MAX = 90
+const TTS_WATCH_MS = 1000
+const TTS_ZOMBIE_MS = 2500
 
-/** 识别服务常把静音/气口编成的词，一律当噪声 */
 const NOISE_TEXTS = ['嗯', '呃', '啊', '哦', '嗯嗯', '谢谢观看', '谢谢大家', '字幕', '请不吝点赞', '订阅', '转发', '打赏', '再见', '本鱼在听', '嗯本鱼在听']
+
+type Job = { text: string; rate: string; narration: boolean; onDone?: () => void }
 
 export function createVoice(opts: VoiceOptions): Voice {
   const apiBase = opts.apiBase || '/api/chubby-whale'
   let voiceName = opts.voiceName || 'zh-CN-XiaoyiNeural'
 
   const stats: VoiceStats = {
-    windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrTexts: 0, heard: 0,
-    echoDropped: 0, ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
-    timing: { windowMs: 0, asrMs: 0 },
+    segments: 0, skippedSilent: 0, speculative: 0, cancelSpec: 0, uploaded: 0,
+    asrFail: 0, asrTexts: 0, heard: 0, echoDropped: 0,
+    ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
+    timing: { endpointMs: 0, windowMs: 0, asrMs: 0, bytes: 0 },
   }
 
   // ---- 状态机 ----
   let status: VoiceStatus = 'idle'
-  function setStatus(s: VoiceStatus): void {
+  const setStatus = (s: VoiceStatus) => {
     if (status === s) return
     status = s
     try { opts.onStatus && opts.onStatus(s) } catch (e) { }
@@ -98,29 +118,28 @@ export function createVoice(opts: VoiceOptions): Voice {
   let stream: MediaStream | null = null
   let actx: AudioContext | null = null
   let analyser: AnalyserNode | null = null
-  let rec: MediaRecorder | null = null
   let timeBuf: Float32Array | null = null
   let running = false
   let muted = false
+  let rec: MediaRecorder | null = null
+  let headerBlob: Blob | null = null                 // webm 头：每段都必须带上
+  let buf: Array<{ t: number; b: Blob }> = []        // 滚动缓冲（录音器常开）
 
-  // ---- 一段录音的状态 ----
-  let parts: Blob[] = []
-  let winPeak = -160
+  // ---- 当前段 ----
+  let segStart = 0
+  let segPeak = -160
   let speechMs = 0
   let quietMs = 0
-  let winStart = 0
-  let floorDb = -70   // 自适应噪声底
-  let winMsForStat = 0
+  let floorDb = -70
   let tickTimer: any = null
-  let restartTimer: any = null
+  let pendingSpec: { blob: Blob; at: number } | null = null
 
-  // ---- 过滤状态 ----
+  // ---- 过滤 ----
   let lastText = ''
   let lastTextAt = 0
   const spokenRecent: Array<{ text: string; at: number }> = []
 
   // ---- 朗读 ----
-  type Job = { text: string; rate: string; narration: boolean; onDone?: () => void }
   const ttsQ: Job[] = []
   let ttsBusy = false
   let ttsAudio: HTMLAudioElement | null = null
@@ -129,7 +148,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   let mutedUntil = 0
   let speakToken = 0
 
-  const level = () => {
+  function level(): number {
     if (!analyser || !timeBuf) return -160
     analyser.getFloatTimeDomainData(timeBuf as any)
     let sum = 0
@@ -142,52 +161,58 @@ export function createVoice(opts: VoiceOptions): Voice {
     try { if (stream) stream.getAudioTracks().forEach((t) => { t.enabled = on }) } catch (e) { }
   }
 
-  function scheduleNext(ms: number): void {
-    if (!running) return
-    if (restartTimer) clearTimeout(restartTimer)
-    restartTimer = setTimeout(() => { restartTimer = null; beginWindow() }, ms)
+  /** 用「webm 头 + 本段数据块」拼出可独立解码的一段 */
+  function buildSegment(fromT: number, toT: number): Blob | null {
+    if (!headerBlob) return null
+    const picked = buf.filter((x) => x.t >= fromT && x.t <= toT).map((x) => x.b)
+    if (!picked.length) return null
+    return new Blob([headerBlob, ...picked], { type: 'audio/webm' })
   }
 
-  function beginWindow(): void {
-    if (!running || !rec) return
-    try {
-      if (rec.state !== 'inactive') { try { rec.stop() } catch (e) { } scheduleNext(200); return }
-      parts = []
-      winPeak = -160
-      speechMs = 0
-      quietMs = 0
-      winStart = performance.now()
-      rec.start()
-      scheduleNext(0)  // 占位：下面立刻换成 tick 循环
-      if (restartTimer) { clearTimeout(restartTimer); restartTimer = null }
-      tick()
-    } catch (e: any) {
-      stats.lastError = 'beginWindow: ' + String(e && e.name)
-      scheduleNext(1000)
-    }
-  }
-
+  // ---- 判停主循环 ----
   function tick(): void {
-    if (!running || !rec || rec.state !== 'recording') return
+    if (!running) return
     try {
       const db = level()
-      if (db > winPeak) winPeak = db
-      const now = performance.now()
-      const elapsed = now - winStart
-      // 自适应噪声底：说话声不能把底噪带高（只在明显低于底噪时跟随）
+      if (db > segPeak) segPeak = db
+      // 自适应噪声底：说话声不会把底噪带高
       if (db < floorDb) floorDb = floorDb * 0.8 + db * 0.2
       else if (db < floorDb + 6) floorDb = floorDb * 0.98 + db * 0.02
       if (floorDb < -95) floorDb = -95
       if (floorDb > -25) floorDb = -25
-      const onTh = Math.min(-40, Math.max(-55, floorDb + 8))   // 起判阈值夹在 -55…-40
-      if (db > (muted ? 0 : onTh)) { speechMs += 60; quietMs = 0 } else { quietMs += 60 }
-      const earlyStop = speechMs >= MIN_SPEECH_MS && quietMs >= EARLY_STOP_QUIET
-      const tooLong = elapsed >= WINDOW_MS
-      if (earlyStop || tooLong) {
-        try { rec.stop() } catch (e) { }
-        try { opts.onDiag && opts.onDiag({ stage: 'window-end', why: earlyStop ? 'quiet' : 'timeout', peak: Math.round(winPeak), speechMs }) } catch (e) { }
-        return   // onstop 里继续
+      const onTh = Math.min(-40, Math.max(-55, floorDb + 8))
+
+      if (db > (muted ? 0 : onTh)) { speechMs += 60; quietMs = 0 }
+      else { quietMs += 60 }
+
+      const now = performance.now()
+      const elapsed = now - segStart
+
+      // ① 抖动窗：预提交（先拼好音频，暂不上传）
+      if (!pendingSpec && speechMs >= MIN_SPEECH_MS && quietMs >= SOFT_QUIET_MS) {
+        const blob = buildSegment(segStart, now)
+        if (blob) { pendingSpec = { blob, at: now }; stats.speculative++ }
       }
+
+      // ② 确认窗：正式提交（采集不中断）
+      const confirmed = quietMs >= HARD_QUIET_MS && speechMs >= MIN_SPEECH_MS
+      const overflow = elapsed >= MAX_SEG_MS
+      if (confirmed || overflow) {
+        const blob = pendingSpec ? pendingSpec.blob : buildSegment(segStart, now)
+        const winMs = Math.round(now - segStart)
+        const endpointMs = Math.round(quietMs)
+        pendingSpec = null
+        segStart = now
+        segPeak = -160
+        speechMs = 0
+        quietMs = 0
+        if (blob) void handleSegment(blob, winMs, endpointMs)
+      } else if (pendingSpec && quietMs < SOFT_QUIET_MS) {
+        // 说话又接上：撤销预提交，同一段继续录
+        pendingSpec = null
+        stats.cancelSpec++
+      }
+
       tickTimer = setTimeout(tick, 60)
     } catch (e: any) {
       stats.lastError = 'tick: ' + String(e && e.name)
@@ -195,25 +220,28 @@ export function createVoice(opts: VoiceOptions): Voice {
     }
   }
 
-  async function onWindowDone(blob: Blob): Promise<void> {
-    stats.windows++
-    // 太安静：直接丢（识别服务对静音会编词，浪费钱还制造幻觉）
-    if (winPeak < SILENT_PEAK_DB) { stats.skippedSilent++; scheduleNext(150); return }
-    if (Date.now() < mutedUntil) { stats.skippedSilent++; scheduleNext(150); return }
-    if (blob.size < 1200) { stats.skippedSilent++; scheduleNext(150); return }
+  async function handleSegment(blob: Blob, winMs: number, endpointMs: number): Promise<void> {
+    stats.segments++
+    stats.timing.windowMs = winMs
+    stats.timing.endpointMs = endpointMs
+    stats.timing.bytes = blob.size
+    if (segPeak < SILENT_PEAK_DB) { stats.skippedSilent++; return }
+    if (Date.now() < mutedUntil) { stats.skippedSilent++; return }
+    if (blob.size < 1200) { stats.skippedSilent++; return }
 
     stats.uploaded++
+    const t0 = performance.now()
     setStatus('recognizing')
     try {
       const b64 = await blobToBase64(blob)
       if (!b64) { stats.asrFail++; stats.lastError = 'b64-empty'; return }
-      const res = await fetchWithTimeout(apiBase + '/asr', {
+      const res = await fetchTimeout(apiBase + '/asr', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ audio: b64, format: 'webm' }),
       }, ASR_TIMEOUT_MS)
       const data = await res.json()
-      stats.timing.asrMs = Math.round(performance.now() - asrT0)
+      stats.timing.asrMs = Math.round(performance.now() - t0)
       if (!data || !data.ok) { stats.asrFail++; stats.lastError = 'asr: ' + String((data && data.error) || 'failed'); return }
       const text = String(data.text || '').trim()
       if (!text) return
@@ -230,17 +258,14 @@ export function createVoice(opts: VoiceOptions): Voice {
       stats.lastError = 'asr-ex: ' + String((e && e.name) || e)
     } finally {
       if (status === 'recognizing') setStatus('listening')
-      scheduleNext(150)
     }
   }
 
-  /** 过滤：静音噪声 / 自身回声 / 短时间重复 */
   function acceptText(text: string): boolean {
     const plain = text.replace(/[\s。，！？,.!?、…~～]/g, '')
     if (plain.length < 2) return false
     if (NOISE_TEXTS.indexOf(plain) >= 0) return false
     if (/^本鱼在听/.test(plain)) return false
-    // 自己刚说过的话（回声）
     const now = Date.now()
     for (const s of spokenRecent) {
       if (now - s.at > 15000) continue
@@ -264,44 +289,44 @@ export function createVoice(opts: VoiceOptions): Voice {
   }
 
   // ---- 朗读 ----
-  function ttsWatchdog(): void {
+  function watchdog(): void {
     try {
-      if (ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0) return
       if (!ttsBusy) return
+      const alive = ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0
+      if (alive) return
       if (Date.now() - ttsBusySince < TTS_ZOMBIE_MS) return
-      // 僵尸：标志说在播，但音频元素早就停了 → 复位，继续下一段
       stats.ttsZombie++
       try { if (ttsAudio) { ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }
       ttsAudio = null
       ttsBusy = false
-      pumpTts()
+      pump()
     } catch (e) { }
   }
 
-  function pumpTts(): void {
+  function pump(): void {
     if (ttsBusy) return
     const job = ttsQ.shift()
     if (!job) { setStatus('listening'); return }
     ttsBusy = true
     ttsBusySince = Date.now()
-    const myToken = ++speakToken
+    const token = ++speakToken
     setStatus('speaking')
-    micOn(false)                     // 出声即闭麦
+    micOn(false)
     stats.ttsRequests++
-    fetchWithTimeout(apiBase + '/tts', {
+    fetchTimeout(apiBase + '/tts', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: job.text, voice: voiceName }),
     }, TTS_TIMEOUT_MS).then((r) => {
       if (!r.ok) throw new Error('tts-http-' + r.status)
       return r.arrayBuffer()
-    }).then((buf) => {
-      if (myToken !== speakToken) { ttsBusy = false; return }
-      const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
+    }).then((ab) => {
+      if (token !== speakToken) { ttsBusy = false; return }
+      const url = URL.createObjectURL(new Blob([ab], { type: 'audio/mpeg' }))
       const a = new Audio(url)
       ttsAudio = a
-      const finish = () => {
-        if (myToken !== speakToken) { try { URL.revokeObjectURL(url) } catch (e) { } return }
+      const done = () => {
+        if (token !== speakToken) { try { URL.revokeObjectURL(url) } catch (e) { } return }
         try { a.onended = null; a.onerror = null } catch (e) { }
         try { URL.revokeObjectURL(url) } catch (e) { }
         ttsAudio = null
@@ -309,39 +334,48 @@ export function createVoice(opts: VoiceOptions): Voice {
         mutedUntil = Date.now() + ECHO_MUTE_MS
         setTimeout(() => { if (!ttsBusy && !muted) micOn(true) }, ECHO_MUTE_MS)
         try { job.onDone && job.onDone() } catch (e) { }
-        pumpTts()
+        pump()
       }
-      a.onended = finish
-      a.onerror = finish
+      a.onended = done
+      a.onerror = done
       stats.ttsPlayed++
-      a.play().catch(() => {
-        stats.ttsFail++
-        finish()
-      })
+      a.play().catch(() => { stats.ttsFail++; done() })
     }).catch((e: any) => {
       stats.ttsFail++
       stats.lastError = 'tts: ' + String((e && e.name) || e)
       ttsBusy = false
       micOn(true)
-      pumpTts()
+      pump()
     })
   }
 
-  function splitText(text: string, max: number): string[] {
-    const clean = text.replace(/\s+/g, ' ').trim()
+  /** 首段 16 字先开口，其余 90 字切（边播边合成） */
+  function splitForSpeech(text: string): string[] {
+    const clean = String(text || '').replace(/\s+/g, ' ').trim()
     if (!clean) return []
-    if (clean.length <= max) return [clean]
     const out: string[] = []
-    let cur = ''
-    for (const ch of clean) {
-      cur += ch
-      if (cur.length >= max || /[。！？!?；;]/.test(ch)) { out.push(cur.trim()); cur = '' }
+    let rest = clean
+    if (rest.length > TTS_FIRST_MAX) {
+      let cut = -1
+      for (let i = 0; i < Math.min(TTS_FIRST_MAX, rest.length); i++) {
+        if (/[。！？!?；;，,]/.test(rest[i])) cut = i + 1
+      }
+      if (cut <= 0) cut = TTS_FIRST_MAX
+      out.push(rest.slice(0, cut).trim())
+      rest = rest.slice(cut).trim()
     }
-    if (cur.trim()) out.push(cur.trim())
+    while (rest.length > TTS_SEG_MAX) {
+      let cut = -1
+      for (let i = 0; i < TTS_SEG_MAX; i++) if (/[。！？!?；;]/.test(rest[i])) cut = i + 1
+      if (cut <= 0) cut = TTS_SEG_MAX
+      out.push(rest.slice(0, cut).trim())
+      rest = rest.slice(cut).trim()
+    }
+    if (rest) out.push(rest)
     return out.filter(Boolean)
   }
 
-  async function blobToBase64(blob: Blob): Promise<string> {
+  function blobToBase64(blob: Blob): Promise<string> {
     return new Promise((resolve) => {
       try {
         const fr = new FileReader()
@@ -354,7 +388,7 @@ export function createVoice(opts: VoiceOptions): Voice {
     })
   }
 
-  async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
+  async function fetchTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
     const timer = ctl ? setTimeout(() => { try { ctl.abort() } catch (e) { } }, ms) : null
     try {
@@ -364,7 +398,7 @@ export function createVoice(opts: VoiceOptions): Voice {
     }
   }
 
-  // ---- 对外接口 ----
+  // ---- 对外 ----
   async function start(): Promise<void> {
     if (running) return
     running = true
@@ -382,20 +416,28 @@ export function createVoice(opts: VoiceOptions): Voice {
       analyser.smoothingTimeConstant = 0
       timeBuf = new Float32Array(1024)
       src.connect(analyser)
-      rec = new MediaRecorder(stream)
-      rec.ondataavailable = (e: BlobEvent) => { if (e.data && e.data.size > 0) parts.push(e.data) }
-      rec.onstop = () => {
-        const blob = new Blob(parts, { type: 'audio/webm' })
-        parts = []
-        void onWindowDone(blob)
+
+      // 录音器常开：采集与识别解耦（每 250ms 一块进滚动缓冲）
+      rec = new MediaRecorder(stream, { audioBitsPerSecond: 32000 } as any)
+      rec.ondataavailable = (e: any) => {
+        if (!e || !e.data || e.data.size === 0) return
+        if (!headerBlob) { headerBlob = e.data; return }
+        buf.push({ t: performance.now(), b: e.data })
+        while (buf.length > 240) buf.shift()
       }
-      rec.onerror = (e: any) => { stats.lastError = 'recorder: ' + String(e && e.error && e.error.name) ; scheduleNext(800) }
+      rec.onerror = (e: any) => { stats.lastError = 'recorder: ' + String(e && e.error && e.error.name) }
+      rec.start(TIMESLICE_MS)
+
       micOn(true)
+      const now = performance.now()
+      segStart = now
+      segPeak = -160
+      speechMs = 0
+      quietMs = 0
       setStatus('listening')
-      beginWindow()
-      // 朗读看门狗：不依赖任何回调，按音频元素真实状态判断
+      tick()
       if (ttsWatch) clearInterval(ttsWatch)
-      ttsWatch = setInterval(ttsWatchdog, TTS_WATCH_MS)
+      ttsWatch = setInterval(watchdog, TTS_WATCH_MS)
       stats.lastError = ''
     } catch (e: any) {
       running = false
@@ -408,17 +450,17 @@ export function createVoice(opts: VoiceOptions): Voice {
   function stop(): void {
     running = false
     if (tickTimer) { clearTimeout(tickTimer); tickTimer = null }
-    if (restartTimer) { clearTimeout(restartTimer); restartTimer = null }
     if (ttsWatch) { clearInterval(ttsWatch); ttsWatch = null }
     try { if (rec && rec.state !== 'inactive') rec.stop() } catch (e) { }
     try { if (actx) actx.close() } catch (e) { }
     try { if (stream) stream.getTracks().forEach((t) => t.stop()) } catch (e) { }
     rec = null; actx = null; analyser = null; stream = null; timeBuf = null
+    headerBlob = null; buf = []
     setStatus('idle')
   }
 
   function speak(text: string, o?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
-    const segs = splitText(String(text || ''), TTS_SEG_MAX)
+    const segs = splitForSpeech(text)
     if (!segs.length) return
     noteSpoken(text)
     for (let i = 0; i < segs.length; i++) {
@@ -429,7 +471,7 @@ export function createVoice(opts: VoiceOptions): Voice {
         onDone: i === segs.length - 1 ? (o && o.onDone) : undefined,
       })
     }
-    pumpTts()
+    pump()
   }
 
   function stopSpeaking(): void {
@@ -450,7 +492,6 @@ export function createVoice(opts: VoiceOptions): Voice {
     speak,
     stopSpeaking,
     speaking: () => ttsBusy,
-    recognizing: () => status === 'recognizing',
     setVoiceName: (n: string) => { voiceName = n || voiceName },
     mute: (on: boolean) => { muted = on; micOn(!on) },
     stats,
