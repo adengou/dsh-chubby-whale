@@ -2287,15 +2287,21 @@
               if (stopped) return;
               const blob = new Blob(chunks, { type: "audio/webm" });
               chunks = [];
-              if (blob.size < 1200) return;
-              try {
-                earDiag.chunks.small++;
-              } catch (e) {
+              if (blob.size < 1200) {
+                try {
+                  earDiag.chunks.small++;
+                } catch (e) {
+                }
+                ;
+                return;
               }
-              if (Date.now() < echoMuteUntil.t) return;
-              try {
-                earDiag.chunks.muted++;
-              } catch (e) {
+              if (Date.now() < echoMuteUntil.t) {
+                try {
+                  earDiag.chunks.muted++;
+                } catch (e) {
+                }
+                ;
+                return;
               }
               const b64 = await blobToBase64(blob);
               if (!b64) return;
@@ -2405,20 +2411,26 @@
             try {
               if (stopped || !analyser) return;
               const db = readDb();
+              try {
+                earDiag.ticks = (earDiag.ticks || 0) + 1;
+                earDiag.state = { started: !!started, stopped: !!stopped, mr: mr ? String(mr.state) : "none" };
+              } catch (e) {
+              }
               const now = performance.now();
               const dt = Math.min(250, Math.max(0, now - lastTickAt));
               lastTickAt = now;
               const elapsed = now - chunkStartedAt;
               const calibrating = now - calibStart < CALIB_MS;
               const inSpeech = speechMs > 0 && quietMs < SILENCE_LIMIT;
-              if (noiseDb === null) noiseDb = db;
-              else if (!inSpeech) noiseDb = noiseDb * 0.95 + db * 0.05;
+              if (noiseDb === null) noiseDb = Math.min(db, -35);
+              else if (!inSpeech && db < noiseDb + 4) noiseDb = db < noiseDb ? noiseDb * 0.7 + db * 0.3 : noiseDb * 0.98 + db * 0.02;
               if (noiseDb < -95) noiseDb = -95;
               if (noiseDb > -20) noiseDb = -20;
               const onsetTh = noiseDb + ONSET_DB;
               const offsetTh = noiseDb + OFFSET_DB;
               if (!calibrating) {
-                if (db > onsetTh) {
+                const aboveOnsetAbs = db > -45;
+                if (db > onsetTh || aboveOnsetAbs) {
                   speechMs += dt;
                   quietMs = 0;
                   if (db > peak) peak = db;

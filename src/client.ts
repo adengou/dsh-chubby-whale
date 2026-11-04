@@ -1172,11 +1172,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (stopped) return
             const blob = new Blob(chunks, { type: 'audio/webm' })
             chunks = []
-            if (blob.size < 1200) return   // 原来 2500：短句常被丢掉
-            try { earDiag.chunks.small++ } catch (e) { }
+            if (blob.size < 1200) { try { earDiag.chunks.small++ } catch (e) { } ; return }
             // 本鱼刚说完话的 700ms 里听到的多半是自己的回声/混响：直接丢，别上传浪费钱
-            if (Date.now() < echoMuteUntil.t) return
-            try { earDiag.chunks.muted++ } catch (e) { }
+            if (Date.now() < echoMuteUntil.t) { try { earDiag.chunks.muted++ } catch (e) { } ; return }
             const b64 = await blobToBase64(blob)
             if (!b64) return
             const t0 = performance.now()
@@ -1264,6 +1262,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try {
             if (stopped || !analyser) return
             const db = readDb()
+            try { earDiag.ticks = (earDiag.ticks || 0) + 1; earDiag.state = { started: !!started, stopped: !!stopped, mr: mr ? String(mr.state) : 'none' } } catch (e) { }
             const now = performance.now()
             const dt = Math.min(250, Math.max(0, now - lastTickAt))
             lastTickAt = now
@@ -1271,14 +1270,17 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const calibrating = now - calibStart < CALIB_MS
             // 噪声底：安静时慢速跟随（0.05），避免把说话声当成噪声
             const inSpeech = speechMs > 0 && quietMs < SILENCE_LIMIT
-            if (noiseDb === null) noiseDb = db
-            else if (!inSpeech) noiseDb = noiseDb * 0.95 + db * 0.05
+            if (noiseDb === null) noiseDb = Math.min(db, -35)   // 初值别直接吃进说话声
+            // 只在「当前电平明显低于噪声底+4dB」时更新：否则说话声会把底噪一路带高，
+            // 导致 onset 永远追不上人声（这就是"说话它听不见"的经典失灵）
+            else if (!inSpeech && db < noiseDb + 4) noiseDb = db < noiseDb ? (noiseDb * 0.7 + db * 0.3) : (noiseDb * 0.98 + db * 0.02)
             if (noiseDb < -95) noiseDb = -95
             if (noiseDb > -20) noiseDb = -20
             const onsetTh = noiseDb + ONSET_DB
             const offsetTh = noiseDb + OFFSET_DB
             if (!calibrating) {
-              if (db > onsetTh) { speechMs += dt; quietMs = 0; if (db > peak) peak = db }
+            const aboveOnsetAbs = db > -45                        // 绝对门槛兜底
+            if (db > onsetTh || aboveOnsetAbs) { speechMs += dt; quietMs = 0; if (db > peak) peak = db }
               else if (db <= offsetTh) { quietMs += dt }
             }
             try {
