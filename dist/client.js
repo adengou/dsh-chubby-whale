@@ -613,7 +613,6 @@
   var ECHO_MUTE_MS = 700;
   var ASR_TIMEOUT_MS = 15e3;
   var TTS_TIMEOUT_MS = 2e4;
-  var TTS_SEG_MAX = 90;
   var TTS_WATCH_MS = 1e3;
   var TTS_ZOMBIE_MS = 2500;
   var NOISE_TEXTS = ["\u55EF", "\u5443", "\u554A", "\u54E6", "\u55EF\u55EF", "\u8C22\u8C22\u89C2\u770B", "\u8C22\u8C22\u5927\u5BB6", "\u5B57\u5E55", "\u8BF7\u4E0D\u541D\u70B9\u8D5E", "\u8BA2\u9605", "\u8F6C\u53D1", "\u6253\u8D4F", "\u518D\u89C1", "\u672C\u9C7C\u5728\u542C", "\u55EF\u672C\u9C7C\u5728\u542C"];
@@ -895,6 +894,57 @@
       } catch (e) {
       }
     }
+    const ttsPrefetch = /* @__PURE__ */ new Map();
+    let ttsSeq = 0;
+    function synth(job) {
+      return fetchWithTimeout(apiBase + "/tts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: job.text, voice: voiceName, rate: job.rate })
+      }, TTS_TIMEOUT_MS).then((r) => {
+        if (!r.ok) throw new Error("tts-http-" + r.status);
+        return r.arrayBuffer();
+      }).catch((e) => {
+        stats.lastError = "tts: " + String(e && e.name || e);
+        return null;
+      });
+    }
+    function speakViaBrowser(text) {
+      return new Promise((resolve) => {
+        try {
+          const Synth = window.speechSynthesis;
+          const Utt = window.SpeechSynthesisUtterance;
+          if (!Synth || !Utt) {
+            resolve();
+            return;
+          }
+          const u = new Utt(text);
+          u.lang = "zh-CN";
+          u.onend = () => resolve();
+          u.onerror = () => resolve();
+          try {
+            Synth.cancel();
+          } catch (e) {
+          }
+          Synth.speak(u);
+        } catch (e) {
+          resolve();
+        }
+      });
+    }
+    function finishJob(j) {
+      ttsBusy = false;
+      mutedUntil = Date.now() + ECHO_MUTE_MS;
+      setTimeout(() => {
+        if (!ttsBusy && !muted) micOn(true);
+      }, ECHO_MUTE_MS);
+      try {
+        j.onDone && j.onDone();
+      } catch (e) {
+      }
+      if (j.narration && ttsQ.length > 0) setTimeout(() => pumpTts(), 260);
+      else pumpTts();
+    }
     function pumpTts() {
       if (ttsBusy) return;
       const job = ttsQ.shift();
@@ -908,16 +958,29 @@
       setStatus("speaking");
       micOn(false);
       stats.ttsRequests++;
-      fetchWithTimeout(apiBase + "/tts", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: job.text, voice: voiceName })
-      }, TTS_TIMEOUT_MS).then((r) => {
-        if (!r.ok) throw new Error("tts-http-" + r.status);
-        return r.arrayBuffer();
-      }).then((buf) => {
+      const cur = ttsPrefetch.get(job.seq) || synth(job);
+      ttsPrefetch.delete(job.seq);
+      const next = ttsQ[0];
+      if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next));
+      cur.then((buf) => {
         if (myToken !== speakToken) {
           ttsBusy = false;
+          return;
+        }
+        if (!buf) {
+          if (job.attempts < 1) {
+            job.attempts++;
+            ttsQ.unshift(job);
+            ttsBusy = false;
+            pumpTts();
+            return;
+          }
+          stats.ttsFail++;
+          try {
+            lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
+          } catch (e) {
+          }
+          speakViaBrowser(job.text).then(() => finishJob(job));
           return;
         }
         const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
@@ -941,59 +1004,52 @@
           } catch (e) {
           }
           ttsAudio = null;
-          ttsBusy = false;
-          mutedUntil = Date.now() + ECHO_MUTE_MS;
-          setTimeout(() => {
-            if (!ttsBusy && !muted) micOn(true);
-          }, ECHO_MUTE_MS);
+          stats.ttsPlayed++;
           try {
-            job.onDone && job.onDone();
+            lastTts = { failed: false, text: job.text.slice(0, 20), at: Date.now() };
           } catch (e) {
           }
-          pumpTts();
+          finishJob(job);
         };
         a.onended = finish;
         a.onerror = finish;
-        stats.ttsPlayed++;
-        try {
-          lastTts = { failed: false, text: job.text.slice(0, 20), at: Date.now() };
-        } catch (e) {
-        }
         a.play().catch(() => {
           stats.ttsFail++;
           try {
             lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
           } catch (e) {
           }
-          finish();
+          try {
+            a.onended = null;
+            a.onerror = null;
+            URL.revokeObjectURL(url);
+          } catch (e) {
+          }
+          ttsAudio = null;
+          speakViaBrowser(job.text).then(() => finishJob(job));
         });
-      }).catch((e) => {
-        stats.ttsFail++;
-        try {
-          lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
-        } catch (e2) {
-        }
-        stats.lastError = "tts: " + String(e && e.name || e);
-        ttsBusy = false;
-        micOn(true);
-        pumpTts();
       });
     }
-    function splitText(text, max) {
-      const clean = text.replace(/\s+/g, " ").trim();
-      if (!clean) return [];
-      if (clean.length <= max) return [clean];
+    function splitForTts(text, maxLen = 56) {
       const out = [];
-      let cur = "";
-      for (const ch of clean) {
-        cur += ch;
-        if (cur.length >= max || /[。！？!?；;]/.test(ch)) {
-          out.push(cur.trim());
-          cur = "";
+      const src = String(text || "");
+      if (!src.trim()) return out;
+      if (maxLen < 8) maxLen = 8;
+      const firstMax = Math.min(maxLen, 14);
+      let sbuf = "";
+      for (const c of src) {
+        sbuf += c;
+        const boundary = /[。，！？!?；;、,\n]/.test(c);
+        const cap = out.length === 0 ? firstMax : maxLen;
+        if (sbuf.length >= cap || boundary && sbuf.length >= Math.max(8, Math.floor(cap / 3))) {
+          const seg = sbuf.trim();
+          if (seg) out.push(seg);
+          sbuf = "";
         }
       }
-      if (cur.trim()) out.push(cur.trim());
-      return out.filter(Boolean);
+      const rest = sbuf.trim();
+      if (rest) out.push(rest);
+      return out;
     }
     async function blobToBase64(blob) {
       return new Promise((resolve) => {
@@ -1113,14 +1169,19 @@
       setStatus("idle");
     }
     function speak(text, o) {
-      const segs = splitText(String(text || ""), TTS_SEG_MAX);
+      const raw = String(text || "");
+      const narration = o && typeof o.narration === "boolean" ? o.narration : raw.length >= 80;
+      const rate = o && o.rate ? o.rate : narration ? "-15%" : "+0%";
+      const segs = splitForTts(raw, 56);
       if (!segs.length) return;
-      noteSpoken(text);
+      noteSpoken(raw);
       for (let i = 0; i < segs.length; i++) {
         ttsQ.push({
+          seq: ++ttsSeq,
           text: segs[i],
-          rate: o && o.rate ? o.rate : "+0%",
-          narration: !!(o && o.narration),
+          rate,
+          narration,
+          attempts: 0,
           onDone: i === segs.length - 1 ? o && o.onDone : void 0
         });
       }

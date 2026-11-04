@@ -125,7 +125,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   const spokenRecent: Array<{ text: string; at: number }> = []
 
   // ---- 朗读 ----
-  type Job = { text: string; rate: string; narration: boolean; onDone?: () => void }
+type Job = { seq: number; text: string; rate: string; narration: boolean; attempts: number; onDone?: () => void }
   const ttsQ: Job[] = []
   let ttsBusy = false
   let ttsAudio: HTMLAudioElement | null = null
@@ -296,6 +296,51 @@ export function createVoice(opts: VoiceOptions): Voice {
     } catch (e) { }
   }
 
+  const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
+  let ttsSeq = 0
+
+  // 合成一段（带超时）。失败返回 null —— 对应 C# 的 wav == null
+  function synth(job: Job): Promise<ArrayBuffer | null> {
+    return fetchWithTimeout(apiBase + '/tts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: job.text, voice: voiceName, rate: job.rate }),
+    }, TTS_TIMEOUT_MS).then((r) => {
+      if (!r.ok) throw new Error('tts-http-' + r.status)
+      return r.arrayBuffer()
+    }).catch((e: any) => {
+      stats.lastError = 'tts: ' + String((e && e.name) || e)
+      return null
+    })
+  }
+
+  // 系统语音兜底 —— 对应 C# 的 SAPI 兜底
+  function speakViaBrowser(text: string): Promise<void> {
+    return new Promise((resolve) => {
+      try {
+        const Synth: any = (window as any).speechSynthesis
+        const Utt: any = (window as any).SpeechSynthesisUtterance
+        if (!Synth || !Utt) { resolve(); return }
+        const u = new Utt(text)
+        u.lang = 'zh-CN'
+        u.onend = () => resolve()
+        u.onerror = () => resolve()
+        try { Synth.cancel() } catch (e) { }
+        Synth.speak(u)
+      } catch (e) { resolve() }
+    })
+  }
+
+  function finishJob(j: Job): void {
+    ttsBusy = false
+    mutedUntil = Date.now() + ECHO_MUTE_MS
+    setTimeout(() => { if (!ttsBusy && !muted) micOn(true) }, ECHO_MUTE_MS)
+    try { j.onDone && j.onDone() } catch (e) { }
+    // 叙述模式：段间 260ms 换气停顿（C# NarrationPauseMs）
+    if (j.narration && ttsQ.length > 0) setTimeout(() => pumpTts(), 260)
+    else pumpTts()
+  }
+
   function pumpTts(): void {
     if (ttsBusy) return
     const job = ttsQ.shift()
@@ -304,17 +349,31 @@ export function createVoice(opts: VoiceOptions): Voice {
     ttsBusySince = Date.now()
     const myToken = ++speakToken
     setStatus('speaking')
-    micOn(false)                     // 出声即闭麦
+    micOn(false)
     stats.ttsRequests++
-    fetchWithTimeout(apiBase + '/tts', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: job.text, voice: voiceName }),
-    }, TTS_TIMEOUT_MS).then((r) => {
-      if (!r.ok) throw new Error('tts-http-' + r.status)
-      return r.arrayBuffer()
-    }).then((buf) => {
+
+    const cur = ttsPrefetch.get(job.seq) || synth(job)
+    ttsPrefetch.delete(job.seq)
+    // 当前段开播前就把下一段合成压上去（C# 的 prefetch）
+    const next = ttsQ[0]
+    if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next))
+
+    cur.then((buf) => {
       if (myToken !== speakToken) { ttsBusy = false; return }
+      if (!buf) {
+        // 失败：先重试一次；仍失败就用系统语音把这段念完，绝不跳过（跳过就是"少内容"）
+        if (job.attempts < 1) {
+          job.attempts++
+          ttsQ.unshift(job)
+          ttsBusy = false
+          pumpTts()
+          return
+        }
+        stats.ttsFail++
+        try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
+        speakViaBrowser(job.text).then(() => finishJob(job))
+        return
+      }
       const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
       const a = new Audio(url)
       ttsAudio = a
@@ -323,43 +382,43 @@ export function createVoice(opts: VoiceOptions): Voice {
         try { a.onended = null; a.onerror = null } catch (e) { }
         try { URL.revokeObjectURL(url) } catch (e) { }
         ttsAudio = null
-        ttsBusy = false
-        mutedUntil = Date.now() + ECHO_MUTE_MS
-        setTimeout(() => { if (!ttsBusy && !muted) micOn(true) }, ECHO_MUTE_MS)
-        try { job.onDone && job.onDone() } catch (e) { }
-        pumpTts()
+        stats.ttsPlayed++
+        try { lastTts = { failed: false, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
+        finishJob(job)
       }
       a.onended = finish
       a.onerror = finish
-      stats.ttsPlayed++
-      try { lastTts = { failed: false, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
       a.play().catch(() => {
         stats.ttsFail++
-      try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
-        finish()
+        try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
+        try { a.onended = null; a.onerror = null; URL.revokeObjectURL(url) } catch (e) { }
+        ttsAudio = null
+        speakViaBrowser(job.text).then(() => finishJob(job))
       })
-    }).catch((e: any) => {
-      stats.ttsFail++
-      try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
-      stats.lastError = 'tts: ' + String((e && e.name) || e)
-      ttsBusy = false
-      micOn(true)
-      pumpTts()
     })
   }
 
-  function splitText(text: string, max: number): string[] {
-    const clean = text.replace(/\s+/g, ' ').trim()
-    if (!clean) return []
-    if (clean.length <= max) return [clean]
+  /** 1:1 移植 C# TextTools.SplitForTts：首段 ≤14 字；边界字符需距上一切点 ≥ cap/3 */
+  function splitForTts(text: string, maxLen = 56): string[] {
     const out: string[] = []
-    let cur = ''
-    for (const ch of clean) {
-      cur += ch
-      if (cur.length >= max || /[。！？!?；;]/.test(ch)) { out.push(cur.trim()); cur = '' }
+    const src = String(text || '')
+    if (!src.trim()) return out
+    if (maxLen < 8) maxLen = 8
+    const firstMax = Math.min(maxLen, 14)
+    let sbuf = ''
+    for (const c of src) {
+      sbuf += c
+      const boundary = /[。，！？!?；;、,\n]/.test(c)
+      const cap = out.length === 0 ? firstMax : maxLen
+      if (sbuf.length >= cap || (boundary && sbuf.length >= Math.max(8, Math.floor(cap / 3)))) {
+        const seg = sbuf.trim()
+        if (seg) out.push(seg)
+        sbuf = ''
+      }
     }
-    if (cur.trim()) out.push(cur.trim())
-    return out.filter(Boolean)
+    const rest = sbuf.trim()
+    if (rest) out.push(rest)
+    return out
   }
 
   async function blobToBase64(blob: Blob): Promise<string> {
@@ -439,16 +498,20 @@ export function createVoice(opts: VoiceOptions): Voice {
   }
 
   function speak(text: string, o?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
-    // 统一按 90 字切分（撤销"首段 16 字先开口"：它会让回答的前半段变成一次极短请求，
-    // 一旦那次请求失败/被浏览器拒绝，主人就只听到后面的内容 = 回答少开头）
-    const segs = splitText(String(text || ""), TTS_SEG_MAX)
+    const raw = String(text || '')
+    // 叙述判定照 C#：≥80 字算长文/典故/诗词 → 降速 -15%，段间 260ms 换气
+    const narration = o && typeof o.narration === 'boolean' ? o.narration : raw.length >= 80
+    const rate = (o && o.rate) ? o.rate : (narration ? '-15%' : '+0%')
+    const segs = splitForTts(raw, 56)
     if (!segs.length) return
-    noteSpoken(text)
+    noteSpoken(raw)
     for (let i = 0; i < segs.length; i++) {
       ttsQ.push({
+        seq: ++ttsSeq,
         text: segs[i],
-        rate: o && o.rate ? o.rate : '+0%',
-        narration: !!(o && o.narration),
+        rate,
+        narration,
+        attempts: 0,
         onDone: i === segs.length - 1 ? (o && o.onDone) : undefined,
       })
     }
