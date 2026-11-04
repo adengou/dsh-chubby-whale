@@ -533,6 +533,40 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         el._t = setTimeout(() => { el.classList.remove('show') }, ms)
       }
 
+      // ===== 拖放：必须在【捕获阶段】抢在 HARNESS 自己的拖放处理之前 =====
+      // React 的 onDrop 走冒泡阶段，宿主的 drop 处理器会先接走文件，鱼永远收不到。
+      // 这里用 window 捕获监听 + 命中判定：落点在鱼身上才归鱼，其它位置仍交给宿主。
+      R.useEffect(() => {
+        const insideFish = (x: number, y: number): boolean => {
+          try {
+            const el = stageRef.current
+            if (!el) return false
+            const r = el.getBoundingClientRect()
+            const pad = 12   // 手抖一点也算命中
+            return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad
+          } catch (e) { return false }
+        }
+        const onDragOverCapture = (e: any): void => {
+          if (!insideFish(e.clientX, e.clientY)) return
+          e.preventDefault()
+          e.stopPropagation()
+        }
+        const onDropCapture = (e: any): void => {
+          if (!insideFish(e.clientX, e.clientY)) return
+          e.preventDefault()
+          e.stopPropagation()
+          const dt = e.dataTransfer
+          const file = dt && dt.files && dt.files[0]
+          try { handleFileDrop(file, { showBubble, speakText }).catch(() => { }) } catch (e2) { }
+        }
+        window.addEventListener('dragover', onDragOverCapture, true)
+        window.addEventListener('drop', onDropCapture, true)
+        return () => {
+          try { window.removeEventListener('dragover', onDragOverCapture, true) } catch (e) { }
+          try { window.removeEventListener('drop', onDropCapture, true) } catch (e) { }
+        }
+      }, [])
+
       // 拖动
       function onPointerDown(e: any): void {
         if (e.button !== 0) return

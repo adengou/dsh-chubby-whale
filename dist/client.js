@@ -1287,6 +1287,48 @@
             el.classList.remove("show");
           }, ms);
         }
+        R.useEffect(() => {
+          const insideFish = (x, y) => {
+            try {
+              const el = stageRef.current;
+              if (!el) return false;
+              const r = el.getBoundingClientRect();
+              const pad = 12;
+              return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+            } catch (e) {
+              return false;
+            }
+          };
+          const onDragOverCapture = (e) => {
+            if (!insideFish(e.clientX, e.clientY)) return;
+            e.preventDefault();
+            e.stopPropagation();
+          };
+          const onDropCapture = (e) => {
+            if (!insideFish(e.clientX, e.clientY)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const dt = e.dataTransfer;
+            const file = dt && dt.files && dt.files[0];
+            try {
+              handleFileDrop(file, { showBubble, speakText }).catch(() => {
+              });
+            } catch (e2) {
+            }
+          };
+          window.addEventListener("dragover", onDragOverCapture, true);
+          window.addEventListener("drop", onDropCapture, true);
+          return () => {
+            try {
+              window.removeEventListener("dragover", onDragOverCapture, true);
+            } catch (e) {
+            }
+            try {
+              window.removeEventListener("drop", onDropCapture, true);
+            } catch (e) {
+            }
+          };
+        }, []);
         function onPointerDown(e) {
           if (e.button !== 0) return;
           const d = dragRef.current;
