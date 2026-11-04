@@ -987,7 +987,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                   fr.onloadend = () => { const s = String(fr.result || ''); resolve(s.indexOf(',') >= 0 ? s.slice(s.indexOf(',') + 1) : s) }
                   fr.readAsDataURL(file)
                 })
-                if (!b64) return
+            if (!b64) { try { earDiag.chunks.b64Fail = (earDiag.chunks.b64Fail || 0) + 1 } catch (e) { } ; return }
                 showBubble('本鲸看看这张图…', 3000)
                 setChatOpen(false)
                 const hdr = file.type || 'image/jpeg'
@@ -1165,7 +1165,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           startTimer = setTimeout(() => { startTimer = null; startChunk() }, delay)
         }
         async function uploadChunk() {
-        if (asrBusy) return                  // 上一段识别还在途：这段直接丢（结果不能乱序）
+        try { earDiag.chunks.uploadCalled = (earDiag.chunks.uploadCalled || 0) + 1 } catch (e) { }
+        if (asrBusy) { try { earDiag.chunks.asrBusyDrop = (earDiag.chunks.asrBusyDrop || 0) + 1 } catch (e) { } ; return }
         asrBusy = true                      // 兼容旧诊断字段
           // 所有 return 都走 finally → 录音循环一定会重启（不再因为「没叫唤醒词」装死）
           try {
@@ -1176,7 +1177,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             // 本鱼刚说完话的 700ms 里听到的多半是自己的回声/混响：直接丢，别上传浪费钱
             if (Date.now() < echoMuteUntil.t) { try { earDiag.chunks.muted++ } catch (e) { } ; return }
             const b64 = await blobToBase64(blob)
-            if (!b64) return
+            if (!b64) { try { earDiag.chunks.b64Fail = (earDiag.chunks.b64Fail || 0) + 1 } catch (e) { } ; return }
             const t0 = performance.now()
             try { earDiag.chunks.uploaded++ } catch (e) { }
             const r = await fetch('/api/chubby-whale/asr', {
@@ -1290,6 +1291,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               earDiag.speechMs = Math.round(speechMs)
               earDiag.quietMs = Math.round(quietMs)
               earDiag.calibrating = calibrating
+              try { earDiag.micEnabled = !!(micTrackRef.current && micTrackRef.current.enabled) } catch (e) { }
             } catch (e) { }
             const ended = speechMs >= MIN_SPEECH_MS && quietMs >= SILENCE_LIMIT
             const tooLong = elapsed >= VOICE_LIMIT + 1000
@@ -1322,7 +1324,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             // 记录器每 60ms 就被切一次 → 音频太短被丢弃 → 表现为「完全听不到」
             speechMs = 0
             quietMs = 0
-            chunkStartedAt = performance.now()
+            asrBusy = false   // 兜底：每段开始强制释放识别位，避免异常遗留导致永久占线
+            try { const tr3 = micTrackRef.current; if (tr3 && tr3.enabled === false) { tr3.enabled = true; earDiag.micEnabled = true; earDiag.revived = (earDiag.revived || 0) + 1 } } catch (e) { }
             try { earDiag.chunks.recorded++ } catch (e) { }
             lastTickAt = chunkStartedAt
             mr.start()
@@ -1355,6 +1358,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (stopped) { try { s.getTracks().forEach((t: any) => t.stop()) } catch (e) { } ; return }
             stream = s
             try { const tr = s.getAudioTracks && s.getAudioTracks()[0]; if (tr) micTrackRef.current = tr } catch (e) { }
+            try { const tr2 = micTrackRef.current; if (tr2) { tr2.enabled = true; earDiag.micEnabled = true } } catch (e) { }
             actx = new (window as any).AudioContext()
             try { await (actx as any).resume() } catch (e) { }
             try { earDiag.ctxState = String(actx.state) } catch (e) { }

@@ -2053,7 +2053,14 @@
                     };
                     fr.readAsDataURL(file);
                   });
-                  if (!b64) return;
+                  if (!b64) {
+                    try {
+                      earDiag.chunks.b64Fail = (earDiag.chunks.b64Fail || 0) + 1;
+                    } catch (e) {
+                    }
+                    ;
+                    return;
+                  }
                   showBubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
                   setChatOpen(false);
                   const hdr = file.type || "image/jpeg";
@@ -2281,7 +2288,18 @@
             }, delay);
           }
           async function uploadChunk() {
-            if (asrBusy) return;
+            try {
+              earDiag.chunks.uploadCalled = (earDiag.chunks.uploadCalled || 0) + 1;
+            } catch (e) {
+            }
+            if (asrBusy) {
+              try {
+                earDiag.chunks.asrBusyDrop = (earDiag.chunks.asrBusyDrop || 0) + 1;
+              } catch (e) {
+              }
+              ;
+              return;
+            }
             asrBusy = true;
             try {
               if (stopped) return;
@@ -2304,7 +2322,14 @@
                 return;
               }
               const b64 = await blobToBase64(blob);
-              if (!b64) return;
+              if (!b64) {
+                try {
+                  earDiag.chunks.b64Fail = (earDiag.chunks.b64Fail || 0) + 1;
+                } catch (e) {
+                }
+                ;
+                return;
+              }
               const t0 = performance.now();
               try {
                 earDiag.chunks.uploaded++;
@@ -2445,6 +2470,10 @@
                 earDiag.speechMs = Math.round(speechMs);
                 earDiag.quietMs = Math.round(quietMs);
                 earDiag.calibrating = calibrating;
+                try {
+                  earDiag.micEnabled = !!(micTrackRef.current && micTrackRef.current.enabled);
+                } catch (e) {
+                }
               } catch (e) {
               }
               const ended = speechMs >= MIN_SPEECH_MS && quietMs >= SILENCE_LIMIT;
@@ -2489,7 +2518,16 @@
               peak = 0;
               speechMs = 0;
               quietMs = 0;
-              chunkStartedAt = performance.now();
+              asrBusy = false;
+              try {
+                const tr3 = micTrackRef.current;
+                if (tr3 && tr3.enabled === false) {
+                  tr3.enabled = true;
+                  earDiag.micEnabled = true;
+                  earDiag.revived = (earDiag.revived || 0) + 1;
+                }
+              } catch (e) {
+              }
               try {
                 earDiag.chunks.recorded++;
               } catch (e) {
@@ -2544,6 +2582,14 @@
               try {
                 const tr2 = s.getAudioTracks && s.getAudioTracks()[0];
                 if (tr2) micTrackRef.current = tr2;
+              } catch (e) {
+              }
+              try {
+                const tr2 = micTrackRef.current;
+                if (tr2) {
+                  tr2.enabled = true;
+                  earDiag.micEnabled = true;
+                }
               } catch (e) {
               }
               actx = new window.AudioContext();
