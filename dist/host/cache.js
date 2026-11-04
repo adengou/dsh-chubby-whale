@@ -142,7 +142,12 @@ export function createCache(opts) {
                 }
                 catch { }
                 try {
-                    mem.delete(it.f.replace(/\.[^.]+$/, ''));
+                    const k = it.f.replace(/\.[^.]+$/, '');
+                    const hit = mem.get(k);
+                    if (hit) {
+                        memBytes -= hit.size;
+                        mem.delete(k);
+                    } // 同步扣减，避免内存计数漂移
                 }
                 catch { }
             }

@@ -209,8 +209,12 @@ export function createStore(dataDir) {
             const rep = Number(r.repeat) || 0;
             if (rep > 0) {
                 // 每天（或自定义间隔）的提醒：不标 done，只把下一次时间往后推
-                const next = new Date(now + rep * 1000);
-                r.nextAt = next.toISOString();
+                // 从「原定时间」往后推，不用「触发时刻」——否则每天 9 点的提醒会一天比一天晚
+                let nextMs = when + rep * 1000;
+                let guard = 0;
+                while (nextMs <= now && guard++ < 10000)
+                    nextMs += rep * 1000;
+                r.nextAt = new Date(nextMs).toISOString();
                 r.at = r.nextAt;
                 r.fired = false;
             }

@@ -114,7 +114,11 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
       const toDelete = entries.slice(0, Math.floor(entries.length / 2))
       for (const it of toDelete) {
         try { await unlink(join(opts.dir, it.f)) } catch { }
-        try { mem.delete(it.f.replace(/\.[^.]+$/, '')) } catch { }
+        try {
+          const k = it.f.replace(/\.[^.]+$/, '')
+          const hit = mem.get(k)
+          if (hit) { memBytes -= hit.size; mem.delete(k) }   // 同步扣减，避免内存计数漂移
+        } catch { }
       }
     } catch { }
   }
