@@ -12,6 +12,16 @@ import { parseDue, cleanReminderText } from './shared/time.js'
   id: 'dsh-chubby-whale',
   factory: (require: any) => {
     const R = require('react')
+    // 早期错误记录器：抓住宿主插槽渲染我们组件时抛的异常（模块加载即安装）
+    try {
+      (window as any).__chubbyErrors = []
+      const origErr = console.error
+      console.error = function (...a: any[]) {
+        try { (window as any).__chubbyErrors.push(a.map((x: any) => (x && x.stack) ? x.stack : String(x)).join(' ').slice(0, 800)) } catch (e) { }
+        return (origErr as any).apply(console, a as any)
+      } as any
+      window.addEventListener('error', (e: any) => { try { (window as any).__chubbyErrors.push('window.error: ' + (e.message || '') + ' | ' + ((e.error && e.error.stack) || '')) } catch (e2) { } })
+    } catch (e) { }
     const h = R.createElement
 
 
@@ -289,7 +299,18 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       } catch (e) { }
     }
 
-    function WhaleOverlay() {
+    /** 安全外壳：把内层组件的渲染异常就地拦下并记录，绝不让整个 slot 变成错误占位 */
+    function WhaleOverlay(props: any) {
+      try {
+        return WhaleBody(props || {})
+      } catch (e: any) {
+        try { (window as any).__chubbyWhale.renderError = String((e && e.stack) || e) } catch (e2) { }
+        try { console.error('[chubby-whale] 渲染异常已被就地拦下：', e) } catch (e2) { }
+        return null
+      }
+    }
+
+    function WhaleBody(props: any) {
       const stageRef = R.useRef(null)
       const canvasRef = R.useRef(null)
       const posRef = R.useRef({ x: 0, y: 0 })
@@ -1219,9 +1240,12 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             console.warn('[chubby-whale]', diag.error)
             return
           }
-          const desc = { name: 'shell.overlay', id: 'chubby-whale-overlay', order: 999 }
+          // 完全照官方插件的描述符形状：name + id + locale + inject（缺字段时宿主会判为装配错误）
+          const desc: any = { name: 'shell.overlay', id: 'chubby-whale-overlay', order: 999, locale: 'chubby-whale', inject: () => ({}) }
           // 第二个参数必须是「渲染函数」：直接传组件会在非渲染上下文调用，触发 Invalid hook call
-          const render = () => h(PetBoundary, null, h(WhaleOverlay, {}))
+          // 与官方插件一致：第二个参数传「组件」，宿主会 React.createElement(组件)
+          // WhaleOverlay 内部自带 try/catch 兜底，直接用它当组件（不再依赖 PetBoundary）
+          const render = WhaleOverlay
           const doRegister = () => {
             try {
               slots.register(desc, render)

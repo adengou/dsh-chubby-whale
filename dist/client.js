@@ -607,6 +607,24 @@
     id: "dsh-chubby-whale",
     factory: (require2) => {
       const R = require2("react");
+      try {
+        window.__chubbyErrors = [];
+        const origErr = console.error;
+        console.error = function(...a) {
+          try {
+            window.__chubbyErrors.push(a.map((x) => x && x.stack ? x.stack : String(x)).join(" ").slice(0, 800));
+          } catch (e) {
+          }
+          return origErr.apply(console, a);
+        };
+        window.addEventListener("error", (e) => {
+          try {
+            window.__chubbyErrors.push("window.error: " + (e.message || "") + " | " + (e.error && e.error.stack || ""));
+          } catch (e2) {
+          }
+        });
+      } catch (e) {
+      }
       const h = R.createElement;
       const CLIENT_ID = (() => {
         try {
@@ -972,7 +990,22 @@
         } catch (e) {
         }
       }
-      function WhaleOverlay() {
+      function WhaleOverlay(props) {
+        try {
+          return WhaleBody(props || {});
+        } catch (e) {
+          try {
+            window.__chubbyWhale.renderError = String(e && e.stack || e);
+          } catch (e2) {
+          }
+          try {
+            console.error("[chubby-whale] \u6E32\u67D3\u5F02\u5E38\u5DF2\u88AB\u5C31\u5730\u62E6\u4E0B\uFF1A", e);
+          } catch (e2) {
+          }
+          return null;
+        }
+      }
+      function WhaleBody(props) {
         const stageRef = R.useRef(null);
         const canvasRef = R.useRef(null);
         const posRef = R.useRef({ x: 0, y: 0 });
@@ -2202,8 +2235,8 @@
               console.warn("[chubby-whale]", diag.error);
               return;
             }
-            const desc = { name: "shell.overlay", id: "chubby-whale-overlay", order: 999 };
-            const render = () => h(PetBoundary, null, h(WhaleOverlay, {}));
+            const desc = { name: "shell.overlay", id: "chubby-whale-overlay", order: 999, locale: "chubby-whale", inject: () => ({}) };
+            const render = WhaleOverlay;
             const doRegister = () => {
               try {
                 slots.register(desc, render);
