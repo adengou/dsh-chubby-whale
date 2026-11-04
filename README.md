@@ -4,6 +4,43 @@ DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下�
 
 > 语音待命的信号处理设计与调参：见 [docs/耳朵算法.md](docs/耳朵算法.md)
 
+## 从 npm 安装（标准方式）
+
+```powershell
+# 1) 装进 web profile（与其它 DSH 插件完全一致的做法）
+dsh plugin --profile web add dsh-chubby-whale
+
+# 2) 重启 dsh web
+dsh web
+```
+
+装完刷新页面即可看到肥鲸。Key 不随包分发，需要自己配：
+
+```jsonc
+// ~/.dsh/plugins/dsh-chubby-whale/config.json   （或包安装目录下的 config.json）
+{
+  "deepseekKey": "sk-...",        // 对话/看图
+  "siliconflowKey": "sk-..."      // 语音识别 + 语音合成
+}
+```
+
+也可用环境变量：`CHUBBY_WHALE_DEEPSEEK_KEY`、`CHUBBY_WHALE_SILICONFLOW_KEY`
+（最后才回退到通用名 `DEEPSEEK_API_KEY` / `SILICONFLOW_API_KEY`）。
+
+### 本地开发（link 方式）
+
+```powershell
+dsh plugin --profile web add "link:C:\Users\<你>\.dsh\plugins\dsh-chubby-whale"
+```
+
+### 卸载
+
+```powershell
+dsh plugin --profile web remove dsh-chubby-whale
+```
+
+运行数据在 `~/.dsh-chubby-whale/`（记忆、亲密度、成长、鱼粮、提醒、缓存），卸载插件不会删它。
+
 ## 功能
 
 | 分类 | 能力 |
