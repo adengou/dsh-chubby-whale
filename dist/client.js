@@ -2011,6 +2011,7 @@
         const animRef = R.useRef(null);
         const storyBusyRef = R.useRef(false);
         const storyBookRef = R.useRef("");
+        const storyAutoRef = R.useRef(false);
         const dueQueueRef = R.useRef([]);
         const dueTimerRef = R.useRef(null);
         const [scale, setScale] = R.useState(1);
@@ -2410,7 +2411,17 @@
             onDone: () => {
               storyBusyRef.current = false;
               storyNarratingRef.current = false;
-              showBubble("\u8FD9\u6BB5\u8BB2\u5B8C\u5566\uFF5E\u70B9\u83DC\u5355\u300C\u63A5\u7740\u8BF4\u300D\u542C\u4E0B\u4E00\u6BB5", 6e3);
+              if (storyAutoRef.current && d.isLast === false) {
+                setTimeout(() => {
+                  try {
+                    nextStory();
+                  } catch (e) {
+                  }
+                }, 800);
+              } else {
+                storyAutoRef.current = false;
+                showBubble(d.isLast ? persona.line("poemDone") : "\u8FD9\u6BB5\u8BB2\u5B8C\u5566\uFF5E\u70B9\u83DC\u5355\u300C\u63A5\u7740\u8BF4\u300D\u542C\u4E0B\u4E00\u6BB5", 6e3);
+              }
             }
           });
         }
@@ -2940,6 +2951,74 @@
             if (el) el.scrollTop = el.scrollHeight;
           }, 0);
         }
+        const BOOK_ALIAS = [
+          [/聊斋/, "\u804A\u658B\u5FD7\u5F02"],
+          [/三国/, "\u4E09\u56FD\u6F14\u4E49"],
+          [/西游/, "\u897F\u6E38\u8BB0"],
+          [/水浒/, "\u6C34\u6D52\u4F20"],
+          [/红楼/, "\u7EA2\u697C\u68A6"],
+          [/封神/, "\u5C01\u795E\u6F14\u4E49"],
+          [/隋唐/, "\u968B\u5510\u6F14\u4E49"],
+          [/杨家将/, "\u6768\u5BB6\u5C06\u6F14\u4E49"],
+          [/世说/, "\u4E16\u8BF4\u65B0\u8BED"],
+          [/三言|二拍/, "\u4E09\u8A00\u4E8C\u62CD"],
+          [/儒林/, "\u5112\u6797\u5916\u53F2"],
+          [/官场/, "\u5B98\u573A\u73B0\u5F62\u8BB0"],
+          [/老残/, "\u8001\u6B8B\u6E38\u8BB0"],
+          [/说岳|岳传/, "\u8BF4\u5CB3\u5168\u4F20"],
+          [/东周/, "\u4E1C\u5468\u5217\u56FD\u5FD7"],
+          [/三侠五义/, "\u4E09\u4FA0\u4E94\u4E49"],
+          [/镜花缘/, "\u955C\u82B1\u7F18"]
+        ];
+        function tryLocalRoute(text) {
+          const t = String(text || "").trim();
+          if (!t || t.length > 30) return false;
+          if (/[?？]|为什么|怎么|如何|为什么呀/.test(t)) return false;
+          if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) {
+            showBubble("\uFF08\u70B9\u64AD\uFF09\u597D\uFF0C\u5FF5\u4E00\u9996", 3e3);
+            fetch("/api/chubby-whale/poem").then((r) => r.json()).then((d) => {
+              const p = d && d.ok && d.item ? d.item : null;
+              if (!p) {
+                showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230", 4e3);
+                return;
+              }
+              const body = String(p.text || "");
+              showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + String(p.author || "\u4F5A\u540D") + "\uFF09", 15e3);
+              const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + String(p.author || "\u4F5A\u540D") + "\u3002" + body.replace(/\\n/g, "\uFF0C");
+              speakText(speech, { rate: NARRATION_RATE2, onDone: () => sayLine(persona.line("poemDone"), 6e3) });
+            }).catch(() => showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230", 4e3));
+            return true;
+          }
+          if (/典故|成语|讲个故事里的事/.test(t)) {
+            const type = /成语/.test(t) ? "chengyu" : "idiom";
+            showBubble(type === "chengyu" ? "\uFF08\u70B9\u64AD\uFF09\u8BB2\u4E2A\u6210\u8BED" : "\uFF08\u70B9\u64AD\uFF09\u8BB2\u4E2A\u5178\u6545", 3e3);
+            fetch("/api/chubby-whale/culture?type=" + type).then((r) => r.json()).then((d) => {
+              const it = d && d.ok && d.item ? d.item : null;
+              if (!it) {
+                showBubble("\u8FD9\u4E2A\u6CA1\u8BFB\u5230", 4e3);
+                return;
+              }
+              const body = collapseText(String(it.text || ""));
+              showBubble((type === "chengyu" ? "\u6210\u8BED\xB7" : "\u5178\u6545\xB7") + String(it.title || ""), 15e3);
+              speakText((type === "chengyu" ? "\u8BB2\u4E2A\u6210\u8BED\u2014\u2014" : "\u8BB2\u4E2A\u5178\u6545\u2014\u2014") + String(it.title || "") + (it.src ? "\uFF0C\u51FA\u81EA" + String(it.src) : "") + "\u3002" + body, { rate: NARRATION_RATE2 });
+            }).catch(() => showBubble("\u8FD9\u4E2A\u6CA1\u8BFB\u5230", 4e3));
+            return true;
+          }
+          if (/讲故事|讲个故事|说书|来段|讲一段|讲个聊斋|讲聊斋/.test(t) || BOOK_ALIAS.some((p) => p[0].test(t))) {
+            let book = "";
+            for (const [re, name] of BOOK_ALIAS) {
+              if (re.test(t)) {
+                book = name;
+                break;
+              }
+            }
+            showBubble("\uFF08\u70B9\u64AD\uFF09" + (book ? "\u8BB2\u300A" + book + "\u300B" : "\u8BB2\u4E00\u6BB5\u4E66"), 4e3);
+            storyAutoRef.current = true;
+            startStory(book);
+            return true;
+          }
+          return false;
+        }
         async function sendText(rawText, opts) {
           const text = String(rawText || "").trim();
           if (!text) return;
@@ -2971,6 +3050,10 @@
               storyBusyRef.current = false;
             } catch (e) {
             }
+          }
+          if (tryLocalRoute(text)) {
+            setInput("");
+            return;
           }
           const myEpoch = ++chatEpoch;
           try {

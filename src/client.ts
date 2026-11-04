@@ -162,6 +162,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       const storyBusyRef = R.useRef(false)
       // 最近一次说书的书名（「从头讲这本书」要按它重置进度）
       const storyBookRef = R.useRef('')
+    const storyAutoRef = R.useRef(false)   // 点播讲故事：自动连播到"这一回讲完"
       const dueQueueRef = R.useRef([] as any[])
       const dueTimerRef = R.useRef(null as any)
 
@@ -481,7 +482,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           onDone: () => {
             storyBusyRef.current = false
             storyNarratingRef.current = false
-            showBubble('这段讲完啦～点菜单「接着说」听下一段', 6000)
+            if (storyAutoRef.current && d.isLast === false) { setTimeout(() => { try { nextStory() } catch (e) { } }, 800) } else { storyAutoRef.current = false; showBubble(d.isLast ? persona.line('poemDone') : '这段讲完啦～点菜单「接着说」听下一段', 6000) }
           },
         })
       }
@@ -855,6 +856,57 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (el) el.scrollTop = el.scrollHeight
         }, 0)
       }
+      // ===== 点播本地路由：讲故事 / 背诗 / 讲典故 直接读本地素材，不调模型（省 token、内容完整）=====
+      const BOOK_ALIAS: Array<[RegExp, string]> = [
+        [/聊斋/, '聊斋志异'], [/三国/, '三国演义'], [/西游/, '西游记'], [/水浒/, '水浒传'],
+        [/红楼/, '红楼梦'], [/封神/, '封神演义'], [/隋唐/, '隋唐演义'], [/杨家将/, '杨家将演义'],
+        [/世说/, '世说新语'], [/三言|二拍/, '三言二拍'], [/儒林/, '儒林外史'], [/官场/, '官场现形记'],
+        [/老残/, '老残游记'], [/说岳|岳传/, '说岳全传'], [/东周/, '东周列国志'], [/三侠五义/, '三侠五义'], [/镜花缘/, '镜花缘'],
+      ]
+      function tryLocalRoute(text: string): boolean {
+        const t = String(text || '').trim()
+        if (!t || t.length > 30) return false
+        // 真提问（为什么/怎么/吗）交给模型，不劫持
+        if (/[?？]|为什么|怎么|如何|为什么呀/.test(t)) return false
+        // ① 背诗 / 念诗
+        if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) {
+          showBubble('（点播）好，念一首', 3000)
+          fetch('/api/chubby-whale/poem').then((r: any) => r.json()).then((d: any) => {
+            const p = (d && d.ok && d.item) ? d.item : null
+            if (!p) { showBubble('诗册没读到', 4000); return }
+            const body = String(p.text || '')
+            showBubble('念诗·' + p.title + '（' + String(p.author || '佚名') + '）', 15000)
+            const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + String(p.author || '佚名') + '。' + body.replace(/\\n/g, '，')
+            speakText(speech, { rate: NARRATION_RATE, onDone: () => sayLine(persona.line('poemDone'), 6000) })
+          }).catch(() => showBubble('诗册没读到', 4000))
+          return true
+        }
+        // ② 典故 / 成语
+        if (/典故|成语|讲个故事里的事/.test(t)) {
+          const type = /成语/.test(t) ? 'chengyu' : 'idiom'
+          showBubble(type === 'chengyu' ? '（点播）讲个成语' : '（点播）讲个典故', 3000)
+          fetch('/api/chubby-whale/culture?type=' + type).then((r: any) => r.json()).then((d: any) => {
+            const it = (d && d.ok && d.item) ? d.item : null
+            if (!it) { showBubble('这个没读到', 4000); return }
+            const body = collapseText(String(it.text || ''))
+            showBubble((type === 'chengyu' ? '成语·' : '典故·') + String(it.title || ''), 15000)
+            speakText((type === 'chengyu' ? '讲个成语——' : '讲个典故——') + String(it.title || '') + (it.src ? '，出自' + String(it.src) : '') + '。' + body, { rate: NARRATION_RATE })
+          }).catch(() => showBubble('这个没读到', 4000))
+          return true
+        }
+        // ③ 讲故事 / 说书（可带书名）
+        if (/讲故事|讲个故事|说书|来段|讲一段|讲个聊斋|讲聊斋/.test(t) || BOOK_ALIAS.some((p) => p[0].test(t))) {
+          let book = ''
+          for (const [re, name] of BOOK_ALIAS) { if (re.test(t)) { book = name; break } }
+          showBubble('（点播）' + (book ? '讲《' + book + '》' : '讲一段书'), 4000)
+          storyAutoRef.current = true
+          startStory(book)
+          return true
+        }
+        return false
+      }
+
+
       async function sendText(rawText: string, opts?: { voice?: boolean }): Promise<void> {
         const text = String(rawText || '').trim()
         if (!text) return
@@ -869,6 +921,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           storyNarratingRef.current = false
           try { storyBusyRef.current = false } catch (e) { }
         }
+        if (tryLocalRoute(text)) { setInput(''); return }
         const myEpoch = ++chatEpoch
         try { const hit = persona.reactTo(text); if (hit) { sayLine(hit.text, 4000); if (hit.event === 'praise') animRef.current?.pushHeart() } } catch (e) { }
         setInput('')
