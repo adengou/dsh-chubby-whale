@@ -5,6 +5,8 @@
 import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
 import { createAnimator } from './client/anim.js'
+import { splitTtsSegments, normalizeRate } from './shared/tts.js'
+import { parseDue, cleanReminderText } from './shared/time.js'
 ;(window as any).__ModuleLoader__.load({
   id: 'dsh-chubby-whale',
   factory: (require: any) => {
@@ -13,69 +15,85 @@ import { createAnimator } from './client/anim.js'
 
 
 
+    // 客户端标识：多标签页说书队列互不抢段（取不到就退化成单队列）
+    const CLIENT_ID = (() => {
+      try {
+        let v = localStorage.getItem('chubby-client-id')
+        if (!v) { v = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('chubby-client-id', v) }
+        return v
+      } catch (e) { return '' }
+    })()
+
+    // ===== TTS：60~80 字分段队列，边播边请求下一段 =====
+    interface TtsJob { text: string; rate: string; onDone?: () => void }
     let ttsAudio: any = null
-    const ttsQueue: string[] = []
+    const ttsQueue: TtsJob[] = []
     let ttsPlaying = false
-    function splitTtsSegments(text: string): string[] {
-      const t = String(text || '').trim()
-      if (!t) return []
-      if (t.length <= 140) return [t]
-      const parts = t.split(/(?<=[。！？!?；;…\.\r\n])/).map((s: string) => s.trim()).filter(Boolean)
-      if (parts.length <= 1) return [t]
-      const first = parts[0]
-      const rest = parts.slice(1).join('').trim()
-      if (!rest) return [first]
-      if (rest.length <= 26) return [first, rest]
-      const mid = Math.floor(rest.length / 2)
-      let cut = -1
-      for (const ch of ['，', ',', '；', '、', ' ', '。', '.']) {
-        const idx = rest.lastIndexOf(ch, mid)
-        if (idx > cut) cut = idx
-      }
-      if (cut < 8) cut = mid
-      return [first, rest.slice(0, cut + 1).trim(), rest.slice(cut + 1).trim()].filter(Boolean)
+    function currentVoice(): string {
+      try { return localStorage.getItem('chubby-tts-voice') || 'auto' } catch (e) { return 'auto' }
     }
-    function speakText(text: string): void {
+    function finishTtsJob(job: TtsJob): void {
+      if (!job || !job.onDone) return
+      const cb = job.onDone
+      job.onDone = undefined
+      try { cb() } catch (e) { }
+    }
+    function speakText(text: string, opts?: { rate?: string; onDone?: () => void }): void {
       try {
         if (!text) return
         try { if (localStorage.getItem('chubby-voice') === 'off') return } catch (e) { }
-        const segs = splitTtsSegments(text)
-        for (const s of segs) { ttsQueue.push(String(s).slice(0, 500)) }
+        const rate = normalizeRate(opts && opts.rate, '+0%')
+        // 说书一段 2000+ 字，按标点切 80 字内逐段请求，整段不会被砍
+        const segs = splitTtsSegments(text, 80)
+        for (let i = 0; i < segs.length; i++) {
+          ttsQueue.push({ text: segs[i], rate, onDone: (i === segs.length - 1) ? (opts && opts.onDone) : undefined })
+        }
         playNextTts()
       } catch (e) { }
     }
     function playNextTts(): void {
       if (ttsPlaying) return
       if (ttsQueue.length === 0) return
+      let job: TtsJob | null = null
       try {
         ttsPlaying = true
-        const text = ttsQueue.shift() as string
+        job = ttsQueue.shift() as TtsJob
+        const text = job.text
         fetch('/api/chubby-whale/tts', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text, voice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'auto' } catch (e) { return 'auto' } })() }),
+          body: JSON.stringify({ text, voice: currentVoice(), rate: job.rate }),
         }).then((r: any) => {
           if (!r.ok) throw new Error('tts http ' + r.status)
           return r.arrayBuffer()
         }).then((buf: ArrayBuffer) => {
+          const jobRef = job as TtsJob
+          let settled = false
+          const settle = () => {
+            if (settled) return
+            settled = true
+            finishTtsJob(jobRef)
+            ttsPlaying = false
+            playNextTts()
+          }
           const blob = new Blob([buf], { type: 'audio/mpeg' })
           const url = URL.createObjectURL(blob)
           const audio = new Audio(url)
           ttsAudio = audio
-          audio.onended = () => { try { URL.revokeObjectURL(url) } catch { } ; ttsPlaying = false; playNextTts() }
-          audio.onerror = () => { ttsPlaying = false }
+          audio.onended = () => { try { URL.revokeObjectURL(url) } catch { } ; settle() }
+          audio.onerror = () => { settle() }
           audio.play().catch(() => {
             try {
               const u = new (window as any).SpeechSynthesisUtterance(text.slice(0, 300))
               u.lang = /[\u4e00-\u9fa5]/.test(text) ? 'zh-CN' : 'en-US'
+              u.onend = settle
+              u.onerror = settle
               ;(window as any).speechSynthesis.cancel()
               ;(window as any).speechSynthesis.speak(u)
-            } catch (e) { }
-            ttsPlaying = false
-            playNextTts()
+            } catch (e) { settle() }
           })
-        }).catch(() => { ttsPlaying = false; playNextTts() })
-      } catch (e) { ttsPlaying = false }
+        }).catch(() => { finishTtsJob(job as TtsJob); ttsPlaying = false; playNextTts() })
+      } catch (e) { ttsPlaying = false; if (job) finishTtsJob(job) }
     }
 
     let recognition: any = null
@@ -152,6 +170,9 @@ import { createAnimator } from './client/anim.js'
       const dragRef = R.useRef({ dragging: false, lastX: 0, lastY: 0, vx: 0, vy: 0, moved: 0 })
       const scaleRef = R.useRef(1)
       const animRef = R.useRef(null as any)
+      const storyBusyRef = R.useRef(false)
+      const dueQueueRef = R.useRef([] as any[])
+      const dueTimerRef = R.useRef(null as any)
 
       const [scale, setScale] = R.useState(1)
       const [hidden, setHidden] = R.useState(false)
@@ -278,6 +299,66 @@ import { createAnimator } from './client/anim.js'
         }).catch(() => { })
       }
 
+      // ===== 说书（连载）=====
+      function playStoryPiece(d: any): void {
+        const text = String(d.text || '')
+        const head = '说书·《' + String(d.book || '') + '》' + (d.title ? '｜' + d.title : '')
+        let voiceOff = false
+        try { voiceOff = localStorage.getItem('chubby-voice') === 'off' } catch (e) { }
+        showBubble(head + '：' + text.slice(0, 100) + (text.length > 100 ? '…' : ''), 12000)
+        animRef.current?.talkFor(8000)
+        if (voiceOff) {
+          storyBusyRef.current = false
+          showBubble(head + '：' + text.slice(0, 300) + '…', 20000)
+          return
+        }
+        storyBusyRef.current = true
+        speakText(text, {
+          rate: normalizeRate(d.rate, '-15%'),
+          onDone: () => {
+            storyBusyRef.current = false
+            showBubble('这段讲完啦～点菜单「接着说」听下一段', 6000)
+          },
+        })
+      }
+      function startStory(hint: string): void {
+        if (storyBusyRef.current) { showBubble('正讲着呢，听完这段再说～', 3000); return }
+        const headers: any = CLIENT_ID ? { 'x-client-id': CLIENT_ID } : {}
+        fetch('/api/chubby-whale/story/start' + (hint ? '?hint=' + encodeURIComponent(hint) : ''), { headers })
+          .then((r: any) => r.json())
+          .then((d: any) => {
+            if (!d || !d.ok) { showBubble('说书没开成：' + ((d && d.error) || '没读到书'), 5000); return }
+            playStoryPiece(d)
+          })
+          .catch(() => showBubble('说书连不上'))
+      }
+      function nextStory(): void {
+        if (storyBusyRef.current) { showBubble('正讲着呢，听完这段再说～', 3000); return }
+        const headers: any = CLIENT_ID ? { 'x-client-id': CLIENT_ID } : {}
+        fetch('/api/chubby-whale/story/next', { headers })
+          .then((r: any) => r.json())
+          .then((d: any) => {
+            if (!d || !d.ok) { showBubble('说书卡住了', 4000); return }
+            if (d.done) { showBubble('一轮都讲完啦，本鱼从头再讲～', 5000); startStory(''); return }
+            playStoryPiece(d)
+          })
+          .catch(() => showBubble('说书连不上'))
+      }
+
+      // ===== 到点提醒：多条排队，逐条显示 + 朗读，间隔 3 秒 =====
+      function pumpDueReminders(): void {
+        if (dueTimerRef.current) return
+        if (dueQueueRef.current.length === 0) return
+        const item = dueQueueRef.current.shift()
+        showBubble('提醒：' + String(item.text || ''), 8000)
+        animRef.current?.talkFor(3000)
+        try { speakText('提醒：' + String(item.text || '')) } catch (e) { }
+        dueTimerRef.current = setTimeout(() => {
+          dueTimerRef.current = null
+          pumpDueReminders()
+        }, 3000)
+      }
+
       // 菜单动作
       function runAction(action: string): void {
         setMenu(null)
@@ -299,21 +380,51 @@ import { createAnimator } from './client/anim.js'
         if (action === 'culture-story') {
           startStory('')
           return
-        }        if (action === 'culture-tale') {
+        }
+        if (action === 'culture-story-next') {
+          nextStory()
+          return
+        }
+        if (action === 'poem') {
+          fetch('/api/chubby-whale/poem').then((r: any) => r.json()).then((d: any) => {
+            if (d && d.ok) {
+              const body = String(d.text || '')
+              const author = String(d.author || '佚名')
+              showBubble('念诗·' + d.title + '（' + author + '）\n' + body, 15000)
+              animRef.current?.talkFor(6000)
+              const speech = '念首诗——' + d.title + '，' + (d.dynasty ? d.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
+              speakText(speech, { rate: '-15%' })
+            } else showBubble('诗册没读到')
+          }).catch(() => showBubble('诗册没读到'))
+          return
+        }
+        if (action === 'culture-tale') {
           fetch('/api/chubby-whale/culture?type=minsu').then((r: any) => r.json()).then((d: any) => {
-            if (d && d.ok && d.item) { showBubble(d.item.text.slice(0, 120) + '…', 9000); animRef.current?.talkFor(5000); speakText(String(d.item.text || '').slice(0, 300)) } else showBubble('故事没讲成')
+            if (d && d.ok && d.item) {
+              showBubble(String(d.item.text || '').slice(0, 120) + '…', 9000)
+              animRef.current?.talkFor(5000)
+              speakText('讲个民间故事——' + String(d.item.title || '') + '。' + String(d.item.text || '').slice(0, 6000), { rate: '-15%' })
+            } else showBubble('故事没讲成')
           }).catch(() => showBubble('故事没讲成'))
           return
         }
         if (action === 'culture-allusion') {
           fetch('/api/chubby-whale/culture?type=chengyu').then((r: any) => r.json()).then((d: any) => {
-            if (d && d.ok && d.item) { showBubble('《' + d.item.title + '》（' + (d.item.src || '') + '）' + String(d.item.text || '').slice(0, 100) + '…', 9000); animRef.current?.talkFor(5000); speakText(String(d.item.title || '') + '。' + String(d.item.text || '').slice(0, 280)) } else showBubble('典故没讲成')
+            if (d && d.ok && d.item) {
+              showBubble('《' + d.item.title + '》（' + (d.item.src || '') + '）' + String(d.item.text || '').slice(0, 100) + '…', 9000)
+              animRef.current?.talkFor(5000)
+              speakText('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + String(d.item.text || ''), { rate: '-15%' })
+            } else showBubble('典故没讲成')
           }).catch(() => showBubble('典故没讲成'))
           return
         }
         if (action === 'culture-idiom') {
           fetch('/api/chubby-whale/culture?type=idiom').then((r: any) => r.json()).then((d: any) => {
-            if (d && d.ok && d.item) { showBubble(d.item.title + '：' + String(d.item.text || '').slice(0, 100), 8000); speakText(String(d.item.title || '') + '。' + String(d.item.text || '').slice(0, 280)) } else showBubble('没查到')
+            if (d && d.ok && d.item) {
+              showBubble(d.item.title + '：' + String(d.item.text || '').slice(0, 100), 8000)
+              const sp = String(d.item.title || '') + '：' + String(d.item.text || '')
+              speakText(sp, { rate: sp.length >= 80 ? '-15%' : '+0%' })
+            } else showBubble('没查到')
           }).catch(() => showBubble('没查到'))
           return
         }
@@ -459,13 +570,28 @@ import { createAnimator } from './client/anim.js'
           try { const u = new (window as any).SpeechSynthesisUtterance('主人，这个声音好听吗？'); (window as any).speechSynthesis.cancel(); (window as any).speechSynthesis.speak(u) } catch (e) { }
           return
         }        if (action === 'remind-add') {
-          const msg = (window as any).prompt('提醒什么？')
+          // 照 C# Reminders.cs 的 ParseDue：一句话里就能带时间（明天9点 / 半小时后 / 每天9点…）
+          const msg = (window as any).prompt('提醒什么？（可以一起说时间，如「明天9点提醒我开会」）')
           if (!msg) return
-          const mins = (window as any).prompt('几分钟后提醒？（填数字，如 5）', '5')
-          if (!mins) return
-          const at = new Date(Date.now() + Number(mins) * 60000).toISOString()
-          fetch('/api/chubby-whale/reminders', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: msg, at }) })
-            .then((r: any) => r.json()).then((d: any) => { showBubble(d && d.ok ? ('好，' + mins + ' 分钟后提醒你：' + msg) : '提醒没加上') })
+          let parsed = parseDue(msg)
+          if (!parsed) {
+            const ans = (window as any).prompt('什么时候提醒？（如 9点 / 明天9点 / 半小时后 / 20分钟后 / 每天9点）', '5分钟后')
+            if (!ans) return
+            parsed = parseDue(ans)
+            if (!parsed) { showBubble('这个时间本鱼没听懂……试试「9点」「明天9点」「半小时后」', 5000); return }
+          }
+          const text = String(parsed.cleaned || cleanReminderText(msg) || msg).slice(0, 200)
+          const dueAt = parsed.at
+          const repeat = parsed.repeat || 0
+          fetch('/api/chubby-whale/reminders', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, at: dueAt.toISOString(), repeat }) })
+            .then((r: any) => r.json()).then((d: any) => {
+              if (d && d.ok) {
+                const hh = String(dueAt.getHours()).padStart(2, '0')
+                const mm = String(dueAt.getMinutes()).padStart(2, '0')
+                const whenText = repeat > 0 ? ('每天 ' + hh + ':' + mm) : ((dueAt.getMonth() + 1) + '月' + dueAt.getDate() + '日 ' + hh + ':' + mm)
+                showBubble('好，' + whenText + ' 提醒你：' + text, 6000)
+              } else showBubble('提醒没加上')
+            })
             .catch(() => showBubble('提醒没加上'))
           return
         }
@@ -473,7 +599,12 @@ import { createAnimator } from './client/anim.js'
           fetch('/api/chubby-whale/reminders').then((r: any) => r.json()).then((d: any) => {
             const arr = (d && d.reminders) || []
             if (!arr.length) { showBubble('还没有提醒～'); return }
-            const txt = arr.map((x: any) => '· ' + x.text + '（' + new Date(x.at).toLocaleString('zh-CN') + '）').join('\n')
+            const txt = arr.map((x: any) => {
+              const when = new Date(x.nextAt || x.at)
+              const stamp = isNaN(when.getTime()) ? String(x.at) : when.toLocaleString('zh-CN')
+              const rep = Number(x.repeat) > 0 ? '（每天）' : ''
+              return '· ' + x.text + '（' + stamp + '）' + rep
+            }).join('\n')
             showBubble(txt, 8000)
           }).catch(() => showBubble('提醒清单查不到'))
           return
@@ -521,14 +652,17 @@ import { createAnimator } from './client/anim.js'
         }
       }
 
-      // 提醒轮询（每 30 秒检查一次）
+      // 提醒轮询（每 20 秒检查一次，与 C# 一致）——到点的全部排队，逐条播报
       R.useEffect(() => {
         const timer = setInterval(() => {
           fetch('/api/chubby-whale/reminders?action=due').then((r: any) => r.json()).then((d: any) => {
             const due = (d && d.due) || []
-            if (due.length > 0 && due[0].text) showBubble('提醒：' + due[0].text, 8000)
+            for (const it of due) {
+              if (it && it.text) dueQueueRef.current.push(it)
+            }
+            pumpDueReminders()
           }).catch(() => { })
-        }, 30000)
+        }, 20000)
         return () => clearInterval(timer)
       }, [])
       // 语音待命（VAD 版，照 fish-pet）：连续录音，静音 700ms 判定说完，立即上传识别
@@ -545,8 +679,11 @@ import { createAnimator } from './client/anim.js'
         let started = false
         let voicedMs = 0
         let silenceMs = 0
-        let totalMs = 0
         let peak = 0
+        let chunkStartedAt = 0
+        let lastTickAt = 0
+        let watchTimer: any = null
+        let startTimer: any = null
         const SILENCE_GATE = 8
         const SILENCE_LIMIT = 700
         const VOICE_LIMIT = 6000
@@ -559,14 +696,20 @@ import { createAnimator } from './client/anim.js'
             } catch (e) { resolve('') }
           })
         }
+        function scheduleStart(delay: number): void {
+          if (stopped) return
+          if (startTimer) clearTimeout(startTimer)
+          startTimer = setTimeout(() => { startTimer = null; startChunk() }, delay)
+        }
         async function uploadChunk() {
+          // 所有 return 都走 finally → 录音循环一定会重启（不再因为「没叫唤醒词」装死）
           try {
             if (stopped) return
             const blob = new Blob(chunks, { type: 'audio/webm' })
             chunks = []
-            if (blob.size < 2500) { startChunk(); return }
+            if (blob.size < 2500) return
             const b64 = await blobToBase64(blob)
-            if (!b64) { startChunk(); return }
+            if (!b64) return
             const r = await fetch('/api/chubby-whale/asr', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
@@ -594,17 +737,9 @@ import { createAnimator } from './client/anim.js'
               showBubble('（听到）' + t, 3000)
               sendText(t)
             }
-          } catch (e) { }
-          if (!stopped) setTimeout(startChunk, 350)
-        }
-        function startChunk() {
-          if (stopped) return
-          try {
-            chunks = []
-            voicedMs = 0; silenceMs = 0; totalMs = 0; peak = 0
-            mr.start()
-            watch()
-          } catch (e) { setTimeout(startChunk, 1000) }
+          } catch (e) { } finally {
+            if (!stopped) scheduleStart(350)
+          }
         }
         function watch() {
           try {
@@ -615,16 +750,42 @@ import { createAnimator } from './client/anim.js'
             for (let i = 0; i < buf.length; i++) sum += buf[i]
             const avg = sum / buf.length
             if (avg > peak) peak = avg
-            totalMs += 100
-            if (avg > SILENCE_GATE) { voicedMs += 100; silenceMs = 0 } else { silenceMs += 100 }
-            const done = (voicedMs > 200 && silenceMs >= SILENCE_LIMIT) || totalMs >= VOICE_LIMIT + 2000 || peak > 90 && silenceMs >= 400
+            // 用真实时间戳算，后台标签页被节流时也不会低估（旧版 totalMs += 100 会漂移）
+            const now = performance.now()
+            const dt = Math.min(250, Math.max(0, now - lastTickAt))
+            lastTickAt = now
+            if (avg > SILENCE_GATE) { voicedMs += dt; silenceMs = 0 } else { silenceMs += dt }
+            const elapsed = now - chunkStartedAt
+            const done = (voicedMs > 200 && silenceMs >= SILENCE_LIMIT) || elapsed >= VOICE_LIMIT + 2000 || (peak > 90 && silenceMs >= 400)
             if (done && mr.state === 'recording') {
               try { mr.stop() } catch { }
               setTimeout(uploadChunk, 100)
               return
             }
-            if (!stopped) setTimeout(watch, 100)
-          } catch (e) { }
+            if (!stopped) scheduleWatch(100)
+          } catch (e) { if (!stopped) scheduleWatch(100) }
+        }
+        function scheduleWatch(delay: number): void {
+          if (stopped) return
+          if (watchTimer) clearTimeout(watchTimer)
+          watchTimer = setTimeout(() => { watchTimer = null; watch() }, delay)
+        }
+        function startChunk() {
+          if (stopped || !mr) return
+          try {
+            // 上一段还没 stop 时不能直接 start()（会抛异常并无限重试），先停，稍后再起
+            if (mr.state !== 'inactive') {
+              try { mr.stop() } catch (e) { }
+              scheduleStart(200)
+              return
+            }
+            chunks = []
+            voicedMs = 0; silenceMs = 0; peak = 0
+            chunkStartedAt = performance.now()
+            lastTickAt = chunkStartedAt
+            mr.start()
+            scheduleWatch(100)
+          } catch (e) { scheduleStart(1000) }
         }
         async function boot() {
           try {
@@ -655,6 +816,9 @@ import { createAnimator } from './client/anim.js'
         } catch { }
         return () => {
           stopped = true
+          // 停掉 watch/start 的定时器链，避免卸载后还多跑一轮
+          if (watchTimer) { try { clearTimeout(watchTimer) } catch { } watchTimer = null }
+          if (startTimer) { try { clearTimeout(startTimer) } catch { } startTimer = null }
           try { if (mr && mr.state === 'recording') mr.stop() } catch { }
           try { if (actx) actx.close() } catch { }
           try { if (stream) stream.getTracks().forEach((t: any) => t.stop()) } catch { }

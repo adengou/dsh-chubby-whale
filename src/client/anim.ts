@@ -28,6 +28,8 @@ export function createAnimator(opts: {
   let last = performance.now()
   let blinkT = 0
   let blinkClosed = false
+  // 眨眼间隔：每次眨完才重新抽一次，不能每帧重算（否则随机到不可控）
+  let blinkGap = 3200 + Math.random() * 1800
 
   function drawEye(c: { x: number; y: number; r: number }, closed: boolean): void {
     if (!closed) return
@@ -81,9 +83,8 @@ export function createAnimator(opts: {
       ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch)
     }
     blinkT += dt
-    const gap = 3200 + Math.random() * 1800
-    if (!blinkClosed && blinkT > gap) { blinkClosed = true; blinkT = 0 }
-    if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0 }
+    if (!blinkClosed && blinkT > blinkGap) { blinkClosed = true; blinkT = 0 }
+    if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
     if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
     if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0)
     drawHearts()

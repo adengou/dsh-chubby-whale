@@ -168,13 +168,18 @@ export function createStore(dataDir) {
         }
         catch { }
     }
-    function addReminder(text, at) {
+    function addReminder(text, at, repeat) {
         const arr = loadReminders();
+        const rep = Math.round(Number(repeat) || 0);
         const item = {
             id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
             text,
             at,
+            repeat: rep > 0 ? rep : null,
+            nextAt: null,
+            fired: false,
             done: false,
+            remindCount: 0,
             createdAt: new Date().toISOString(),
         };
         arr.push(item);
@@ -187,10 +192,30 @@ export function createStore(dataDir) {
         const due = [];
         let changed = false;
         for (const r of arr) {
-            if (!r.done && r.at && new Date(r.at).getTime() <= now) {
+            if (!r || r.done)
+                continue; // 已完成的一律跳过
+            const stamp = r.nextAt || r.at;
+            if (!stamp)
+                continue;
+            const when = new Date(stamp).getTime();
+            if (!Number.isFinite(when) || when > now)
+                continue;
+            if (r.fired)
+                continue;
+            r.fired = true;
+            r.remindCount = (Number(r.remindCount) || 0) + 1;
+            due.push(r);
+            changed = true;
+            const rep = Number(r.repeat) || 0;
+            if (rep > 0) {
+                // 每天（或自定义间隔）的提醒：不标 done，只把下一次时间往后推
+                const next = new Date(now + rep * 1000);
+                r.nextAt = next.toISOString();
+                r.at = r.nextAt;
+                r.fired = false;
+            }
+            else {
                 r.done = true;
-                changed = true;
-                due.push(r);
             }
         }
         if (changed)

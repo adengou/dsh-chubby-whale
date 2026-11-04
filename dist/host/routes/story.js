@@ -1,6 +1,9 @@
 /**
- * host/routes/story.ts —— 说书路由（1:1 复刻 dsh-fish-pet 的 story.ps1 算法）
- * 选回目、整回连播、进度记忆（book|title|piece）、按需加载（Worker 读大 JSON）
+ * host/routes/story.ts —— 说书路由（对齐 C# 版 Story.cs 的 Next() 算法）
+ * 选段：按数组顺序找第一个未读段（key = book|index，避免回目里 piece 重复导致误判）；
+ * 一本读完自动下一本；17 本全读完才清空进度重来。
+ * 进度文件：{"book|index": true, "_current": "书名"}
+ * 连播：每个客户端（x-client-id）一条队列，多标签页互不抢段；拿不到 id 时共用单队列。
  */
 import { readdir } from 'node:fs/promises';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -18,18 +21,22 @@ export function createStoryHandlers(opts) {
     const PROGRESS = join(opts.dataDir, 'story_progress.json');
     const bookCache = new Map();
     const progress = loadProgress();
-    // 当前连播队列（模块级单例）
-    let queue = [];
-    let queueBook = '';
-    let queueTitle = '';
+    // 每个客户端一条连播队列：{ queue: 本书剩余未读段, book: 书名 }
+    const clientQueues = new Map();
     function loadProgress() {
         try {
             const obj = JSON.parse(readFileSync(PROGRESS, 'utf8'));
             const out = {};
-            if (obj && typeof obj === 'object') {
-                for (const k of Object.keys(obj))
-                    if (obj[k])
+            if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+                for (const k of Object.keys(obj)) {
+                    if (k === '_current') {
+                        if (typeof obj[k] === 'string')
+                            out[k] = obj[k];
+                    }
+                    else if (obj[k]) {
                         out[k] = true;
+                    }
+                }
             }
             return out;
         }
@@ -44,10 +51,65 @@ export function createStoryHandlers(opts) {
         }
         catch { }
     }
-    function storyKey(c) {
-        return String(c.book || '') + '|' + String(c.title || '') + '|' + String(c.piece || '');
+    function storyKey(book, index) {
+        return String(book || '') + '|' + String(index);
     }
-    // 按需加载一本书的切片（Worker 解析，内存缓存）
+    async function listBooks() {
+        try {
+            const files = await readdir(STORY_DIR);
+            return files.filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, '')).sort();
+        }
+        catch {
+            return [];
+        }
+    }
+    function resolveBook(books, want) {
+        const w = String(want || '').trim();
+        if (!w)
+            return '';
+        if (books.indexOf(w) >= 0)
+            return w;
+        let hit = '';
+        for (const b of books) {
+            if (b.indexOf(w) >= 0 || w.indexOf(b) >= 0) {
+                if (b.length > hit.length)
+                    hit = b;
+            }
+        }
+        return hit;
+    }
+    function currentBook(books) {
+        try {
+            const cur = progress['_current'];
+            if (typeof cur === 'string' && cur && books.indexOf(cur) >= 0)
+                return cur;
+        }
+        catch { }
+        return books.length ? books[0] : '';
+    }
+    // 按需加载一本书的切片（Worker 解析，内存缓存）；index 用原数组序号（照 C#）
+    function normalizeBook(book, raw) {
+        const out = [];
+        if (!Array.isArray(raw))
+            return out;
+        for (let i = 0; i < raw.length; i++) {
+            const c = raw[i];
+            if (!c || typeof c !== 'object')
+                continue;
+            const text = String(c.text == null ? '' : c.text);
+            if (!text.trim())
+                continue;
+            out.push({
+                book: String(c.book || book),
+                title: String(c.title || ''),
+                piece: Number(c.piece) || 1,
+                total: Number(c.total) || 1,
+                text,
+                index: i,
+            });
+        }
+        return out;
+    }
     function loadBook(book) {
         const cached = bookCache.get(book);
         if (cached)
@@ -66,8 +128,9 @@ export function createStoryHandlers(opts) {
                     }
                     catch { }
                     if (msg && msg.ok) {
-                        bookCache.set(book, msg.chunks);
-                        resolve(msg.chunks);
+                        const list = normalizeBook(book, msg.chunks);
+                        bookCache.set(book, list);
+                        resolve(list);
                     }
                     else
                         reject(new Error(msg?.error || 'parse failed'));
@@ -79,18 +142,6 @@ export function createStoryHandlers(opts) {
                 reject(err);
             }
         });
-    }
-    async function handleBooks(_req, res) {
-        try {
-            const files = await readdir(STORY_DIR);
-            const books = files.filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, ''));
-            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-            res.end(JSON.stringify({ ok: true, books }));
-        }
-        catch (err) {
-            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-            res.end(JSON.stringify({ ok: false, error: String(err?.message || err), books: [] }));
-        }
     }
     // 播一段（组装开场白/结尾，照 fish-pet 的 Speak-StoryChunk）
     function buildChunk(c, isFirst, isLast) {
@@ -114,85 +165,149 @@ export function createStoryHandlers(opts) {
             rate: '-15%',
         };
     }
-    function pickChunk(chunks, pick) {
-        const pickBook = String(pick.book);
-        queueBook = pickBook;
-        queueTitle = String(pick.title);
-        const q = chunks
-            .filter((c) => String(c.book) === pickBook && String(c.title) === String(pick.title) && Number(c.piece) >= Number(pick.piece))
-            .sort((a, b) => Number(a.piece) - Number(b.piece));
-        queue = q;
+    function isLastPiece(c) {
+        return Number(c.piece) >= Number(c.total);
     }
-    async function handleStoryStart(req, res) {
-        try {
-            const url = new URL(req.url, 'http://x');
-            const hint = url.searchParams.get('hint') || '';
-            const books = await readdir(STORY_DIR);
-            const bookList = books.filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, ''));
-            if (bookList.length === 0) {
-                res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-                res.end(JSON.stringify({ ok: false, error: 'no books' }));
-                return;
+    /** 本回剩余未读段（按数组顺序，供本客户端连播） */
+    function queueAfter(chunks, book, piece) {
+        return chunks
+            .filter((c) => Number(c.index) > Number(piece.index) && !progress[storyKey(book, c.index)])
+            .sort((a, b) => Number(a.index) - Number(b.index));
+    }
+    /** 照 C# Story.Next()：当前书里找第一个未读段；读完换下一本；全读完才清零重来 */
+    async function pickNext(books, want) {
+        if (books.length === 0)
+            return null;
+        const resolved = resolveBook(books, want);
+        let target = resolved || currentBook(books);
+        for (let attempt = 0; attempt < books.length; attempt++) {
+            const chunks = await loadBook(target);
+            const hit = chunks.find((c) => !progress[storyKey(target, c.index)]);
+            if (hit) {
+                progress[storyKey(target, hit.index)] = true;
+                progress['_current'] = target;
+                saveProgress();
+                return { piece: hit, chunks, book: target };
             }
-            let book = '';
-            if (hint) {
-                for (const b of bookList) {
-                    if (hint.indexOf(b) >= 0 || (b.length > 2 && hint.indexOf(b.slice(0, 2)) >= 0)) {
-                        book = b;
+            const idx = books.indexOf(target);
+            target = books[(idx + 1) % books.length];
+        }
+        // 整整一轮都没找到未读：17 本都讲完了，清空进度从头再来
+        for (const k of Object.keys(progress)) {
+            if (k !== '_current')
+                delete progress[k];
+        }
+        saveProgress();
+        const firstBook = books[0];
+        const chunks = await loadBook(firstBook);
+        const hit = chunks.find((c) => !progress[storyKey(firstBook, c.index)]);
+        if (!hit)
+            return null;
+        progress[storyKey(firstBook, hit.index)] = true;
+        progress['_current'] = firstBook;
+        saveProgress();
+        return { piece: hit, chunks, book: firstBook };
+    }
+    function clientId(req) {
+        try {
+            const raw = req?.headers?.['x-client-id'];
+            const v = Array.isArray(raw) ? raw[0] : raw;
+            if (typeof v !== 'string')
+                return '';
+            return v.replace(/[^\w.-]/g, '').slice(0, 64);
+        }
+        catch {
+            return '';
+        }
+    }
+    function stateFor(id) {
+        let st = clientQueues.get(id);
+        if (!st) {
+            st = { queue: [], book: '' };
+            clientQueues.set(id, st);
+            if (clientQueues.size > 16) {
+                for (const k of clientQueues.keys()) {
+                    if (k !== id) {
+                        clientQueues.delete(k);
                         break;
                     }
                 }
             }
-            if (!book)
-                book = bookList[Math.floor(Math.random() * bookList.length)];
-            const chunks = await loadBook(book);
-            if (!chunks || chunks.length === 0) {
-                res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-                res.end(JSON.stringify({ ok: false, error: 'empty book' }));
-                return;
-            }
-            const fresh = chunks.filter((c) => !progress[storyKey(c)]);
-            const pool = fresh.length > 0 ? fresh : chunks;
-            const firstPieces = pool.filter((c) => Number(c.piece) === 1);
-            const src = firstPieces.length > 0 ? firstPieces : pool;
-            const pick = src[Math.floor(Math.random() * src.length)];
-            if (!pick) {
-                res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-                res.end(JSON.stringify({ ok: false, error: 'no chunk' }));
-                return;
-            }
-            pickChunk(chunks, pick);
-            const first = queue.shift();
-            const isLast = Number(first.piece) >= Number(first.total);
-            progress[storyKey(first)] = true;
-            saveProgress();
-            const out = buildChunk(first, true, isLast);
-            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-            res.end(JSON.stringify({ ok: true, ...out, remain: queue.length }));
+        }
+        return st;
+    }
+    function send(res, payload) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(payload));
+    }
+    async function handleBooks(_req, res) {
+        try {
+            send(res, { ok: true, books: await listBooks() });
         }
         catch (err) {
-            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-            res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }));
+            send(res, { ok: false, error: String(err?.message || err), books: [] });
         }
     }
-    async function handleStoryNext(_req, res) {
+    async function handleStoryStart(req, res) {
         try {
-            if (queue.length === 0) {
-                res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-                res.end(JSON.stringify({ ok: true, done: true }));
+            const books = await listBooks();
+            if (books.length === 0) {
+                send(res, { ok: false, error: 'no books' });
                 return;
             }
-            const c = queue.shift();
-            const isLast = Number(c.piece) >= Number(c.total);
-            progress[storyKey(c)] = true;
-            saveProgress();
-            const out = buildChunk(c, false, isLast);
-            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-            res.end(JSON.stringify({ ok: true, ...out, remain: queue.length }));
+            const url = new URL(req.url, 'http://x');
+            const hint = url.searchParams.get('hint') || '';
+            const picked = await pickNext(books, hint);
+            if (!picked) {
+                send(res, { ok: false, error: 'no chunk' });
+                return;
+            }
+            const st = stateFor(clientId(req));
+            st.book = picked.book;
+            st.queue = queueAfter(picked.chunks, picked.book, picked.piece);
+            const out = buildChunk(picked.piece, true, isLastPiece(picked.piece));
+            send(res, { ok: true, ...out, remain: st.queue.length });
         }
         catch (err) {
-            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-            res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }));
+            send(res, { ok: false, error: String(err?.message || err) });
+        }
+    }
+    async function handleStoryNext(req, res) {
+        try {
+            const books = await listBooks();
+            if (books.length === 0) {
+                send(res, { ok: false, error: 'no books' });
+                return;
+            }
+            const st = stateFor(clientId(req));
+            // 队列里若已被别的标签页讲过，就跳过
+            while (st.queue.length > 0 && progress[storyKey(st.book, st.queue[0].index)])
+                st.queue.shift();
+            let piece = null;
+            let isFirst = false;
+            if (st.queue.length > 0) {
+                piece = st.queue.shift();
+            }
+            else {
+                const picked = await pickNext(books, '');
+                if (!picked) {
+                    send(res, { ok: true, done: true });
+                    return;
+                }
+                piece = picked.piece;
+                st.book = picked.book;
+                st.queue = queueAfter(picked.chunks, picked.book, piece);
+                isFirst = true;
+            }
+            const bk = st.book || String(piece.book || books[0]);
+            progress[storyKey(bk, piece.index)] = true;
+            progress['_current'] = bk;
+            saveProgress();
+            const out = buildChunk(piece, isFirst, isLastPiece(piece));
+            send(res, { ok: true, ...out, remain: st.queue.length });
+        }
+        catch (err) {
+            send(res, { ok: false, error: String(err?.message || err) });
         }
     }
     return { handleBooks, handleStoryStart, handleStoryNext };

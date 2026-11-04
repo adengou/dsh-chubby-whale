@@ -3,7 +3,7 @@
  */
 export function createReminderHandlers(opts: {
   loadReminders: () => any[]
-  addReminder: (text: string, at: string) => any
+  addReminder: (text: string, at: string, repeat?: number) => any
   dueReminders: () => any[]
   removeReminder: (id: string) => void
 }) {
@@ -30,12 +30,15 @@ export function createReminderHandlers(opts: {
         try { body = text ? JSON.parse(text) : {} } catch { body = {} }
         const msg = typeof body?.text === 'string' ? body.text.slice(0, 200) : ''
         const at = typeof body?.at === 'string' ? body.at : ''
-        if (!msg || !at) {
+        const repIn = Number(body?.repeat) || 0
+        // 重复间隔（秒）：只接受 1 分钟 ~ 7 天，其余按不重复处理
+        const repeat = repIn >= 60 && repIn <= 86400 * 7 ? Math.round(repIn) : 0
+        if (!msg || !at || !Number.isFinite(new Date(at).getTime())) {
           res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
           res.end(JSON.stringify({ ok: false, error: 'text and at required' }))
           return
         }
-        const item = opts.addReminder(msg, at)
+        const item = opts.addReminder(msg, at, repeat)
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ ok: true, reminder: item }))
         return

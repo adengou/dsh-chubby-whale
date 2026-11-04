@@ -4,11 +4,13 @@
  * Key 来源：插件 config.json 的 siliconflowKey > 环境变量 SILICONFLOW_API_KEY
  */
 import { readFileSync } from 'node:fs'
-import { hashKey } from '../cache.js'
+import { hashBytes } from '../cache.js'
 import { join } from 'node:path'
 
 const ASR_MODEL = 'Qwen/Qwen3-ASR-1.7B'
 const ENDPOINT = 'https://api.siliconflow.cn/v1/audio/transcriptions'
+/** 识别结果的缓存有效期：7 天（音频字节内容 hash，同一个录音重放可直接命中） */
+const ASR_CACHE_MAX_AGE = 7 * 24 * 3600 * 1000
 
 export function readSiliconFlowKey(pluginDir: string): string {
   try {
@@ -43,9 +45,10 @@ export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
         return
       }
       const buf = Buffer.from(audioB64, 'base64')
-      const ck = hashKey(audioB64.slice(0, 4000) + '|' + audioB64.length)
+      // 用完整音频字节做 key（只取前 4000 字符容易撞 key）
+      const ck = hashBytes(buf)
       if (opts.cache) {
-        const hit = await opts.cache.getJson(ck)
+        const hit = await opts.cache.getJson(ck, 'json', ASR_CACHE_MAX_AGE)
         if (hit && typeof hit.text === 'string') {
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
           res.end(JSON.stringify({ ok: true, text: hit.text, cached: true }))
@@ -85,6 +88,7 @@ export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
       }
       const data: any = await resp.json()
       const text = String(data?.text || '').trim()
+      if (opts.cache && text) { try { await opts.cache.setJson(ck, { text }) } catch { } }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ ok: true, text }))
     } catch (err: any) {

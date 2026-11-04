@@ -128,6 +128,8 @@
     "\u63D0\u9192\u6E05\u5355\u2026": "Reminders\u2026",
     "\u6587\u5316\u6C14 \u25B8": "Culture \u25B8",
     "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09": "Storytelling",
+    "\u63A5\u7740\u8BF4": "Continue story",
+    "\u5FF5\u9996\u8BD7": "Recite a poem",
     "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B": "Folk tale",
     "\u8BB2\u4E2A\u5178\u6545": "Classic allusion",
     "\u6210\u8BED\u8FA8\u6790": "Idiom",
@@ -205,6 +207,8 @@
       { type: "sep" },
       { type: "sub", label: "\u6587\u5316\u6C14 \u25B8", items: [
         { type: "item", label: "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09", action: "culture-story" },
+        { type: "item", label: "\u63A5\u7740\u8BF4", action: "culture-story-next" },
+        { type: "item", label: "\u5FF5\u9996\u8BD7", action: "poem" },
         { type: "item", label: "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B", action: "culture-tale" },
         { type: "item", label: "\u8BB2\u4E2A\u5178\u6545", action: "culture-allusion" },
         { type: "item", label: "\u6210\u8BED\u8FA8\u6790", action: "culture-idiom" },
@@ -232,6 +236,7 @@
     let last = performance.now();
     let blinkT = 0;
     let blinkClosed = false;
+    let blinkGap = 3200 + Math.random() * 1800;
     function drawEye(c, closed) {
       if (!closed) return;
       const p = { x: c.x * sx, y: c.y * sy };
@@ -284,14 +289,14 @@
         ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch);
       }
       blinkT += dt;
-      const gap = 3200 + Math.random() * 1800;
-      if (!blinkClosed && blinkT > gap) {
+      if (!blinkClosed && blinkT > blinkGap) {
         blinkClosed = true;
         blinkT = 0;
       }
       if (blinkClosed && blinkT > 150) {
         blinkClosed = false;
         blinkT = 0;
+        blinkGap = 3200 + Math.random() * 1800;
       }
       if (blinkClosed) {
         drawEye(EYE_L, true);
@@ -316,44 +321,162 @@
     return { start, stop, talkFor, pushHeart };
   }
 
+  // src/shared/tts.ts
+  function isValidRate(s) {
+    return typeof s === "string" && /^[+-]\d{1,2}%$/.test(s.trim());
+  }
+  function normalizeRate(s, defaultRate = "+0%") {
+    return isValidRate(s) ? String(s).trim() : defaultRate;
+  }
+  function splitTtsSegments(text, maxLen = 80) {
+    const t = String(text || "").trim();
+    if (!t) return [];
+    if (t.length <= maxLen) return [t];
+    const boundary = /[。！？!?；;…，,、\n\r]/;
+    const minCut = Math.max(20, Math.floor(maxLen / 2));
+    const out = [];
+    let start = 0;
+    while (start < t.length) {
+      let end = Math.min(t.length, start + maxLen);
+      if (end < t.length) {
+        let cut = -1;
+        for (let i = end - 1; i >= start + minCut; i--) {
+          if (boundary.test(t[i])) {
+            cut = i + 1;
+            break;
+          }
+        }
+        if (cut > start) end = cut;
+        const code = t.charCodeAt(end - 1);
+        if (code >= 55296 && code <= 56319 && end - 2 > start) end -= 1;
+      }
+      out.push(t.slice(start, end));
+      start = end;
+    }
+    return out;
+  }
+
+  // src/shared/time.ts
+  var DAY_MS = 864e5;
+  function cleanReminderText(raw) {
+    let t = String(raw || "").trim();
+    const leads = ["\u63D0\u9192\u6211\u4E00\u4E0B", "\u63D0\u9192\u4E00\u4E0B", "\u63D0\u9192\u6211", "\u63D0\u9192", "\u53EB\u6211\u4E00\u4E0B", "\u53EB\u6211", "\u8BB0\u5F97\u8981", "\u8BB0\u5F97", "\u5230\u65F6\u5019"];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const lead of leads) {
+        if (t.startsWith(lead)) {
+          t = t.slice(lead.length).trim();
+          changed = true;
+          break;
+        }
+      }
+    }
+    t = t.replace(/^[，,。.：:、\s]+/, "").replace(/[，,。.：:、\s]+$/, "");
+    return t;
+  }
+  function parseDue(raw, now = /* @__PURE__ */ new Date()) {
+    const src = String(raw || "").trim();
+    if (!src) return null;
+    const base = new Date(now.getTime());
+    const daily = /每天|每日/.test(src);
+    const done = (at, stripped) => ({
+      at,
+      repeat: daily ? 86400 : null,
+      cleaned: cleanReminderText(stripped.replace(/每天|每日/g, ""))
+    });
+    let m = src.match(/(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})/);
+    if (m) {
+      const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), 0, 0);
+      if (!isNaN(dt.getTime())) return done(dt, src.replace(m[0], "").trim());
+    }
+    m = src.match(/半小时(?:后|以后)?/);
+    if (m) return done(new Date(base.getTime() + 30 * 6e4), src.replace(m[0], "").trim());
+    m = src.match(/(\d+)\s*分钟(?:后|以后)?/);
+    if (m) {
+      const mins = Math.max(1, Math.min(24 * 60, Number(m[1]) || 1));
+      return done(new Date(base.getTime() + mins * 6e4), src.replace(m[0], "").trim());
+    }
+    m = src.match(/(一小时|1小时)(?:后|以后)?/);
+    if (m) return done(new Date(base.getTime() + 60 * 6e4), src.replace(m[0], "").trim());
+    m = src.match(/(\d+)\s*小时(?:后|以后)?/);
+    if (m) {
+      const hours = Math.max(1, Math.min(24 * 7, Number(m[1]) || 1));
+      return done(new Date(base.getTime() + hours * 36e5), src.replace(m[0], "").trim());
+    }
+    const day = src.match(/(今天|明天|后天)/);
+    const clock = src.match(/(\d{1,2})\s*(?:点|:|：)\s*(半|\d{2})?/);
+    if (clock) {
+      const h = Number(clock[1]);
+      if (Number.isFinite(h) && h >= 0 && h <= 23) {
+        let minute = 0;
+        const mm = clock[2] || "";
+        if (mm === "\u534A") minute = 30;
+        else if (mm) minute = Math.max(0, Math.min(59, Number(mm) || 0));
+        const dayStart = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+        let target = new Date(dayStart.getTime());
+        if (day) {
+          if (day[1] === "\u660E\u5929") target = new Date(dayStart.getTime() + DAY_MS);
+          else if (day[1] === "\u540E\u5929") target = new Date(dayStart.getTime() + 2 * DAY_MS);
+        }
+        target.setHours(h, minute, 0, 0);
+        if (!day && target.getTime() <= base.getTime()) target = new Date(target.getTime() + DAY_MS);
+        let stripped = src.replace(clock[0], "").trim();
+        if (day) stripped = stripped.replace(day[1], "").trim();
+        return done(target, stripped);
+      }
+    }
+    return null;
+  }
+
   // src/client.ts
   window.__ModuleLoader__.load({
     id: "dsh-chubby-whale",
     factory: (require2) => {
       const R = require2("react");
       const h = R.createElement;
+      const CLIENT_ID = (() => {
+        try {
+          let v = localStorage.getItem("chubby-client-id");
+          if (!v) {
+            v = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+            localStorage.setItem("chubby-client-id", v);
+          }
+          return v;
+        } catch (e) {
+          return "";
+        }
+      })();
       let ttsAudio = null;
       const ttsQueue = [];
       let ttsPlaying = false;
-      function splitTtsSegments(text) {
-        const t = String(text || "").trim();
-        if (!t) return [];
-        if (t.length <= 140) return [t];
-        const parts = t.split(/(?<=[。！？!?；;…\.\r\n])/).map((s) => s.trim()).filter(Boolean);
-        if (parts.length <= 1) return [t];
-        const first = parts[0];
-        const rest = parts.slice(1).join("").trim();
-        if (!rest) return [first];
-        if (rest.length <= 26) return [first, rest];
-        const mid = Math.floor(rest.length / 2);
-        let cut = -1;
-        for (const ch of ["\uFF0C", ",", "\uFF1B", "\u3001", " ", "\u3002", "."]) {
-          const idx = rest.lastIndexOf(ch, mid);
-          if (idx > cut) cut = idx;
+      function currentVoice() {
+        try {
+          return localStorage.getItem("chubby-tts-voice") || "auto";
+        } catch (e) {
+          return "auto";
         }
-        if (cut < 8) cut = mid;
-        return [first, rest.slice(0, cut + 1).trim(), rest.slice(cut + 1).trim()].filter(Boolean);
       }
-      function speakText(text) {
+      function finishTtsJob(job) {
+        if (!job || !job.onDone) return;
+        const cb = job.onDone;
+        job.onDone = void 0;
+        try {
+          cb();
+        } catch (e) {
+        }
+      }
+      function speakText(text, opts) {
         try {
           if (!text) return;
           try {
             if (localStorage.getItem("chubby-voice") === "off") return;
           } catch (e) {
           }
-          const segs = splitTtsSegments(text);
-          for (const s of segs) {
-            ttsQueue.push(String(s).slice(0, 500));
+          const rate = normalizeRate(opts && opts.rate, "+0%");
+          const segs = splitTtsSegments(text, 80);
+          for (let i = 0; i < segs.length; i++) {
+            ttsQueue.push({ text: segs[i], rate, onDone: i === segs.length - 1 ? opts && opts.onDone : void 0 });
           }
           playNextTts();
         } catch (e) {
@@ -362,23 +485,28 @@
       function playNextTts() {
         if (ttsPlaying) return;
         if (ttsQueue.length === 0) return;
+        let job = null;
         try {
           ttsPlaying = true;
-          const text = ttsQueue.shift();
+          job = ttsQueue.shift();
+          const text = job.text;
           fetch("/api/chubby-whale/tts", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ text, voice: (() => {
-              try {
-                return localStorage.getItem("chubby-tts-voice") || "auto";
-              } catch (e) {
-                return "auto";
-              }
-            })() })
+            body: JSON.stringify({ text, voice: currentVoice(), rate: job.rate })
           }).then((r) => {
             if (!r.ok) throw new Error("tts http " + r.status);
             return r.arrayBuffer();
           }).then((buf) => {
+            const jobRef = job;
+            let settled = false;
+            const settle = () => {
+              if (settled) return;
+              settled = true;
+              finishTtsJob(jobRef);
+              ttsPlaying = false;
+              playNextTts();
+            };
             const blob = new Blob([buf], { type: "audio/mpeg" });
             const url = URL.createObjectURL(blob);
             const audio = new Audio(url);
@@ -389,29 +517,31 @@
               } catch {
               }
               ;
-              ttsPlaying = false;
-              playNextTts();
+              settle();
             };
             audio.onerror = () => {
-              ttsPlaying = false;
+              settle();
             };
             audio.play().catch(() => {
               try {
                 const u = new window.SpeechSynthesisUtterance(text.slice(0, 300));
                 u.lang = /[\u4e00-\u9fa5]/.test(text) ? "zh-CN" : "en-US";
+                u.onend = settle;
+                u.onerror = settle;
                 window.speechSynthesis.cancel();
                 window.speechSynthesis.speak(u);
               } catch (e) {
+                settle();
               }
-              ttsPlaying = false;
-              playNextTts();
             });
           }).catch(() => {
+            finishTtsJob(job);
             ttsPlaying = false;
             playNextTts();
           });
         } catch (e) {
           ttsPlaying = false;
+          if (job) finishTtsJob(job);
         }
       }
       let recognition = null;
@@ -532,6 +662,9 @@
         const dragRef = R.useRef({ dragging: false, lastX: 0, lastY: 0, vx: 0, vy: 0, moved: 0 });
         const scaleRef = R.useRef(1);
         const animRef = R.useRef(null);
+        const storyBusyRef = R.useRef(false);
+        const dueQueueRef = R.useRef([]);
+        const dueTimerRef = R.useRef(null);
         const [scale, setScale] = R.useState(1);
         const [hidden, setHidden] = R.useState(false);
         const [menu, setMenu] = R.useState(null);
@@ -671,6 +804,78 @@
           }).catch(() => {
           });
         }
+        function playStoryPiece(d) {
+          const text = String(d.text || "");
+          const head = "\u8BF4\u4E66\xB7\u300A" + String(d.book || "") + "\u300B" + (d.title ? "\uFF5C" + d.title : "");
+          let voiceOff = false;
+          try {
+            voiceOff = localStorage.getItem("chubby-voice") === "off";
+          } catch (e) {
+          }
+          showBubble2(head + "\uFF1A" + text.slice(0, 100) + (text.length > 100 ? "\u2026" : ""), 12e3);
+          animRef.current?.talkFor(8e3);
+          if (voiceOff) {
+            storyBusyRef.current = false;
+            showBubble2(head + "\uFF1A" + text.slice(0, 300) + "\u2026", 2e4);
+            return;
+          }
+          storyBusyRef.current = true;
+          speakText(text, {
+            rate: normalizeRate(d.rate, "-15%"),
+            onDone: () => {
+              storyBusyRef.current = false;
+              showBubble2("\u8FD9\u6BB5\u8BB2\u5B8C\u5566\uFF5E\u70B9\u83DC\u5355\u300C\u63A5\u7740\u8BF4\u300D\u542C\u4E0B\u4E00\u6BB5", 6e3);
+            }
+          });
+        }
+        function startStory(hint) {
+          if (storyBusyRef.current) {
+            showBubble2("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+            return;
+          }
+          const headers = CLIENT_ID ? { "x-client-id": CLIENT_ID } : {};
+          fetch("/api/chubby-whale/story/start" + (hint ? "?hint=" + encodeURIComponent(hint) : ""), { headers }).then((r) => r.json()).then((d) => {
+            if (!d || !d.ok) {
+              showBubble2("\u8BF4\u4E66\u6CA1\u5F00\u6210\uFF1A" + (d && d.error || "\u6CA1\u8BFB\u5230\u4E66"), 5e3);
+              return;
+            }
+            playStoryPiece(d);
+          }).catch(() => showBubble2("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
+        }
+        function nextStory() {
+          if (storyBusyRef.current) {
+            showBubble2("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+            return;
+          }
+          const headers = CLIENT_ID ? { "x-client-id": CLIENT_ID } : {};
+          fetch("/api/chubby-whale/story/next", { headers }).then((r) => r.json()).then((d) => {
+            if (!d || !d.ok) {
+              showBubble2("\u8BF4\u4E66\u5361\u4F4F\u4E86", 4e3);
+              return;
+            }
+            if (d.done) {
+              showBubble2("\u4E00\u8F6E\u90FD\u8BB2\u5B8C\u5566\uFF0C\u672C\u9C7C\u4ECE\u5934\u518D\u8BB2\uFF5E", 5e3);
+              startStory("");
+              return;
+            }
+            playStoryPiece(d);
+          }).catch(() => showBubble2("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
+        }
+        function pumpDueReminders() {
+          if (dueTimerRef.current) return;
+          if (dueQueueRef.current.length === 0) return;
+          const item = dueQueueRef.current.shift();
+          showBubble2("\u63D0\u9192\uFF1A" + String(item.text || ""), 8e3);
+          animRef.current?.talkFor(3e3);
+          try {
+            speakText("\u63D0\u9192\uFF1A" + String(item.text || ""));
+          } catch (e) {
+          }
+          dueTimerRef.current = setTimeout(() => {
+            dueTimerRef.current = null;
+            pumpDueReminders();
+          }, 3e3);
+        }
         function runAction(action) {
           setMenu(null);
           if (action === "feed") {
@@ -750,12 +955,29 @@
             startStory("");
             return;
           }
+          if (action === "culture-story-next") {
+            nextStory();
+            return;
+          }
+          if (action === "poem") {
+            fetch("/api/chubby-whale/poem").then((r) => r.json()).then((d) => {
+              if (d && d.ok) {
+                const body = String(d.text || "");
+                const author = String(d.author || "\u4F5A\u540D");
+                showBubble2("\u5FF5\u8BD7\xB7" + d.title + "\uFF08" + author + "\uFF09\n" + body, 15e3);
+                animRef.current?.talkFor(6e3);
+                const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + d.title + "\uFF0C" + (d.dynasty ? d.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
+                speakText(speech, { rate: "-15%" });
+              } else showBubble2("\u8BD7\u518C\u6CA1\u8BFB\u5230");
+            }).catch(() => showBubble2("\u8BD7\u518C\u6CA1\u8BFB\u5230"));
+            return;
+          }
           if (action === "culture-tale") {
             fetch("/api/chubby-whale/culture?type=minsu").then((r) => r.json()).then((d) => {
               if (d && d.ok && d.item) {
-                showBubble2(d.item.text.slice(0, 120) + "\u2026", 9e3);
+                showBubble2(String(d.item.text || "").slice(0, 120) + "\u2026", 9e3);
                 animRef.current?.talkFor(5e3);
-                speakText(String(d.item.text || "").slice(0, 300));
+                speakText("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + String(d.item.title || "") + "\u3002" + String(d.item.text || "").slice(0, 6e3), { rate: "-15%" });
               } else showBubble2("\u6545\u4E8B\u6CA1\u8BB2\u6210");
             }).catch(() => showBubble2("\u6545\u4E8B\u6CA1\u8BB2\u6210"));
             return;
@@ -765,7 +987,7 @@
               if (d && d.ok && d.item) {
                 showBubble2("\u300A" + d.item.title + "\u300B\uFF08" + (d.item.src || "") + "\uFF09" + String(d.item.text || "").slice(0, 100) + "\u2026", 9e3);
                 animRef.current?.talkFor(5e3);
-                speakText(String(d.item.title || "") + "\u3002" + String(d.item.text || "").slice(0, 280));
+                speakText("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + String(d.item.text || ""), { rate: "-15%" });
               } else showBubble2("\u5178\u6545\u6CA1\u8BB2\u6210");
             }).catch(() => showBubble2("\u5178\u6545\u6CA1\u8BB2\u6210"));
             return;
@@ -774,7 +996,8 @@
             fetch("/api/chubby-whale/culture?type=idiom").then((r) => r.json()).then((d) => {
               if (d && d.ok && d.item) {
                 showBubble2(d.item.title + "\uFF1A" + String(d.item.text || "").slice(0, 100), 8e3);
-                speakText(String(d.item.title || "") + "\u3002" + String(d.item.text || "").slice(0, 280));
+                const sp = String(d.item.title || "") + "\uFF1A" + String(d.item.text || "");
+                speakText(sp, { rate: sp.length >= 80 ? "-15%" : "+0%" });
               } else showBubble2("\u6CA1\u67E5\u5230");
             }).catch(() => showBubble2("\u6CA1\u67E5\u5230"));
             return;
@@ -974,13 +1197,28 @@
             return;
           }
           if (action === "remind-add") {
-            const msg = window.prompt("\u63D0\u9192\u4EC0\u4E48\uFF1F");
+            const msg = window.prompt("\u63D0\u9192\u4EC0\u4E48\uFF1F\uFF08\u53EF\u4EE5\u4E00\u8D77\u8BF4\u65F6\u95F4\uFF0C\u5982\u300C\u660E\u59299\u70B9\u63D0\u9192\u6211\u5F00\u4F1A\u300D\uFF09");
             if (!msg) return;
-            const mins = window.prompt("\u51E0\u5206\u949F\u540E\u63D0\u9192\uFF1F\uFF08\u586B\u6570\u5B57\uFF0C\u5982 5\uFF09", "5");
-            if (!mins) return;
-            const at = new Date(Date.now() + Number(mins) * 6e4).toISOString();
-            fetch("/api/chubby-whale/reminders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: msg, at }) }).then((r) => r.json()).then((d) => {
-              showBubble2(d && d.ok ? "\u597D\uFF0C" + mins + " \u5206\u949F\u540E\u63D0\u9192\u4F60\uFF1A" + msg : "\u63D0\u9192\u6CA1\u52A0\u4E0A");
+            let parsed = parseDue(msg);
+            if (!parsed) {
+              const ans = window.prompt("\u4EC0\u4E48\u65F6\u5019\u63D0\u9192\uFF1F\uFF08\u5982 9\u70B9 / \u660E\u59299\u70B9 / \u534A\u5C0F\u65F6\u540E / 20\u5206\u949F\u540E / \u6BCF\u59299\u70B9\uFF09", "5\u5206\u949F\u540E");
+              if (!ans) return;
+              parsed = parseDue(ans);
+              if (!parsed) {
+                showBubble2("\u8FD9\u4E2A\u65F6\u95F4\u672C\u9C7C\u6CA1\u542C\u61C2\u2026\u2026\u8BD5\u8BD5\u300C9\u70B9\u300D\u300C\u660E\u59299\u70B9\u300D\u300C\u534A\u5C0F\u65F6\u540E\u300D", 5e3);
+                return;
+              }
+            }
+            const text = String(parsed.cleaned || cleanReminderText(msg) || msg).slice(0, 200);
+            const dueAt = parsed.at;
+            const repeat = parsed.repeat || 0;
+            fetch("/api/chubby-whale/reminders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, at: dueAt.toISOString(), repeat }) }).then((r) => r.json()).then((d) => {
+              if (d && d.ok) {
+                const hh = String(dueAt.getHours()).padStart(2, "0");
+                const mm = String(dueAt.getMinutes()).padStart(2, "0");
+                const whenText = repeat > 0 ? "\u6BCF\u5929 " + hh + ":" + mm : dueAt.getMonth() + 1 + "\u6708" + dueAt.getDate() + "\u65E5 " + hh + ":" + mm;
+                showBubble2("\u597D\uFF0C" + whenText + " \u63D0\u9192\u4F60\uFF1A" + text, 6e3);
+              } else showBubble2("\u63D0\u9192\u6CA1\u52A0\u4E0A");
             }).catch(() => showBubble2("\u63D0\u9192\u6CA1\u52A0\u4E0A"));
             return;
           }
@@ -991,7 +1229,12 @@
                 showBubble2("\u8FD8\u6CA1\u6709\u63D0\u9192\uFF5E");
                 return;
               }
-              const txt = arr.map((x) => "\xB7 " + x.text + "\uFF08" + new Date(x.at).toLocaleString("zh-CN") + "\uFF09").join("\n");
+              const txt = arr.map((x) => {
+                const when = new Date(x.nextAt || x.at);
+                const stamp = isNaN(when.getTime()) ? String(x.at) : when.toLocaleString("zh-CN");
+                const rep = Number(x.repeat) > 0 ? "\uFF08\u6BCF\u5929\uFF09" : "";
+                return "\xB7 " + x.text + "\uFF08" + stamp + "\uFF09" + rep;
+              }).join("\n");
               showBubble2(txt, 8e3);
             }).catch(() => showBubble2("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230"));
             return;
@@ -1066,10 +1309,13 @@
           const timer = setInterval(() => {
             fetch("/api/chubby-whale/reminders?action=due").then((r) => r.json()).then((d) => {
               const due = d && d.due || [];
-              if (due.length > 0 && due[0].text) showBubble2("\u63D0\u9192\uFF1A" + due[0].text, 8e3);
+              for (const it of due) {
+                if (it && it.text) dueQueueRef.current.push(it);
+              }
+              pumpDueReminders();
             }).catch(() => {
             });
-          }, 3e4);
+          }, 2e4);
           return () => clearInterval(timer);
         }, []);
         R.useEffect(() => {
@@ -1085,8 +1331,11 @@
           let started = false;
           let voicedMs = 0;
           let silenceMs = 0;
-          let totalMs = 0;
           let peak = 0;
+          let chunkStartedAt = 0;
+          let lastTickAt = 0;
+          let watchTimer = null;
+          let startTimer = null;
           const SILENCE_GATE = 8;
           const SILENCE_LIMIT = 700;
           const VOICE_LIMIT = 6e3;
@@ -1104,20 +1353,22 @@
               }
             });
           }
+          function scheduleStart(delay) {
+            if (stopped) return;
+            if (startTimer) clearTimeout(startTimer);
+            startTimer = setTimeout(() => {
+              startTimer = null;
+              startChunk();
+            }, delay);
+          }
           async function uploadChunk() {
             try {
               if (stopped) return;
               const blob = new Blob(chunks, { type: "audio/webm" });
               chunks = [];
-              if (blob.size < 2500) {
-                startChunk();
-                return;
-              }
+              if (blob.size < 2500) return;
               const b64 = await blobToBase64(blob);
-              if (!b64) {
-                startChunk();
-                return;
-              }
+              if (!b64) return;
               const r = await fetch("/api/chubby-whale/asr", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
@@ -1154,21 +1405,8 @@
                 sendText(t);
               }
             } catch (e) {
-            }
-            if (!stopped) setTimeout(startChunk, 350);
-          }
-          function startChunk() {
-            if (stopped) return;
-            try {
-              chunks = [];
-              voicedMs = 0;
-              silenceMs = 0;
-              totalMs = 0;
-              peak = 0;
-              mr.start();
-              watch();
-            } catch (e) {
-              setTimeout(startChunk, 1e3);
+            } finally {
+              if (!stopped) scheduleStart(350);
             }
           }
           function watch() {
@@ -1180,14 +1418,17 @@
               for (let i = 0; i < buf.length; i++) sum += buf[i];
               const avg = sum / buf.length;
               if (avg > peak) peak = avg;
-              totalMs += 100;
+              const now = performance.now();
+              const dt = Math.min(250, Math.max(0, now - lastTickAt));
+              lastTickAt = now;
               if (avg > SILENCE_GATE) {
-                voicedMs += 100;
+                voicedMs += dt;
                 silenceMs = 0;
               } else {
-                silenceMs += 100;
+                silenceMs += dt;
               }
-              const done = voicedMs > 200 && silenceMs >= SILENCE_LIMIT || totalMs >= VOICE_LIMIT + 2e3 || peak > 90 && silenceMs >= 400;
+              const elapsed = now - chunkStartedAt;
+              const done = voicedMs > 200 && silenceMs >= SILENCE_LIMIT || elapsed >= VOICE_LIMIT + 2e3 || peak > 90 && silenceMs >= 400;
               if (done && mr.state === "recording") {
                 try {
                   mr.stop();
@@ -1196,8 +1437,40 @@
                 setTimeout(uploadChunk, 100);
                 return;
               }
-              if (!stopped) setTimeout(watch, 100);
+              if (!stopped) scheduleWatch(100);
             } catch (e) {
+              if (!stopped) scheduleWatch(100);
+            }
+          }
+          function scheduleWatch(delay) {
+            if (stopped) return;
+            if (watchTimer) clearTimeout(watchTimer);
+            watchTimer = setTimeout(() => {
+              watchTimer = null;
+              watch();
+            }, delay);
+          }
+          function startChunk() {
+            if (stopped || !mr) return;
+            try {
+              if (mr.state !== "inactive") {
+                try {
+                  mr.stop();
+                } catch (e) {
+                }
+                scheduleStart(200);
+                return;
+              }
+              chunks = [];
+              voicedMs = 0;
+              silenceMs = 0;
+              peak = 0;
+              chunkStartedAt = performance.now();
+              lastTickAt = chunkStartedAt;
+              mr.start();
+              scheduleWatch(100);
+            } catch (e) {
+              scheduleStart(1e3);
             }
           }
           async function boot() {
@@ -1236,6 +1509,20 @@
           }
           return () => {
             stopped = true;
+            if (watchTimer) {
+              try {
+                clearTimeout(watchTimer);
+              } catch {
+              }
+              watchTimer = null;
+            }
+            if (startTimer) {
+              try {
+                clearTimeout(startTimer);
+              } catch {
+              }
+              startTimer = null;
+            }
             try {
               if (mr && mr.state === "recording") mr.stop();
             } catch {

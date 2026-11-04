@@ -27,6 +27,8 @@ export function createChatHandler(opts: {
       const imageB64 = typeof body?.image === 'string' ? body.image : ''
       const chatLang = (typeof body?.lang === 'string' && /^(zh|en|auto)$/.test(body.lang)) ? body.lang : 'auto'
       const imageMime = typeof body?.imageMime === 'string' ? body.imageMime : 'image/jpeg'
+      // 短句（<6 字）不进缓存：不然「在吗」「好的」会被复读机式复用（照 C# 的修法）
+      const cacheable = message.trim().length >= 6
       if (!message) {
         res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ ok: false, error: 'empty message' }))
@@ -38,9 +40,9 @@ export function createChatHandler(opts: {
         res.end(JSON.stringify({ ok: false, error: 'NO_KEY', reply: '主人，本鲸还没拿到钥匙（DeepSeek Key），配一下就能聊啦～' }))
         return
       }
-      // 缓存：相同问题直接复用回复（省 token）
+      // 缓存：相同问题直接复用回复（省 token；问题太短不缓存）
       const cacheKey = hashKey(chatLang + '|' + message + (imageB64 ? '|img' : ''))
-      if (opts.cache && !imageB64) {
+      if (opts.cache && !imageB64 && cacheable) {
         const cached = await opts.cache.getJson(cacheKey)
         if (cached && typeof cached.reply === 'string') {
           try { const st0 = opts.loadState(); st0.intimacy = Math.min(100, (Number(st0.intimacy) || 0) + 1); opts.saveState(st0) } catch { }
@@ -95,7 +97,7 @@ export function createChatHandler(opts: {
         const u = data?.usage
         if (u && typeof u.total_tokens === 'number' && opts.addTokens) opts.addTokens('chat', u.total_tokens)
       } catch { }
-      if (opts.cache && !imageB64) { try { await opts.cache.setJson(cacheKey, { reply }) } catch { } }
+      if (opts.cache && !imageB64 && cacheable) { try { await opts.cache.setJson(cacheKey, { reply }) } catch { } }
       history.push({ role: 'user', content: message })
       history.push({ role: 'assistant', content: reply || '主人……本鲸刚刚走神了。' })
       opts.saveHistory(history)

@@ -13,6 +13,7 @@ import { createStoryHandlers } from './host/routes/story.js'
 import { createMiscHandlers } from './host/routes/misc.js'
 import { createReminderHandlers } from './host/routes/reminders.js'
 import { createCultureHandlers } from './host/routes/culture.js'
+import { createPoemHandler } from './host/routes/poem.js'
 import { createBriefingHandlers } from './host/routes/briefing.js'
 import { createTtsHandler } from './host/routes/tts.js'
 import { createAsrHandler, readSiliconFlowKey } from './host/routes/asr.js'
@@ -91,6 +92,8 @@ export function apply(ctx: any): void {
   ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/culture', handler: culture.handleCulture })
   ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/melodies', handler: culture.handleMelodies })
   ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/melody', handler: culture.handleMelody })
+  const poem = createPoemHandler({ dataDir: DATA_DIR })
+  ctx.webServer.register({ kind: 'exact', path: '/api/chubby-whale/poem', handler: poem.handlePoem })
   const briefing = createBriefingHandlers({
     loadGrowth: store.loadGrowth,
     loadReminders: store.loadReminders,
