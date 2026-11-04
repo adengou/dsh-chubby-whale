@@ -56,6 +56,39 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     let ttsPlaying = false
     // 说书/讲古/念诗期间为 true：耳朵完全静音，避免本鱼自己的声音把自己打断
     const storyNarratingRef = { current: false }
+    // ===== 回声抑制：本鱼刚说过的话，别被自己的麦克风再听一遍 =====
+    const ECHO_MUTE_MS = 700          // TTS 结束后这段时间内一律不听（让混响散掉）
+    const echoMuteUntil = { t: 0 }    // 时间戳：到点之前忽略麦克风
+    const spokenRecent: Array<{ text: string; at: number }> = []   // 最近说过的话（用于文本相似度比对）
+    function noteSpoken(text: string): void {
+      try {
+        const s = String(text || '').trim()
+        if (!s) return
+        spokenRecent.push({ text: s, at: Date.now() })
+        while (spokenRecent.length > 6) spokenRecent.shift()
+      } catch (e) { }
+    }
+    /** 粗略判定：这句听来的话是不是本鱼自己刚说过的回声 */
+    function looksLikeEcho(heard: string): boolean {
+      try {
+        const norm = (s: string) => String(s || '').replace(/[\s，。、；：！？,.!?;:（）()「」“”"'’"…—-]/g, '')
+        const h = norm(heard)
+        if (h.length < 4) return false
+        const now = Date.now()
+        for (const rec of spokenRecent) {
+          if (now - rec.at > 15000) continue
+          const r = norm(rec.text)
+          if (!r) continue
+          if (r.indexOf(h) >= 0 || h.indexOf(r) >= 0) return true
+          // 逐字命中率：至少 60% 的字出现在本鱼说过的话里，判为回声
+          let hit = 0
+          for (const ch of h) if (r.indexOf(ch) >= 0) hit++
+          if (hit / h.length >= 0.6) return true
+        }
+        return false
+      } catch (e) { return false }
+    }
+
     let ttsCurrentJob: TtsJob | null = null
     /** 叙述段间的换气停顿截止时刻（C# NarrationPauseMs = 260） */
     let ttsPauseUntil = 0
@@ -111,6 +144,31 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       } catch (e) { return Promise.resolve(null) }
     }
     /** 把队首那段的合成先压上去（已在预取里就不重复发） */
+    // ===== 垫音：识别到主人说话后立刻「嗯」一声，掩盖后面 3-8 秒的等待 =====
+    let fillerBuf: ArrayBuffer | null = null
+    let fillerLoading = false
+    function prefetchFiller(): void {
+      if (fillerBuf || fillerLoading) return
+      try { if (localStorage.getItem('chubby-voice') === 'off') return } catch (e) { }
+      fillerLoading = true
+      try {
+        fetch('/api/chubby-whale/tts', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: '嗯，本鱼在听。', voice: (function () { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })() }),
+        }).then((r: any) => (r.ok ? r.arrayBuffer() : null)).then((b: any) => { if (b && b.byteLength > 1000) fillerBuf = b }).catch(() => { }).finally(() => { fillerLoading = false })
+      } catch (e) { fillerLoading = false }
+    }
+    function playFiller(): void {
+      try {
+        if (!fillerBuf) { prefetchFiller(); return }
+        const url = URL.createObjectURL(new Blob([fillerBuf], { type: 'audio/mpeg' }))
+        const a = new Audio(url)
+        a.volume = 0.9
+        a.onended = () => { try { URL.revokeObjectURL(url) } catch (e) { } }
+        a.play().catch(() => { try { URL.revokeObjectURL(url) } catch (e) { } })
+      } catch (e) { }
+    }
     function prefetchNextTts(): void {
       const next = ttsQueue[0]
       if (!next) return
@@ -135,6 +193,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }
         if (ttsUrl) { try { URL.revokeObjectURL(ttsUrl) } catch (e) { } ; ttsUrl = '' }
         ttsPlaying = false
+      echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
         try { const ss = (window as any).speechSynthesis; if (ss && ss.speaking) ss.cancel() } catch (e) { }
       } catch (e) { ttsPlaying = false }
     }
@@ -194,6 +253,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (ttsCurrentJob === job) ttsCurrentJob = null
             finishTtsJob(job)
             ttsPlaying = false
+      echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
             playNextTts()
             return
           }
@@ -206,6 +266,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (ttsUrl === url) ttsUrl = ''
             finishTtsJob(job)
             ttsPlaying = false
+      echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
             // 叙述：同一组还有下一段时留 260ms 换气，别一口气念到底
             const next = ttsQueue[0]
             if (job.narration && next && next.group === job.group) ttsPauseUntil = Date.now() + 260
@@ -232,11 +293,13 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (ttsCurrentJob === job) ttsCurrentJob = null
           finishTtsJob(job)
           ttsPlaying = false
+      echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
           playNextTts()
         })
       } catch (e) {
         if (ttsCurrentJob === job) ttsCurrentJob = null
         ttsPlaying = false
+      echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
         finishTtsJob(job)
         playNextTts()
       }
@@ -492,6 +555,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       // 启动后拉一次余额，菜单还没打开时标题也能显示真实金额
       R.useEffect(() => {
         const t0 = setTimeout(() => { try { refreshBalance() } catch (e) { } }, 2000)
+        const tF = setTimeout(() => { try { prefetchFiller() } catch (e) { } }, 3000)
         return () => clearTimeout(t0)
       }, [])
       // 右键菜单
@@ -564,6 +628,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }
         storyBusyRef.current = true
         storyNarratingRef.current = true
+        noteSpoken(text)
         speakText(text, {
           rate: normalizeRate(d.rate, '-15%'),
           onDone: () => {
@@ -665,6 +730,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('念诗·' + p.title + '（' + author + '）', 15000)
               animRef.current?.talkFor(6000)
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
+              noteSpoken(speech)
               speakText(speech, { rate: '-15%' })
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
@@ -817,12 +883,14 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 showBubble('本鲸看看这张图…', 3000)
                 setChatOpen(false)
                 const hdr = file.type || 'image/jpeg'
-                const res = await fetch('/api/chubby-whale/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: VISION_PROMPT, image: b64, imageMime: hdr }) })
+                const tChat = performance.now()
+          const res = await fetch('/api/chubby-whale/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: VISION_PROMPT, image: b64, imageMime: hdr }) })
                 const d = await res.json()
                 const reply = (d && d.reply) || '这条鱼看不懂这张图……'
                 showBubble('（看图）' + reply, 10000)
                 // 聊天回复：长回复（≥80 字）按叙述 -15%，短句正常语速
-                speakText(reply, { rate: reply.length >= 80 ? '-15%' : '+0%' })
+                noteSpoken(reply)
+      speakText(reply, { rate: reply.length >= 80 ? '-15%' : '+0%' })
               } catch (e) { showBubble('图片处理失败', 4000) }
             }
             input.click()
@@ -902,6 +970,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         scrollBody()
         let data: any = null
         try {
+          const tChat = performance.now()
           const res = await fetch('/api/chubby-whale/chat', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -921,7 +990,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try {
             if (data && data.reply) {
               const rp = String(data.reply)
-              speakText(rp, { rate: rp.length >= 80 ? '-15%' : '+0%' })
+              noteSpoken(rp)
+      speakText(rp, { rate: rp.length >= 80 ? '-15%' : '+0%' })
             }
           } catch { }
           scrollBody()
@@ -961,8 +1031,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         let watchTimer: any = null
         let startTimer: any = null
         const SILENCE_GATE = 5        // 原来 8：说话声小一点就检不出来
-        const SILENCE_LIMIT = 550      // 原来 700：说完要等太久才收尾
-        const VOICE_LIMIT = 6000
+        const SILENCE_LIMIT = 450      // 原来 700：说完要等太久才收尾
+        const VOICE_LIMIT = 5000   // 原来 6000：录音越长 ASR 越慢
         function blobToBase64(blob: any): Promise<string> {
           return new Promise((resolve) => {
             try {
@@ -984,14 +1054,23 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const blob = new Blob(chunks, { type: 'audio/webm' })
             chunks = []
             if (blob.size < 1200) return   // 原来 2500：短句常被丢掉
+            // 本鱼刚说完话的 700ms 里听到的多半是自己的回声/混响：直接丢，别上传浪费钱
+            if (Date.now() < echoMuteUntil.t) return
             const b64 = await blobToBase64(blob)
             if (!b64) return
+            const t0 = performance.now()
             const r = await fetch('/api/chubby-whale/asr', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ audio: b64, format: 'webm' }),
             })
             const d = await r.json()
+            const asrMs = Math.round(performance.now() - t0)
+            // 本鱼刚说过的话被麦克风听回来（回声）：直接丢，别自言自语
+            if (d && d.ok && d.text && looksLikeEcho(String(d.text))) {
+              try { console.log('[chubby-whale] 丢弃回声（' + asrMs + 'ms）：' + String(d.text).slice(0, 40)) } catch (e) { }
+              return
+            }
             if (d && d.ok && d.text && d.text.trim().length >= 2) {
               // 说书/讲故事/念诗期间一律闭嘴：只要本鱼还在出声（正在播、队列里还有段落、
               // 或说书中），麦克风听到的都是自己的声音，绝不能当成主人在说话去抢频道
@@ -1021,7 +1100,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 showBubble('（听到）' + t + '｜语音聊天关着，先不接话', 4000)
                 return
               }
-              showBubble('（听到）' + t, 3000)
+              playFiller()   // 立刻「嗯」一声，别让主人干等
+              showBubble('（听到）' + t + '｜本鱼在想…', 3000)
               sendText(t)
             }
           } catch (e) { } finally {
@@ -1043,7 +1123,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             lastTickAt = now
             if (avg > SILENCE_GATE) { voicedMs += dt; silenceMs = 0 } else { silenceMs += dt }
             const elapsed = now - chunkStartedAt
-            const done = (voicedMs > 200 && silenceMs >= SILENCE_LIMIT) || elapsed >= VOICE_LIMIT + 2000 || (peak > 90 && silenceMs >= 400)
+            const done = (voicedMs > 200 && silenceMs >= SILENCE_LIMIT) || elapsed >= VOICE_LIMIT + 1000 || (peak > 90 && silenceMs >= 400)
             if (done && mr.state === 'recording') {
               try { mr.stop() } catch { }
               setTimeout(uploadChunk, 100)

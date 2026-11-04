@@ -130,7 +130,13 @@ export function createChatHandler(opts: {
           + '中文只允许出现在解释专有名词时。'
         : (effLang === 'zh' ? '\n【语言规则】主人用中文提问，请用中文回答。' : '')
       const memHint = memSummary ? ('\n（关于主人的长期记忆：' + memSummary + '）') : ''
-      const messages: any[] = [{ role: 'system', content: opts.systemPrompt + langHint + memHint }]
+      // 语音输入是 ASR 结果，可能有错字/口语碎屑：明确告诉模型按大意理解，别纠正错字、别答非所问
+      const voiceHint = isVoice
+        ? '\n【输入说明】这条消息来自语音识别，可能出现错字、同音字、断句错误或口水词。'
+          + '请按最合理的日常意思理解后直接回答，不要复述原句、不要纠正错字、不要反问「你是不是想说…」，'
+          + '也不要因为听不清就说看不懂。'
+        : ''
+      const messages: any[] = [{ role: 'system', content: opts.systemPrompt + langHint + memHint + voiceHint }]
       for (const m of history) {
         if (m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string') {
           messages.push({ role: m.role, content: m.content })

@@ -652,6 +652,38 @@
       const ttsPrefetch = /* @__PURE__ */ new Map();
       let ttsPlaying = false;
       const storyNarratingRef = { current: false };
+      const ECHO_MUTE_MS = 700;
+      const echoMuteUntil = { t: 0 };
+      const spokenRecent = [];
+      function noteSpoken(text) {
+        try {
+          const s = String(text || "").trim();
+          if (!s) return;
+          spokenRecent.push({ text: s, at: Date.now() });
+          while (spokenRecent.length > 6) spokenRecent.shift();
+        } catch (e) {
+        }
+      }
+      function looksLikeEcho(heard) {
+        try {
+          const norm = (s) => String(s || "").replace(/[\s，。、；：！？,.!?;:（）()「」“”"'’"…—-]/g, "");
+          const h2 = norm(heard);
+          if (h2.length < 4) return false;
+          const now = Date.now();
+          for (const rec of spokenRecent) {
+            if (now - rec.at > 15e3) continue;
+            const r = norm(rec.text);
+            if (!r) continue;
+            if (r.indexOf(h2) >= 0 || h2.indexOf(r) >= 0) return true;
+            let hit = 0;
+            for (const ch of h2) if (r.indexOf(ch) >= 0) hit++;
+            if (hit / h2.length >= 0.6) return true;
+          }
+          return false;
+        } catch (e) {
+          return false;
+        }
+      }
       let ttsCurrentJob = null;
       let ttsPauseUntil = 0;
       let ttsPauseTimer = null;
@@ -719,6 +751,60 @@
           return Promise.resolve(null);
         }
       }
+      let fillerBuf = null;
+      let fillerLoading = false;
+      function prefetchFiller() {
+        if (fillerBuf || fillerLoading) return;
+        try {
+          if (localStorage.getItem("chubby-voice") === "off") return;
+        } catch (e) {
+        }
+        fillerLoading = true;
+        try {
+          fetch("/api/chubby-whale/tts", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ text: "\u55EF\uFF0C\u672C\u9C7C\u5728\u542C\u3002", voice: (function() {
+              try {
+                return localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
+              } catch (e) {
+                return "zh-CN-XiaoyiNeural";
+              }
+            })() })
+          }).then((r) => r.ok ? r.arrayBuffer() : null).then((b) => {
+            if (b && b.byteLength > 1e3) fillerBuf = b;
+          }).catch(() => {
+          }).finally(() => {
+            fillerLoading = false;
+          });
+        } catch (e) {
+          fillerLoading = false;
+        }
+      }
+      function playFiller() {
+        try {
+          if (!fillerBuf) {
+            prefetchFiller();
+            return;
+          }
+          const url = URL.createObjectURL(new Blob([fillerBuf], { type: "audio/mpeg" }));
+          const a = new Audio(url);
+          a.volume = 0.9;
+          a.onended = () => {
+            try {
+              URL.revokeObjectURL(url);
+            } catch (e) {
+            }
+          };
+          a.play().catch(() => {
+            try {
+              URL.revokeObjectURL(url);
+            } catch (e) {
+            }
+          });
+        } catch (e) {
+        }
+      }
       function prefetchNextTts() {
         const next = ttsQueue[0];
         if (!next) return;
@@ -768,6 +854,7 @@
             ttsUrl = "";
           }
           ttsPlaying = false;
+          echoMuteUntil.t = Date.now() + ECHO_MUTE_MS;
           try {
             const ss = window.speechSynthesis;
             if (ss && ss.speaking) ss.cancel();
@@ -835,6 +922,7 @@
               if (ttsCurrentJob === job) ttsCurrentJob = null;
               finishTtsJob(job);
               ttsPlaying = false;
+              echoMuteUntil.t = Date.now() + ECHO_MUTE_MS;
               playNextTts();
               return;
             }
@@ -850,6 +938,7 @@
               if (ttsUrl === url) ttsUrl = "";
               finishTtsJob(job);
               ttsPlaying = false;
+              echoMuteUntil.t = Date.now() + ECHO_MUTE_MS;
               const next = ttsQueue[0];
               if (job.narration && next && next.group === job.group) ttsPauseUntil = Date.now() + 260;
               playNextTts();
@@ -877,11 +966,13 @@
             if (ttsCurrentJob === job) ttsCurrentJob = null;
             finishTtsJob(job);
             ttsPlaying = false;
+            echoMuteUntil.t = Date.now() + ECHO_MUTE_MS;
             playNextTts();
           });
         } catch (e) {
           if (ttsCurrentJob === job) ttsCurrentJob = null;
           ttsPlaying = false;
+          echoMuteUntil.t = Date.now() + ECHO_MUTE_MS;
           finishTtsJob(job);
           playNextTts();
         }
@@ -1238,6 +1329,12 @@
             } catch (e) {
             }
           }, 2e3);
+          const tF = setTimeout(() => {
+            try {
+              prefetchFiller();
+            } catch (e) {
+            }
+          }, 3e3);
           return () => clearTimeout(t0);
         }, []);
         function onContextMenu(e) {
@@ -1306,6 +1403,7 @@
           }
           storyBusyRef.current = true;
           storyNarratingRef.current = true;
+          noteSpoken(text);
           speakText(text, {
             rate: normalizeRate(d.rate, "-15%"),
             onDone: () => {
@@ -1481,6 +1579,7 @@
                 showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + author + "\uFF09", 15e3);
                 animRef.current?.talkFor(6e3);
                 const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
+                noteSpoken(speech);
                 speakText(speech, { rate: "-15%" });
               } else showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230");
             }).catch(() => showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230"));
@@ -1669,10 +1768,12 @@
                   showBubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
                   setChatOpen(false);
                   const hdr = file.type || "image/jpeg";
+                  const tChat = performance.now();
                   const res = await fetch("/api/chubby-whale/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: VISION_PROMPT, image: b64, imageMime: hdr }) });
                   const d = await res.json();
                   const reply = d && d.reply || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
                   showBubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
+                  noteSpoken(reply);
                   speakText(reply, { rate: reply.length >= 80 ? "-15%" : "+0%" });
                 } catch (e) {
                   showBubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
@@ -1776,6 +1877,7 @@
           scrollBody();
           let data = null;
           try {
+            const tChat = performance.now();
             const res = await fetch("/api/chubby-whale/chat", {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -1802,6 +1904,7 @@
             try {
               if (data && data.reply) {
                 const rp = String(data.reply);
+                noteSpoken(rp);
                 speakText(rp, { rate: rp.length >= 80 ? "-15%" : "+0%" });
               }
             } catch {
@@ -1841,8 +1944,8 @@
           let watchTimer = null;
           let startTimer = null;
           const SILENCE_GATE = 5;
-          const SILENCE_LIMIT = 550;
-          const VOICE_LIMIT = 6e3;
+          const SILENCE_LIMIT = 450;
+          const VOICE_LIMIT = 5e3;
           function blobToBase64(blob) {
             return new Promise((resolve) => {
               try {
@@ -1871,14 +1974,24 @@
               const blob = new Blob(chunks, { type: "audio/webm" });
               chunks = [];
               if (blob.size < 1200) return;
+              if (Date.now() < echoMuteUntil.t) return;
               const b64 = await blobToBase64(blob);
               if (!b64) return;
+              const t0 = performance.now();
               const r = await fetch("/api/chubby-whale/asr", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({ audio: b64, format: "webm" })
               });
               const d = await r.json();
+              const asrMs = Math.round(performance.now() - t0);
+              if (d && d.ok && d.text && looksLikeEcho(String(d.text))) {
+                try {
+                  console.log("[chubby-whale] \u4E22\u5F03\u56DE\u58F0\uFF08" + asrMs + "ms\uFF09\uFF1A" + String(d.text).slice(0, 40));
+                } catch (e) {
+                }
+                return;
+              }
               if (d && d.ok && d.text && d.text.trim().length >= 2) {
                 if (ttsPlaying) return;
                 if (ttsQueue.length > 0) return;
@@ -1916,7 +2029,8 @@
                   showBubble("\uFF08\u542C\u5230\uFF09" + t + "\uFF5C\u8BED\u97F3\u804A\u5929\u5173\u7740\uFF0C\u5148\u4E0D\u63A5\u8BDD", 4e3);
                   return;
                 }
-                showBubble("\uFF08\u542C\u5230\uFF09" + t, 3e3);
+                playFiller();
+                showBubble("\uFF08\u542C\u5230\uFF09" + t + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
                 sendText(t);
               }
             } catch (e) {
@@ -1943,7 +2057,7 @@
                 silenceMs += dt;
               }
               const elapsed = now - chunkStartedAt;
-              const done = voicedMs > 200 && silenceMs >= SILENCE_LIMIT || elapsed >= VOICE_LIMIT + 2e3 || peak > 90 && silenceMs >= 400;
+              const done = voicedMs > 200 && silenceMs >= SILENCE_LIMIT || elapsed >= VOICE_LIMIT + 1e3 || peak > 90 && silenceMs >= 400;
               if (done && mr.state === "recording") {
                 try {
                   mr.stop();
