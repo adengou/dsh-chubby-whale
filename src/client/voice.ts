@@ -15,6 +15,7 @@
 
 import { Ape } from './ape.js'
 import { isRepeat, normalizeText, similarity } from './sim.js'
+import { isPlaybackZombie } from './playback.js'
 
 export type VoiceStatus = 'idle' | 'listening' | 'recognizing' | 'thinking' | 'speaking'
 
@@ -135,6 +136,7 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
   let ttsBusy = false
   let ttsAudio: HTMLAudioElement | null = null
   let ttsBusySince = 0
+  let ttsSynthAt = 0   // 本段开始合成的时刻（0 = 未在合成）；看门狗据此区分"合成中"与"僵死"
   let ttsWatch: any = null
   let mutedUntil = 0
   let speakToken = 0
@@ -299,13 +301,26 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
   // ---- 朗读 ----
   function ttsWatchdog(): void {
     try {
-      if (ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0) return
-      if (!ttsBusy) return
-      if (Date.now() - ttsBusySince < TTS_ZOMBIE_MS) return
-      // 僵尸：标志说在播，但音频元素早就停了 → 复位，继续下一段
+      const audioPlaying = !!(ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0)
+      // 判定抽到 client/playback.ts（纯函数，npm test 覆盖）：
+      // 关键——合成中（实测 3~4 秒）不能被当成僵死，否则前几段会被丢弃，
+      // 表现就是念长诗「从第三句开始」。
+      const zombie = isPlaybackZombie({
+        hasAudio: !!ttsAudio,
+        audioPlaying,
+        busy: ttsBusy,
+        busySince: ttsBusySince,
+        synthAt: ttsSynthAt,
+        now: Date.now(),
+        zombieMs: TTS_ZOMBIE_MS,
+        synthTimeoutMs: TTS_TIMEOUT_MS,
+      })
+      if (!zombie) return
+      // 真僵死：有音频却不动，或合成超时 → 复位，继续下一段
       stats.ttsZombie++
       try { if (ttsAudio) { ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }
       ttsAudio = null
+      ttsSynthAt = 0
       ttsBusy = false
       pumpTts()
     } catch (e) { }
@@ -383,12 +398,14 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
     stats.ttsRequests++
 
     const cur = ttsPrefetch.get(job.seq) || synth(job)
+    ttsSynthAt = Date.now()
     ttsPrefetch.delete(job.seq)
     // 当前段开播前就把下一段合成压上去（C# 的 prefetch）
     const next = ttsQ[0]
     if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next))
 
     cur.then((buf) => {
+      ttsSynthAt = 0
       if (myToken !== speakToken) { ttsBusy = false; return }
       if (!buf) {
         // 失败：最多重试 3 次（每次间隔递增）。绝不静默跳过——跳过就是'少内容'。
@@ -570,6 +587,7 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
   }
 
   function stopSpeaking(): void {
+    ttsSynthAt = 0
     speakToken++
     ttsQ.length = 0
     try { if (ttsAudio) { ttsAudio.pause(); ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }

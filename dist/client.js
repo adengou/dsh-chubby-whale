@@ -660,6 +660,16 @@
     return false;
   }
 
+  // src/client/playback.ts
+  function isPlaybackZombie(p) {
+    const zombieMs = p.zombieMs === void 0 ? 2500 : p.zombieMs;
+    const synthTimeoutMs = p.synthTimeoutMs === void 0 ? 2e4 : p.synthTimeoutMs;
+    if (!p.busy) return false;
+    if (p.hasAudio && p.audioPlaying) return false;
+    if (!p.hasAudio && p.synthAt > 0 && p.now - p.synthAt < synthTimeoutMs) return false;
+    return p.now - p.busySince >= zombieMs;
+  }
+
   // src/client/voice.ts
   var WINDOW_MS = 6e3;
   var EARLY_STOP_QUIET = 700;
@@ -738,6 +748,7 @@
     let ttsBusy = false;
     let ttsAudio = null;
     let ttsBusySince = 0;
+    let ttsSynthAt = 0;
     let ttsWatch = null;
     let mutedUntil = 0;
     let speakToken = 0;
@@ -958,9 +969,18 @@
     }
     function ttsWatchdog() {
       try {
-        if (ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0) return;
-        if (!ttsBusy) return;
-        if (Date.now() - ttsBusySince < TTS_ZOMBIE_MS) return;
+        const audioPlaying = !!(ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0);
+        const zombie = isPlaybackZombie({
+          hasAudio: !!ttsAudio,
+          audioPlaying,
+          busy: ttsBusy,
+          busySince: ttsBusySince,
+          synthAt: ttsSynthAt,
+          now: Date.now(),
+          zombieMs: TTS_ZOMBIE_MS,
+          synthTimeoutMs: TTS_TIMEOUT_MS
+        });
+        if (!zombie) return;
         stats.ttsZombie++;
         try {
           if (ttsAudio) {
@@ -970,6 +990,7 @@
         } catch (e) {
         }
         ttsAudio = null;
+        ttsSynthAt = 0;
         ttsBusy = false;
         pumpTts();
       } catch (e) {
@@ -1048,10 +1069,12 @@
       micOn(false);
       stats.ttsRequests++;
       const cur = ttsPrefetch.get(job.seq) || synth(job);
+      ttsSynthAt = Date.now();
       ttsPrefetch.delete(job.seq);
       const next = ttsQ[0];
       if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next));
       cur.then((buf) => {
+        ttsSynthAt = 0;
         if (myToken !== speakToken) {
           ttsBusy = false;
           return;
@@ -1324,6 +1347,7 @@
       pumpTts();
     }
     function stopSpeaking() {
+      ttsSynthAt = 0;
       speakToken++;
       ttsQ.length = 0;
       try {
@@ -1940,6 +1964,15 @@
         const i = t.indexOf("\xB7");
         if (i > 0 && i < t.length - 1) return { book: t.slice(0, i), title: t.slice(i + 1) };
         return { title: t, book: "" };
+      }
+      function collapsePoemBody(raw) {
+        let t = String(raw == null ? "" : raw);
+        t = t.replace(/\r/g, "");
+        t = t.replace(/\n+/g, "\uFF0C");
+        t = t.replace(/[。！？；]+，/g, (m) => m.slice(0, 1));
+        t = t.replace(/，{2,}/g, "\uFF0C");
+        t = t.replace(/，([。！？；])/g, "$1");
+        return t.trim();
       }
       function collapseText(raw) {
         return String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
@@ -2726,7 +2759,7 @@
                 const author = String(p.author || "\u4F5A\u540D");
                 showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + author + "\uFF09", 15e3);
                 animRef.current?.talkFor(6e3);
-                const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
+                const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + collapsePoemBody(body);
                 sayLine(persona.line("poemStart"), 4e3);
                 setTimeout(() => {
                   try {
@@ -3092,7 +3125,7 @@
               }
               const body = String(p.text || "");
               showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + String(p.author || "\u4F5A\u540D") + "\uFF09", 15e3);
-              const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + String(p.author || "\u4F5A\u540D") + "\u3002" + body.replace(/\n/g, "\uFF0C");
+              const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + String(p.author || "\u4F5A\u540D") + "\u3002" + collapsePoemBody(body);
               sayLine(persona.line("poemStart"), 4e3);
               setTimeout(() => {
                 try {

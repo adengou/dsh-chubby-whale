@@ -63,6 +63,17 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       return { title: t, book: '' }
     }
     /** 正文换行/连续空白压成单空格（照 C# Culture.Collapse） */
+    /** 诗句正文转朗读稿：换行→逗号；顺手抹掉「。，」「，，」这类重复标点，免得 TTS 念出怪停顿 */
+    function collapsePoemBody(raw: any): string {
+      let t = String(raw == null ? '' : raw)
+      t = t.replace(/\r/g, '')
+      t = t.replace(/\n+/g, '，')
+      t = t.replace(/[。！？；]+，/g, (m) => m.slice(0, 1))
+      t = t.replace(/，{2,}/g, '，')
+      t = t.replace(/，([。！？；])/g, '$1')
+      return t.trim()
+    }
+
     function collapseText(raw: any): string {
       return String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim()
     }
@@ -588,7 +599,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               const author = String(p.author || '佚名')
               showBubble('念诗·' + p.title + '（' + author + '）', 15000)
               animRef.current?.talkFor(6000)
-              const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
+              const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + collapsePoemBody(body)
             sayLine(persona.line('poemStart'), 4000); setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => sayLine(persona.line('poemDone'), 6000) }) } catch (e) { } }, 600)
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
@@ -870,7 +881,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (!p) { showBubble('诗册没读到', 4000); return }
             const body = String(p.text || '')
             showBubble('念诗·' + p.title + '（' + String(p.author || '佚名') + '）', 15000)
-            const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + String(p.author || '佚名') + '。' + body.replace(/\n/g, '，')
+            const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + String(p.author || '佚名') + '。' + collapsePoemBody(body)
             sayLine(persona.line('poemStart'), 4000)
             setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => sayLine(persona.line('poemDone'), 6000) }) } catch (e) { } }, 600)
           }).catch(() => showBubble('诗册没读到', 4000))
