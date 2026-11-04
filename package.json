@@ -1,4 +1,4 @@
-﻿{
+{
     "name":  "dsh-chubby-whale",
     "version":  "0.1.1",
     "description":  "DSH 网页版桌面宠物「肥鲸」——蓝发女仆鲸鱼娘，固定显示在 harness 页面右下角；会眨眼、能拖拽（带惯性）、点击可聊天。",
@@ -49,7 +49,7 @@
                             "typescript":  "^7.0.2"
                         },
     "scripts":  {
-                    "build":  "tsc -p tsconfig.json \u0026\u0026 esbuild src/client.ts --bundle --format=iife --external:react --outfile=dist/client.js",
+                    "build":  "node scripts/check-bom.mjs \u0026\u0026 tsc -p tsconfig.json \u0026\u0026 esbuild src/client.ts --bundle --format=iife --external:react --outfile=dist/client.js",
                     "prepublishOnly":  "npm run build"
                 },
     "repository":  {
