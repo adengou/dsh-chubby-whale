@@ -58,9 +58,25 @@ export function createPersona() {
     return idx
   }
 
-  function pick(arr?: string[]): string {
+  // 洗牌抽签：每个场景把台词洗一遍，抽完一轮才会重复 —— 不会老是那两三句
+  const bags = new Map<string, number[]>()
+  function shuffle(a: number[]): void {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const t = a[i]; a[i] = a[j]; a[j] = t
+    }
+  }
+  function pick(arr?: string[], key = ''): string {
     if (!arr || !arr.length) return ''
-    return arr[Math.floor(Math.random() * arr.length)]
+    if (!key) return arr[Math.floor(Math.random() * arr.length)]
+    let bag = bags.get(key)
+    if (!bag || !bag.length) {
+      bag = arr.map((_, i) => i)
+      shuffle(bag)
+      bags.set(key, bag)
+    }
+    const idx = bag.pop() as number
+    return arr[idx] || arr[0]
   }
 
   function touch(): void {
@@ -87,7 +103,7 @@ export function createPersona() {
 
   function line(event: string): string {
     const lines = (data.lines as any)[event]
-    return pick(lines)
+    return pick(lines, event)
   }
 
   function greeting(now = Date.now()): string {

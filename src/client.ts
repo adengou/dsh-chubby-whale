@@ -383,6 +383,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         const t0 = setTimeout(() => { try { refreshBalance() } catch (e) { } }, 2000)
         // 饭团：进门先打个招呼（按当前时段挑台词），3 秒后出现，不抢首屏
         const tGreet = setTimeout(() => { try { if (greetedOnce) return; greetedOnce = true; const g = persona.greeting(); if (g) sayLine(g, 5000) } catch (e) { } }, 3000)
+            // 打了招呼再看是不是饿了：饿着就补一句（对应人设的 hungry 场景）
+            try { const st: any = (persona as any).state; if (st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1000) setTimeout(() => { try { sayLine(persona.line('hungry'), 4000) } catch (e) { } }, 6000) } catch (e) { }
         try { const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {}); w.persona = persona; w.sayLine = sayLine } catch (e) { }
         // 状态行 2 秒周期刷新：常驻气泡只会在被调用时更新，靠事件驱动容易漏（就曾卡在「识别中…」）
         const tStatus = setInterval(() => {
@@ -584,7 +586,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('念诗·' + p.title + '（' + author + '）', 15000)
               animRef.current?.talkFor(6000)
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
-              speakText(speech, { rate: NARRATION_RATE, onDone: () => { showBubble('诗念完啦～', 5000); try { speakText('念完啦～') } catch (e) { } } })
+              speakText(speech, { rate: NARRATION_RATE, onDone: () => { sayLine(persona.line('poemDone'), 6000); try { speakText(persona.line('poemDone')) } catch (e) { } } })
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
           return
@@ -894,7 +896,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (voiceModeRef.current) { showBubble('（说）' + reply, 8000) }
           if (data && data.upgraded) showBubble('本鲸又长大一点啦！', 4000)
         } catch {
-          setMessages((m: any[]) => [...m, { who: 'fish', text: '主人，本鲸连不上服务器……' }])
+          setMessages((m: any[]) => [...m, { who: 'fish', text: persona.line('error') }])
         } finally {
           setBusy(false)
           animRef.current?.talkFor(1500)
