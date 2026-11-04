@@ -471,10 +471,10 @@
   }
 
   // src/client/voice.ts
-  var WINDOW_MS = 6e3;
-  var EARLY_STOP_QUIET = 700;
-  var MIN_SPEECH_MS = 400;
-  var SILENT_PEAK_DB = -35;
+  var WINDOW_MS = 4500;
+  var EARLY_STOP_QUIET = 500;
+  var MIN_SPEECH_MS = 200;
+  var SILENT_PEAK_DB = -42;
   var ECHO_MUTE_MS = 700;
   var ASR_TIMEOUT_MS = 15e3;
   var TTS_TIMEOUT_MS = 2e4;
@@ -497,7 +497,8 @@
       ttsPlayed: 0,
       ttsFail: 0,
       ttsZombie: 0,
-      lastError: ""
+      lastError: "",
+      timing: { windowMs: 0, asrMs: 0 }
     };
     let status = "idle";
     function setStatus(s) {
@@ -520,6 +521,8 @@
     let speechMs = 0;
     let quietMs = 0;
     let winStart = 0;
+    let floorDb = -70;
+    let winMsForStat = 0;
     let tickTimer = null;
     let restartTimer = null;
     let lastText = "";
@@ -591,7 +594,12 @@
         if (db > winPeak) winPeak = db;
         const now = performance.now();
         const elapsed = now - winStart;
-        if (db > (muted ? 0 : -45)) {
+        if (db < floorDb) floorDb = floorDb * 0.8 + db * 0.2;
+        else if (db < floorDb + 6) floorDb = floorDb * 0.98 + db * 0.02;
+        if (floorDb < -95) floorDb = -95;
+        if (floorDb > -25) floorDb = -25;
+        const onTh = Math.min(-40, Math.max(-55, floorDb + 8));
+        if (db > (muted ? 0 : onTh)) {
           speechMs += 60;
           quietMs = 0;
         } else {
@@ -648,6 +656,7 @@
           body: JSON.stringify({ audio: b64, format: "webm" })
         }, ASR_TIMEOUT_MS);
         const data = await res.json();
+        stats.timing.asrMs = Math.round(performance.now() - asrT0);
         if (!data || !data.ok) {
           stats.asrFail++;
           stats.lastError = "asr: " + String(data && data.error || "failed");
@@ -1970,7 +1979,7 @@
                 showBubble("\u8BED\u97F3\u6A21\u5757\u8FD8\u6CA1\u8D77\u6765\uFF08\u8BED\u97F3\u5F85\u547D\u53EF\u80FD\u662F\u5173\u7684\uFF09", 6e3);
                 return;
               }
-              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
+              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + "\\n\u8017\u65F6\uFF1A\u7B49\u7A97\u53E3 " + (st.timing && st.timing.windowMs || 0) + "ms\uFF5C\u8BC6\u522B " + (st.timing && st.timing.asrMs || 0) + "ms\uFF5C\u5BF9\u8BDD " + (window.__chubbyWhale.latMs || 0) + "ms" + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
               showBubble(line, 15e3);
               try {
                 navigator.clipboard.writeText(JSON.stringify(st));
@@ -2244,6 +2253,10 @@
             try {
               latDiag.chatMs = Math.round(performance.now() - tChat);
               latDiag.updates++;
+            } catch (e) {
+            }
+            try {
+              window.__chubbyWhale.latMs = Math.round(performance.now() - tChat);
             } catch (e) {
             }
             if (myEpoch !== chatEpoch) return;

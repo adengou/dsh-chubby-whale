@@ -28,6 +28,8 @@ export type VoiceStats = {
   ttsFail: number          // 合成/播放失败
   ttsZombie: number        // 僵尸复位次数
   lastError: string
+  /** 每段耗时：等窗口多久 / 识别多久（判断"为什么回答慢"用） */
+  timing: { windowMs: number; asrMs: number }
 }
 
 export type VoiceOptions = {
@@ -60,10 +62,10 @@ export type Voice = {
 // 参考仓库：https://gitee.com/adengou/linyu  →  tools/asr-listener.ps1
 //   原始语义：连续采集 → 静音 700ms 判说完 → 最长 6000ms
 //   丢弃条件：时长 < 400ms 或 峰值 < SilenceGate(600/32768 ≈ -34.7 dBFS)
-const WINDOW_MS = 6000           // MaxMs
-const EARLY_STOP_QUIET = 700     // SilenceMs
-const MIN_SPEECH_MS = 400        // 原始：ms < 400 直接丢
-const SILENT_PEAK_DB = -35       // SilenceGate 换算：20*log10(600/32768) ≈ -34.7
+const WINDOW_MS = 4500           // MaxMs（原来 6000：等得更久）
+const EARLY_STOP_QUIET = 500     // SilenceMs（原来 700：多说 200ms 就收尾）
+const MIN_SPEECH_MS = 200        // 原来 400：短句也要能触发收尾
+const SILENT_PEAK_DB = -42       // 原来 -35：麦克风小声时整段被误判为静音
 const ECHO_MUTE_MS = 700         // 朗读结束后继续静音的时间
 const ASR_TIMEOUT_MS = 15000
 const TTS_TIMEOUT_MS = 20000
@@ -81,6 +83,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   const stats: VoiceStats = {
     windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrTexts: 0, heard: 0,
     echoDropped: 0, ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
+    timing: { windowMs: 0, asrMs: 0 },
   }
 
   // ---- 状态机 ----
@@ -106,6 +109,8 @@ export function createVoice(opts: VoiceOptions): Voice {
   let speechMs = 0
   let quietMs = 0
   let winStart = 0
+  let floorDb = -70   // 自适应噪声底
+  let winMsForStat = 0
   let tickTimer: any = null
   let restartTimer: any = null
 
@@ -169,7 +174,13 @@ export function createVoice(opts: VoiceOptions): Voice {
       if (db > winPeak) winPeak = db
       const now = performance.now()
       const elapsed = now - winStart
-      if (db > (muted ? 0 : -45)) { speechMs += 60; quietMs = 0 } else { quietMs += 60 }
+      // 自适应噪声底：说话声不能把底噪带高（只在明显低于底噪时跟随）
+      if (db < floorDb) floorDb = floorDb * 0.8 + db * 0.2
+      else if (db < floorDb + 6) floorDb = floorDb * 0.98 + db * 0.02
+      if (floorDb < -95) floorDb = -95
+      if (floorDb > -25) floorDb = -25
+      const onTh = Math.min(-40, Math.max(-55, floorDb + 8))   // 起判阈值夹在 -55…-40
+      if (db > (muted ? 0 : onTh)) { speechMs += 60; quietMs = 0 } else { quietMs += 60 }
       const earlyStop = speechMs >= MIN_SPEECH_MS && quietMs >= EARLY_STOP_QUIET
       const tooLong = elapsed >= WINDOW_MS
       if (earlyStop || tooLong) {
@@ -202,6 +213,7 @@ export function createVoice(opts: VoiceOptions): Voice {
         body: JSON.stringify({ audio: b64, format: 'webm' }),
       }, ASR_TIMEOUT_MS)
       const data = await res.json()
+      stats.timing.asrMs = Math.round(performance.now() - asrT0)
       if (!data || !data.ok) { stats.asrFail++; stats.lastError = 'asr: ' + String((data && data.error) || 'failed'); return }
       const text = String(data.text || '').trim()
       if (!text) return
