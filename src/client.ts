@@ -67,18 +67,11 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     // 耳朵实时诊断：主人可在控制台看 __chubbyWhale.ear 了解当前音量/噪声底/阈值
     // 端到端延迟打点（毫秒）：主人随时可看 __chubbyWhale.lat 判断瓶颈在哪一段
     const latDiag: any = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 }
-    const earDiag: any = { db: 0, noiseDb: -60, onsetDb: -50, speechMs: 0, quietMs: 0, calibrating: true, drops: 0, echoDrops: 0, asrMs: 0 }
-    // ===== 回声抑制：本鱼刚说过的话，别被自己的麦克风再听一遍 =====
-    const ECHO_MUTE_MS = 700          // TTS 结束后这段时间内一律不听（让混响散掉）
-    const echoMuteUntil = { t: 0 }    // 时间戳：到点之前忽略麦克风
-    const spokenRecent: Array<{ text: string; at: number }> = []   // 最近说过的话（用于文本相似度比对）
-    function noteSpoken(text: string): void {
-      try {
-        const s = String(text || '').trim()
-        if (!s) return
-        spokenRecent.push({ text: s, at: Date.now() })
-        while (spokenRecent.length > 6) spokenRecent.shift()
-      } catch (e) { }
+    const earDiag: any = {
+      db: 0, noiseDb: -60, onsetDb: -50, speechMs: 0, quietMs: 0, calibrating: true,
+      ctxState: 'unknown', lastError: '', asrMs: 0,
+      // 分段计数：每一环丢了多少，直接回答「接不住」到底丢在哪一环
+      chunks: { recorded: 0, small: 0, muted: 0, uploaded: 0, asrFail: 0, empty: 0, echo: 0, nowake: 0, sent: 0 },
     }
     /** 粗略判定：这句听来的话是不是本鱼自己刚说过的回声 */
     function looksLikeEcho(heard: string): boolean {
@@ -1172,7 +1165,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           startTimer = setTimeout(() => { startTimer = null; startChunk() }, delay)
         }
         async function uploadChunk() {
-        if (channels.asr.isBusy()) return   // 识别通道占线：这段直接丢（最新一段才有意义）
+        if (asrBusy) return                  // 上一段识别还在途：这段直接丢（结果不能乱序）
         asrBusy = true                      // 兼容旧诊断字段
           // 所有 return 都走 finally → 录音循环一定会重启（不再因为「没叫唤醒词」装死）
           try {
@@ -1180,11 +1173,14 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const blob = new Blob(chunks, { type: 'audio/webm' })
             chunks = []
             if (blob.size < 1200) return   // 原来 2500：短句常被丢掉
+            try { earDiag.chunks.small++ } catch (e) { }
             // 本鱼刚说完话的 700ms 里听到的多半是自己的回声/混响：直接丢，别上传浪费钱
             if (Date.now() < echoMuteUntil.t) return
+            try { earDiag.chunks.muted++ } catch (e) { }
             const b64 = await blobToBase64(blob)
             if (!b64) return
             const t0 = performance.now()
+            try { earDiag.chunks.uploaded++ } catch (e) { }
             const r = await fetch('/api/chubby-whale/asr', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
@@ -1195,10 +1191,12 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             try { latDiag.asrMs = asrMs } catch (e) { }
             // 本鱼刚说过的话被麦克风听回来（回声）：直接丢，别自言自语
             if (d && d.ok && d.text && looksLikeEcho(String(d.text))) {
+              try { earDiag.chunks.echo++ } catch (e) { }
               try { console.log('[chubby-whale] 丢弃回声（' + asrMs + 'ms）：' + String(d.text).slice(0, 40)) } catch (e) { }
               return
             }
             if (d && d.ok && d.text && d.text.trim().length >= 2) {
+              try { earDiag.chunks.recognized = (earDiag.chunks.recognized || 0) + 1 } catch (e) { }
               // 说书/讲故事/念诗期间一律闭嘴：只要本鱼还在出声（正在播、队列里还有段落、
               // 或说书中），麦克风听到的都是自己的声音，绝不能当成主人在说话去抢频道
               if (ttsPlaying) return
@@ -1219,6 +1217,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               } else {
                 const wokeRecent = Date.now() - wokeRef.current.at < 120000   // 唤醒后 2 分钟内可以直接接着说
                 if (!wokeRecent) return
+                try { earDiag.chunks.nowake++ } catch (e) { }
               }
               voiceModeRef.current = true
               setChatOpen(false)
@@ -1230,6 +1229,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               playFiller()   // 立刻「嗯」一声，别让主人干等
               showBubble('（听到）' + t + '｜本鱼在想…', 3000)
               sendText(t, { voice: true })
+              try { earDiag.chunks.sent++ } catch (e) { }
             }
           } catch (e) { } finally {
             asrBusy = false        // 释放识别位（无论成功失败都要放，否则耳朵永久占线）
@@ -1321,6 +1321,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             speechMs = 0
             quietMs = 0
             chunkStartedAt = performance.now()
+            try { earDiag.chunks.recorded++ } catch (e) { }
             lastTickAt = chunkStartedAt
             mr.start()
             scheduleWatch(100)
@@ -1353,6 +1354,13 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             stream = s
             try { const tr = s.getAudioTracks && s.getAudioTracks()[0]; if (tr) micTrackRef.current = tr } catch (e) { }
             actx = new (window as any).AudioContext()
+            try { await (actx as any).resume() } catch (e) { }
+            try { earDiag.ctxState = String(actx.state) } catch (e) { }
+            if (actx && actx.state === 'suspended') {
+              // 浏览器自动播放策略把上下文挂起时，分析器读数恒为 0，必须等用户手势再恢复
+              showBubble('麦克风还没激活：点一下页面任意位置就好', 6000)
+              try { document.addEventListener('pointerdown', () => { try { actx.resume() } catch (e) { } }, { once: true }) } catch (e) { }
+            }
             const src = actx.createMediaStreamSource(stream)
             analyser = actx.createAnalyser()
             analyser.fftSize = 1024      // 时域 1024 点 ≈ 21ms @48k：够算 RMS，又不会太钝
@@ -1361,6 +1369,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             mr = new (window as any).MediaRecorder(stream)
             mr.ondataavailable = (e: any) => { if (e && e.data && e.data.size > 0) chunks.push(e.data) }
             mr.onstop = () => { }
+            mr.onerror = (ev: any) => { try { earDiag.lastError = 'recorder: ' + String(ev && ev.error && ev.error.name) } catch (e) { } }
             detachGesture()                 // 麦克风真拿到了才摘监听
             showBubble('本鲸在听（千问识别），说完就会接话～', 3000)
             startChunk()

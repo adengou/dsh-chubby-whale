@@ -742,19 +742,19 @@
       let asrBusy = false;
       const storyNarratingRef = { current: false };
       const latDiag = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 };
-      const earDiag = { db: 0, noiseDb: -60, onsetDb: -50, speechMs: 0, quietMs: 0, calibrating: true, drops: 0, echoDrops: 0, asrMs: 0 };
-      const ECHO_MUTE_MS = 700;
-      const echoMuteUntil = { t: 0 };
-      const spokenRecent = [];
-      function noteSpoken(text) {
-        try {
-          const s = String(text || "").trim();
-          if (!s) return;
-          spokenRecent.push({ text: s, at: Date.now() });
-          while (spokenRecent.length > 6) spokenRecent.shift();
-        } catch (e) {
-        }
-      }
+      const earDiag = {
+        db: 0,
+        noiseDb: -60,
+        onsetDb: -50,
+        speechMs: 0,
+        quietMs: 0,
+        calibrating: true,
+        ctxState: "unknown",
+        lastError: "",
+        asrMs: 0,
+        // 分段计数：每一环丢了多少，直接回答「接不住」到底丢在哪一环
+        chunks: { recorded: 0, small: 0, muted: 0, uploaded: 0, asrFail: 0, empty: 0, echo: 0, nowake: 0, sent: 0 }
+      };
       function looksLikeEcho(heard) {
         try {
           const norm = (s) => String(s || "").replace(/[\s，。、；：！？,.!?;:（）()「」“”"'’"…—-]/g, "");
@@ -2281,17 +2281,29 @@
             }, delay);
           }
           async function uploadChunk() {
-            if (channels.asr.isBusy()) return;
+            if (asrBusy) return;
             asrBusy = true;
             try {
               if (stopped) return;
               const blob = new Blob(chunks, { type: "audio/webm" });
               chunks = [];
               if (blob.size < 1200) return;
+              try {
+                earDiag.chunks.small++;
+              } catch (e) {
+              }
               if (Date.now() < echoMuteUntil.t) return;
+              try {
+                earDiag.chunks.muted++;
+              } catch (e) {
+              }
               const b64 = await blobToBase64(blob);
               if (!b64) return;
               const t0 = performance.now();
+              try {
+                earDiag.chunks.uploaded++;
+              } catch (e) {
+              }
               const r = await fetch("/api/chubby-whale/asr", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
@@ -2305,12 +2317,20 @@
               }
               if (d && d.ok && d.text && looksLikeEcho(String(d.text))) {
                 try {
+                  earDiag.chunks.echo++;
+                } catch (e) {
+                }
+                try {
                   console.log("[chubby-whale] \u4E22\u5F03\u56DE\u58F0\uFF08" + asrMs + "ms\uFF09\uFF1A" + String(d.text).slice(0, 40));
                 } catch (e) {
                 }
                 return;
               }
               if (d && d.ok && d.text && d.text.trim().length >= 2) {
+                try {
+                  earDiag.chunks.recognized = (earDiag.chunks.recognized || 0) + 1;
+                } catch (e) {
+                }
                 if (ttsPlaying) return;
                 if (ttsQueue.length > 0) return;
                 let narrating = false;
@@ -2340,6 +2360,10 @@
                 } else {
                   const wokeRecent = Date.now() - wokeRef.current.at < 12e4;
                   if (!wokeRecent) return;
+                  try {
+                    earDiag.chunks.nowake++;
+                  } catch (e) {
+                  }
                 }
                 voiceModeRef.current = true;
                 setChatOpen(false);
@@ -2350,6 +2374,10 @@
                 playFiller();
                 showBubble("\uFF08\u542C\u5230\uFF09" + t + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
                 sendText(t, { voice: true });
+                try {
+                  earDiag.chunks.sent++;
+                } catch (e) {
+                }
               }
             } catch (e) {
             } finally {
@@ -2450,6 +2478,10 @@
               speechMs = 0;
               quietMs = 0;
               chunkStartedAt = performance.now();
+              try {
+                earDiag.chunks.recorded++;
+              } catch (e) {
+              }
               lastTickAt = chunkStartedAt;
               mr.start();
               scheduleWatch(100);
@@ -2503,6 +2535,26 @@
               } catch (e) {
               }
               actx = new window.AudioContext();
+              try {
+                await actx.resume();
+              } catch (e) {
+              }
+              try {
+                earDiag.ctxState = String(actx.state);
+              } catch (e) {
+              }
+              if (actx && actx.state === "suspended") {
+                showBubble("\u9EA6\u514B\u98CE\u8FD8\u6CA1\u6FC0\u6D3B\uFF1A\u70B9\u4E00\u4E0B\u9875\u9762\u4EFB\u610F\u4F4D\u7F6E\u5C31\u597D", 6e3);
+                try {
+                  document.addEventListener("pointerdown", () => {
+                    try {
+                      actx.resume();
+                    } catch (e) {
+                    }
+                  }, { once: true });
+                } catch (e) {
+                }
+              }
               const src = actx.createMediaStreamSource(stream);
               analyser = actx.createAnalyser();
               analyser.fftSize = 1024;
@@ -2513,6 +2565,12 @@
                 if (e && e.data && e.data.size > 0) chunks.push(e.data);
               };
               mr.onstop = () => {
+              };
+              mr.onerror = (ev) => {
+                try {
+                  earDiag.lastError = "recorder: " + String(ev && ev.error && ev.error.name);
+                } catch (e) {
+                }
               };
               detachGesture();
               showBubble("\u672C\u9CB8\u5728\u542C\uFF08\u5343\u95EE\u8BC6\u522B\uFF09\uFF0C\u8BF4\u5B8C\u5C31\u4F1A\u63A5\u8BDD\uFF5E", 3e3);
