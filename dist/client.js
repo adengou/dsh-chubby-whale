@@ -469,6 +469,93 @@
     return { start, stop, talkFor, pushHeart };
   }
 
+  // src/client/channel.ts
+  function createChannel(name) {
+    const queue = [];
+    let inFlight = false;
+    let seq = 0;
+    const stats = { inFlight: 0, queued: 0, done: 0, dropped: 0, lastMs: 0, lastError: "" };
+    function pickNext() {
+      if (queue.length === 0) return void 0;
+      let best = 0;
+      for (let i = 1; i < queue.length; i++) {
+        const a = queue[i];
+        const b = queue[best];
+        if (a.priority < b.priority || a.priority === b.priority && a.seq < b.seq) best = i;
+      }
+      return queue.splice(best, 1)[0];
+    }
+    async function drain() {
+      if (inFlight) return;
+      const next = pickNext();
+      if (!next) return;
+      inFlight = true;
+      stats.inFlight = 1;
+      stats.queued = queue.length;
+      const t0 = Date.now();
+      try {
+        await next.run();
+        stats.lastError = "";
+      } catch (e) {
+        stats.lastError = String(e && e.message || e);
+        try {
+          console.error("[" + name + "] \u901A\u9053\u4EFB\u52A1\u5F02\u5E38\uFF1A", e);
+        } catch (e2) {
+        }
+      } finally {
+        stats.lastMs = Date.now() - t0;
+        stats.done++;
+        inFlight = false;
+        stats.inFlight = 0;
+        stats.queued = queue.length;
+        if (queue.length > 0) setTimeout(() => {
+          void drain();
+        }, 0);
+      }
+    }
+    function push(task) {
+      const priority = typeof task.priority === "number" ? task.priority : 5;
+      if (task.conflate && task.key) {
+        for (let i = queue.length - 1; i >= 0; i--) {
+          if (queue[i].key === task.key) {
+            queue.splice(i, 1);
+            stats.dropped++;
+          }
+        }
+      }
+      queue.push({ key: task.key, priority, seq: ++seq, run: task.run });
+      stats.queued = queue.length;
+      void drain();
+    }
+    return {
+      name,
+      push,
+      /** 直接跑一个任务并返回结果（不排队，但仍受 inFlight 保护：忙则返回 undefined） */
+      tryRun: (task) => {
+        if (inFlight) return false;
+        push(task);
+        return true;
+      },
+      stats,
+      isBusy: () => inFlight,
+      clear: () => {
+        stats.dropped += queue.length;
+        queue.length = 0;
+        stats.queued = 0;
+      }
+    };
+  }
+  function createChannels() {
+    return {
+      /** 麦克风采集段：最新一段才有意义（conflate） */
+      mic: createChannel("mic"),
+      /** ASR：同一时刻只允许一个在途，结果不能乱序 */
+      asr: createChannel("asr"),
+      /** 扬声器：严格串行，按优先级（P0 主人回复 > P1 说书 > P2 提醒） */
+      speak: createChannel("speak")
+    };
+  }
+
   // src/shared/tts.ts
   function isValidRate(s) {
     return typeof s === "string" && /^[+-]\d{1,2}%$/.test(s.trim());
@@ -650,9 +737,11 @@
       const ttsQueue = [];
       const ttsPrefetch = /* @__PURE__ */ new Map();
       let ttsPlaying = false;
+      const channels = createChannels();
       let chatEpoch = 0;
       let asrBusy = false;
       const storyNarratingRef = { current: false };
+      const latDiag = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 };
       const earDiag = { db: 0, noiseDb: -60, onsetDb: -50, speechMs: 0, quietMs: 0, calibrating: true, drops: 0, echoDrops: 0, asrMs: 0 };
       const ECHO_MUTE_MS = 700;
       const echoMuteUntil = { t: 0 };
@@ -856,6 +945,12 @@
             ttsUrl = "";
           }
           ttsPlaying = false;
+          setTimeout(() => {
+            try {
+              if (!ttsPlaying) unmuteMic();
+            } catch (e) {
+            }
+          }, ECHO_MUTE_MS);
           echoMuteUntil.t = Date.now() + ECHO_MUTE_MS;
           try {
             const ss = window.speechSynthesis;
@@ -910,6 +1005,7 @@
         const epoch = ttsEpoch;
         const job = ttsQueue.shift();
         ttsPlaying = true;
+        muteMic();
         ttsCurrentJob = job;
         try {
           const pending = ttsPrefetch.get(job.id) || fetchTts(job);
@@ -924,6 +1020,12 @@
               if (ttsCurrentJob === job) ttsCurrentJob = null;
               finishTtsJob(job);
               ttsPlaying = false;
+              setTimeout(() => {
+                try {
+                  if (!ttsPlaying) unmuteMic();
+                } catch (e) {
+                }
+              }, ECHO_MUTE_MS);
               echoMuteUntil.t = Date.now() + ECHO_MUTE_MS;
               playNextTts();
               return;
@@ -940,6 +1042,12 @@
               if (ttsUrl === url) ttsUrl = "";
               finishTtsJob(job);
               ttsPlaying = false;
+              setTimeout(() => {
+                try {
+                  if (!ttsPlaying) unmuteMic();
+                } catch (e) {
+                }
+              }, ECHO_MUTE_MS);
               echoMuteUntil.t = Date.now() + ECHO_MUTE_MS;
               const next = ttsQueue[0];
               if (job.narration && next && next.group === job.group) ttsPauseUntil = Date.now() + 260;
@@ -968,12 +1076,24 @@
             if (ttsCurrentJob === job) ttsCurrentJob = null;
             finishTtsJob(job);
             ttsPlaying = false;
+            setTimeout(() => {
+              try {
+                if (!ttsPlaying) unmuteMic();
+              } catch (e) {
+              }
+            }, ECHO_MUTE_MS);
             echoMuteUntil.t = Date.now() + ECHO_MUTE_MS;
             playNextTts();
           });
         } catch (e) {
           if (ttsCurrentJob === job) ttsCurrentJob = null;
           ttsPlaying = false;
+          setTimeout(() => {
+            try {
+              if (!ttsPlaying) unmuteMic();
+            } catch (e2) {
+            }
+          }, ECHO_MUTE_MS);
           echoMuteUntil.t = Date.now() + ECHO_MUTE_MS;
           finishTtsJob(job);
           playNextTts();
@@ -2028,6 +2148,11 @@
               })() })
             });
             data = await res.json();
+            try {
+              latDiag.chatMs = Math.round(performance.now() - tChat);
+              latDiag.updates++;
+            } catch (e) {
+            }
             if (myEpoch !== chatEpoch) return;
             const reply = data?.reply || "\u4E3B\u4EBA\u2026\u2026\u672C\u9CB8\u8D70\u795E\u4E86\u3002";
             setMessages((m) => [...m, { who: "fish", text: reply }]);
@@ -2080,7 +2205,7 @@
           let lastTickAt = 0;
           let watchTimer = null;
           let startTimer = null;
-          const SILENCE_LIMIT = 450;
+          const SILENCE_LIMIT = 350;
           const VOICE_LIMIT = 5e3;
           function blobToBase64(blob) {
             return new Promise((resolve) => {
@@ -2105,7 +2230,7 @@
             }, delay);
           }
           async function uploadChunk() {
-            if (asrBusy) return;
+            if (channels.asr.isBusy()) return;
             asrBusy = true;
             try {
               if (stopped) return;
@@ -2123,6 +2248,10 @@
               });
               const d = await r.json();
               const asrMs = Math.round(performance.now() - t0);
+              try {
+                latDiag.asrMs = asrMs;
+              } catch (e) {
+              }
               if (d && d.ok && d.text && looksLikeEcho(String(d.text))) {
                 try {
                   console.log("[chubby-whale] \u4E22\u5F03\u56DE\u58F0\uFF08" + asrMs + "ms\uFF09\uFF1A" + String(d.text).slice(0, 40));
@@ -2313,6 +2442,11 @@
                 return;
               }
               stream = s;
+              try {
+                const tr2 = s.getAudioTracks && s.getAudioTracks()[0];
+                if (tr2) micTrackRef.current = tr2;
+              } catch (e) {
+              }
               actx = new window.AudioContext();
               const src = actx.createMediaStreamSource(stream);
               analyser = actx.createAnalyser();
@@ -2545,6 +2679,8 @@
             hasCtx: !!ctx,
             hasSlots: !!(ctx && ctx.slots),
             ear: earDiag,
+            lat: latDiag,
+            ch: { mic: channels.mic.stats, asr: channels.asr.stats, speak: channels.speak.stats },
             registered: false,
             error: null
           };

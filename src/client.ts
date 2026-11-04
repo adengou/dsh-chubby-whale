@@ -6,6 +6,7 @@ import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chat
 import { buildMenu, tr } from './client/menu.js'
 import { handleFileDrop, VISION_PROMPT } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
+import { createChannels } from './client/channel.js'
 import { splitTtsSegments, normalizeRate, cleanTtsText } from './shared/tts.js'
 import { parseDue, cleanReminderText } from './shared/time.js'
 ;(window as any).__ModuleLoader__.load({
@@ -54,6 +55,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     /** 预取缓存：段 id → 已发出的合成请求（当前段开播时就把下一段压上去） */
     const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
     let ttsPlaying = false
+    // 三条独占资源通道：麦克风 / ASR / 扬声器（同通道串行，跨通道并发）
+    const channels = createChannels()
     // ===== 并发纪律（防串线/占线/插队）=====
     // chatEpoch：每次发起对话 +1；回来的响应若纪元已变，一律丢弃（旧答案绝不能盖掉新问题）
     let chatEpoch = 0
@@ -62,6 +65,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     // 说书/讲古/念诗期间为 true：耳朵完全静音，避免本鱼自己的声音把自己打断
     const storyNarratingRef = { current: false }
     // 耳朵实时诊断：主人可在控制台看 __chubbyWhale.ear 了解当前音量/噪声底/阈值
+    // 端到端延迟打点（毫秒）：主人随时可看 __chubbyWhale.lat 判断瓶颈在哪一段
+    const latDiag: any = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 }
     const earDiag: any = { db: 0, noiseDb: -60, onsetDb: -50, speechMs: 0, quietMs: 0, calibrating: true, drops: 0, echoDrops: 0, asrMs: 0 }
     // ===== 回声抑制：本鱼刚说过的话，别被自己的麦克风再听一遍 =====
     const ECHO_MUTE_MS = 700          // TTS 结束后这段时间内一律不听（让混响散掉）
@@ -200,6 +205,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }
         if (ttsUrl) { try { URL.revokeObjectURL(ttsUrl) } catch (e) { } ; ttsUrl = '' }
         ttsPlaying = false
+      setTimeout(() => { try { if (!ttsPlaying) unmuteMic() } catch (e) { } }, ECHO_MUTE_MS)
       echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
         try { const ss = (window as any).speechSynthesis; if (ss && ss.speaking) ss.cancel() } catch (e) { }
       } catch (e) { ttsPlaying = false }
@@ -246,6 +252,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       const epoch = ttsEpoch
       const job = ttsQueue.shift() as TtsJob
       ttsPlaying = true
+      muteMic()   // 出声即闭麦（物理层，浏览器不再采样）
       ttsCurrentJob = job
       try {
         const pending = ttsPrefetch.get(job.id) || fetchTts(job)
@@ -260,6 +267,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (ttsCurrentJob === job) ttsCurrentJob = null
             finishTtsJob(job)
             ttsPlaying = false
+      setTimeout(() => { try { if (!ttsPlaying) unmuteMic() } catch (e) { } }, ECHO_MUTE_MS)
       echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
             playNextTts()
             return
@@ -273,6 +281,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (ttsUrl === url) ttsUrl = ''
             finishTtsJob(job)
             ttsPlaying = false
+      setTimeout(() => { try { if (!ttsPlaying) unmuteMic() } catch (e) { } }, ECHO_MUTE_MS)
       echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
             // 叙述：同一组还有下一段时留 260ms 换气，别一口气念到底
             const next = ttsQueue[0]
@@ -300,12 +309,14 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (ttsCurrentJob === job) ttsCurrentJob = null
           finishTtsJob(job)
           ttsPlaying = false
+      setTimeout(() => { try { if (!ttsPlaying) unmuteMic() } catch (e) { } }, ECHO_MUTE_MS)
       echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
           playNextTts()
         })
       } catch (e) {
         if (ttsCurrentJob === job) ttsCurrentJob = null
         ttsPlaying = false
+      setTimeout(() => { try { if (!ttsPlaying) unmuteMic() } catch (e) { } }, ECHO_MUTE_MS)
       echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
         finishTtsJob(job)
         playNextTts()
@@ -1072,6 +1083,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             body: JSON.stringify({ message: text, voice: true, lang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })() }),
           })
           data = await res.json()
+          try { latDiag.chatMs = Math.round(performance.now() - tChat); latDiag.updates++ } catch (e) { }
           if (myEpoch !== chatEpoch) return   // 主人已经问了新问题：这条旧回复作废（防串线）
           const reply = data?.reply || '主人……本鲸走神了。'
           setMessages((m: any[]) => [...m, { who: 'fish', text: reply }])
@@ -1125,7 +1137,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         let watchTimer: any = null
         let startTimer: any = null
         // SILENCE_GATE 已被 dBFS 自适应阈值取代（见 readDb / ONSET_DB），保留常量仅做兼容
-        const SILENCE_LIMIT = 450      // 原来 700：说完要等太久才收尾
+        const SILENCE_LIMIT = 350      // 原来 700：说完要等太久才收尾（350 是短句不断、又不拖沓的折中）
         const VOICE_LIMIT = 5000   // 原来 6000：录音越长 ASR 越慢
         function blobToBase64(blob: any): Promise<string> {
           return new Promise((resolve) => {
@@ -1142,8 +1154,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           startTimer = setTimeout(() => { startTimer = null; startChunk() }, delay)
         }
         async function uploadChunk() {
-        if (asrBusy) return          // 上一段识别还没回来：直接放弃这段，避免结果乱序
-        asrBusy = true
+        if (channels.asr.isBusy()) return   // 识别通道占线：这段直接丢（最新一段才有意义）
+        asrBusy = true                      // 兼容旧诊断字段
           // 所有 return 都走 finally → 录音循环一定会重启（不再因为「没叫唤醒词」装死）
           try {
             if (stopped) return
@@ -1162,6 +1174,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             })
             const d = await r.json()
             const asrMs = Math.round(performance.now() - t0)
+            try { latDiag.asrMs = asrMs } catch (e) { }
             // 本鱼刚说过的话被麦克风听回来（回声）：直接丢，别自言自语
             if (d && d.ok && d.text && looksLikeEcho(String(d.text))) {
               try { console.log('[chubby-whale] 丢弃回声（' + asrMs + 'ms）：' + String(d.text).slice(0, 40)) } catch (e) { }
@@ -1319,6 +1332,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             // 拿麦期间被「语音待命：关」了：别再把麦克风挂着
             if (stopped) { try { s.getTracks().forEach((t: any) => t.stop()) } catch (e) { } ; return }
             stream = s
+            try { const tr = s.getAudioTracks && s.getAudioTracks()[0]; if (tr) micTrackRef.current = tr } catch (e) { }
             actx = new (window as any).AudioContext()
             const src = actx.createMediaStreamSource(stream)
             analyser = actx.createAnalyser()
@@ -1478,7 +1492,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       apply(ctx: any) {
         // 诊断对象：出问题时在浏览器控制台输入 __chubbyWhale 就能看到卡在哪一步
         const diag: any = (window as any).__chubbyWhale = {
-          version: VERSION, applied: true, hasCtx: !!ctx, hasSlots: !!(ctx && ctx.slots), ear: earDiag,
+          version: VERSION, applied: true, hasCtx: !!ctx, hasSlots: !!(ctx && ctx.slots), ear: earDiag, lat: latDiag,
+          ch: { mic: channels.mic.stats, asr: channels.asr.stats, speak: channels.speak.stats },
           registered: false, error: null,
         }
         try {
