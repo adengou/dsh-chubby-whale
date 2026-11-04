@@ -471,15 +471,13 @@
   }
 
   // src/client/voice.ts
-  var MAX_SEG_MS = 6e3;
-  var SOFT_QUIET_MS = 300;
-  var HARD_QUIET_MS = 450;
-  var MIN_SPEECH_MS = 180;
-  var TIMESLICE_MS = 250;
+  var WINDOW_MS = 6e3;
+  var EARLY_STOP_QUIET = 700;
+  var MIN_SPEECH_MS = 400;
+  var SILENT_PEAK_DB = -35;
   var ECHO_MUTE_MS = 700;
   var ASR_TIMEOUT_MS = 15e3;
   var TTS_TIMEOUT_MS = 2e4;
-  var TTS_FIRST_MAX = 16;
   var TTS_SEG_MAX = 90;
   var TTS_WATCH_MS = 1e3;
   var TTS_ZOMBIE_MS = 2500;
@@ -488,10 +486,8 @@
     const apiBase = opts.apiBase || "/api/chubby-whale";
     let voiceName = opts.voiceName || "zh-CN-XiaoyiNeural";
     const stats = {
-      segments: 0,
+      windows: 0,
       skippedSilent: 0,
-      speculative: 0,
-      cancelSpec: 0,
       uploaded: 0,
       asrFail: 0,
       asrTexts: 0,
@@ -501,36 +497,31 @@
       ttsPlayed: 0,
       ttsFail: 0,
       ttsZombie: 0,
-      lastError: "",
-      lastPeak: 0,
-      timing: { endpointMs: 0, windowMs: 0, asrMs: 0, bytes: 0 }
+      lastError: ""
     };
     let status = "idle";
-    const setStatus = (s) => {
+    function setStatus(s) {
       if (status === s) return;
       status = s;
       try {
         opts.onStatus && opts.onStatus(s);
       } catch (e) {
       }
-    };
+    }
     let stream = null;
     let actx = null;
     let analyser = null;
+    let rec = null;
     let timeBuf = null;
     let running = false;
     let muted = false;
-    let rec = null;
-    let headerBlob = null;
-    let buf = [];
-    let segStart = 0;
-    let segPeak = -160;
+    let parts = [];
+    let winPeak = -160;
     let speechMs = 0;
     let quietMs = 0;
-    let floorDb = -70;
-    let gateDb = -50;
+    let winStart = 0;
     let tickTimer = null;
-    let pendingSpec = null;
+    let restartTimer = null;
     let lastText = "";
     let lastTextAt = 0;
     const spokenRecent = [];
@@ -541,14 +532,14 @@
     let ttsWatch = null;
     let mutedUntil = 0;
     let speakToken = 0;
-    function level() {
+    const level = () => {
       if (!analyser || !timeBuf) return -160;
       analyser.getFloatTimeDomainData(timeBuf);
       let sum = 0;
       for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
       const rms = Math.sqrt(sum / timeBuf.length);
       return 20 * Math.log10(rms + 1e-8);
-    }
+    };
     function micOn(on) {
       try {
         if (stream) stream.getAudioTracks().forEach((t) => {
@@ -557,67 +548,67 @@
       } catch (e) {
       }
     }
-    function buildSegment(fromT, toT) {
-      if (!headerBlob) return null;
-      const picked = buf.filter((x) => x.t >= fromT && x.t <= toT).map((x) => x.b);
-      if (!picked.length) return null;
-      return new Blob([headerBlob, ...picked], { type: "audio/webm" });
+    function scheduleNext(ms) {
+      if (!running) return;
+      if (restartTimer) clearTimeout(restartTimer);
+      restartTimer = setTimeout(() => {
+        restartTimer = null;
+        beginWindow();
+      }, ms);
+    }
+    function beginWindow() {
+      if (!running || !rec) return;
+      try {
+        if (rec.state !== "inactive") {
+          try {
+            rec.stop();
+          } catch (e) {
+          }
+          scheduleNext(200);
+          return;
+        }
+        parts = [];
+        winPeak = -160;
+        speechMs = 0;
+        quietMs = 0;
+        winStart = performance.now();
+        rec.start();
+        scheduleNext(0);
+        if (restartTimer) {
+          clearTimeout(restartTimer);
+          restartTimer = null;
+        }
+        tick();
+      } catch (e) {
+        stats.lastError = "beginWindow: " + String(e && e.name);
+        scheduleNext(1e3);
+      }
     }
     function tick() {
-      if (!running) return;
+      if (!running || !rec || rec.state !== "recording") return;
       try {
-        try {
-          if (actx && actx.state !== "running") {
-            actx.resume();
-          }
-          stats.ctxState = actx ? String(actx.state) : "none";
-        } catch (e) {
-        }
         const db = level();
-        if (db <= -159) {
-          stats.zeroTicks = (stats.zeroTicks || 0) + 1;
-        }
-        if (db > segPeak) segPeak = db;
-        if (db < floorDb) floorDb = floorDb * 0.8 + db * 0.2;
-        else if (db < floorDb + 6) floorDb = floorDb * 0.98 + db * 0.02;
-        if (floorDb < -95) floorDb = -95;
-        if (floorDb > -25) floorDb = -25;
-        const onTh = Math.min(-40, Math.max(-55, floorDb + 8));
-        gateDb = onTh;
-        try {
-          stats.gateDb = Math.round(onTh);
-        } catch (e) {
-        }
-        if (db > (muted ? 0 : onTh)) {
+        if (db > winPeak) winPeak = db;
+        const now = performance.now();
+        const elapsed = now - winStart;
+        if (db > (muted ? 0 : -45)) {
           speechMs += 60;
           quietMs = 0;
         } else {
           quietMs += 60;
         }
-        const now = performance.now();
-        const elapsed = now - segStart;
-        if (!pendingSpec && speechMs >= MIN_SPEECH_MS && quietMs >= SOFT_QUIET_MS) {
-          const blob = buildSegment(segStart, now);
-          if (blob) {
-            pendingSpec = { blob, at: now };
-            stats.speculative++;
+        const earlyStop = speechMs >= MIN_SPEECH_MS && quietMs >= EARLY_STOP_QUIET;
+        const tooLong = elapsed >= WINDOW_MS;
+        if (earlyStop || tooLong) {
+          try {
+            rec.stop();
+          } catch (e) {
           }
-        }
-        const confirmed = quietMs >= HARD_QUIET_MS && speechMs >= MIN_SPEECH_MS;
-        const overflow = elapsed >= MAX_SEG_MS;
-        if (confirmed || overflow) {
-          const blob = pendingSpec ? pendingSpec.blob : buildSegment(segStart, now);
-          const winMs = Math.round(now - segStart);
-          const endpointMs = Math.round(quietMs);
-          pendingSpec = null;
-          segStart = now;
-          segPeak = -160;
-          speechMs = 0;
-          quietMs = 0;
-          if (blob) void handleSegment(blob, winMs, endpointMs);
-        } else if (pendingSpec && quietMs < SOFT_QUIET_MS) {
-          pendingSpec = null;
-          stats.cancelSpec++;
+          try {
+            opts.onDiag && opts.onDiag({ stage: "window-end", why: earlyStop ? "quiet" : "timeout", peak: Math.round(winPeak), speechMs });
+          } catch (e) {
+          }
+          return;
         }
         tickTimer = setTimeout(tick, 60);
       } catch (e) {
@@ -625,26 +616,24 @@
         tickTimer = setTimeout(tick, 120);
       }
     }
-    async function handleSegment(blob, winMs, endpointMs) {
-      stats.segments++;
-      stats.timing.windowMs = winMs;
-      stats.timing.endpointMs = endpointMs;
-      stats.timing.bytes = blob.size;
-      stats.lastPeak = Math.round(segPeak);
-      if (segPeak < gateDb) {
+    async function onWindowDone(blob) {
+      stats.windows++;
+      if (winPeak < SILENT_PEAK_DB) {
         stats.skippedSilent++;
+        scheduleNext(150);
         return;
       }
       if (Date.now() < mutedUntil) {
         stats.skippedSilent++;
+        scheduleNext(150);
         return;
       }
       if (blob.size < 1200) {
         stats.skippedSilent++;
+        scheduleNext(150);
         return;
       }
       stats.uploaded++;
-      const t0 = performance.now();
       setStatus("recognizing");
       try {
         const b64 = await blobToBase64(blob);
@@ -653,13 +642,12 @@
           stats.lastError = "b64-empty";
           return;
         }
-        const res = await fetchTimeout(apiBase + "/asr", {
+        const res = await fetchWithTimeout(apiBase + "/asr", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ audio: b64, format: "webm" })
         }, ASR_TIMEOUT_MS);
         const data = await res.json();
-        stats.timing.asrMs = Math.round(performance.now() - t0);
         if (!data || !data.ok) {
           stats.asrFail++;
           stats.lastError = "asr: " + String(data && data.error || "failed");
@@ -683,6 +671,7 @@
         stats.lastError = "asr-ex: " + String(e && e.name || e);
       } finally {
         if (status === "recognizing") setStatus("listening");
+        scheduleNext(150);
       }
     }
     function acceptText(text) {
@@ -710,11 +699,10 @@
       spokenRecent.push({ text: t, at: Date.now() });
       while (spokenRecent.length > 12) spokenRecent.shift();
     }
-    function watchdog() {
+    function ttsWatchdog() {
       try {
+        if (ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0) return;
         if (!ttsBusy) return;
-        const alive = ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0;
-        if (alive) return;
         if (Date.now() - ttsBusySince < TTS_ZOMBIE_MS) return;
         stats.ttsZombie++;
         try {
@@ -726,11 +714,11 @@
         }
         ttsAudio = null;
         ttsBusy = false;
-        pump();
+        pumpTts();
       } catch (e) {
       }
     }
-    function pump() {
+    function pumpTts() {
       if (ttsBusy) return;
       const job = ttsQ.shift();
       if (!job) {
@@ -739,27 +727,27 @@
       }
       ttsBusy = true;
       ttsBusySince = Date.now();
-      const token = ++speakToken;
+      const myToken = ++speakToken;
       setStatus("speaking");
       micOn(false);
       stats.ttsRequests++;
-      fetchTimeout(apiBase + "/tts", {
+      fetchWithTimeout(apiBase + "/tts", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text: job.text, voice: voiceName })
       }, TTS_TIMEOUT_MS).then((r) => {
         if (!r.ok) throw new Error("tts-http-" + r.status);
         return r.arrayBuffer();
-      }).then((ab) => {
-        if (token !== speakToken) {
+      }).then((buf) => {
+        if (myToken !== speakToken) {
           ttsBusy = false;
           return;
         }
-        const url = URL.createObjectURL(new Blob([ab], { type: "audio/mpeg" }));
+        const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
         const a = new Audio(url);
         ttsAudio = a;
-        const done = () => {
-          if (token !== speakToken) {
+        const finish = () => {
+          if (myToken !== speakToken) {
             try {
               URL.revokeObjectURL(url);
             } catch (e) {
@@ -785,48 +773,40 @@
             job.onDone && job.onDone();
           } catch (e) {
           }
-          pump();
+          pumpTts();
         };
-        a.onended = done;
-        a.onerror = done;
+        a.onended = finish;
+        a.onerror = finish;
         stats.ttsPlayed++;
         a.play().catch(() => {
           stats.ttsFail++;
-          done();
+          finish();
         });
       }).catch((e) => {
         stats.ttsFail++;
         stats.lastError = "tts: " + String(e && e.name || e);
         ttsBusy = false;
         micOn(true);
-        pump();
+        pumpTts();
       });
     }
-    function splitForSpeech(text) {
-      const clean = String(text || "").replace(/\s+/g, " ").trim();
+    function splitText(text, max) {
+      const clean = text.replace(/\s+/g, " ").trim();
       if (!clean) return [];
+      if (clean.length <= max) return [clean];
       const out = [];
-      let rest = clean;
-      if (rest.length > TTS_FIRST_MAX) {
-        let cut = -1;
-        for (let i = 0; i < Math.min(TTS_FIRST_MAX, rest.length); i++) {
-          if (/[。！？!?；;，,]/.test(rest[i])) cut = i + 1;
+      let cur = "";
+      for (const ch of clean) {
+        cur += ch;
+        if (cur.length >= max || /[。！？!?；;]/.test(ch)) {
+          out.push(cur.trim());
+          cur = "";
         }
-        if (cut <= 0) cut = TTS_FIRST_MAX;
-        out.push(rest.slice(0, cut).trim());
-        rest = rest.slice(cut).trim();
       }
-      while (rest.length > TTS_SEG_MAX) {
-        let cut = -1;
-        for (let i = 0; i < TTS_SEG_MAX; i++) if (/[。！？!?；;]/.test(rest[i])) cut = i + 1;
-        if (cut <= 0) cut = TTS_SEG_MAX;
-        out.push(rest.slice(0, cut).trim());
-        rest = rest.slice(cut).trim();
-      }
-      if (rest) out.push(rest);
+      if (cur.trim()) out.push(cur.trim());
       return out.filter(Boolean);
     }
-    function blobToBase64(blob) {
+    async function blobToBase64(blob) {
       return new Promise((resolve) => {
         try {
           const fr = new FileReader();
@@ -840,7 +820,7 @@
         }
       });
     }
-    async function fetchTimeout(url, init, ms) {
+    async function fetchWithTimeout(url, init, ms) {
       const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timer = ctl ? setTimeout(() => {
         try {
@@ -875,50 +855,30 @@
           await actx.resume();
         } catch (e) {
         }
-        try {
-          if (actx && actx.state !== "running") {
-            stats.ctxState = String(actx.state);
-            const wake = () => {
-              try {
-                actx && actx.resume();
-              } catch (e) {
-              }
-            };
-            document.addEventListener("pointerdown", wake, { once: true });
-            document.addEventListener("keydown", wake, { once: true });
-          }
-        } catch (e) {
-        }
         const src = actx.createMediaStreamSource(stream);
         analyser = actx.createAnalyser();
         analyser.fftSize = 1024;
         analyser.smoothingTimeConstant = 0;
         timeBuf = new Float32Array(1024);
         src.connect(analyser);
-        rec = new MediaRecorder(stream, { audioBitsPerSecond: 32e3 });
+        rec = new MediaRecorder(stream);
         rec.ondataavailable = (e) => {
-          if (!e || !e.data || e.data.size === 0) return;
-          if (!headerBlob) {
-            headerBlob = e.data;
-            return;
-          }
-          buf.push({ t: performance.now(), b: e.data });
-          while (buf.length > 240) buf.shift();
+          if (e.data && e.data.size > 0) parts.push(e.data);
+        };
+        rec.onstop = () => {
+          const blob = new Blob(parts, { type: "audio/webm" });
+          parts = [];
+          void onWindowDone(blob);
         };
         rec.onerror = (e) => {
           stats.lastError = "recorder: " + String(e && e.error && e.error.name);
+          scheduleNext(800);
         };
-        rec.start(TIMESLICE_MS);
         micOn(true);
-        const now = performance.now();
-        segStart = now;
-        segPeak = -160;
-        speechMs = 0;
-        quietMs = 0;
         setStatus("listening");
-        tick();
+        beginWindow();
         if (ttsWatch) clearInterval(ttsWatch);
-        ttsWatch = setInterval(watchdog, TTS_WATCH_MS);
+        ttsWatch = setInterval(ttsWatchdog, TTS_WATCH_MS);
         stats.lastError = "";
       } catch (e) {
         running = false;
@@ -935,6 +895,10 @@
       if (tickTimer) {
         clearTimeout(tickTimer);
         tickTimer = null;
+      }
+      if (restartTimer) {
+        clearTimeout(restartTimer);
+        restartTimer = null;
       }
       if (ttsWatch) {
         clearInterval(ttsWatch);
@@ -957,12 +921,10 @@
       analyser = null;
       stream = null;
       timeBuf = null;
-      headerBlob = null;
-      buf = [];
       setStatus("idle");
     }
     function speak(text, o) {
-      const segs = splitForSpeech(text);
+      const segs = splitText(String(text || ""), TTS_SEG_MAX);
       if (!segs.length) return;
       noteSpoken(text);
       for (let i = 0; i < segs.length; i++) {
@@ -973,7 +935,7 @@
           onDone: i === segs.length - 1 ? o && o.onDone : void 0
         });
       }
-      pump();
+      pumpTts();
     }
     function stopSpeaking() {
       speakToken++;
@@ -1004,6 +966,7 @@
       speak,
       stopSpeaking,
       speaking: () => ttsBusy,
+      recognizing: () => status === "recognizing",
       setVoiceName: (n) => {
         voiceName = n || voiceName;
       },
@@ -2007,7 +1970,7 @@
                 showBubble("\u8BED\u97F3\u6A21\u5757\u8FD8\u6CA1\u8D77\u6765\uFF08\u8BED\u97F3\u5F85\u547D\u53EF\u80FD\u662F\u5173\u7684\uFF09", 6e3);
                 return;
               }
-              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.segments + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\uFF5C\u9884\u63D0\u4EA4 " + st.speculative + "\uFF0F\u64A4\u9500 " + st.cancelSpec + "\n\u672C\u6BB5\uFF1A\u5CF0\u503C " + (st.lastPeak || 0) + "dB\uFF5C\u95E8\u9650 " + (st.gateDb || 0) + "dB\n\u97F3\u9891\uFF1A" + (st.ctxState || "?") + "\uFF5C\u5168\u96F6\u91C7\u6837 " + (st.zeroTicks || 0) + " \u6B21\uFF08\u5168\u96F6=\u5206\u6790\u5668\u6CA1\u6570\u636E\uFF09\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + "\n\u8017\u65F6\uFF1A\u7B49\u7A97\u53E3 " + (st.timing && st.timing.windowMs || 0) + "ms\uFF5C\u8BC6\u522B " + (st.timing && st.timing.asrMs || 0) + "ms\uFF5C\u5BF9\u8BDD " + (window.__chubbyWhale.latMs || 0) + "ms" + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
+              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
               showBubble(line, 15e3);
               try {
                 navigator.clipboard.writeText(JSON.stringify(st));
@@ -2281,10 +2244,6 @@
             try {
               latDiag.chatMs = Math.round(performance.now() - tChat);
               latDiag.updates++;
-            } catch (e) {
-            }
-            try {
-              window.__chubbyWhale.latMs = Math.round(performance.now() - tChat);
             } catch (e) {
             }
             if (myEpoch !== chatEpoch) return;

@@ -660,12 +660,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const st: any = v ? v.stats : null
             if (!st) { showBubble('语音模块还没起来（语音待命可能是关的）', 6000); return }
             const line = '语音自检（新模块）：' + String(v.status())
-              + '\n录音段 ' + st.segments + '｜上传 ' + st.uploaded + '｜识别出字 ' + st.asrTexts + '｜交给对话 ' + st.heard
-              + '\n丢：太安静 ' + st.skippedSilent + '｜回声/重复 ' + st.echoDropped + '｜识别失败 ' + st.asrFail + '｜预提交 ' + st.speculative + '／撤销 ' + st.cancelSpec
-              + '\n本段：峰值 ' + (st.lastPeak || 0) + 'dB｜门限 ' + (st.gateDb || 0) + 'dB'
-              + '\n音频：' + (st.ctxState || '?') + '｜全零采样 ' + (st.zeroTicks || 0) + ' 次（全零=分析器没数据）'
+              + '\n录音段 ' + st.windows + '｜上传 ' + st.uploaded + '｜识别出字 ' + st.asrTexts + '｜交给对话 ' + st.heard
+              + '\n丢：太安静 ' + st.skippedSilent + '｜回声/重复 ' + st.echoDropped + '｜识别失败 ' + st.asrFail
               + '\n朗读：请求 ' + st.ttsRequests + '｜开播 ' + st.ttsPlayed + '｜失败 ' + st.ttsFail + '｜僵尸复位 ' + st.ttsZombie
-              + '\n耗时：等窗口 ' + ((st.timing && st.timing.windowMs) || 0) + 'ms｜识别 ' + ((st.timing && st.timing.asrMs) || 0) + 'ms｜对话 ' + ((window as any).__chubbyWhale.latMs || 0) + 'ms'
               + (st.lastError ? '\n最近错误：' + st.lastError : '')
             showBubble(line, 15000)
             try { navigator.clipboard.writeText(JSON.stringify(st)) } catch (e) { }
@@ -864,7 +861,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           })
           data = await res.json()
           try { latDiag.chatMs = Math.round(performance.now() - tChat); latDiag.updates++ } catch (e) { }
-          try { (window as any).__chubbyWhale.latMs = Math.round(performance.now() - tChat) } catch (e) { }
           if (myEpoch !== chatEpoch) return   // 主人已经问了新问题：这条旧回复作废（防串线）
           const reply = data?.reply || '主人……本鲸走神了。'
           try { (window as any).__chubbyWhale.lastChat = { stage: 'fetched', reply: String(reply).slice(0, 40), at: Date.now() } } catch (e) { }
