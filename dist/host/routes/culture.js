@@ -85,7 +85,7 @@ export function createCultureHandlers(opts) {
             }
             else if (type === 'minsu') {
                 const arr = await loadJson('minsu', 'minsu.json');
-                const x = pickUnseen(arr, 'minsu', (i) => String(i.title || ''));
+                const x = pickUnseen(arr, 'minsu', (i) => String(i.book || '') + '|' + String(i.title || ''));
                 if (x)
                     item = { kind: 'minsu', title: (x.book || '') + '·' + (x.title || ''), text: x.text };
             }

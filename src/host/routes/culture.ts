@@ -77,7 +77,7 @@ export function createCultureHandlers(opts: { dataDir: string }) {
         if (x) item = { kind: 'idiom', title: x.name, cat: x.cat, text: (x.mean || '') + (x.wrong ? '；易误解为：' + String(x.wrong).replace('易误解为：', '') : '') }
       } else if (type === 'minsu') {
         const arr = await loadJson('minsu', 'minsu.json')
-        const x = pickUnseen(arr, 'minsu', (i: any) => String(i.title || ''))
+        const x = pickUnseen(arr, 'minsu', (i: any) => String(i.book || '') + '|' + String(i.title || ''))
         if (x) item = { kind: 'minsu', title: (x.book || '') + '·' + (x.title || ''), text: x.text }
       } else {
         item = { kind: 'unknown', title: '嗯？', text: '这个类型的文化小鲸还没学会。' }

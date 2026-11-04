@@ -40,7 +40,9 @@ export function createPoemHandler(opts) {
         return poems;
     }
     function keyOf(p) {
-        return String(p.title || '') + '|' + String(p.author || '');
+        // 同题不同作很多（蝶恋花/浣溪沙 等），键里加上首句前 12 字
+        const first = Array.isArray(p.lines) ? String(p.lines[0] || '') : String(p.text || '');
+        return String(p.title || '') + '|' + String(p.author || '') + '|' + first.slice(0, 12);
     }
     function loadSeen() {
         if (seen)
