@@ -86,6 +86,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   const ape = new Ape()
   let lastApe: any = null
   let lastSeg: any = null
+  let lastTts: any = null
 
   const stats: VoiceStats = {
     windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrTexts: 0, heard: 0,
@@ -331,12 +332,15 @@ export function createVoice(opts: VoiceOptions): Voice {
       a.onended = finish
       a.onerror = finish
       stats.ttsPlayed++
+      try { lastTts = { failed: false, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
       a.play().catch(() => {
         stats.ttsFail++
+      try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
         finish()
       })
     }).catch((e: any) => {
       stats.ttsFail++
+      try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
       stats.lastError = 'tts: ' + String((e && e.name) || e)
       ttsBusy = false
       micOn(true)
@@ -435,11 +439,9 @@ export function createVoice(opts: VoiceOptions): Voice {
   }
 
   function speak(text: string, o?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
-    // 首段 16 字先开口：长回复不用等整段合成完（只影响文字切分，不涉及录音逻辑）
-    const head = splitText(String(text || ""), 16)
-    const segs = head.length <= 1
-      ? splitText(String(text || ""), TTS_SEG_MAX)
-      : [head[0], ...splitText(head.slice(1).join(""), TTS_SEG_MAX)]
+    // 统一按 90 字切分（撤销"首段 16 字先开口"：它会让回答的前半段变成一次极短请求，
+    // 一旦那次请求失败/被浏览器拒绝，主人就只听到后面的内容 = 回答少开头）
+    const segs = splitText(String(text || ""), TTS_SEG_MAX)
     if (!segs.length) return
     noteSpoken(text)
     for (let i = 0; i < segs.length; i++) {
@@ -474,6 +476,7 @@ export function createVoice(opts: VoiceOptions): Voice {
     recognizing: () => status === 'recognizing',
     setEndpointMode: (m: 'ape' | 'classic') => { epMode = m; try { localStorage.setItem('chubby-endpoint', m) } catch (e) { } },
     lastSegment: () => lastSeg,
+    lastTtsInfo: () => lastTts,
     setVoiceName: (n: string) => { voiceName = n || voiceName },
     mute: (on: boolean) => { muted = on; micOn(!on) },
     stats,

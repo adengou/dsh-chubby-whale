@@ -630,6 +630,7 @@
     const ape = new Ape();
     let lastApe = null;
     let lastSeg = null;
+    let lastTts = null;
     const stats = {
       windows: 0,
       skippedSilent: 0,
@@ -954,12 +955,24 @@
         a.onended = finish;
         a.onerror = finish;
         stats.ttsPlayed++;
+        try {
+          lastTts = { failed: false, text: job.text.slice(0, 20), at: Date.now() };
+        } catch (e) {
+        }
         a.play().catch(() => {
           stats.ttsFail++;
+          try {
+            lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
+          } catch (e) {
+          }
           finish();
         });
       }).catch((e) => {
         stats.ttsFail++;
+        try {
+          lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
+        } catch (e2) {
+        }
         stats.lastError = "tts: " + String(e && e.name || e);
         ttsBusy = false;
         micOn(true);
@@ -1100,8 +1113,7 @@
       setStatus("idle");
     }
     function speak(text, o) {
-      const head = splitText(String(text || ""), 16);
-      const segs = head.length <= 1 ? splitText(String(text || ""), TTS_SEG_MAX) : [head[0], ...splitText(head.slice(1).join(""), TTS_SEG_MAX)];
+      const segs = splitText(String(text || ""), TTS_SEG_MAX);
       if (!segs.length) return;
       noteSpoken(text);
       for (let i = 0; i < segs.length; i++) {
@@ -1152,6 +1164,7 @@
         }
       },
       lastSegment: () => lastSeg,
+      lastTtsInfo: () => lastTts,
       setVoiceName: (n) => {
         voiceName = n || voiceName;
       },
@@ -2174,6 +2187,14 @@
                 return;
               }
               const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u7AEF\u70B9\u68C0\u6D4B\uFF1A" + (voiceRef.current && voiceRef.current.endpointInfo ? voiceRef.current.endpointInfo().mode === "ape" ? "\u81EA\u9002\u5E94" : "\u7ECF\u5178" : "?") + (function() {
+                try {
+                  const t = voiceRef.current && voiceRef.current.lastTtsInfo ? voiceRef.current.lastTtsInfo() : null;
+                  if (!t) return "";
+                  return "\\n\u6717\u8BFB\uFF1A\u6700\u540E\u4E00\u6BB5 " + (t.failed ? "\u5931\u8D25" : "\u5DF2\u5F00\u64AD") + "\uFF5C\u6587\u672C\u5F00\u5934\u300C" + t.text + "\u300D";
+                } catch (e) {
+                  return "";
+                }
+              })() + (function() {
                 try {
                   const s = voiceRef.current && voiceRef.current.lastSegment ? voiceRef.current.lastSegment() : null;
                   if (!s) return "";
