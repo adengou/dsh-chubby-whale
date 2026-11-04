@@ -1052,7 +1052,7 @@
         }
         melodyCtx = null;
       }
-      function playMelody(notes, bpm) {
+      function playMelody(notes, bpm, onDone) {
         try {
           stopMelody();
           const AC = window.AudioContext || window.webkitAudioContext;
@@ -1086,6 +1086,13 @@
             melodyOscs.push(o);
             t += dur * beat;
           }
+          const totalMs = Math.max(0, (t - ctx.currentTime) * 1e3) + 300;
+          if (onDone) setTimeout(() => {
+            try {
+              onDone();
+            } catch (e) {
+            }
+          }, totalMs);
         } catch (e) {
         }
       }
@@ -1732,8 +1739,21 @@
             stopTts();
             fetch("/api/chubby-whale/melody?name=" + encodeURIComponent(name)).then((r) => r.json()).then((d) => {
               if (d && d.ok && d.song) {
-                playMelody(d.song.notes, d.song.bpm);
-                showBubble("\u5F39\u300A" + d.song.name + "\u300B\u266A");
+                const songName = String(d.song.name || "\u8FD9\u9996\u66F2\u5B50");
+                const bpm = Number(d.song.bpm) || 100;
+                const notes = d.song.notes || [];
+                let beats = 0;
+                for (const pair of notes) beats += Number(pair[1]) || 1;
+                const estSec = Math.round(beats * (60 / Math.max(60, bpm)) * 10) / 10;
+                showBubble("\u5F39\u300A" + songName + "\u300B\u266A\uFF08\u7EA6 " + estSec + " \u79D2\uFF09", 6e3);
+                playMelody(notes, bpm, () => {
+                  showBubble("\u5F39\u5B8C\u5566\uFF5E\u300A" + songName + "\u300B", 6e3);
+                  animRef.current?.talkFor(1500);
+                  try {
+                    speakText("\u5F39\u5B8C\u5566\uFF5E");
+                  } catch (e) {
+                  }
+                });
               } else showBubble("\u8FD9\u9996\u66F2\u5B50\u6CA1\u627E\u5230");
             }).catch(() => showBubble("\u5F39\u7434\u5931\u8D25"));
             return;

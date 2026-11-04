@@ -340,7 +340,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       melodyOscs = []
       try { if (melodyCtx) { melodyCtx.close() } } catch (e) { }
       melodyCtx = null
-    }    function playMelody(notes: any[], bpm: number): void {
+      }
+
+      function playMelody(notes: any[], bpm: number, onDone?: () => void): void {
       try {
         stopMelody()
         const AC = (window as any).AudioContext || (window as any).webkitAudioContext
@@ -368,6 +370,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           melodyOscs.push(o)
           t += dur * beat
         }
+        // 全部音符播完的时刻 = 当前累计时间 t（AudioContext 时间轴）
+        const totalMs = Math.max(0, (t - ctx.currentTime) * 1000) + 300
+        if (onDone) setTimeout(() => { try { onDone() } catch (e) { } }, totalMs)
       } catch (e) { }
     }
 
@@ -852,7 +857,21 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           // 弹琴前先停朗读（C#：if (Speech.IsSpeaking) Speech.Stop()）
           stopTts()
           fetch('/api/chubby-whale/melody?name=' + encodeURIComponent(name)).then((r: any) => r.json()).then((d: any) => {
-            if (d && d.ok && d.song) { playMelody(d.song.notes, d.song.bpm); showBubble('弹《' + d.song.name + '》♪') } else showBubble('这首曲子没找到')
+            if (d && d.ok && d.song) {
+              const songName = String(d.song.name || '这首曲子')
+              const bpm = Number(d.song.bpm) || 100
+              const notes = d.song.notes || []
+              // 预估时长：所有时值之和 × 拍长，用来在开始时就告诉主人大概多久
+              let beats = 0
+              for (const pair of notes) beats += Number(pair[1]) || 1
+              const estSec = Math.round(beats * (60 / Math.max(60, bpm)) * 10) / 10
+              showBubble('弹《' + songName + '》♪（约 ' + estSec + ' 秒）', 6000)
+              playMelody(notes, bpm, () => {
+                showBubble('弹完啦～《' + songName + '》', 6000)
+                animRef.current?.talkFor(1500)
+                try { speakText('弹完啦～') } catch (e) { }
+              })
+            } else showBubble('这首曲子没找到')
           }).catch(() => showBubble('弹琴失败'))
           return
         }
