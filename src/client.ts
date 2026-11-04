@@ -57,6 +57,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     /** 预取缓存：段 id → 已发出的合成请求（当前段开播时就把下一段压上去） */
     const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
     let ttsPlaying = false
+    let ttsBusySince = 0
     // 三条独占资源通道：麦克风 / ASR / 扬声器（同通道串行，跨通道并发）
     const channels = createChannels()
     // ===== 并发纪律（防串线/占线/插队）=====
@@ -257,6 +258,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       const epoch = ttsEpoch
       const job = ttsQueue.shift() as TtsJob
       ttsPlaying = true
+      ttsBusySince = Date.now()
       try { setStatus() } catch (e) { }
       muteMic()   // 出声即闭麦（物理层，浏览器不再采样）
       ttsCurrentJob = job
@@ -453,6 +455,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       const [messages, setMessages] = R.useState([] as any[])
       const [input, setInput] = R.useState('')
       const [busy, setBusy] = R.useState(false)
+      const busyRef = R.useRef(false)
+      const busyAtRef = R.useRef(0)
+      busyRef.current = busy   // 供定时器读取最新值（闭包里的 busy 会是旧值）
       const bodyRef = R.useRef(null)
       const bubbleRef = R.useRef(null)
       const bubbleTextRef = R.useRef(null)
@@ -668,7 +673,30 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       R.useEffect(() => {
         const t0 = setTimeout(() => { try { refreshBalance() } catch (e) { } }, 2000)
         // 状态行 2 秒周期刷新：常驻气泡只会在被调用时更新，靠事件驱动容易漏（就曾卡在「识别中…」）
-        const tStatus = setInterval(() => { try { setStatus() } catch (e) { } }, 2000)
+        const tStatus = setInterval(() => {
+          // 朗读僵尸复位：播完没回调（浏览器偶发）会让 ttsPlaying 永远为 true，
+          // 之后所有回复都进不了播放队列 → 主人只听到填充音「嗯，本鱼在听」
+          try {
+            const audio: any = ttsAudioRef
+            const dead = !audio || audio.paused || audio.ended || audio.readyState === 0
+            if (ttsPlaying && dead && Date.now() - ttsBusySince > 3000) {
+              ttsPlaying = false
+              try { if (ttsCurrentJob) (window as any).__chubbyWhale.ttsZombie = ((window as any).__chubbyWhale.ttsZombie || 0) + 1 } catch (e) { }
+              ttsCurrentJob = null
+              ttsBusySince = 0
+              try { playNextTts() } catch (e) { }
+              try { setStatus() } catch (e) { }
+            }
+          } catch (e) { }
+          try { setStatus() } catch (e) { }
+          // 占线自愈：一次请求异常不能让后续提问永远被「还在想上一句」挡住
+          try {
+            if (busyRef.current && Date.now() - busyAtRef.current > 35000) {
+              busyAtRef.current = Date.now(); setBusy(false); busyRef.current = false
+              try { (window as any).__chubbyWhale.busyReset = ((window as any).__chubbyWhale.busyReset || 0) + 1 } catch (e2) { }
+            }
+          } catch (e) { }
+        }, 2000)
         setTimeout(() => { try { setStatus() } catch (e) { } }, 1200)   // 挂载后先亮一次
         const clearStatus = () => { try { clearInterval(tStatus) } catch (e) { } }
         const tF = setTimeout(() => { try { prefetchFiller() } catch (e) { } }, 3000)
@@ -1165,7 +1193,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         // 占线保护：上一条还在想就拒绝（不排队），避免两条回复抢同一个话筒
         try { (window as any).__chubbyWhale.lastChat = { stage: 'entry', busy: !!busy, tts: !!ttsPlaying, at: Date.now() } } catch (e) { }
         if (busy) { try { (window as any).__chubbyWhale.lastChat.stage = 'blocked-busy' } catch (e) { } }
-        if (busy) { if (opts && opts.voice) showBubble('本鲸还在想上一句呢，稍等～', 2500); return }
+        if (busy && Date.now() - busyAtRef.current < 35000) { if (opts && opts.voice) showBubble('本鲸还在想上一句呢，稍等～', 2500); return }
         // 用户提问永远优先：先打断正在播的旁白（说书/念诗）再回答
         if (storyNarratingRef.current || ttsPlaying || ttsQueue.length > 0) {
           try { stopTts() } catch (e) { }
@@ -1180,6 +1208,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         setInput('')
         setMessages((m: any[]) => [...m, { who: 'me', text }])
         setBusy(true)
+        busyAtRef.current = Date.now()
         try { setStatus() } catch (e) { }
         animRef.current?.talkFor(1200)
         scrollBody()
@@ -1220,6 +1249,16 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }
       }
 
+      // 提醒轮询（每 20 秒检查一次，与 C# 一致）——到点的全部排队，逐条播报
+      // 调试口：控制台输入 __chubbyWhale.say("你好呀") 可直接测「对话 + 朗读」链路（不经过麦克风）
+      R.useEffect(() => {
+        try {
+          const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
+          w.say = (t: string) => { try { sendText(String(t || ""), { voice: true }) } catch (e) { } }
+          w.sayStop = () => { try { stopTts() } catch (e) { } }
+          w.busyNow = () => ({ busy: busyRef.current, age: Date.now() - busyAtRef.current, tts: ttsPlaying, queue: ttsQueue.length })
+        } catch (e) { }
+      }, [])
       // 提醒轮询（每 20 秒检查一次，与 C# 一致）——到点的全部排队，逐条播报
       R.useEffect(() => {
         const timer = setInterval(() => {

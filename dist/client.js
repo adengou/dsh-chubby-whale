@@ -903,6 +903,7 @@
       const ttsQueue = [];
       const ttsPrefetch = /* @__PURE__ */ new Map();
       let ttsPlaying = false;
+      let ttsBusySince = 0;
       const channels = createChannels();
       let chatEpoch = 0;
       let asrBusy = false;
@@ -1202,6 +1203,7 @@
         const epoch = ttsEpoch;
         const job = ttsQueue.shift();
         ttsPlaying = true;
+        ttsBusySince = Date.now();
         try {
           setStatus();
         } catch (e) {
@@ -1518,6 +1520,9 @@
         const [messages, setMessages] = R.useState([]);
         const [input, setInput] = R.useState("");
         const [busy, setBusy] = R.useState(false);
+        const busyRef = R.useRef(false);
+        const busyAtRef = R.useRef(0);
+        busyRef.current = busy;
         const bodyRef = R.useRef(null);
         const bubbleRef = R.useRef(null);
         const bubbleTextRef = R.useRef(null);
@@ -1775,7 +1780,41 @@
           }, 2e3);
           const tStatus = setInterval(() => {
             try {
+              const audio = ttsAudioRef;
+              const dead = !audio || audio.paused || audio.ended || audio.readyState === 0;
+              if (ttsPlaying && dead && Date.now() - ttsBusySince > 3e3) {
+                ttsPlaying = false;
+                try {
+                  if (ttsCurrentJob) window.__chubbyWhale.ttsZombie = (window.__chubbyWhale.ttsZombie || 0) + 1;
+                } catch (e) {
+                }
+                ttsCurrentJob = null;
+                ttsBusySince = 0;
+                try {
+                  playNextTts();
+                } catch (e) {
+                }
+                try {
+                  setStatus2();
+                } catch (e) {
+                }
+              }
+            } catch (e) {
+            }
+            try {
               setStatus2();
+            } catch (e) {
+            }
+            try {
+              if (busyRef.current && Date.now() - busyAtRef.current > 35e3) {
+                busyAtRef.current = Date.now();
+                setBusy(false);
+                busyRef.current = false;
+                try {
+                  window.__chubbyWhale.busyReset = (window.__chubbyWhale.busyReset || 0) + 1;
+                } catch (e2) {
+                }
+              }
             } catch (e) {
             }
           }, 2e3);
@@ -2475,7 +2514,7 @@
             } catch (e) {
             }
           }
-          if (busy) {
+          if (busy && Date.now() - busyAtRef.current < 35e3) {
             if (opts && opts.voice) showBubble("\u672C\u9CB8\u8FD8\u5728\u60F3\u4E0A\u4E00\u53E5\u5462\uFF0C\u7A0D\u7B49\uFF5E", 2500);
             return;
           }
@@ -2508,6 +2547,7 @@
           setInput("");
           setMessages((m) => [...m, { who: "me", text }]);
           setBusy(true);
+          busyAtRef.current = Date.now();
           try {
             setStatus2();
           } catch (e) {
@@ -2571,6 +2611,25 @@
             scrollBody();
           }
         }
+        R.useEffect(() => {
+          try {
+            const w = window.__chubbyWhale || (window.__chubbyWhale = {});
+            w.say = (t) => {
+              try {
+                sendText(String(t || ""), { voice: true });
+              } catch (e) {
+              }
+            };
+            w.sayStop = () => {
+              try {
+                stopTts();
+              } catch (e) {
+              }
+            };
+            w.busyNow = () => ({ busy: busyRef.current, age: Date.now() - busyAtRef.current, tts: ttsPlaying, queue: ttsQueue.length });
+          } catch (e) {
+          }
+        }, []);
         R.useEffect(() => {
           const timer = setInterval(() => {
             fetch("/api/chubby-whale/reminders?action=due").then((r) => r.json()).then((d) => {
