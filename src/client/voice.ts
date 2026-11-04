@@ -53,6 +53,8 @@ export type VoiceStats = {
   /** 最近一段的峰值 dBFS（判断"是不是被判成静音"） */
   lastPeak: number
   gateDb?: number
+  ctxState?: string
+  zeroTicks?: number
   timing: VoiceTiming
 }
 
@@ -178,7 +180,12 @@ export function createVoice(opts: VoiceOptions): Voice {
   function tick(): void {
     if (!running) return
     try {
+      try {
+        if (actx && actx.state !== 'running') { actx.resume() }
+        stats.ctxState = actx ? String(actx.state) : 'none'
+      } catch (e) { }
       const db = level()
+      if (db <= -159) { stats.zeroTicks = (stats.zeroTicks || 0) + 1 }   // 全零 = 分析器没数据（上下文挂起/轨道被禁）
       if (db > segPeak) segPeak = db
       // 自适应噪声底：说话声不会把底噪带高
       if (db < floorDb) floorDb = floorDb * 0.8 + db * 0.2
@@ -418,6 +425,16 @@ export function createVoice(opts: VoiceOptions): Voice {
       const Ctx: any = (window as any).AudioContext || (window as any).webkitAudioContext
       actx = new Ctx()
       try { await actx!.resume() } catch (e) { }
+      // 浏览器自动播放策略会把 AudioContext 挂成 suspended —— 此时分析器读数恒为 0，
+      // 表现就是"峰值 -160dB、永远听不见"。这里是上一版回归的根因。
+      try {
+        if (actx && actx.state !== 'running') {
+          stats.ctxState = String(actx.state)
+          const wake = () => { try { actx && actx.resume() } catch (e) { } }
+          document.addEventListener('pointerdown', wake, { once: true })
+          document.addEventListener('keydown', wake, { once: true })
+        }
+      } catch (e) { }
       const src = actx!.createMediaStreamSource(stream)
       analyser = actx!.createAnalyser()
       analyser.fftSize = 1024
