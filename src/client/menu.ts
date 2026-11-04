@@ -97,6 +97,7 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
   const voiceOn = state && state.voiceOn ? true : false
   const earOn = state && state.earOn ? true : false
   const voiceChatOn = state && state.voiceChatOn ? true : false
+  const chatLang = (state && state.chatLang) ? String(state.chatLang) : 'auto'
   const balanceText = (state && state.balance) ? state.balance : '--'
   const growthText = (state && state.growth) ? state.growth : '--'
   return [
@@ -121,8 +122,9 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
       { type: 'item', label: '音色：Sonia（英·女·英式）', action: 'voice:en-GB-SoniaNeural' },
     ] },
     { type: 'sub', label: '聊天语言 ▸', items: [
-      { type: 'item', label: '中文', action: 'chat-lang:zh' },
-      { type: 'item', label: 'English', action: 'chat-lang:en' },
+      { type: 'item', label: (chatLang === 'auto' ? '✓ ' : '') + '自动（跟随提问语言）', action: 'chat-lang:auto' },
+      { type: 'item', label: (chatLang === 'zh' ? '✓ ' : '') + '中文', action: 'chat-lang:zh' },
+      { type: 'item', label: (chatLang === 'en' ? '✓ ' : '') + 'English', action: 'chat-lang:en' },
     ] },
     { type: 'sub', label: '界面语言 ▸', items: [
       { type: 'item', label: '中文', action: 'lang:zh' },

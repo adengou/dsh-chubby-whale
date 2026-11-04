@@ -733,8 +733,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           }).catch(() => showBubble('余额查不到'))
           return
         }
-        if (action === 'chat-lang:zh' || action === 'chat-lang:en') {
-          const cl = action === 'chat-lang:en' ? 'en' : 'zh'
+        if (action === 'chat-lang:auto' || action === 'chat-lang:zh' || action === 'chat-lang:en') {
+          const cl = action === 'chat-lang:en' ? 'en' : (action === 'chat-lang:zh' ? 'zh' : 'auto')
           try { localStorage.setItem('chubby-chatlang', cl) } catch { }
           showBubble(cl === 'en' ? '聊天语言：English' : '聊天语言：中文')
           return
@@ -1145,7 +1145,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           h('div', { style: { padding: '8px 14px', borderBottom: '1px solid #1f4a85', color: '#9FD8FF', fontSize: 12, display: 'flex', justifyContent: 'space-between' } },
             h('span', null, (lang === 'en' ? 'Fat Whale · v' : '肥鲸 · v') + VERSION),
             h('span', { style: { color: '#FFD166' } }, balanceText)),
-          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, balance: balanceLabel, growth: growthLabel })),
+          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel })),
         ) : null,
         h('div', { style: chatPanelStyle(chatOpen) },
           h('div', { style: headStyle },

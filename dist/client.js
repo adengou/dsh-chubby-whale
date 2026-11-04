@@ -184,6 +184,7 @@
     const voiceOn = state && state.voiceOn ? true : false;
     const earOn = state && state.earOn ? true : false;
     const voiceChatOn = state && state.voiceChatOn ? true : false;
+    const chatLang = state && state.chatLang ? String(state.chatLang) : "auto";
     const balanceText = state && state.balance ? state.balance : "--";
     const growthText = state && state.growth ? state.growth : "--";
     return [
@@ -208,8 +209,9 @@
         { type: "item", label: "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09", action: "voice:en-GB-SoniaNeural" }
       ] },
       { type: "sub", label: "\u804A\u5929\u8BED\u8A00 \u25B8", items: [
-        { type: "item", label: "\u4E2D\u6587", action: "chat-lang:zh" },
-        { type: "item", label: "English", action: "chat-lang:en" }
+        { type: "item", label: (chatLang === "auto" ? "\u2713 " : "") + "\u81EA\u52A8\uFF08\u8DDF\u968F\u63D0\u95EE\u8BED\u8A00\uFF09", action: "chat-lang:auto" },
+        { type: "item", label: (chatLang === "zh" ? "\u2713 " : "") + "\u4E2D\u6587", action: "chat-lang:zh" },
+        { type: "item", label: (chatLang === "en" ? "\u2713 " : "") + "English", action: "chat-lang:en" }
       ] },
       { type: "sub", label: "\u754C\u9762\u8BED\u8A00 \u25B8", items: [
         { type: "item", label: "\u4E2D\u6587", action: "lang:zh" },
@@ -1544,8 +1546,8 @@
             }).catch(() => showBubble("\u4F59\u989D\u67E5\u4E0D\u5230"));
             return;
           }
-          if (action === "chat-lang:zh" || action === "chat-lang:en") {
-            const cl = action === "chat-lang:en" ? "en" : "zh";
+          if (action === "chat-lang:auto" || action === "chat-lang:zh" || action === "chat-lang:en") {
+            const cl = action === "chat-lang:en" ? "en" : action === "chat-lang:zh" ? "zh" : "auto";
             try {
               localStorage.setItem("chubby-chatlang", cl);
             } catch {
@@ -2088,7 +2090,13 @@
               h("span", null, (lang === "en" ? "Fat Whale \xB7 v" : "\u80A5\u9CB8 \xB7 v") + VERSION),
               h("span", { style: { color: "#FFD166" } }, balanceText)
             ),
-            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, balance: balanceLabel, growth: growthLabel }))
+            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, chatLang: (() => {
+              try {
+                return localStorage.getItem("chubby-chatlang") || "auto";
+              } catch (e) {
+                return "auto";
+              }
+            })(), balance: balanceLabel, growth: growthLabel }))
           ) : null,
           h(
             "div",
