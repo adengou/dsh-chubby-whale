@@ -273,34 +273,23 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         clearTimeout(el._t)
         el._t = setTimeout(() => { el.classList.remove('show'); try { restoreIdleStatus() } catch (e) { } }, ms)
       }
-      // ===== 常驻状态行（照旧算法：闲时显示「在听…」，忙时显示当前在做什么）=====
-      // 普通气泡（听到/回复/提醒）是临时覆盖：到期后自动回到常驻状态。
-      function statusText(): string {
-        if (ttsPlaying) return '在说…'
-        if (busy) return '在想…'
-        return '在听…'
-      }
+      // ===== 状态提示（已按主人要求去掉）=====
+      // 原来闲时一直挂「在听…」，还出现过"讲着话却显示在听"的矛盾。
+      // 现在不主动显示任何状态字：只听/只在真正有内容时冒气泡（听到、回复、念完…）。
       function setStatus(): void {
         try {
-          if (hidden) return                    // 隐藏状态不显示
-          if (!earOnRef.current) return         // 语音待命关着也不显示"在听"
           const el = bubbleRef.current
           if (!el) return
-          const p = posRef.current
-          el.style.left = (p.x + W / 2) + 'px'
-          el.style.transform = 'translateX(-50%)'
-          el.style.top = 'auto'
-          el.style.right = 'auto'
-          el.style.bottom = Math.max(70, window.innerHeight - p.y + 12) + 'px'
-          if (bubbleTextRef.current) bubbleTextRef.current.textContent = statusText()
-          el.classList.add('show')
-          clearTimeout(el._t)
-          el._t = null                          // 常驻：不自动隐藏
+          const txt = bubbleTextRef.current ? String(bubbleTextRef.current.textContent || "") : ""
+          // 只有气泡里现在是纯状态字时才收起，别把正常消息一起抹掉
+          if (txt === "在听…" || txt === "在想…" || txt === "识别中…" || txt === "在说…") {
+            el.classList.remove("show")
+            clearTimeout(el._t)
+            el._t = null
+          }
         } catch (e) { }
       }
-      function restoreIdleStatus(): void {
-        setTimeout(() => { try { setStatus() } catch (e) { } }, 600)
-      }
+      function restoreIdleStatus(): void { }
 
       // ===== 拖放：必须在【捕获阶段】抢在 HARNESS 自己的拖放处理之前 =====
       // React 的 onDrop 走冒泡阶段，宿主的 drop 处理器会先接走文件，鱼永远收不到。
@@ -393,7 +382,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             }
           } catch (e) { }
         }, 2000)
-        setTimeout(() => { try { setStatus() } catch (e) { } }, 1200)   // 挂载后先亮一次
         const clearStatus = () => { try { clearInterval(tStatus) } catch (e) { } }
         const tF = setTimeout(() => { try { prefetchFiller() } catch (e) { } }, 3000)
         return () => {
@@ -852,7 +840,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try { storyBusyRef.current = false } catch (e) { }
         }
         const myEpoch = ++chatEpoch
-            try { showBubble('识别中…', 1200) } catch (e) { }   // 临时提示，不做常驻状态（常驻会被卡住）
         if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart()
         if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble('哼…本鲸生气了')
         if (/胖|肥猪|肥嘟嘟/.test(text)) { showBubble('人家不胖！是鲸鱼天生圆！'); const s0 = Math.min(1.4, scale + 0.12); setScale(s0); setTimeout(function () { setScale(Math.max(0.7, s0 - 0.12)) }, 600) }
@@ -860,7 +847,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         setMessages((m: any[]) => [...m, { who: 'me', text }])
         setBusy(true)
         busyAtRef.current = Date.now()
-        try { setStatus() } catch (e) { }
         animRef.current?.talkFor(1200)
         scrollBody()
         let data: any = null
@@ -885,7 +871,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           setMessages((m: any[]) => [...m, { who: 'fish', text: '主人，本鲸连不上服务器……' }])
         } finally {
           setBusy(false)
-          try { restoreIdleStatus() } catch (e) { }
           animRef.current?.talkFor(1500)
           // 聊天回复：长回复（≥80 字）按 C# 自动切叙述语调 -15%，短句 +0%
           try {
@@ -936,7 +921,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           },
           onStatus: (st: any) => {
             ttsPlaying = st === 'speaking'
-            try { setStatus() } catch (e) { }
           },
           onDiag: (d: any) => { try { (window as any).__chubbyWhale.voiceDiag = d } catch (e) { } },
         })

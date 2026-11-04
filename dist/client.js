@@ -1441,37 +1441,20 @@
             }
           }, ms);
         }
-        function statusText() {
-          if (ttsPlaying) return "\u5728\u8BF4\u2026";
-          if (busy) return "\u5728\u60F3\u2026";
-          return "\u5728\u542C\u2026";
-        }
         function setStatus() {
           try {
-            if (hidden) return;
-            if (!earOnRef.current) return;
             const el = bubbleRef.current;
             if (!el) return;
-            const p = posRef.current;
-            el.style.left = p.x + W / 2 + "px";
-            el.style.transform = "translateX(-50%)";
-            el.style.top = "auto";
-            el.style.right = "auto";
-            el.style.bottom = Math.max(70, window.innerHeight - p.y + 12) + "px";
-            if (bubbleTextRef.current) bubbleTextRef.current.textContent = statusText();
-            el.classList.add("show");
-            clearTimeout(el._t);
-            el._t = null;
+            const txt = bubbleTextRef.current ? String(bubbleTextRef.current.textContent || "") : "";
+            if (txt === "\u5728\u542C\u2026" || txt === "\u5728\u60F3\u2026" || txt === "\u8BC6\u522B\u4E2D\u2026" || txt === "\u5728\u8BF4\u2026") {
+              el.classList.remove("show");
+              clearTimeout(el._t);
+              el._t = null;
+            }
           } catch (e) {
           }
         }
         function restoreIdleStatus() {
-          setTimeout(() => {
-            try {
-              setStatus();
-            } catch (e) {
-            }
-          }, 600);
         }
         R.useEffect(() => {
           const insideFish = (x, y) => {
@@ -1600,12 +1583,6 @@
             } catch (e) {
             }
           }, 2e3);
-          setTimeout(() => {
-            try {
-              setStatus();
-            } catch (e) {
-            }
-          }, 1200);
           const clearStatus = () => {
             try {
               clearInterval(tStatus);
@@ -2231,10 +2208,6 @@
             }
           }
           const myEpoch = ++chatEpoch;
-          try {
-            showBubble("\u8BC6\u522B\u4E2D\u2026", 1200);
-          } catch (e) {
-          }
           if (/乖|可爱|好鱼|棒|喜欢你|真聪明/.test(text)) animRef.current?.pushHeart();
           if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(text)) showBubble("\u54FC\u2026\u672C\u9CB8\u751F\u6C14\u4E86");
           if (/胖|肥猪|肥嘟嘟/.test(text)) {
@@ -2249,10 +2222,6 @@
           setMessages((m) => [...m, { who: "me", text }]);
           setBusy(true);
           busyAtRef.current = Date.now();
-          try {
-            setStatus();
-          } catch (e) {
-          }
           animRef.current?.talkFor(1200);
           scrollBody();
           let data = null;
@@ -2292,10 +2261,6 @@
             setMessages((m) => [...m, { who: "fish", text: "\u4E3B\u4EBA\uFF0C\u672C\u9CB8\u8FDE\u4E0D\u4E0A\u670D\u52A1\u5668\u2026\u2026" }]);
           } finally {
             setBusy(false);
-            try {
-              restoreIdleStatus();
-            } catch (e) {
-            }
             animRef.current?.talkFor(1500);
             try {
               if (data && data.reply && myEpoch === chatEpoch) {
@@ -2363,10 +2328,6 @@
             },
             onStatus: (st) => {
               ttsPlaying = st === "speaking";
-              try {
-                setStatus();
-              } catch (e) {
-              }
             },
             onDiag: (d) => {
               try {
