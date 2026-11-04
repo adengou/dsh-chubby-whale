@@ -2166,8 +2166,8 @@
             h(
               "div",
               { style: { padding: "8px 14px", borderBottom: "1px solid #1f4a85", color: "#9FD8FF", fontSize: 12, display: "flex", justifyContent: "space-between" } },
-              h("span", null, (lang === "en" ? "Fat Whale \xB7 v" : "\u80A5\u9CB8 \xB7 v") + VERSION),
-              h("span", { style: { color: "#FFD166" } }, balanceText)
+              // 标题栏只放名字：余额与版本号都在下面菜单项里，避免重复（版本号按规矩放最下面）
+              h("span", null, lang === "en" ? "Fat Whale" : "\u80A5\u9CB8")
             ),
             renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, chatCacheOn, ttsVoice: (() => {
               try {

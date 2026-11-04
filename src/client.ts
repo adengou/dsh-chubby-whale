@@ -1194,8 +1194,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef })),
         menu ? h('div', { style: menuStyle(menu), 'data-menu-root': '1' },
           h('div', { style: { padding: '8px 14px', borderBottom: '1px solid #1f4a85', color: '#9FD8FF', fontSize: 12, display: 'flex', justifyContent: 'space-between' } },
-            h('span', null, (lang === 'en' ? 'Fat Whale · v' : '肥鲸 · v') + VERSION),
-            h('span', { style: { color: '#FFD166' } }, balanceText)),
+            // 标题栏只放名字：余额与版本号都在下面菜单项里，避免重复（版本号按规矩放最下面）
+            h('span', null, lang === 'en' ? 'Fat Whale' : '肥鲸'),
+          ),
           renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel })),
         ) : null,
         h('div', { style: chatPanelStyle(chatOpen) },
