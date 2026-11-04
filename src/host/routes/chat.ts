@@ -62,6 +62,10 @@ export function createChatHandler(opts: {
       const message = typeof body?.message === 'string' ? body.message.slice(0, 500) : ''
       const imageB64 = typeof body?.image === 'string' ? body.image : ''
       const chatLang = (typeof body?.lang === 'string' && /^(zh|en|auto)$/.test(body.lang)) ? body.lang : 'auto'
+      // auto 模式下按内容判语言：整句没有中文、且有拉丁字母 → 判定为英文
+      // （以前 auto 一律不加提示，模型看见中文人设+中文历史就用中文答，英文提问会得到「一头雾水」）
+      const detected = /[\u4e00-\u9fa5]/.test(message) ? 'zh' : (/[A-Za-z]{2,}/.test(message) ? 'en' : 'auto')
+      const effLang = chatLang === 'auto' ? detected : chatLang
       const imageMime = typeof body?.imageMime === 'string' ? body.imageMime : 'image/jpeg'
       // 短句（<6 字）不进缓存：不然「在吗」「好的」会被复读机式复用（照 C# 的修法）
       const cacheable = message.trim().length >= 6
@@ -76,7 +80,7 @@ export function createChatHandler(opts: {
       try { memSummary = opts.loadMemorySummary ? String(opts.loadMemorySummary() || '') : '' } catch { }
       // 缓存 key 必须带上上下文：prompt 里拼了完整 history 和长期记忆摘要，
       // 只按「语言|问题」算 key 会让同一句话永远命中第一条回复；这里加 history 长度 + 摘要短指纹
-      const cacheKey = hashKey(chatLang + '|' + message + '|h' + history.length + '|s' + shortHash(memSummary) + (imageB64 ? '|img' : ''))
+      const cacheKey = hashKey(effLang + '|' + message + '|h' + history.length + '|s' + shortHash(memSummary) + (imageB64 ? '|img' : ''))
       // 缓存查找排在 Key 检查之前：没配 Key 时本地缓存照样能用
       if (opts.cache && !imageB64 && cacheable) {
         const cached = await opts.cache.getJson(cacheKey, 'json', CHAT_CACHE_TTL)
@@ -95,7 +99,12 @@ export function createChatHandler(opts: {
         res.end(JSON.stringify({ ok: false, error: 'NO_KEY', reply: '主人，本鲸还没拿到钥匙（DeepSeek Key），配一下就能聊啦～' }))
         return
       }
-      const langHint = chatLang === 'en' ? '\n重要：无论用户用什么语言提问，你都必须用英文回答。' : ''
+      // 语言硬约束：英文提问必须英文作答（模型默认会跟着中文人设走，必须明说）
+      const langHint = effLang === 'en'
+        ? '\n【语言规则·必须遵守】主人这条消息是英文。你必须用英文回答（Reply in English only）。'
+          + '不要用中文回答，不要说看不懂或一头雾水——这就是一句普通英文，直接自然回答即可。'
+          + '中文只允许出现在解释专有名词时。'
+        : (effLang === 'zh' ? '\n【语言规则】主人用中文提问，请用中文回答。' : '')
       const memHint = memSummary ? ('\n（关于主人的长期记忆：' + memSummary + '）') : ''
       const messages: any[] = [{ role: 'system', content: opts.systemPrompt + langHint + memHint }]
       for (const m of history) {
