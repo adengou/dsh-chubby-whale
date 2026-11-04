@@ -556,6 +556,8 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
     speaking: () => ttsBusy,
     recognizing: () => status === 'recognizing',
     setEndpointMode: (m: 'ape' | 'classic') => { epMode = m; try { localStorage.setItem('chubby-endpoint', m) } catch (e) { } },
+    // 端点检测模式（APE 已默认关闭；此处报告当前实际模式）
+    endpointInfo: () => ({ mode: 'classic' }),
     lastSegment: () => lastSeg,
     lastTtsInfo: () => lastTts,
     setVoiceName: (n: string) => { voiceName = n || voiceName },

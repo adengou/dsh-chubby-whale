@@ -1258,6 +1258,8 @@
         } catch (e) {
         }
       },
+      // 端点检测模式（APE 已默认关闭；此处报告当前实际模式）
+      endpointInfo: () => ({ mode: "classic" }),
       lastSegment: () => lastSeg,
       lastTtsInfo: () => lastTts,
       setVoiceName: (n) => {
@@ -2504,7 +2506,7 @@
                 try {
                   const t = voiceRef.current && voiceRef.current.lastTtsInfo ? voiceRef.current.lastTtsInfo() : null;
                   if (!t) return "";
-                  return "\\n\u6717\u8BFB\uFF1A\u6700\u540E\u4E00\u6BB5 " + (t.failed ? "\u5931\u8D25" : "\u5DF2\u5F00\u64AD") + "\uFF5C\u6587\u672C\u5F00\u5934\u300C" + t.text + "\u300D";
+                  return "\n\u6717\u8BFB\uFF1A\u6700\u540E\u4E00\u6BB5 " + (t.failed ? "\u5931\u8D25" : "\u5DF2\u5F00\u64AD") + "\uFF5C\u6587\u672C\u5F00\u5934\u300C" + t.text + "\u300D";
                 } catch (e) {
                   return "";
                 }
@@ -2512,7 +2514,7 @@
                 try {
                   const s = voiceRef.current && voiceRef.current.lastSegment ? voiceRef.current.lastSegment() : null;
                   if (!s) return "";
-                  return "\\n\u4E0A\u4E00\u6BB5\uFF1A" + s.mode + "\uFF5C\u7A97\u53E3 " + s.winMs + "ms\uFF5C\u8BF4\u8BDD " + s.peMs + "ms\uFF5C\u9759\u97F3 " + s.quMs + "ms" + (s.floor !== null ? "\uFF5C\u5E95\u566A " + s.floor + "dB" : "") + (s.target ? "\uFF5C\u76EE\u6807 " + s.target + "ms" : "") + "\\n\u8BC6\u522B\u7ED3\u679C\uFF1A" + s.text;
+                  return "\n\u4E0A\u4E00\u6BB5\uFF1A" + s.mode + "\uFF5C\u7A97\u53E3 " + s.winMs + "ms\uFF5C\u8BF4\u8BDD " + s.peMs + "ms\uFF5C\u9759\u97F3 " + s.quMs + "ms" + (s.floor !== null ? "\uFF5C\u5E95\u566A " + s.floor + "dB" : "") + (s.target ? "\uFF5C\u76EE\u6807 " + s.target + "ms" : "") + "\n\u8BC6\u522B\u7ED3\u679C\uFF1A" + s.text;
                 } catch (e) {
                   return "";
                 }

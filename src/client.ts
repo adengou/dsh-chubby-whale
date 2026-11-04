@@ -688,8 +688,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               + '\n丢：太安静 ' + st.skippedSilent + '｜回声/重复 ' + st.echoDropped + '｜识别失败 ' + st.asrFail
               + '\n去重：重复丢弃 ' + (st.dupDropped || 0) + ' 次（同一句话被切成两段时用）'
               + '\n端点检测：' + ((voiceRef.current && voiceRef.current.endpointInfo) ? (voiceRef.current.endpointInfo().mode === 'ape' ? '自适应' : '经典') : '?')
-              + (function () { try { const t = voiceRef.current && voiceRef.current.lastTtsInfo ? voiceRef.current.lastTtsInfo() : null; if (!t) return ''; return '\\n朗读：最后一段 ' + (t.failed ? '失败' : '已开播') + '｜文本开头「' + t.text + '」' } catch (e) { return '' } })()
-              + (function () { try { const s = voiceRef.current && voiceRef.current.lastSegment ? voiceRef.current.lastSegment() : null; if (!s) return ''; return '\\n上一段：' + s.mode + '｜窗口 ' + s.winMs + 'ms｜说话 ' + s.peMs + 'ms｜静音 ' + s.quMs + 'ms' + (s.floor !== null ? '｜底噪 ' + s.floor + 'dB' : '') + (s.target ? '｜目标 ' + s.target + 'ms' : '') + '\\n识别结果：' + s.text } catch (e) { return '' } })()
+              + (function () { try { const t = voiceRef.current && voiceRef.current.lastTtsInfo ? voiceRef.current.lastTtsInfo() : null; if (!t) return ''; return '\n朗读：最后一段 ' + (t.failed ? '失败' : '已开播') + '｜文本开头「' + t.text + '」' } catch (e) { return '' } })()
+              + (function () { try { const s = voiceRef.current && voiceRef.current.lastSegment ? voiceRef.current.lastSegment() : null; if (!s) return ''; return '\n上一段：' + s.mode + '｜窗口 ' + s.winMs + 'ms｜说话 ' + s.peMs + 'ms｜静音 ' + s.quMs + 'ms' + (s.floor !== null ? '｜底噪 ' + s.floor + 'dB' : '') + (s.target ? '｜目标 ' + s.target + 'ms' : '') + '\n识别结果：' + s.text } catch (e) { return '' } })()
               + '\n朗读：请求 ' + st.ttsRequests + '｜开播 ' + st.ttsPlayed + '｜失败 ' + st.ttsFail + '｜僵尸复位 ' + st.ttsZombie
               + (st.lastError ? '\n最近错误：' + st.lastError : '')
             showBubble(line, 15000)
