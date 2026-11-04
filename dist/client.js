@@ -1992,7 +1992,7 @@
               else if (!e.hasMediaDevices) verdict = "\u2192 \u6D4F\u89C8\u5668\u6CA1\u63D0\u4F9B\u9EA6\u514B\u98CE\u63A5\u53E3\uFF08\u975E https/localhost\uFF1F\uFF09";
               else if (e.bootFail > 0) verdict = "\u2192 \u5F00\u9EA6\u5931\u8D25\uFF1A" + String(e.lastError || "\u672A\u77E5") + "\uFF08\u70B9\u5730\u5740\u680F\u5C0F\u9501\u5141\u8BB8\u9EA6\u514B\u98CE\uFF09";
               else if (!e.ticks) verdict = "\u2192 \u91C7\u6837\u6CA1\u8DD1\uFF08\u94FE\u8DEF\u672A\u542F\u52A8\uFF09";
-              else if (!e.micEnabled) verdict = "\u2192 \u9EA6\u514B\u98CE\u88AB\u9759\u97F3\uFF08\u70B9\u4E00\u4E0B\u9C7C\u8EAB\u6062\u590D\uFF09";
+              else if (!e.micEnabled) verdict = "\u2192 \u9EA6\u514B\u98CE\u8F68\u9053\u4E0D\u53EF\u7528\uFF08\u53EF\u80FD\u88AB\u9759\u97F3\u6216\u6CA1\u62FF\u5230\u8F68\u9053\uFF09";
               else if (e.db < -60) verdict = "\u2192 \u9EA6\u514B\u98CE\u6536\u4E0D\u5230\u58F0\u97F3\uFF08\u67E5\u7CFB\u7EDF\u8F93\u5165\u8BBE\u5907/\u6743\u9650\uFF09";
               else if (rec === 0) verdict = "\u2192 \u6CA1\u5F00\u59CB\u5F55\u97F3";
               else if ((c.uploadCalled || 0) === 0) verdict = "\u2192 \u4E0A\u4F20\u6CA1\u88AB\u89E6\u53D1\uFF08VAD \u6CA1\u5224\u51FA\u8BF4\u8BDD\uFF09";
@@ -2001,7 +2001,7 @@
               else if ((c.nowake || 0) > 0 && (c.nowakeAccepted || 0) === 0) verdict = "\u2192 \u8BC6\u522B\u5230\u4E86\u4F46\u88AB\u5524\u9192\u8BCD\u62E6\uFF08\u8BF4\u300C\u5927\u80A5\u9C7C\u300D\u5F00\u5934\uFF0C\u6216\u6253\u5F00\u8BED\u97F3\u804A\u5929\uFF09";
               else if (sent === 0 && (c.recognized || 0) > 0) verdict = "\u2192 \u8BC6\u522B\u6210\u529F\u4F46\u88AB\u56DE\u58F0/\u5524\u9192\u5224\u5B9A\u62E6\u4E86";
               else if (sent > 0) verdict = "\u2192 \u94FE\u8DEF\u5DF2\u901A\uFF08\u5DF2\u4EA4\u7ED9\u5BF9\u8BDD\uFF09";
-              const line = "\u8033\u6735\u81EA\u68C0\uFF1A\u97F3\u91CF " + Math.round(e.db) + "dB\uFF5C\u5E95\u566A " + Math.round(e.noiseDb) + "dB\uFF5C\u9608\u503C " + Math.round(e.onsetDb) + "dB\n\u9EA6\u514B\u98CE " + (e.micEnabled ? "\u5F00" : "\u5173") + "\uFF5C\u5F85\u547D " + (e.earOn === false ? "\u5173" : "\u5F00") + "\uFF5C\u6743\u9650 " + (e.perm || "?") + "\n\u91C7\u6837 " + (e.ticks || 0) + " \u6B21\uFF5C\u542F\u52A8 " + (e.ctxState || "?") + "\uFF5C\u5F00\u9EA6\u5C1D\u8BD5 " + (e.bootAttempts || 0) + " \u6B21\uFF08\u5931\u8D25 " + (e.bootFail || 0) + "\uFF09\n\u5F55\u97F3\u6BB5 " + rec + "\uFF5C\u4E0A\u4F20 " + (c.uploaded || 0) + "\uFF5C\u8BC6\u522B " + (c.recognized || 0) + "\uFF5C\u53D1\u9001 " + sent + "\n\u4E22\uFF1A\u592A\u77ED " + (c.small || 0) + "\uFF5C\u9759\u97F3\u7A97 " + (c.muted || 0) + "\uFF5C\u5360\u7EBF " + (c.asrBusyDrop || 0) + "\uFF5C\u56DE\u58F0 " + (c.echo || 0) + "\uFF5C\u672A\u5524\u9192 " + (c.nowake || 0) + "\n" + verdict;
+              const line = "\u8033\u6735\u81EA\u68C0\uFF1A\u97F3\u91CF " + Math.round(e.db) + "dB\uFF5C\u5E95\u566A " + Math.round(e.noiseDb) + "dB\uFF5C\u9608\u503C " + Math.round(e.onsetDb) + "dB\n\u9EA6\u514B\u98CE " + (e.micEnabled ? "\u5F00" : "\u5173") + "\uFF5C\u5F85\u547D " + (e.earOn === false ? "\u5173" : "\u5F00") + "\uFF5C\u6743\u9650 " + (e.perm || "?") + "\n\u91C7\u6837 " + (e.ticks || 0) + " \u6B21\uFF5C\u542F\u52A8 " + (e.ctxState || "?") + "\uFF5C\u5F00\u9EA6\u5C1D\u8BD5 " + (e.bootAttempts || 0) + " \u6B21\uFF08\u5931\u8D25 " + (e.bootFail || 0) + "\uFF09\n\u5F55\u97F3\u6BB5 " + rec + "\uFF5C\u4E0A\u4F20 " + (c.uploaded || 0) + "\uFF5C\u8BC6\u522B " + (c.recognized || 0) + "\uFF5C\u53D1\u9001 " + sent + "\n\u4E0A\u4F20\u88AB\u8C03\u7528 " + (c.uploadCalled || 0) + "\uFF5C\u770B\u95E8\u72D7 " + (c.watchdog || 0) + "\uFF5C\u590D\u6D3B\u9EA6 " + (e.revived || 0) + "\uFF5C\u8F6C\u7801\u5931\u8D25 " + (c.b64Fail || 0) + "\n\u4E22\uFF1A\u592A\u77ED " + (c.small || 0) + "\uFF5C\u9759\u97F3\u7A97 " + (c.muted || 0) + "\uFF5C\u5360\u7EBF " + (c.asrBusyDrop || 0) + "\uFF5C\u56DE\u58F0 " + (c.echo || 0) + "\uFF5C\u672A\u5524\u9192 " + (c.nowake || 0) + "\n" + verdict;
               let vadOk = "";
               try {
                 const quiet = simulate(new Array(30).fill(-65), 60);
@@ -2371,6 +2371,7 @@
           let chunkStartedAt = 0;
           let lastTickAt = 0;
           let watchTimer = null;
+          let forceTimer = null;
           let startTimer = null;
           function blobToBase64(blob) {
             return new Promise((resolve) => {
@@ -2734,6 +2735,32 @@
               detachGesture();
               showBubble("\u672C\u9CB8\u5728\u542C\uFF08\u5343\u95EE\u8BC6\u522B\uFF09\uFF0C\u8BF4\u5B8C\u5C31\u4F1A\u63A5\u8BDD\uFF5E", 3e3);
               startChunk();
+              try {
+                if (forceTimer) clearInterval(forceTimer);
+                forceTimer = setInterval(() => {
+                  try {
+                    if (stopped) return;
+                    const tr2 = micTrackRef.current;
+                    if (tr2 && tr2.enabled === false) {
+                      tr2.enabled = true;
+                      earDiag.revived = (earDiag.revived || 0) + 1;
+                    }
+                    if (mr && mr.state === "recording") {
+                      try {
+                        earDiag.chunks.watchdog = (earDiag.chunks.watchdog || 0) + 1;
+                      } catch (e) {
+                      }
+                      try {
+                        mr.stop();
+                      } catch (e) {
+                      }
+                      setTimeout(uploadChunk, 120);
+                    }
+                  } catch (e) {
+                  }
+                }, 5e3);
+              } catch (e) {
+              }
             } catch (e) {
               started = false;
               if (stopped) return;
@@ -2756,6 +2783,13 @@
           }
           function stopEar() {
             stopped = true;
+            if (forceTimer) {
+              try {
+                clearInterval(forceTimer);
+              } catch (e) {
+              }
+              forceTimer = null;
+            }
             if (watchTimer) {
               try {
                 clearTimeout(watchTimer);

@@ -912,7 +912,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             else if (!e.hasMediaDevices) verdict = '→ 浏览器没提供麦克风接口（非 https/localhost？）'
             else if (e.bootFail > 0) verdict = '→ 开麦失败：' + String(e.lastError || '未知') + '（点地址栏小锁允许麦克风）'
             else if (!e.ticks) verdict = '→ 采样没跑（链路未启动）'
-            else if (!e.micEnabled) verdict = '→ 麦克风被静音（点一下鱼身恢复）'
+            else if (!e.micEnabled) verdict = '→ 麦克风轨道不可用（可能被静音或没拿到轨道）'
             else if (e.db < -60) verdict = '→ 麦克风收不到声音（查系统输入设备/权限）'
             else if (rec === 0) verdict = '→ 没开始录音'
             else if ((c.uploadCalled || 0) === 0) verdict = '→ 上传没被触发（VAD 没判出说话）'
@@ -926,6 +926,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               + '麦克风 ' + (e.micEnabled ? '开' : '关') + '｜待命 ' + (e.earOn === false ? '关' : '开') + '｜权限 ' + (e.perm || '?') + '\n'
               + '采样 ' + (e.ticks || 0) + ' 次｜启动 ' + (e.ctxState || '?') + '｜开麦尝试 ' + (e.bootAttempts || 0) + ' 次（失败 ' + (e.bootFail || 0) + '）\n'
               + '录音段 ' + rec + '｜上传 ' + (c.uploaded || 0) + '｜识别 ' + (c.recognized || 0) + '｜发送 ' + sent + '\n'
+              + '上传被调用 ' + (c.uploadCalled || 0) + '｜看门狗 ' + (c.watchdog || 0) + '｜复活麦 ' + (e.revived || 0) + '｜转码失败 ' + (c.b64Fail || 0) + '\n'
               + '丢：太短 ' + (c.small || 0) + '｜静音窗 ' + (c.muted || 0) + '｜占线 ' + (c.asrBusyDrop || 0) + '｜回声 ' + (c.echo || 0) + '｜未唤醒 ' + (c.nowake || 0) + '\n'
               + verdict
             // VAD 现场自检：用合成电平序列跑一遍被测过的判定逻辑，证明算法本机可用
@@ -1198,6 +1199,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         let chunkStartedAt = 0
         let lastTickAt = 0
         let watchTimer: any = null
+        let forceTimer: any = null   // 看门狗：不管 VAD 是否判出，每 5 秒强制定段上传
         let startTimer: any = null
         function blobToBase64(blob: any): Promise<string> {
           return new Promise((resolve) => {
@@ -1420,6 +1422,23 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             detachGesture()                 // 麦克风真拿到了才摘监听
             showBubble('本鲸在听（千问识别），说完就会接话～', 3000)
             startChunk()
+            // 看门狗：VAD 失灵也要能说话。每 5 秒不强判定直接收段上传，
+            // 这一段路径与被主体验证过的手动录音完全一致（拿麦→录→上传）。
+            try {
+              if (forceTimer) clearInterval(forceTimer)
+              forceTimer = setInterval(() => {
+                try {
+                  if (stopped) return
+                  const tr = micTrackRef.current
+                  if (tr && tr.enabled === false) { tr.enabled = true; earDiag.revived = (earDiag.revived || 0) + 1 }
+                  if (mr && mr.state === ('recording' as any)) {
+                    try { earDiag.chunks.watchdog = (earDiag.chunks.watchdog || 0) + 1 } catch (e) { }
+                    try { mr.stop() } catch (e) { }
+                    setTimeout(uploadChunk, 120)
+                  }
+                } catch (e) { }
+              }, 5000)
+            } catch (e) { }
           } catch (e) {
             // 拿麦失败（没授权/没有设备）：允许下一次手势再试，别把开始标志焊死
             started = false
@@ -1439,6 +1458,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         // 关掉「语音待命」：真的把录音链停掉（定时器 + MediaRecorder + 音轨 + AudioContext）
         function stopEar(): void {
           stopped = true
+          if (forceTimer) { try { clearInterval(forceTimer) } catch (e) { } forceTimer = null }
           if (watchTimer) { try { clearTimeout(watchTimer) } catch { } watchTimer = null }
           if (startTimer) { try { clearTimeout(startTimer) } catch { } startTimer = null }
           try { if (mr && mr.state !== 'inactive') mr.stop() } catch { }
