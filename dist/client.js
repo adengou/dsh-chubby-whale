@@ -869,6 +869,7 @@
           const blob = new Blob(parts, { type: "audio/webm" });
           parts = [];
           void onWindowDone(blob);
+          scheduleNext(120);
         };
         rec.onerror = (e) => {
           stats.lastError = "recorder: " + String(e && e.error && e.error.name);
@@ -924,7 +925,8 @@
       setStatus("idle");
     }
     function speak(text, o) {
-      const segs = splitText(String(text || ""), TTS_SEG_MAX);
+      const head = splitText(String(text || ""), 16);
+      const segs = head.length <= 1 ? splitText(String(text || ""), TTS_SEG_MAX) : [head[0], ...splitText(head.slice(1).join(""), TTS_SEG_MAX)];
       if (!segs.length) return;
       noteSpoken(text);
       for (let i = 0; i < segs.length; i++) {

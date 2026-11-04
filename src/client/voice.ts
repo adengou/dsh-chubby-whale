@@ -376,6 +376,8 @@ export function createVoice(opts: VoiceOptions): Voice {
         const blob = new Blob(parts, { type: 'audio/webm' })
         parts = []
         void onWindowDone(blob)
+        // 关键：立刻开始录下一段，不要等识别返回（原来识别期间麦克风是"瞎"的，主人接话就丢）
+        scheduleNext(120)
       }
       rec.onerror = (e: any) => { stats.lastError = 'recorder: ' + String(e && e.error && e.error.name) ; scheduleNext(800) }
       micOn(true)
@@ -406,7 +408,11 @@ export function createVoice(opts: VoiceOptions): Voice {
   }
 
   function speak(text: string, o?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
-    const segs = splitText(String(text || ''), TTS_SEG_MAX)
+    // 首段 16 字先开口：长回复不用等整段合成完（只影响文字切分，不涉及录音逻辑）
+    const head = splitText(String(text || ""), 16)
+    const segs = head.length <= 1
+      ? splitText(String(text || ""), TTS_SEG_MAX)
+      : [head[0], ...splitText(head.slice(1).join(""), TTS_SEG_MAX)]
     if (!segs.length) return
     noteSpoken(text)
     for (let i = 0; i < segs.length; i++) {
