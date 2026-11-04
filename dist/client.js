@@ -557,6 +557,120 @@
     };
   }
 
+  // src/client/webspeech.ts
+  function createWebSpeech(handlers, lang = "zh-CN") {
+    const w = typeof window !== "undefined" ? window : {};
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    const ctl = {
+      available: !!SR,
+      running: false,
+      lastError: "",
+      restarts: 0,
+      start() {
+      },
+      stop() {
+      }
+    };
+    if (!SR) return ctl;
+    let rec = null;
+    let wantOn = false;
+    let restartTimer = null;
+    function build() {
+      const r = new SR();
+      r.lang = lang;
+      r.continuous = true;
+      r.interimResults = true;
+      r.maxAlternatives = 1;
+      r.onresult = (ev) => {
+        try {
+          for (let i = ev.resultIndex; i < ev.results.length; i++) {
+            const res = ev.results[i];
+            if (!res) continue;
+            const text = String(res[0] && res[0].transcript || "").trim();
+            if (!text) continue;
+            if (res.isFinal) {
+              try {
+                handlers.onFinal(text);
+              } catch (e) {
+              }
+            } else if (handlers.onInterim) {
+              try {
+                handlers.onInterim(text);
+              } catch (e) {
+              }
+            }
+          }
+        } catch (e) {
+        }
+      };
+      r.onerror = (ev) => {
+        ctl.lastError = String(ev && ev.error || "unknown");
+        if (handlers.onError) {
+          try {
+            handlers.onError(ctl.lastError);
+          } catch (e) {
+          }
+        }
+        if (ctl.lastError === "not-allowed" || ctl.lastError === "service-not-allowed" || ctl.lastError === "network") {
+          wantOn = false;
+        }
+      };
+      r.onend = () => {
+        ctl.running = false;
+        if (handlers.onEnd) {
+          try {
+            handlers.onEnd();
+          } catch (e) {
+          }
+        }
+        if (wantOn) {
+          ctl.restarts++;
+          if (restartTimer) clearTimeout(restartTimer);
+          restartTimer = setTimeout(() => {
+            restartTimer = null;
+            try {
+              r.start();
+            } catch (e) {
+            }
+          }, 400);
+        }
+      };
+      return r;
+    }
+    ctl.start = () => {
+      if (wantOn) return;
+      wantOn = true;
+      try {
+        if (!rec) rec = build();
+        rec.start();
+        ctl.running = true;
+        ctl.lastError = "";
+      } catch (e) {
+        ctl.lastError = String(e && e.name || e);
+      }
+    };
+    ctl.stop = () => {
+      wantOn = false;
+      if (restartTimer) {
+        try {
+          clearTimeout(restartTimer);
+        } catch (e) {
+        }
+        restartTimer = null;
+      }
+      try {
+        if (rec) rec.stop();
+      } catch (e) {
+      }
+      try {
+        if (rec) rec.abort();
+      } catch (e) {
+      }
+      ctl.running = false;
+    };
+    return ctl;
+  }
+
   // src/client/vad.ts
   var ONSET_DB = 9;
   var OFFSET_DB = 5;
@@ -1988,7 +2102,9 @@
               const rec = c.recorded || 0;
               const sent = c.sent || 0;
               let verdict = "";
-              if (e.earOn === false) verdict = "\u2192 \u8BED\u97F3\u5F85\u547D\u662F\u5173\u7684\uFF08\u53F3\u952E\u83DC\u5355\u70B9\u300C\u8BED\u97F3\u5F85\u547D\u300D\u6253\u5F00\uFF09";
+              if (e.mode === "webspeech" && !e.wsError) verdict = "\u2192 \u8D70\u6D4F\u89C8\u5668\u8BC6\u522B\u901A\u9053\uFF08\u6700\u7701\u4E8B\uFF09";
+              else if (e.wsError) verdict = "\u2192 \u6D4F\u89C8\u5668\u8BC6\u522B\u4E0D\u53EF\u7528\uFF08" + e.wsError + "\uFF09\uFF0C\u5DF2\u9000\u56DE\u81EA\u5EFA\u8BC6\u522B";
+              else if (e.earOn === false) verdict = "\u2192 \u8BED\u97F3\u5F85\u547D\u662F\u5173\u7684\uFF08\u53F3\u952E\u83DC\u5355\u70B9\u300C\u8BED\u97F3\u5F85\u547D\u300D\u6253\u5F00\uFF09";
               else if (!e.hasMediaDevices) verdict = "\u2192 \u6D4F\u89C8\u5668\u6CA1\u63D0\u4F9B\u9EA6\u514B\u98CE\u63A5\u53E3\uFF08\u975E https/localhost\uFF1F\uFF09";
               else if (e.bootFail > 0) verdict = "\u2192 \u5F00\u9EA6\u5931\u8D25\uFF1A" + String(e.lastError || "\u672A\u77E5") + "\uFF08\u70B9\u5730\u5740\u680F\u5C0F\u9501\u5141\u8BB8\u9EA6\u514B\u98CE\uFF09";
               else if (!e.ticks) verdict = "\u2192 \u91C7\u6837\u6CA1\u8DD1\uFF08\u94FE\u8DEF\u672A\u542F\u52A8\uFF09";
@@ -2001,7 +2117,7 @@
               else if ((c.nowake || 0) > 0 && (c.nowakeAccepted || 0) === 0) verdict = "\u2192 \u8BC6\u522B\u5230\u4E86\u4F46\u88AB\u5524\u9192\u8BCD\u62E6\uFF08\u8BF4\u300C\u5927\u80A5\u9C7C\u300D\u5F00\u5934\uFF0C\u6216\u6253\u5F00\u8BED\u97F3\u804A\u5929\uFF09";
               else if (sent === 0 && (c.recognized || 0) > 0) verdict = "\u2192 \u8BC6\u522B\u6210\u529F\u4F46\u88AB\u56DE\u58F0/\u5524\u9192\u5224\u5B9A\u62E6\u4E86";
               else if (sent > 0) verdict = "\u2192 \u94FE\u8DEF\u5DF2\u901A\uFF08\u5DF2\u4EA4\u7ED9\u5BF9\u8BDD\uFF09";
-              const line = "\u8033\u6735\u81EA\u68C0\uFF1A\u97F3\u91CF " + Math.round(e.db) + "dB\uFF5C\u5E95\u566A " + Math.round(e.noiseDb) + "dB\uFF5C\u9608\u503C " + Math.round(e.onsetDb) + "dB\n\u9EA6\u514B\u98CE " + (e.micEnabled ? "\u5F00" : "\u5173") + "\uFF5C\u5F85\u547D " + (e.earOn === false ? "\u5173" : "\u5F00") + "\uFF5C\u6743\u9650 " + (e.perm || "?") + "\n\u91C7\u6837 " + (e.ticks || 0) + " \u6B21\uFF5C\u542F\u52A8 " + (e.ctxState || "?") + "\uFF5C\u5F00\u9EA6\u5C1D\u8BD5 " + (e.bootAttempts || 0) + " \u6B21\uFF08\u5931\u8D25 " + (e.bootFail || 0) + "\uFF09\n\u5F55\u97F3\u6BB5 " + rec + "\uFF5C\u4E0A\u4F20 " + (c.uploaded || 0) + "\uFF5C\u8BC6\u522B " + (c.recognized || 0) + "\uFF5C\u53D1\u9001 " + sent + "\n\u4E0A\u4F20\u88AB\u8C03\u7528 " + (c.uploadCalled || 0) + "\uFF5C\u770B\u95E8\u72D7 " + (c.watchdog || 0) + "\uFF5C\u590D\u6D3B\u9EA6 " + (e.revived || 0) + "\uFF5C\u8F6C\u7801\u5931\u8D25 " + (c.b64Fail || 0) + "\n\u4E22\uFF1A\u592A\u77ED " + (c.small || 0) + "\uFF5C\u9759\u97F3\u7A97 " + (c.muted || 0) + "\uFF5C\u5360\u7EBF " + (c.asrBusyDrop || 0) + "\uFF5C\u56DE\u58F0 " + (c.echo || 0) + "\uFF5C\u672A\u5524\u9192 " + (c.nowake || 0) + "\n" + verdict;
+              const line = "\u8033\u6735\u81EA\u68C0\uFF1A\u97F3\u91CF " + Math.round(e.db) + "dB\uFF5C\u5E95\u566A " + Math.round(e.noiseDb) + "dB\uFF5C\u9608\u503C " + Math.round(e.onsetDb) + "dB\n\u901A\u9053 " + (e.mode || "?") + "\uFF08\u6D4F\u89C8\u5668\u8BC6\u522B " + (e.wsAvailable ? "\u53EF\u7528" : "\u4E0D\u53EF\u7528") + (e.wsError ? "\uFF0C\u9519\u8BEF " + e.wsError : "") + "\uFF09\n\u9EA6\u514B\u98CE " + (e.micEnabled ? "\u5F00" : "\u5173") + "\uFF5C\u5F85\u547D " + (e.earOn === false ? "\u5173" : "\u5F00") + "\uFF5C\u6743\u9650 " + (e.perm || "?") + "\n\u91C7\u6837 " + (e.ticks || 0) + " \u6B21\uFF5C\u542F\u52A8 " + (e.ctxState || "?") + "\uFF5C\u5F00\u9EA6\u5C1D\u8BD5 " + (e.bootAttempts || 0) + " \u6B21\uFF08\u5931\u8D25 " + (e.bootFail || 0) + "\uFF09\n\u5F55\u97F3\u6BB5 " + rec + "\uFF5C\u4E0A\u4F20 " + (c.uploaded || 0) + "\uFF5C\u8BC6\u522B " + (c.recognized || 0) + "\uFF5C\u53D1\u9001 " + sent + "\n\u4E0A\u4F20\u88AB\u8C03\u7528 " + (c.uploadCalled || 0) + "\uFF5C\u770B\u95E8\u72D7 " + (c.watchdog || 0) + "\uFF5C\u590D\u6D3B\u9EA6 " + (e.revived || 0) + "\uFF5C\u8F6C\u7801\u5931\u8D25 " + (c.b64Fail || 0) + "\n\u4E22\uFF1A\u592A\u77ED " + (c.small || 0) + "\uFF5C\u9759\u97F3\u7A97 " + (c.muted || 0) + "\uFF5C\u5360\u7EBF " + (c.asrBusyDrop || 0) + "\uFF5C\u56DE\u58F0 " + (c.echo || 0) + "\uFF5C\u672A\u5524\u9192 " + (c.nowake || 0) + "\n" + verdict;
               let vadOk = "";
               try {
                 const quiet = simulate(new Array(30).fill(-65), 60);
@@ -2372,6 +2488,7 @@
           let lastTickAt = 0;
           let watchTimer = null;
           let forceTimer = null;
+          let wsCtl = null;
           let startTimer = null;
           function blobToBase64(blob) {
             return new Promise((resolve) => {
@@ -2394,6 +2511,85 @@
               startTimer = null;
               startChunk();
             }, delay);
+          }
+          function acceptHeard(rawText, source, asrMs) {
+            try {
+              let t = String(rawText || "").trim();
+              if (!t || t.length < 2) return;
+              try {
+                earDiag.chunks.recognized = (earDiag.chunks.recognized || 0) + 1;
+              } catch (e) {
+              }
+              try {
+                earDiag.lastSource = source;
+                earDiag.lastHeard = t.slice(0, 30);
+              } catch (e) {
+              }
+              if (ttsPlaying) return;
+              if (ttsQueue.length > 0) return;
+              let narrating = false;
+              try {
+                narrating = storyNarratingRef.current;
+              } catch (e) {
+              }
+              if (narrating) return;
+              if (looksLikeEcho(t)) {
+                try {
+                  earDiag.chunks.echo++;
+                } catch (e) {
+                }
+                ;
+                return;
+              }
+              if (t === lastHeardText && Date.now() - lastHeardAt < 6e3) return;
+              lastHeardText = t;
+              lastHeardAt = Date.now();
+              if (/[。，！？,.!?]{3,}/.test(t) || t.length > 60) return;
+              const hasWake = WAKE_WORDS.some(function(w) {
+                return t.indexOf(w) >= 0;
+              });
+              if (hasWake) {
+                wokeRef.current.at = Date.now();
+                try {
+                  t = t.replace(/大肥鱼|肥鲸|肥鱼|小鱼|蓝鱼|小蓝鱼|鱼鱼|肥肥/g, "").trim();
+                } catch (e) {
+                }
+                if (!t) {
+                  showBubble("\u6211\u5728\uFF5E\u4E3B\u4EBA\u8BF4\uFF5E", 3e3);
+                  return;
+                }
+              } else {
+                const wokeRecent = Date.now() - wokeRef.current.at < 12e4;
+                if (!wokeRecent) {
+                  if (voiceChatOnRef.current) {
+                    try {
+                      earDiag.chunks.nowakeAccepted = (earDiag.chunks.nowakeAccepted || 0) + 1;
+                    } catch (e) {
+                    }
+                  } else {
+                    try {
+                      earDiag.chunks.nowake++;
+                    } catch (e) {
+                    }
+                    return;
+                  }
+                }
+              }
+              voiceModeRef.current = true;
+              setChatOpen(false);
+              if (!voiceChatOnRef.current) {
+                showBubble("\uFF08\u542C\u5230\uFF09" + t + "\uFF5C\u8BED\u97F3\u804A\u5929\u5173\u7740\uFF0C\u5148\u4E0D\u63A5\u8BDD", 4e3);
+                return;
+              }
+              playFiller();
+              showBubble("\uFF08\u542C\u5230\uFF09" + t + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
+              sendText(t, { voice: true });
+              try {
+                earDiag.chunks.sent++;
+              } catch (e) {
+              }
+            } catch (e) {
+            }
           }
           async function uploadChunk() {
             try {
@@ -2466,66 +2662,7 @@
                 return;
               }
               if (d && d.ok && d.text && d.text.trim().length >= 2) {
-                try {
-                  earDiag.chunks.recognized = (earDiag.chunks.recognized || 0) + 1;
-                } catch (e) {
-                }
-                if (ttsPlaying) return;
-                if (ttsQueue.length > 0) return;
-                let narrating = false;
-                try {
-                  narrating = storyNarratingRef.current;
-                } catch (e) {
-                }
-                if (narrating) return;
-                let t = String(d.text).trim();
-                if (t === lastHeardText && Date.now() - lastHeardAt < 6e3) return;
-                lastHeardText = t;
-                lastHeardAt = Date.now();
-                if (/[。，！？,.!?]{3,}/.test(t) || t.length > 60) return;
-                const hasWake = WAKE_WORDS.some(function(w) {
-                  return t.indexOf(w) >= 0;
-                });
-                if (hasWake) {
-                  wokeRef.current.at = Date.now();
-                  try {
-                    t = t.replace(/大肥鱼|肥鲸|肥鱼|小鱼|蓝鱼|小蓝鱼|鱼鱼|肥肥/g, "").trim();
-                  } catch (e) {
-                  }
-                  if (!t) {
-                    showBubble("\u6211\u5728\uFF5E\u4E3B\u4EBA\u8BF4\uFF5E", 3e3);
-                    return;
-                  }
-                } else {
-                  const wokeRecent = Date.now() - wokeRef.current.at < 12e4;
-                  if (!wokeRecent) {
-                    if (voiceChatOnRef.current) {
-                      try {
-                        earDiag.chunks.nowakeAccepted = (earDiag.chunks.nowakeAccepted || 0) + 1;
-                      } catch (e) {
-                      }
-                    } else {
-                      try {
-                        earDiag.chunks.nowake++;
-                      } catch (e) {
-                      }
-                      return;
-                    }
-                  }
-                }
-                voiceModeRef.current = true;
-                setChatOpen(false);
-                if (!voiceChatOnRef.current) {
-                  showBubble("\uFF08\u542C\u5230\uFF09" + t + "\uFF5C\u8BED\u97F3\u804A\u5929\u5173\u7740\uFF0C\u5148\u4E0D\u63A5\u8BDD", 4e3);
-                  return;
-                }
-                playFiller();
-                showBubble("\uFF08\u542C\u5230\uFF09" + t + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
-                sendText(t, { voice: true });
-                try {
-                  earDiag.chunks.sent++;
-                } catch (e) {
-                }
+                acceptHeard(String(d.text), "asr", asrMs);
               }
             } catch (e) {
             } finally {
@@ -2734,6 +2871,52 @@
               };
               detachGesture();
               showBubble("\u672C\u9CB8\u5728\u542C\uFF08\u5343\u95EE\u8BC6\u522B\uFF09\uFF0C\u8BF4\u5B8C\u5C31\u4F1A\u63A5\u8BDD\uFF5E", 3e3);
+              try {
+                const ws = createWebSpeech({
+                  onFinal: (text) => {
+                    acceptHeard(text, "ws");
+                  },
+                  onError: (code) => {
+                    earDiag.wsError = code;
+                    if (code === "network" || code === "not-allowed" || code === "service-not-allowed") {
+                      try {
+                        earDiag.mode = "asr-fallback";
+                      } catch (e) {
+                      }
+                      try {
+                        if (wsCtl) wsCtl.stop();
+                      } catch (e) {
+                      }
+                      try {
+                        startChunk();
+                      } catch (e) {
+                      }
+                    }
+                  }
+                });
+                wsCtl = ws;
+                try {
+                  window.__chubbyWs = ws;
+                } catch (e) {
+                }
+                earDiag.wsAvailable = ws.available;
+                if (ws.available) {
+                  earDiag.mode = "webspeech";
+                  ws.start();
+                  try {
+                    earDiag.wsRunning = true;
+                  } catch (e) {
+                  }
+                } else {
+                  earDiag.mode = "asr";
+                }
+              } catch (e) {
+                earDiag.mode = "asr";
+                try {
+                  startChunk();
+                } catch (e2) {
+                }
+              }
               startChunk();
               try {
                 if (forceTimer) clearInterval(forceTimer);
@@ -2789,6 +2972,10 @@
               } catch (e) {
               }
               forceTimer = null;
+            }
+            try {
+              if (wsCtl) wsCtl.stop();
+            } catch (e) {
             }
             if (watchTimer) {
               try {

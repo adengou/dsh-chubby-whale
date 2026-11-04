@@ -7,6 +7,7 @@ import { buildMenu, tr } from './client/menu.js'
 import { handleFileDrop, VISION_PROMPT } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { createChannels } from './client/channel.js'
+import { createWebSpeech } from './client/webspeech.js'
 import { createVadState, resetVadSegment, stepVad, simulate as simulateVad } from './client/vad.js'
 import { splitTtsSegments, normalizeRate, cleanTtsText } from './shared/tts.js'
 import { parseDue, cleanReminderText } from './shared/time.js'
@@ -908,7 +909,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const rec = c.recorded || 0
             const sent = c.sent || 0
             let verdict = ''
-            if (e.earOn === false) verdict = '→ 语音待命是关的（右键菜单点「语音待命」打开）'
+            if (e.mode === 'webspeech' && !e.wsError) verdict = '→ 走浏览器识别通道（最省事）'
+            else if (e.wsError) verdict = '→ 浏览器识别不可用（' + e.wsError + '），已退回自建识别'
+            else if (e.earOn === false) verdict = '→ 语音待命是关的（右键菜单点「语音待命」打开）'
             else if (!e.hasMediaDevices) verdict = '→ 浏览器没提供麦克风接口（非 https/localhost？）'
             else if (e.bootFail > 0) verdict = '→ 开麦失败：' + String(e.lastError || '未知') + '（点地址栏小锁允许麦克风）'
             else if (!e.ticks) verdict = '→ 采样没跑（链路未启动）'
@@ -923,6 +926,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             else if (sent > 0) verdict = '→ 链路已通（已交给对话）'
             const line = '耳朵自检：音量 ' + Math.round(e.db) + 'dB｜底噪 ' + Math.round(e.noiseDb)
               + 'dB｜阈值 ' + Math.round(e.onsetDb) + 'dB\n'
+              + '通道 ' + (e.mode || '?') + '（浏览器识别 ' + (e.wsAvailable ? '可用' : '不可用') + (e.wsError ? '，错误 ' + e.wsError : '') + '）\n'
               + '麦克风 ' + (e.micEnabled ? '开' : '关') + '｜待命 ' + (e.earOn === false ? '关' : '开') + '｜权限 ' + (e.perm || '?') + '\n'
               + '采样 ' + (e.ticks || 0) + ' 次｜启动 ' + (e.ctxState || '?') + '｜开麦尝试 ' + (e.bootAttempts || 0) + ' 次（失败 ' + (e.bootFail || 0) + '）\n'
               + '录音段 ' + rec + '｜上传 ' + (c.uploaded || 0) + '｜识别 ' + (c.recognized || 0) + '｜发送 ' + sent + '\n'
@@ -1200,6 +1204,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         let lastTickAt = 0
         let watchTimer: any = null
         let forceTimer: any = null   // 看门狗：不管 VAD 是否判出，每 5 秒强制定段上传
+        let wsCtl: any = null   // 浏览器自带识别通道（Web Speech）
         let startTimer: any = null
         function blobToBase64(blob: any): Promise<string> {
           return new Promise((resolve) => {
@@ -1215,6 +1220,53 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (startTimer) clearTimeout(startTimer)
           startTimer = setTimeout(() => { startTimer = null; startChunk() }, delay)
         }
+        /** 收到一段识别文本（自建 ASR 或浏览器 Web Speech），统一走这里 */
+        function acceptHeard(rawText: string, source: 'asr' | 'ws', asrMs?: number) {
+          try {
+            let t = String(rawText || '').trim()
+            if (!t || t.length < 2) return
+            try { earDiag.chunks.recognized = (earDiag.chunks.recognized || 0) + 1 } catch (e) { }
+            try { earDiag.lastSource = source; earDiag.lastHeard = t.slice(0, 30) } catch (e) { }
+            if (ttsPlaying) return
+            if (ttsQueue.length > 0) return
+            let narrating = false
+            try { narrating = storyNarratingRef.current } catch (e) { }
+            if (narrating) return
+            if (looksLikeEcho(t)) { try { earDiag.chunks.echo++ } catch (e) { } ; return }
+            if (t === lastHeardText && Date.now() - lastHeardAt < 6000) return
+            lastHeardText = t
+            lastHeardAt = Date.now()
+            if (/[。，！？,.!?]{3,}/.test(t) || t.length > 60) return
+            const hasWake = WAKE_WORDS.some(function (w) { return t.indexOf(w) >= 0 })
+            if (hasWake) {
+              wokeRef.current.at = Date.now()
+              try { t = t.replace(/大肥鱼|肥鲸|肥鱼|小鱼|蓝鱼|小蓝鱼|鱼鱼|肥肥/g, '').trim() } catch (e) { }
+              if (!t) { showBubble('我在～主人说～', 3000); return }
+            } else {
+              const wokeRecent = Date.now() - wokeRef.current.at < 120000
+              if (!wokeRecent) {
+                if (voiceChatOnRef.current) {
+                  try { earDiag.chunks.nowakeAccepted = (earDiag.chunks.nowakeAccepted || 0) + 1 } catch (e) { }
+                } else {
+                  try { earDiag.chunks.nowake++ } catch (e) { }
+                  return
+                }
+              }
+            }
+            voiceModeRef.current = true
+            setChatOpen(false)
+            if (!voiceChatOnRef.current) {
+              showBubble('（听到）' + t + '｜语音聊天关着，先不接话', 4000)
+              return
+            }
+            playFiller()
+            showBubble('（听到）' + t + '｜本鱼在想…', 3000)
+            sendText(t, { voice: true })
+            try { earDiag.chunks.sent++ } catch (e) { }
+          } catch (e) { }
+        }
+
+
         async function uploadChunk() {
         try { earDiag.chunks.uploadCalled = (earDiag.chunks.uploadCalled || 0) + 1 } catch (e) { }
         if (asrBusy) { try { earDiag.chunks.asrBusyDrop = (earDiag.chunks.asrBusyDrop || 0) + 1 } catch (e) { } ; return }
@@ -1246,48 +1298,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               return
             }
             if (d && d.ok && d.text && d.text.trim().length >= 2) {
-              try { earDiag.chunks.recognized = (earDiag.chunks.recognized || 0) + 1 } catch (e) { }
-              // 说书/讲故事/念诗期间一律闭嘴：只要本鱼还在出声（正在播、队列里还有段落、
-              // 或说书中），麦克风听到的都是自己的声音，绝不能当成主人在说话去抢频道
-              if (ttsPlaying) return
-              if (ttsQueue.length > 0) return
-              let narrating = false
-              try { narrating = storyNarratingRef.current } catch (e) { }
-              if (narrating) return
-              let t = String(d.text).trim()
-              if (t === lastHeardText && Date.now() - lastHeardAt < 6000) return   // 原来 20s 太狠，同一句话复查也被吞
-              lastHeardText = t
-              lastHeardAt = Date.now()
-              if (/[。，！？,.!?]{3,}/.test(t) || t.length > 60) return
-              const hasWake = WAKE_WORDS.some(function (w) { return t.indexOf(w) >= 0 })
-              if (hasWake) {
-                wokeRef.current.at = Date.now()
-                try { t = t.replace(/大肥鱼|肥鲸|肥鱼|小鱼|蓝鱼|小蓝鱼|鱼鱼|肥肥/g, '').trim() } catch (e) { }
-                if (!t) { showBubble('我在～主人说～', 3000); return }
-              } else {
-                // 语音待命开着 + 语音聊天开着 = 主人就是在跟本鱼说话，不必每次都喊唤醒词。
-                // 以前没喊唤醒词就直接丢，主人说「你好呀」当然毫无反应（这就是"接不住"的体感来源）。
-                const wokeRecent = Date.now() - wokeRef.current.at < 120000
-                if (!wokeRecent) {
-                  if (voiceChatOnRef.current) {
-                    try { earDiag.chunks.nowakeAccepted = (earDiag.chunks.nowakeAccepted || 0) + 1 } catch (e) { }
-                  } else {
-                    try { earDiag.chunks.nowake++ } catch (e) { }
-                    return
-                  }
-                }
-              }
-              voiceModeRef.current = true
-              setChatOpen(false)
-              if (!voiceChatOnRef.current) {
-                // 语音聊天关着：只听不接话，冒个气泡就好
-                showBubble('（听到）' + t + '｜语音聊天关着，先不接话', 4000)
-                return
-              }
-              playFiller()   // 立刻「嗯」一声，别让主人干等
-              showBubble('（听到）' + t + '｜本鱼在想…', 3000)
-              sendText(t, { voice: true })
-              try { earDiag.chunks.sent++ } catch (e) { }
+              acceptHeard(String(d.text), 'asr', asrMs)
             }
           } catch (e) { } finally {
             asrBusy = false        // 释放识别位（无论成功失败都要放，否则耳朵永久占线）
@@ -1421,6 +1432,35 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             mr.onerror = (ev: any) => { try { earDiag.lastError = 'recorder: ' + String(ev && ev.error && ev.error.name) } catch (e) { } }
             detachGesture()                 // 麦克风真拿到了才摘监听
             showBubble('本鲸在听（千问识别），说完就会接话～', 3000)
+            // ===== 优先用浏览器自带语音识别（Web Speech）=====
+            // 它内部已做 VAD 与流式识别，不用我们判段；国内网络可能连不上，故失败即退回自建链路。
+            try {
+              const ws = createWebSpeech({
+                onFinal: (text: string) => { acceptHeard(text, 'ws') },
+                onError: (code: string) => {
+                  earDiag.wsError = code
+                  // 云端不可达 / 无权限：立刻切回自建 ASR（MediaRecorder + 硅基流动）
+                  if (code === 'network' || code === 'not-allowed' || code === 'service-not-allowed') {
+                    try { earDiag.mode = 'asr-fallback' } catch (e) { }
+                    try { if (wsCtl) wsCtl.stop() } catch (e) { }
+                    try { startChunk() } catch (e) { }
+                  }
+                },
+              })
+              wsCtl = ws
+              try { (window as any).__chubbyWs = ws } catch (e) { }
+              earDiag.wsAvailable = ws.available
+              if (ws.available) {
+                earDiag.mode = 'webspeech'
+                ws.start()
+                try { earDiag.wsRunning = true } catch (e) { }
+              } else {
+                earDiag.mode = 'asr'
+              }
+            } catch (e) {
+              earDiag.mode = 'asr'
+              try { startChunk() } catch (e2) { }
+            }
             startChunk()
             // 看门狗：VAD 失灵也要能说话。每 5 秒不强判定直接收段上传，
             // 这一段路径与被主体验证过的手动录音完全一致（拿麦→录→上传）。
@@ -1459,6 +1499,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         function stopEar(): void {
           stopped = true
           if (forceTimer) { try { clearInterval(forceTimer) } catch (e) { } forceTimer = null }
+          try { if (wsCtl) wsCtl.stop() } catch (e) { }
           if (watchTimer) { try { clearTimeout(watchTimer) } catch { } watchTimer = null }
           if (startTimer) { try { clearTimeout(startTimer) } catch { } startTimer = null }
           try { if (mr && mr.state !== 'inactive') mr.stop() } catch { }
