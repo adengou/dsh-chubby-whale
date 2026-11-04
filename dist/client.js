@@ -1062,6 +1062,11 @@
             audio.onerror = settle;
             audio.play().catch(() => {
               try {
+                latDiag.firstAudioMs = Math.round(performance.now() - (latDiag.speechEndAt || performance.now()));
+                latDiag.totalMs = Math.round((latDiag.asrMs || 0) + (latDiag.chatMs || 0));
+              } catch (e) {
+              }
+              try {
                 const u = new window.SpeechSynthesisUtterance(job.text.slice(0, 300));
                 u.lang = /[\u4e00-\u9fa5]/.test(job.text) ? "zh-CN" : "en-US";
                 u.onend = settle;
@@ -2364,6 +2369,10 @@
                 } catch {
                 }
                 setTimeout(uploadChunk, 100);
+                try {
+                  latDiag.speechEndAt = performance.now();
+                } catch (e) {
+                }
                 return;
               }
               if (!stopped) scheduleWatch(60);

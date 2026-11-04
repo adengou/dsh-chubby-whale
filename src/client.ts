@@ -296,6 +296,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           audio.onended = settle
           audio.onerror = settle
           audio.play().catch(() => {
+          try { latDiag.firstAudioMs = Math.round(performance.now() - (latDiag.speechEndAt || performance.now())) ; latDiag.totalMs = Math.round((latDiag.asrMs || 0) + (latDiag.chatMs || 0)) } catch (e) { }
             try {
               const u = new (window as any).SpeechSynthesisUtterance(job.text.slice(0, 300))
               u.lang = /[\u4e00-\u9fa5]/.test(job.text) ? 'zh-CN' : 'en-US'
@@ -1136,7 +1137,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         let lastTickAt = 0
         let watchTimer: any = null
         let startTimer: any = null
-        // SILENCE_GATE 已被 dBFS 自适应阈值取代（见 readDb / ONSET_DB），保留常量仅做兼容
         const SILENCE_LIMIT = 350      // 原来 700：说完要等太久才收尾（350 是短句不断、又不拖沓的折中）
         const VOICE_LIMIT = 5000   // 原来 6000：录音越长 ASR 越慢
         function blobToBase64(blob: any): Promise<string> {
@@ -1276,6 +1276,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if ((ended || tooLong) && mr.state === 'recording') {
               try { mr.stop() } catch { }
               setTimeout(uploadChunk, 100)
+              try { latDiag.speechEndAt = performance.now() } catch (e) { }
               return
             }
             if (!stopped) scheduleWatch(60)
