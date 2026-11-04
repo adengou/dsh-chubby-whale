@@ -733,7 +733,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               animRef.current?.talkFor(6000)
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
               noteSpoken(speech)
-              speakText(speech, { rate: '-15%' })
+              speakText(speech, { rate: '-15%', onDone: () => { showBubble('诗念完啦～', 5000); try { speakText('念完啦～') } catch (e) { } } })
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
           return
@@ -749,7 +749,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('讲民间故事·' + tp.title + (tp.book ? '（出自《' + tp.book + '》）' : ''), 9000)
               animRef.current?.talkFor(5000)
               // 照 C# Culture.TaleSpeech：标题 + 出处 + 整篇（超 6000 字才截），叙述一律 -15%
-              speakText('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body.slice(0, 6000), { rate: '-15%' })
+              speakText('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body.slice(0, 6000), { rate: '-15%', onDone: () => { showBubble('故事讲完啦～', 5000); try { speakText('讲完啦～') } catch (e) { } } })
             } else showBubble('故事没讲成')
           }).catch(() => showBubble('故事没讲成'))
           return
@@ -762,7 +762,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               const cut = body.length > 100
               showBubble('讲典故·' + d.item.title + '（' + (d.item.src || '') + '）', 9000)
               animRef.current?.talkFor(5000)
-              speakText('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + body, { rate: '-15%' })
+              speakText('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + body, { rate: '-15%', onDone: () => { showBubble('典故讲完啦～', 5000); try { speakText('讲完啦～') } catch (e) { } } })
             } else showBubble('典故没讲成')
           }).catch(() => showBubble('典故没讲成'))
           return
@@ -773,7 +773,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('成语辨析·' + d.item.title, 8000)
               const sp = String(d.item.title || '') + '：' + String(d.item.text || '')
               // 成语辨析属叙述：一律 -15%，不再按长度改语速
-              speakText(sp, { rate: '-15%' })
+              speakText(sp, { rate: '-15%', onDone: () => { showBubble('这个成语讲完啦～', 5000); try { speakText('讲完啦～') } catch (e) { } } })
             } else showBubble('没查到')
           }).catch(() => showBubble('没查到'))
           return
@@ -1187,6 +1187,10 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             }
             chunks = []
             peak = 0
+            // 关键：每段必须重置语音/静音计数，否则第一段之后 ended 永远为真，
+            // 记录器每 60ms 就被切一次 → 音频太短被丢弃 → 表现为「完全听不到」
+            speechMs = 0
+            quietMs = 0
             chunkStartedAt = performance.now()
             lastTickAt = chunkStartedAt
             mr.start()
@@ -1335,8 +1339,13 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef })),
         menu ? h('div', { style: menuStyle(menu), 'data-menu-root': '1' },
           h('div', { style: { padding: '8px 14px', borderBottom: '1px solid #1f4a85', color: '#9FD8FF', fontSize: 12, display: 'flex', justifyContent: 'space-between' } },
-            // 标题栏只放名字：余额与版本号都在下面菜单项里，避免重复（版本号按规矩放最下面）
-            h('span', null, lang === 'en' ? 'Fat Whale' : '肥鲸'),
+            // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
+            h('span', null, (lang === 'en' ? 'Fat Whale · v' : '肥鲸 · v') + VERSION),
+            h('span', {
+              style: { color: '#FFD166', cursor: 'pointer' },
+              title: lang === 'en' ? 'Click to refresh balance' : '点一下刷新余额',
+              onClick: () => { try { refreshBalance() } catch (e) { } },
+            }, balanceText || '--'),
           ),
           renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel })),
         ) : null,

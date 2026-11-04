@@ -170,7 +170,6 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
     { type: 'item', label: (chatCacheOn ? '聊天缓存：开' : '聊天缓存：关'), action: 'cache-toggle' },
     { type: 'item', label: '让它游走（退出）', action: 'hide' },
     { type: 'sep' },
-    { type: 'item', label: '余额：' + balanceText, action: 'balance' },
     { type: 'item', label: '鱼粮账本', action: 'fishfood' },
     { type: 'item', label: '成长：' + growthText, action: 'growth' },
     { type: 'item', label: '版本：v' + version, action: 'version' },

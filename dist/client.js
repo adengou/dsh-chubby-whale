@@ -255,7 +255,6 @@
       { type: "item", label: chatCacheOn ? "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00" : "\u804A\u5929\u7F13\u5B58\uFF1A\u5173", action: "cache-toggle" },
       { type: "item", label: "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09", action: "hide" },
       { type: "sep" },
-      { type: "item", label: "\u4F59\u989D\uFF1A" + balanceText, action: "balance" },
       { type: "item", label: "\u9C7C\u7CAE\u8D26\u672C", action: "fishfood" },
       { type: "item", label: "\u6210\u957F\uFF1A" + growthText, action: "growth" },
       { type: "item", label: "\u7248\u672C\uFF1Av" + version, action: "version" }
@@ -1581,7 +1580,13 @@
                 animRef.current?.talkFor(6e3);
                 const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
                 noteSpoken(speech);
-                speakText(speech, { rate: "-15%" });
+                speakText(speech, { rate: "-15%", onDone: () => {
+                  showBubble("\u8BD7\u5FF5\u5B8C\u5566\uFF5E", 5e3);
+                  try {
+                    speakText("\u5FF5\u5B8C\u5566\uFF5E");
+                  } catch (e) {
+                  }
+                } });
               } else showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230");
             }).catch(() => showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230"));
             return;
@@ -1595,7 +1600,13 @@
                 const shown = cut ? body.slice(0, 120) + "\u2026" : body;
                 showBubble("\u8BB2\u6C11\u95F4\u6545\u4E8B\xB7" + tp.title + (tp.book ? "\uFF08\u51FA\u81EA\u300A" + tp.book + "\u300B\uFF09" : ""), 9e3);
                 animRef.current?.talkFor(5e3);
-                speakText("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + tp.title + (tp.book ? "\uFF0C\u51FA\u81EA\u300A" + tp.book + "\u300B" : "") + "\u3002" + body.slice(0, 6e3), { rate: "-15%" });
+                speakText("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + tp.title + (tp.book ? "\uFF0C\u51FA\u81EA\u300A" + tp.book + "\u300B" : "") + "\u3002" + body.slice(0, 6e3), { rate: "-15%", onDone: () => {
+                  showBubble("\u6545\u4E8B\u8BB2\u5B8C\u5566\uFF5E", 5e3);
+                  try {
+                    speakText("\u8BB2\u5B8C\u5566\uFF5E");
+                  } catch (e) {
+                  }
+                } });
               } else showBubble("\u6545\u4E8B\u6CA1\u8BB2\u6210");
             }).catch(() => showBubble("\u6545\u4E8B\u6CA1\u8BB2\u6210"));
             return;
@@ -1607,7 +1618,13 @@
                 const cut = body.length > 100;
                 showBubble("\u8BB2\u5178\u6545\xB7" + d.item.title + "\uFF08" + (d.item.src || "") + "\uFF09", 9e3);
                 animRef.current?.talkFor(5e3);
-                speakText("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + body, { rate: "-15%" });
+                speakText("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + body, { rate: "-15%", onDone: () => {
+                  showBubble("\u5178\u6545\u8BB2\u5B8C\u5566\uFF5E", 5e3);
+                  try {
+                    speakText("\u8BB2\u5B8C\u5566\uFF5E");
+                  } catch (e) {
+                  }
+                } });
               } else showBubble("\u5178\u6545\u6CA1\u8BB2\u6210");
             }).catch(() => showBubble("\u5178\u6545\u6CA1\u8BB2\u6210"));
             return;
@@ -1617,7 +1634,13 @@
               if (d && d.ok && d.item) {
                 showBubble("\u6210\u8BED\u8FA8\u6790\xB7" + d.item.title, 8e3);
                 const sp = String(d.item.title || "") + "\uFF1A" + String(d.item.text || "");
-                speakText(sp, { rate: "-15%" });
+                speakText(sp, { rate: "-15%", onDone: () => {
+                  showBubble("\u8FD9\u4E2A\u6210\u8BED\u8BB2\u5B8C\u5566\uFF5E", 5e3);
+                  try {
+                    speakText("\u8BB2\u5B8C\u5566\uFF5E");
+                  } catch (e) {
+                  }
+                } });
               } else showBubble("\u6CA1\u67E5\u5230");
             }).catch(() => showBubble("\u6CA1\u67E5\u5230"));
             return;
@@ -2122,6 +2145,8 @@
               }
               chunks = [];
               peak = 0;
+              speechMs = 0;
+              quietMs = 0;
               chunkStartedAt = performance.now();
               lastTickAt = chunkStartedAt;
               mr.start();
@@ -2327,8 +2352,18 @@
             h(
               "div",
               { style: { padding: "8px 14px", borderBottom: "1px solid #1f4a85", color: "#9FD8FF", fontSize: 12, display: "flex", justifyContent: "space-between" } },
-              // 标题栏只放名字：余额与版本号都在下面菜单项里，避免重复（版本号按规矩放最下面）
-              h("span", null, lang === "en" ? "Fat Whale" : "\u80A5\u9CB8")
+              // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
+              h("span", null, (lang === "en" ? "Fat Whale \xB7 v" : "\u80A5\u9CB8 \xB7 v") + VERSION),
+              h("span", {
+                style: { color: "#FFD166", cursor: "pointer" },
+                title: lang === "en" ? "Click to refresh balance" : "\u70B9\u4E00\u4E0B\u5237\u65B0\u4F59\u989D",
+                onClick: () => {
+                  try {
+                    refreshBalance();
+                  } catch (e) {
+                  }
+                }
+              }, balanceText || "--")
             ),
             renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, chatCacheOn, ttsVoice: (() => {
               try {
