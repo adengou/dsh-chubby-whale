@@ -271,6 +271,8 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
       if (plain === target) return false
       if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return false
       if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return false
+      // 短词回声：主人说 "master"，本鲸回复里也含 master，麦克风会把它听回去 → 就变成"说两遍"
+      if (plain.length >= 3 && now - s.at < 6000 && target.indexOf(plain) >= 0) { try { stats.echoDropped++ } catch (e) { } ; return false }
     }
     // 加强去重：VAD 把一句话切成两段时，ASR 常返回相同/相近文本 → 会重复回答。
     // 与最近 20 秒内听过的 3 句比较：完全相同，或前 8 字相同，视为同一次发言。

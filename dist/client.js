@@ -872,6 +872,14 @@
         if (plain === target) return false;
         if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return false;
         if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return false;
+        if (plain.length >= 3 && now - s.at < 6e3 && target.indexOf(plain) >= 0) {
+          try {
+            stats.echoDropped++;
+          } catch (e) {
+          }
+          ;
+          return false;
+        }
       }
       for (const h of recentHeard) {
         if (now - h.at > 2e4) continue;
