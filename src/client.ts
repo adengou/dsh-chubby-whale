@@ -978,7 +978,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             else if ((c.uploadCalled || 0) === 0) verdict = '→ 上传没被触发（VAD 没判出说话）'
             else if ((c.asrBusyDrop || 0) > 0 && (c.uploaded || 0) === 0) verdict = '→ 识别占线，全被丢弃'
             else if ((c.uploaded || 0) > 0 && (c.recognized || 0) === 0) verdict = '→ 识别服务没返回文字'
-            else if (sent === 0 && (c.recognized || 0) > 0) verdict = '→ 识别成功但被唤醒词/回声拦了'
+            else if ((c.nowake || 0) > 0 && (c.nowakeAccepted || 0) === 0) verdict = '→ 识别到了但被唤醒词拦（说「大肥鱼」开头，或打开语音聊天）'
+            else if (sent === 0 && (c.recognized || 0) > 0) verdict = '→ 识别成功但被回声/唤醒判定拦了'
             else if (sent > 0) verdict = '→ 链路已通（已交给对话）'
             const line = '耳朵自检：音量 ' + Math.round(e.db) + 'dB｜底噪 ' + Math.round(e.noiseDb)
               + 'dB｜阈值 ' + Math.round(e.onsetDb) + 'dB\n'
@@ -1316,9 +1317,17 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 try { t = t.replace(/大肥鱼|肥鲸|肥鱼|小鱼|蓝鱼|小蓝鱼|鱼鱼|肥肥/g, '').trim() } catch (e) { }
                 if (!t) { showBubble('我在～主人说～', 3000); return }
               } else {
-                const wokeRecent = Date.now() - wokeRef.current.at < 120000   // 唤醒后 2 分钟内可以直接接着说
-                if (!wokeRecent) return
-                try { earDiag.chunks.nowake++ } catch (e) { }
+                // 语音待命开着 + 语音聊天开着 = 主人就是在跟本鱼说话，不必每次都喊唤醒词。
+                // 以前没喊唤醒词就直接丢，主人说「你好呀」当然毫无反应（这就是"接不住"的体感来源）。
+                const wokeRecent = Date.now() - wokeRef.current.at < 120000
+                if (!wokeRecent) {
+                  if (voiceChatOnRef.current) {
+                    try { earDiag.chunks.nowakeAccepted = (earDiag.chunks.nowakeAccepted || 0) + 1 } catch (e) { }
+                  } else {
+                    try { earDiag.chunks.nowake++ } catch (e) { }
+                    return
+                  }
+                }
               }
               voiceModeRef.current = true
               setChatOpen(false)
