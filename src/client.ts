@@ -42,6 +42,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     let chatEpoch = 0
     let asrBusy = false
     let asrBusyAt = 0   // 识别位占用的起始时刻（用于僵尸复位与状态显示）
+    // 叙述语速（与 voice.ts 同源，localStorage 可调，默认 -25%）
+    const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-narration-rate'); return (s && /^[+-]\\d{1,2}%$/.test(s)) ? s : '-25%' } catch (e) { return '-25%' } })()
     const storyNarratingRef = { current: false }
     const persona = createPersona()   // 饭团人设：情绪状态机 + 台词库（data/persona.json）
     const latDiag: any = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 }
@@ -468,7 +470,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         storyBusyRef.current = true
         storyNarratingRef.current = true
         speakText(text, {
-          rate: normalizeRate(d.rate, '-15%'),
+          rate: normalizeRate(d.rate, NARRATION_RATE),
           onDone: () => {
             storyBusyRef.current = false
             storyNarratingRef.current = false
@@ -577,7 +579,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('念诗·' + p.title + '（' + author + '）', 15000)
               animRef.current?.talkFor(6000)
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
-              speakText(speech, { rate: '-15%', onDone: () => { showBubble('诗念完啦～', 5000); try { speakText('念完啦～') } catch (e) { } } })
+              speakText(speech, { rate: NARRATION_RATE, onDone: () => { showBubble('诗念完啦～', 5000); try { speakText('念完啦～') } catch (e) { } } })
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
           return
@@ -593,7 +595,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('讲民间故事·' + tp.title + (tp.book ? '（出自《' + tp.book + '》）' : ''), 9000)
               animRef.current?.talkFor(5000)
               // 照 C# Culture.TaleSpeech：标题 + 出处 + 整篇（超 6000 字才截），叙述一律 -15%
-              speakText('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body.slice(0, 6000), { rate: '-15%', onDone: () => { showBubble('故事讲完啦～', 5000); try { speakText('讲完啦～') } catch (e) { } } })
+              speakText('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body.slice(0, 6000), { rate: NARRATION_RATE, onDone: () => { showBubble('故事讲完啦～', 5000); try { speakText('讲完啦～') } catch (e) { } } })
             } else showBubble('故事没讲成')
           }).catch(() => showBubble('故事没讲成'))
           return
@@ -606,7 +608,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               const cut = body.length > 100
               showBubble('讲典故·' + d.item.title + '（' + (d.item.src || '') + '）', 9000)
               animRef.current?.talkFor(5000)
-              speakText('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + body, { rate: '-15%', onDone: () => { showBubble('典故讲完啦～', 5000); try { speakText('讲完啦～') } catch (e) { } } })
+              speakText('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + body, { rate: NARRATION_RATE, onDone: () => { showBubble('典故讲完啦～', 5000); try { speakText('讲完啦～') } catch (e) { } } })
             } else showBubble('典故没讲成')
           }).catch(() => showBubble('典故没讲成'))
           return
@@ -617,7 +619,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('成语辨析·' + d.item.title, 8000)
               const sp = String(d.item.title || '') + '：' + String(d.item.text || '')
               // 成语辨析属叙述：一律 -15%，不再按长度改语速
-              speakText(sp, { rate: '-15%', onDone: () => { showBubble('这个成语讲完啦～', 5000); try { speakText('讲完啦～') } catch (e) { } } })
+              speakText(sp, { rate: NARRATION_RATE, onDone: () => { showBubble('这个成语讲完啦～', 5000); try { speakText('讲完啦～') } catch (e) { } } })
             } else showBubble('没查到')
           }).catch(() => showBubble('没查到'))
           return
@@ -778,7 +780,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 const reply = (d && d.reply) || '这条鱼看不懂这张图……'
                 showBubble('（看图）' + reply, 10000)
                 // 聊天回复：长回复（≥80 字）按叙述 -15%，短句正常语速
-      speakText(reply, { rate: reply.length >= 80 ? '-15%' : '+0%' })
+      speakText(reply, { rate: reply.length >= 80 ? NARRATION_RATE : '+0%' })
               } catch (e) { showBubble('图片处理失败', 4000) }
             }
             input.click()
@@ -895,7 +897,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (data && data.reply && myEpoch === chatEpoch) {
               const rp = String(data.reply)
               try { (window as any).__chubbyWhale.lastChat = { stage: 'speak', reply: rp.slice(0, 40), at: Date.now() } } catch (e) { }
-      speakText(rp, { rate: rp.length >= 80 ? '-15%' : '+0%' })
+      speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE : '+0%' })
             }
           } catch { }
           scrollBody()

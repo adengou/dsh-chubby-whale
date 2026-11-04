@@ -613,6 +613,14 @@
   var ECHO_MUTE_MS = 700;
   var ASR_TIMEOUT_MS = 15e3;
   var TTS_TIMEOUT_MS = 2e4;
+  var NARRATION_RATE = (() => {
+    try {
+      const s = localStorage.getItem("chubby-narration-rate");
+      return s && /^[+-]\d{1,2}%$/.test(s) ? s : "-25%";
+    } catch (e) {
+      return "-25%";
+    }
+  })();
   var TTS_WATCH_MS = 1e3;
   var TTS_ZOMBIE_MS = 2500;
   var NOISE_TEXTS = ["\u55EF", "\u5443", "\u554A", "\u54E6", "\u55EF\u55EF", "\u8C22\u8C22\u89C2\u770B", "\u8C22\u8C22\u5927\u5BB6", "\u5B57\u5E55", "\u8BF7\u4E0D\u541D\u70B9\u8D5E", "\u8BA2\u9605", "\u8F6C\u53D1", "\u6253\u8D4F", "\u518D\u89C1", "\u672C\u9C7C\u5728\u542C", "\u55EF\u672C\u9C7C\u5728\u542C"];
@@ -1171,7 +1179,7 @@
     function speak(text, o) {
       const raw = String(text || "");
       const narration = o && typeof o.narration === "boolean" ? o.narration : raw.length >= 80;
-      const rate = o && o.rate ? o.rate : narration ? "-15%" : "+0%";
+      const rate = o && o.rate ? o.rate : narration ? NARRATION_RATE : "+0%";
       const segs = splitForTts(raw, 56);
       if (!segs.length) return;
       noteSpoken(raw);
@@ -1557,6 +1565,14 @@
       let chatEpoch = 0;
       let asrBusy = false;
       let asrBusyAt = 0;
+      const NARRATION_RATE2 = (() => {
+        try {
+          const s = localStorage.getItem("chubby-narration-rate");
+          return s && /^[+-]\\d{1,2}%$/.test(s) ? s : "-25%";
+        } catch (e) {
+          return "-25%";
+        }
+      })();
       const storyNarratingRef = { current: false };
       const persona = createPersona();
       const latDiag = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 };
@@ -2138,7 +2154,7 @@
           storyBusyRef.current = true;
           storyNarratingRef.current = true;
           speakText(text, {
-            rate: normalizeRate(d.rate, "-15%"),
+            rate: normalizeRate(d.rate, NARRATION_RATE2),
             onDone: () => {
               storyBusyRef.current = false;
               storyNarratingRef.current = false;
@@ -2320,7 +2336,7 @@
                 showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + author + "\uFF09", 15e3);
                 animRef.current?.talkFor(6e3);
                 const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
-                speakText(speech, { rate: "-15%", onDone: () => {
+                speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
                   showBubble("\u8BD7\u5FF5\u5B8C\u5566\uFF5E", 5e3);
                   try {
                     speakText("\u5FF5\u5B8C\u5566\uFF5E");
@@ -2340,7 +2356,7 @@
                 const shown = cut ? body.slice(0, 120) + "\u2026" : body;
                 showBubble("\u8BB2\u6C11\u95F4\u6545\u4E8B\xB7" + tp.title + (tp.book ? "\uFF08\u51FA\u81EA\u300A" + tp.book + "\u300B\uFF09" : ""), 9e3);
                 animRef.current?.talkFor(5e3);
-                speakText("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + tp.title + (tp.book ? "\uFF0C\u51FA\u81EA\u300A" + tp.book + "\u300B" : "") + "\u3002" + body.slice(0, 6e3), { rate: "-15%", onDone: () => {
+                speakText("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + tp.title + (tp.book ? "\uFF0C\u51FA\u81EA\u300A" + tp.book + "\u300B" : "") + "\u3002" + body.slice(0, 6e3), { rate: NARRATION_RATE2, onDone: () => {
                   showBubble("\u6545\u4E8B\u8BB2\u5B8C\u5566\uFF5E", 5e3);
                   try {
                     speakText("\u8BB2\u5B8C\u5566\uFF5E");
@@ -2358,7 +2374,7 @@
                 const cut = body.length > 100;
                 showBubble("\u8BB2\u5178\u6545\xB7" + d.item.title + "\uFF08" + (d.item.src || "") + "\uFF09", 9e3);
                 animRef.current?.talkFor(5e3);
-                speakText("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + body, { rate: "-15%", onDone: () => {
+                speakText("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + body, { rate: NARRATION_RATE2, onDone: () => {
                   showBubble("\u5178\u6545\u8BB2\u5B8C\u5566\uFF5E", 5e3);
                   try {
                     speakText("\u8BB2\u5B8C\u5566\uFF5E");
@@ -2374,7 +2390,7 @@
               if (d && d.ok && d.item) {
                 showBubble("\u6210\u8BED\u8FA8\u6790\xB7" + d.item.title, 8e3);
                 const sp = String(d.item.title || "") + "\uFF1A" + String(d.item.text || "");
-                speakText(sp, { rate: "-15%", onDone: () => {
+                speakText(sp, { rate: NARRATION_RATE2, onDone: () => {
                   showBubble("\u8FD9\u4E2A\u6210\u8BED\u8BB2\u5B8C\u5566\uFF5E", 5e3);
                   try {
                     speakText("\u8BB2\u5B8C\u5566\uFF5E");
@@ -2589,7 +2605,7 @@
                   const d = await res.json();
                   const reply = d && d.reply || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
                   showBubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
-                  speakText(reply, { rate: reply.length >= 80 ? "-15%" : "+0%" });
+                  speakText(reply, { rate: reply.length >= 80 ? NARRATION_RATE2 : "+0%" });
                 } catch (e) {
                   showBubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
                 }
@@ -2764,7 +2780,7 @@
                   window.__chubbyWhale.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now() };
                 } catch (e) {
                 }
-                speakText(rp, { rate: rp.length >= 80 ? "-15%" : "+0%" });
+                speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE2 : "+0%" });
               }
             } catch {
             }
