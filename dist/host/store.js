@@ -100,7 +100,7 @@ export function createStore(dataDir) {
             console.error('[store] 坏文件备份失败 file=' + file + ' err=' + String((err2 && err2.message) || err2));
         }
     }
-    // ===== 聊天记忆（history + summary，照 fish-pet） =====
+    // ===== 聊天记忆（history + summary，照 C# 版） =====
     function loadMemoryObj() {
         try {
             const obj = JSON.parse(readFileSync(MEMORY, 'utf8'));
@@ -366,7 +366,7 @@ export function createStore(dataDir) {
     function removeReminder(id) {
         saveReminders(loadReminders().filter((r) => r.id !== id));
     }
-    // ===== 宠物状态（feeds/hunger/mood，照 fish-pet 的 state.json） =====
+    // ===== 宠物状态（feeds/hunger/mood，照 C# 版 的 state.json） =====
     function loadPet() {
         try {
             const obj = JSON.parse(readFileSync(PET, 'utf8'));

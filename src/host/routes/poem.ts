@@ -7,9 +7,9 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-export function createPoemHandler(opts: { dataDir: string }) {
+export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }) {
   const POEMS_FILE = join(opts.dataDir, 'poems.json')
-  const SEEN_FILE = join(opts.dataDir, 'poem-seen.json')
+  const SEEN_FILE = join(opts.runtimeDir || opts.dataDir, 'poem-seen.json')
   let poems: any[] | null = null
   let seen: Set<string> | null = null
 

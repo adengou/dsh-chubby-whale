@@ -11,9 +11,9 @@ import { readFile } from 'node:fs/promises'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-export function createCultureHandlers(opts: { dataDir: string }) {
+export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: string }) {
   const CULTURE_DIR = join(opts.dataDir, 'culture')
-  const SEEN_FILE = join(opts.dataDir, 'culture-seen.json')
+  const SEEN_FILE = join(opts.runtimeDir || opts.dataDir, 'culture-seen.json')
   const cache = new Map<string, any[]>()
   let seen: Record<string, boolean> | null = null
 

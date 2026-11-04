@@ -59,7 +59,13 @@ export function createTtsHandler(opts: { voice?: string; cache?: any }) {
           if (code === 0) resolve()
           else reject(new Error('tts exit ' + code))
         })
-        child.on('error', (err: any) => { clearTimeout(timer); reject(err) })
+        // 本机没装 python / edge-tts → 标记 TTS_UNAVAILABLE，让客户端降级到浏览器朗读
+        child.on('error', (err: any) => {
+          clearTimeout(timer)
+          const e: any = new Error('tts unavailable: ' + String(err?.message || err))
+          e.code = 'TTS_UNAVAILABLE'
+          reject(e)
+        })
       })
       const buf = await readFile(tmpFile)
       if (cache) { try { await cache.setJson(ck, buf, 'mp3') } catch { } }
@@ -67,8 +73,14 @@ export function createTtsHandler(opts: { voice?: string; cache?: any }) {
       res.end(buf)
     } catch (err: any) {
       try {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }))
+        // 合成不可用（没装 python/edge-tts）→ 501，客户端据此改用浏览器 speechSynthesis；其余 → 500
+        const unavailable = err && err.code === 'TTS_UNAVAILABLE'
+        res.writeHead(unavailable ? 501 : 500, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({
+          ok: false,
+          code: unavailable ? 'TTS_UNAVAILABLE' : 'TTS_FAILED',
+          error: String(err?.message || err),
+        }))
       } catch { }
     } finally {
       if (tmpFile) { try { await unlink(tmpFile) } catch { } }

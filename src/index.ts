@@ -4,6 +4,8 @@
  * 模块：host/config.ts（Key）、host/store.ts（持久化）、host/routes/*（路由）。
  */
 import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
+import { mkdirSync, existsSync, copyFileSync, cpSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { readApiKey } from './host/config.js'
 import { createStore } from './host/store.js'
@@ -20,7 +22,41 @@ import { createAsrHandler, readSiliconFlowKey } from './host/routes/asr.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PLUGIN_DIR = join(__dirname, '..')
+/** 内容数据（17 本古籍 / 诗词 / 文化 / 曲库）——随插件包发布，只读 */
 const DATA_DIR = join(PLUGIN_DIR, 'data')
+/**
+ * 运行数据（记忆 / 成长 / 提醒 / 进度 / 缓存）——放在插件包**之外**的独立目录：
+ * 插件升级/重装不会抹掉，也不会与任何其他插件共享。
+ */
+const RUNTIME_DIR = join(homedir(), '.dsh-chubby-whale')
+
+/** 老的运行数据写在包内 data/ 里，首次启动搬到 RUNTIME_DIR（不删原件，保守迁移） */
+function migrateRuntimeData(): void {
+  const files = [
+    'memory.json', 'state.json', 'growth.json', 'fishfood.json', 'reminders.json',
+    'story_progress.json', 'culture-seen.json', 'poem-seen.json', 'pet_state.json',
+  ]
+  try { mkdirSync(RUNTIME_DIR, { recursive: true }) } catch { }
+  for (const f of files) {
+    const src = join(DATA_DIR, f)
+    const dst = join(RUNTIME_DIR, f)
+    try {
+      if (existsSync(src) && !existsSync(dst)) {
+        copyFileSync(src, dst)
+        console.log('[chubby-whale] 迁移运行数据 ' + f + ' → ' + RUNTIME_DIR)
+      }
+    } catch { }
+  }
+  // 缓存目录整目录搬迁（只在目标不存在时）
+  try {
+    const src = join(DATA_DIR, 'cache')
+    const dst = join(RUNTIME_DIR, 'cache')
+    if (existsSync(src) && !existsSync(dst)) {
+      cpSync(src, dst, { recursive: true })
+      console.log('[chubby-whale] 迁移缓存 → ' + dst)
+    }
+  } catch { }
+}
 
 export const name = 'dsh-chubby-whale'
 export const inject = ['webServer']
@@ -44,10 +80,12 @@ export function apply(ctx: any, config?: any): void {
     return
   }
 
-  const store = createStore(DATA_DIR)
-  const ttsCache = createCache({ dir: join(DATA_DIR, 'cache', 'tts') })
-  const chatCache = createCache({ dir: join(DATA_DIR, 'cache', 'chat') })
-  const asrCache = createCache({ dir: join(DATA_DIR, 'cache', 'asr') })
+  migrateRuntimeData()
+
+  const store = createStore(RUNTIME_DIR)
+  const ttsCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'tts') })
+  const chatCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'chat') })
+  const asrCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'asr') })
   const getKey = () => readApiKey(PLUGIN_DIR)
 
   const chat = createChatHandler({
@@ -84,8 +122,8 @@ export function apply(ctx: any, config?: any): void {
     dueReminders: store.dueReminders,
     removeReminder: store.removeReminder,
   })
-  const culture = createCultureHandlers({ dataDir: DATA_DIR })
-  const poem = createPoemHandler({ dataDir: DATA_DIR })
+  const culture = createCultureHandlers({ dataDir: DATA_DIR, runtimeDir: RUNTIME_DIR })
+  const poem = createPoemHandler({ dataDir: DATA_DIR, runtimeDir: RUNTIME_DIR })
   const briefing = createBriefingHandlers({
     loadGrowth: store.loadGrowth,
     loadReminders: store.loadReminders,

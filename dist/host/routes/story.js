@@ -22,7 +22,7 @@ export const STORY_AUTHORS = {
 };
 export function createStoryHandlers(opts) {
     const STORY_DIR = join(opts.dataDir, 'story');
-    const PROGRESS = join(opts.dataDir, 'story_progress.json');
+    const PROGRESS = join(opts.runtimeDir || opts.dataDir, 'story_progress.json');
     const bookCache = new Map();
     const progress = loadProgress();
     // 每个客户端一条连播队列：{ queue: 本书剩余未读段, book: 书名 }
@@ -165,7 +165,7 @@ export function createStoryHandlers(opts) {
             }
         });
     }
-    // 播一段（组装开场白/结尾，照 fish-pet 的 Speak-StoryChunk）
+    // 播一段（组装开场白/结尾，照 C# 版 的 Speak-StoryChunk）
     function buildChunk(c, isFirst, isLast) {
         const bookName = String(c.book || '故事');
         const title = String(c.title || '');

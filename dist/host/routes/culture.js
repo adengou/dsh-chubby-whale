@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 export function createCultureHandlers(opts) {
     const CULTURE_DIR = join(opts.dataDir, 'culture');
-    const SEEN_FILE = join(opts.dataDir, 'culture-seen.json');
+    const SEEN_FILE = join(opts.runtimeDir || opts.dataDir, 'culture-seen.json');
     const cache = new Map();
     let seen = null;
     /** 读一份文化数据；缺失/损坏/结构不对都返回空数组，并按 key 去重（保留第一条） */

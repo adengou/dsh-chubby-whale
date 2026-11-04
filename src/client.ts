@@ -57,6 +57,27 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       job.onDone = undefined
       try { cb() } catch (e) { }
     }
+    /**
+     * 纯前端兜底朗读：本机没装 python/edge-tts（服务端 501）时用浏览器内置语音，
+     * 保证"没有外部依赖也听得到声音"。resolve(null) 表示这段已经用浏览器念完了。
+     */
+    function speakWithBrowserTts(job: TtsJob): Promise<null> {
+      try {
+        const ss = (window as any).speechSynthesis
+        const Us = (window as any).SpeechSynthesisUtterance
+        if (!ss || !Us) return Promise.resolve(null)
+        const u = new Us(String(job.text || '').slice(0, 300))
+        u.lang = /[\u4e00-\u9fa5]/.test(job.text) ? 'zh-CN' : 'en-US'
+        return new Promise<null>((resolve) => {
+          let done = false
+          const finish = () => { if (!done) { done = true; resolve(null) } }
+          u.onend = finish
+          u.onerror = finish
+          try { ss.cancel(); ss.speak(u) } catch (e) { finish() }
+          setTimeout(finish, 12000)
+        })
+      } catch (e) { return Promise.resolve(null) }
+    }
     /** 合成一段音频；失败返回 null（播放端跳过这一段，绝不把整条队列卡死） */
     function fetchTts(job: TtsJob): Promise<ArrayBuffer | null> {
       try {
@@ -65,9 +86,15 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ text: job.text, voice: currentVoice(), rate: job.rate }),
         }).then((r: any) => {
+          const ct = String((r.headers && r.headers.get && r.headers.get('content-type')) || '')
+          // 服务端 501 / JSON 错误 = 没有 edge-tts，改走浏览器朗读
+          if (r.status === 501 || ct.indexOf('application/json') >= 0) throw new Error('TTS_UNAVAILABLE')
           if (!r.ok) throw new Error('tts http ' + r.status)
           return r.arrayBuffer()
-        }).catch(() => null)
+        }).catch((err: any) => {
+          if (String((err && err.message) || err).indexOf('TTS_UNAVAILABLE') >= 0) return speakWithBrowserTts(job)
+          return null
+        })
       } catch (e) { return Promise.resolve(null) }
     }
     /** 把队首那段的合成先压上去（已在预取里就不重复发） */
@@ -834,7 +861,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }, 20000)
         return () => clearInterval(timer)
       }, [])
-      // 语音待命（VAD 版，照 fish-pet）：连续录音，静音 700ms 判定说完，立即上传识别
+      // 语音待命（VAD 版，照 C# 版）：连续录音，静音 700ms 判定说完，立即上传识别
       R.useEffect(() => {
         let stopped = false
         let lastHeardText = ''

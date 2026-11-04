@@ -1,5 +1,5 @@
 /**
- * client/menu.ts —— 菜单数据（1:1 复刻 dsh-fish-pet 的 menu.ps1，含中英双语）
+ * client/menu.ts —— 菜单数据（1:1 复刻 C# 版 的 menu.ps1，含中英双语）
  */
 export type MenuItem =
   | { type: 'item'; label: string; action: string; note?: string }

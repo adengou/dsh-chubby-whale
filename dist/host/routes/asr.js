@@ -1,13 +1,6 @@
-/**
- * host/routes/asr.ts —— 语音识别路由（硅基流动 Qwen3-ASR）
- * POST JSON { audio: base64, format: 'webm'|'wav'|'mp3' } → { text }
- * Key 来源：插件 config.json 的 siliconflowKey > 环境变量 SILICONFLOW_API_KEY
- * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB；外呼超时 60 秒
- */
-import { readFileSync } from 'node:fs';
 import { hashBytes } from '../cache.js';
+import { readSiliconFlowKey } from '../config.js';
 import { fetchJson, isBodyTooLarge, isTimeoutError, readBody, sendTooLarge } from '../http.js';
-import { join } from 'node:path';
 const ASR_MODEL = 'Qwen/Qwen3-ASR-1.7B';
 const ENDPOINT = 'https://api.siliconflow.cn/v1/audio/transcriptions';
 /** 识别结果的缓存有效期：7 天（音频字节内容 hash，同一个录音重放可直接命中） */
@@ -18,20 +11,7 @@ const ASR_MAX_BODY = 12 * 1024 * 1024;
 const ASR_MAX_AUDIO = 8 * 1024 * 1024;
 /** 外呼超时：60 秒 */
 const ASR_TIMEOUT = 60 * 1000;
-export function readSiliconFlowKey(pluginDir) {
-    try {
-        const cfg = JSON.parse(readFileSync(join(pluginDir, 'config.json'), 'utf8'));
-        if (cfg && typeof cfg.siliconflowKey === 'string' && cfg.siliconflowKey.trim())
-            return cfg.siliconflowKey.trim();
-    }
-    catch { }
-    try {
-        if (process.env.SILICONFLOW_API_KEY)
-            return process.env.SILICONFLOW_API_KEY.trim();
-    }
-    catch { }
-    return '';
-}
+export { readSiliconFlowKey };
 export function createAsrHandler(opts) {
     return async function handleAsr(req, res) {
         try {

@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 export function createPoemHandler(opts) {
     const POEMS_FILE = join(opts.dataDir, 'poems.json');
-    const SEEN_FILE = join(opts.dataDir, 'poem-seen.json');
+    const SEEN_FILE = join(opts.runtimeDir || opts.dataDir, 'poem-seen.json');
     let poems = null;
     let seen = null;
     function keyOf(p) {

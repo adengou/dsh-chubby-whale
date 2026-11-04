@@ -6,6 +6,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { hashBytes } from '../cache.js'
+import { readSiliconFlowKey } from '../config.js'
 import { fetchJson, isBodyTooLarge, isTimeoutError, readBody, sendTooLarge } from '../http.js'
 import { join } from 'node:path'
 
@@ -20,16 +21,7 @@ const ASR_MAX_AUDIO = 8 * 1024 * 1024
 /** 外呼超时：60 秒 */
 const ASR_TIMEOUT = 60 * 1000
 
-export function readSiliconFlowKey(pluginDir: string): string {
-  try {
-    const cfg = JSON.parse(readFileSync(join(pluginDir, 'config.json'), 'utf8'))
-    if (cfg && typeof cfg.siliconflowKey === 'string' && cfg.siliconflowKey.trim()) return cfg.siliconflowKey.trim()
-  } catch { }
-  try {
-    if (process.env.SILICONFLOW_API_KEY) return process.env.SILICONFLOW_API_KEY.trim()
-  } catch { }
-  return ''
-}
+export { readSiliconFlowKey }
 
 export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
   return async function handleAsr(req: any, res: any): Promise<void> {

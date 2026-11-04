@@ -93,7 +93,7 @@ export function createStore(dataDir: string) {
     }
   }
 
-  // ===== 聊天记忆（history + summary，照 fish-pet） =====
+  // ===== 聊天记忆（history + summary，照 C# 版） =====
   function loadMemoryObj(): any {
     try {
       const obj = JSON.parse(readFileSync(MEMORY, 'utf8'))
@@ -316,7 +316,7 @@ export function createStore(dataDir: string) {
     saveReminders(loadReminders().filter((r: any) => r.id !== id))
   }
 
-  // ===== 宠物状态（feeds/hunger/mood，照 fish-pet 的 state.json） =====
+  // ===== 宠物状态（feeds/hunger/mood，照 C# 版 的 state.json） =====
   function loadPet(): any {
     try {
       const obj = JSON.parse(readFileSync(PET, 'utf8'))

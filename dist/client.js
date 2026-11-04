@@ -636,6 +636,35 @@
         } catch (e) {
         }
       }
+      function speakWithBrowserTts(job) {
+        try {
+          const ss = window.speechSynthesis;
+          const Us = window.SpeechSynthesisUtterance;
+          if (!ss || !Us) return Promise.resolve(null);
+          const u = new Us(String(job.text || "").slice(0, 300));
+          u.lang = /[\u4e00-\u9fa5]/.test(job.text) ? "zh-CN" : "en-US";
+          return new Promise((resolve) => {
+            let done = false;
+            const finish = () => {
+              if (!done) {
+                done = true;
+                resolve(null);
+              }
+            };
+            u.onend = finish;
+            u.onerror = finish;
+            try {
+              ss.cancel();
+              ss.speak(u);
+            } catch (e) {
+              finish();
+            }
+            setTimeout(finish, 12e3);
+          });
+        } catch (e) {
+          return Promise.resolve(null);
+        }
+      }
       function fetchTts(job) {
         try {
           return fetch("/api/chubby-whale/tts", {
@@ -643,9 +672,14 @@
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ text: job.text, voice: currentVoice(), rate: job.rate })
           }).then((r) => {
+            const ct = String(r.headers && r.headers.get && r.headers.get("content-type") || "");
+            if (r.status === 501 || ct.indexOf("application/json") >= 0) throw new Error("TTS_UNAVAILABLE");
             if (!r.ok) throw new Error("tts http " + r.status);
             return r.arrayBuffer();
-          }).catch(() => null);
+          }).catch((err) => {
+            if (String(err && err.message || err).indexOf("TTS_UNAVAILABLE") >= 0) return speakWithBrowserTts(job);
+            return null;
+          });
         } catch (e) {
           return Promise.resolve(null);
         }
