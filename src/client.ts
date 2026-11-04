@@ -162,6 +162,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     function prefetchFiller(): void {
       if (fillerBuf || fillerLoading) return
       try { if (localStorage.getItem('chubby-voice') === 'off') return } catch (e) { }
+        try { if (localStorage.getItem('chubby-voice') === 'off') { (window as any).__chubbyWhale.ttsSkip = 'voice-off（菜单里语音朗读是关的）'; return } } catch (e) { }
+        try { (window as any).__chubbyWhale.ttsSkip = '' } catch (e) { }
       fillerLoading = true
       try {
         fetch('/api/chubby-whale/tts', {
@@ -213,7 +215,10 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     function speakText(text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
       try {
         if (!text) return
+        try { (window as any).__chubbyWhale.ttsSkip = 'empty-text' } catch (e) { }
         try { if (localStorage.getItem('chubby-voice') === 'off') return } catch (e) { }
+        try { if (localStorage.getItem('chubby-voice') === 'off') { (window as any).__chubbyWhale.ttsSkip = 'voice-off（菜单里语音朗读是关的）'; return } } catch (e) { }
+        try { (window as any).__chubbyWhale.ttsSkip = '' } catch (e) { }
         // 模型回复里的 markdown/emoji 念出来很怪：入队前先清洗（照 C# TextTools.Clean）
         const clean = cleanTtsText(text)
         if (!clean) return
@@ -362,6 +367,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         const ctx = new AC()
         melodyCtx = ctx
         try { ctx.resume() } catch (e) { }
+      // 显式等上下文真正跑起来：suspended 状态下排程的音符会被吞，听感就是"开头没弹"
+      try { if (ctx.state === 'suspended') ctx.resume() } catch (e) { }
         const beat = 60 / Math.max(60, bpm || 100)
         let t = ctx.currentTime + 0.05
         for (const pair of notes) {
@@ -1058,6 +1065,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       async function sendText(rawText: string, opts?: { voice?: boolean }): Promise<void> {
         const text = String(rawText || '').trim()
         if (!text) return
+        try { (window as any).__chubbyWhale.ttsSkip = 'empty-text' } catch (e) { }
         // 占线保护：上一条还在想就拒绝（不排队），避免两条回复抢同一个话筒
         if (busy) { if (opts && opts.voice) showBubble('本鲸还在想上一句呢，稍等～', 2500); return }
         // 用户提问永远优先：先打断正在播的旁白（说书/念诗）再回答

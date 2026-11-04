@@ -850,6 +850,17 @@
           if (localStorage.getItem("chubby-voice") === "off") return;
         } catch (e) {
         }
+        try {
+          if (localStorage.getItem("chubby-voice") === "off") {
+            window.__chubbyWhale.ttsSkip = "voice-off\uFF08\u83DC\u5355\u91CC\u8BED\u97F3\u6717\u8BFB\u662F\u5173\u7684\uFF09";
+            return;
+          }
+        } catch (e) {
+        }
+        try {
+          window.__chubbyWhale.ttsSkip = "";
+        } catch (e) {
+        }
         fillerLoading = true;
         try {
           fetch("/api/chubby-whale/tts", {
@@ -965,7 +976,22 @@
         try {
           if (!text) return;
           try {
+            window.__chubbyWhale.ttsSkip = "empty-text";
+          } catch (e) {
+          }
+          try {
             if (localStorage.getItem("chubby-voice") === "off") return;
+          } catch (e) {
+          }
+          try {
+            if (localStorage.getItem("chubby-voice") === "off") {
+              window.__chubbyWhale.ttsSkip = "voice-off\uFF08\u83DC\u5355\u91CC\u8BED\u97F3\u6717\u8BFB\u662F\u5173\u7684\uFF09";
+              return;
+            }
+          } catch (e) {
+          }
+          try {
+            window.__chubbyWhale.ttsSkip = "";
           } catch (e) {
           }
           const clean = cleanTtsText(text);
@@ -1186,6 +1212,10 @@
           melodyCtx = ctx;
           try {
             ctx.resume();
+          } catch (e) {
+          }
+          try {
+            if (ctx.state === "suspended") ctx.resume();
           } catch (e) {
           }
           const beat = 60 / Math.max(60, bpm || 100);
@@ -2107,6 +2137,10 @@
         async function sendText(rawText, opts) {
           const text = String(rawText || "").trim();
           if (!text) return;
+          try {
+            window.__chubbyWhale.ttsSkip = "empty-text";
+          } catch (e) {
+          }
           if (busy) {
             if (opts && opts.voice) showBubble("\u672C\u9CB8\u8FD8\u5728\u60F3\u4E0A\u4E00\u53E5\u5462\uFF0C\u7A0D\u7B49\uFF5E", 2500);
             return;
