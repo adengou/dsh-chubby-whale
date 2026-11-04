@@ -50,8 +50,6 @@ export type Voice = {
   recognizing: () => boolean
   speak: (text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }) => void
   stopSpeaking: () => void
-  /** 播一句极短的「嗯」占位音（预先合成，点一下就有回应） */
-  playFiller: () => void
   setVoiceName: (name: string) => void
   mute: (on: boolean) => void
   stats: VoiceStats
@@ -124,8 +122,6 @@ export function createVoice(opts: VoiceOptions): Voice {
   let ttsBusySince = 0
   let ttsWatch: any = null
   let mutedUntil = 0
-  let fillerBuf: ArrayBuffer | null = null
-  let fillerAt = 0
   let speakToken = 0
 
   const level = () => {
@@ -436,37 +432,11 @@ export function createVoice(opts: VoiceOptions): Voice {
     setStatus('listening')
   }
 
-  function playFiller(): void {
-    const now = Date.now()
-    if (now - fillerAt < 2500) return
-    fillerAt = now
-    const doPlay = (buf: ArrayBuffer) => {
-      try {
-        const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
-        const a = new Audio(url)
-        a.volume = 0.9
-        a.onended = () => { try { URL.revokeObjectURL(url) } catch (e) { } }
-        a.play().catch(() => { try { URL.revokeObjectURL(url) } catch (e) { } })
-      } catch (e) { }
-    }
-    if (fillerBuf) { doPlay(fillerBuf); return }
-    // 首次：合成一句极短的占位音，之后复用
-    fetchWithTimeout(apiBase + '/tts', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: '嗯。', voice: voiceName }),
-    }, TTS_TIMEOUT_MS).then((r) => r.arrayBuffer()).then((buf) => {
-      fillerBuf = buf
-      doPlay(buf)
-    }).catch(() => { })
-  }
-
   return {
     start,
     stop,
     speak,
     stopSpeaking,
-    playFiller,
     speaking: () => ttsBusy,
     recognizing: () => status === 'recognizing',
     setVoiceName: (n: string) => { voiceName = n || voiceName },

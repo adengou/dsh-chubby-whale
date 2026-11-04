@@ -531,8 +531,6 @@
     let ttsBusySince = 0;
     let ttsWatch = null;
     let mutedUntil = 0;
-    let fillerBuf = null;
-    let fillerAt = 0;
     let speakToken = 0;
     const level = () => {
       if (!analyser || !timeBuf) return -160;
@@ -695,7 +693,7 @@
       lastTextAt = now;
       return true;
     }
-    function noteSpoken2(text) {
+    function noteSpoken(text) {
       const t = String(text || "").trim();
       if (!t) return;
       spokenRecent.push({ text: t, at: Date.now() });
@@ -928,7 +926,7 @@
     function speak(text, o) {
       const segs = splitText(String(text || ""), TTS_SEG_MAX);
       if (!segs.length) return;
-      noteSpoken2(text);
+      noteSpoken(text);
       for (let i = 0; i < segs.length; i++) {
         ttsQ.push({
           text: segs[i],
@@ -962,50 +960,11 @@
       mutedUntil = Date.now() + ECHO_MUTE_MS;
       setStatus("listening");
     }
-    function playFiller() {
-      const now = Date.now();
-      if (now - fillerAt < 2500) return;
-      fillerAt = now;
-      const doPlay = (buf) => {
-        try {
-          const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
-          const a = new Audio(url);
-          a.volume = 0.9;
-          a.onended = () => {
-            try {
-              URL.revokeObjectURL(url);
-            } catch (e) {
-            }
-          };
-          a.play().catch(() => {
-            try {
-              URL.revokeObjectURL(url);
-            } catch (e) {
-            }
-          });
-        } catch (e) {
-        }
-      };
-      if (fillerBuf) {
-        doPlay(fillerBuf);
-        return;
-      }
-      fetchWithTimeout(apiBase + "/tts", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: "\u55EF\u3002", voice: voiceName })
-      }, TTS_TIMEOUT_MS).then((r) => r.arrayBuffer()).then((buf) => {
-        fillerBuf = buf;
-        doPlay(buf);
-      }).catch(() => {
-      });
-    }
     return {
       start,
       stop,
       speak,
       stopSpeaking,
-      playFiller,
       speaking: () => ttsBusy,
       recognizing: () => status === "recognizing",
       setVoiceName: (n) => {
@@ -1739,7 +1698,6 @@
           }
           storyBusyRef.current = true;
           storyNarratingRef.current = true;
-          noteSpoken(text);
           speakText(text, {
             rate: normalizeRate(d.rate, "-15%"),
             onDone: () => {
@@ -1922,7 +1880,6 @@
                 showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + author + "\uFF09", 15e3);
                 animRef.current?.talkFor(6e3);
                 const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
-                noteSpoken(speech);
                 speakText(speech, { rate: "-15%", onDone: () => {
                   showBubble("\u8BD7\u5FF5\u5B8C\u5566\uFF5E", 5e3);
                   try {
@@ -2150,14 +2107,6 @@
                     };
                     fr.readAsDataURL(file);
                   });
-                  if (!b64) {
-                    try {
-                      earDiag.chunks.b64Fail = (earDiag.chunks.b64Fail || 0) + 1;
-                    } catch (e) {
-                    }
-                    ;
-                    return;
-                  }
                   showBubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
                   setChatOpen(false);
                   const hdr = file.type || "image/jpeg";
@@ -2166,7 +2115,6 @@
                   const d = await res.json();
                   const reply = d && d.reply || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
                   showBubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
-                  noteSpoken(reply);
                   speakText(reply, { rate: reply.length >= 80 ? "-15%" : "+0%" });
                 } catch (e) {
                   showBubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
@@ -2352,7 +2300,6 @@
             try {
               if (data && data.reply && myEpoch === chatEpoch) {
                 const rp = String(data.reply);
-                noteSpoken(rp);
                 try {
                   window.__chubbyWhale.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now() };
                 } catch (e) {
@@ -2403,10 +2350,6 @@
             onHeard: (text) => {
               try {
                 voiceModeRef.current = true;
-              } catch (e) {
-              }
-              try {
-                playFiller();
               } catch (e) {
               }
               try {
@@ -2475,12 +2418,6 @@
         function stopTts() {
           try {
             if (voiceRef.current) voiceRef.current.stopSpeaking();
-          } catch (e) {
-          }
-        }
-        function playFiller() {
-          try {
-            if (voiceRef.current) voiceRef.current.playFiller();
           } catch (e) {
           }
         }
@@ -2645,7 +2582,6 @@
             applied: true,
             hasCtx: !!ctx,
             hasSlots: !!(ctx && ctx.slots),
-            ear: earDiag,
             lat: latDiag,
             ch: { mic: channels.mic.stats, asr: channels.asr.stats, speak: channels.speak.stats },
             registered: false,

@@ -473,7 +473,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }
         storyBusyRef.current = true
         storyNarratingRef.current = true
-        noteSpoken(text)
         speakText(text, {
           rate: normalizeRate(d.rate, '-15%'),
           onDone: () => {
@@ -584,7 +583,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('念诗·' + p.title + '（' + author + '）', 15000)
               animRef.current?.talkFor(6000)
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
-              noteSpoken(speech)
               speakText(speech, { rate: '-15%', onDone: () => { showBubble('诗念完啦～', 5000); try { speakText('念完啦～') } catch (e) { } } })
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
@@ -763,7 +761,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                   fr.onloadend = () => { const s = String(fr.result || ''); resolve(s.indexOf(',') >= 0 ? s.slice(s.indexOf(',') + 1) : s) }
                   fr.readAsDataURL(file)
                 })
-            if (!b64) { try { earDiag.chunks.b64Fail = (earDiag.chunks.b64Fail || 0) + 1 } catch (e) { } ; return }
                 showBubble('本鲸看看这张图…', 3000)
                 setChatOpen(false)
                 const hdr = file.type || 'image/jpeg'
@@ -773,7 +770,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 const reply = (d && d.reply) || '这条鱼看不懂这张图……'
                 showBubble('（看图）' + reply, 10000)
                 // 聊天回复：长回复（≥80 字）按叙述 -15%，短句正常语速
-                noteSpoken(reply)
       speakText(reply, { rate: reply.length >= 80 ? '-15%' : '+0%' })
               } catch (e) { showBubble('图片处理失败', 4000) }
             }
@@ -895,7 +891,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try {
             if (data && data.reply && myEpoch === chatEpoch) {
               const rp = String(data.reply)
-              noteSpoken(rp)
               try { (window as any).__chubbyWhale.lastChat = { stage: 'speak', reply: rp.slice(0, 40), at: Date.now() } } catch (e) { }
       speakText(rp, { rate: rp.length >= 80 ? '-15%' : '+0%' })
             }
@@ -936,7 +931,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         const v = createVoice({
           onHeard: (text: string) => {
             try { voiceModeRef.current = true } catch (e) { }
-            try { playFiller() } catch (e) { }
             try { showBubble('（听到）' + text + '｜本鱼在想…', 3000) } catch (e) { }
             try { sendText(text, { voice: true }) } catch (e) { }
           },
@@ -963,7 +957,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         try { if (voiceRef.current) voiceRef.current.speak(text, o) } catch (e) { }
       }
       function stopTts(): void { try { if (voiceRef.current) voiceRef.current.stopSpeaking() } catch (e) { } }
-      function playFiller(): void { try { if (voiceRef.current) voiceRef.current.playFiller() } catch (e) { } }
       function muteMic(): void { try { if (voiceRef.current) voiceRef.current.mute(true) } catch (e) { } }
       function unmuteMic(): void { try { if (voiceRef.current) voiceRef.current.mute(false) } catch (e) { } }
       function prefetchFiller(): void { }
@@ -1067,7 +1060,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       apply(ctx: any) {
         // 诊断对象：出问题时在浏览器控制台输入 __chubbyWhale 就能看到卡在哪一步
         const diag: any = (window as any).__chubbyWhale = {
-          version: VERSION, applied: true, hasCtx: !!ctx, hasSlots: !!(ctx && ctx.slots), ear: earDiag, lat: latDiag,
+          version: VERSION, applied: true, hasCtx: !!ctx, hasSlots: !!(ctx && ctx.slots), lat: latDiag,
           ch: { mic: channels.mic.stats, asr: channels.asr.stats, speak: channels.speak.stats },
           registered: false, error: null,
         }
