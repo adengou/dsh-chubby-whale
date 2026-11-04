@@ -209,6 +209,7 @@
       { type: "item", label: "\u6253\u5B57\u8BF4\u4E24\u53E5", action: "type" },
       { type: "item", label: voiceOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173", action: "voice" },
       { type: "item", label: "\u505C\u6B62\u8BF4\u8BDD", action: "tts-stop" },
+      { type: "item", label: "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09", action: "ear-check" },
       { type: "sub", label: "\u6362\u4E2A\u58F0\u97F3 \u25B8", items: [
         { type: "item", label: voiceTick("zh-CN-XiaoyiNeural") + "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoyiNeural" },
         { type: "item", label: voiceTick("zh-CN-XiaoxiaoNeural") + "\u97F3\u8272\uFF1A\u6653\u6653\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoxiaoNeural" },
@@ -1923,6 +1924,37 @@
                 });
               } else showBubble("\u8FD9\u9996\u66F2\u5B50\u6CA1\u627E\u5230");
             }).catch(() => showBubble("\u5F39\u7434\u5931\u8D25"));
+            return;
+          }
+          if (action === "ear-check") {
+            try {
+              const e = window.__chubbyWhale && window.__chubbyWhale.ear;
+              if (!e) {
+                showBubble("\u8033\u6735\u8FD8\u6CA1\u8D77\u6765\uFF08\u6CA1\u62FF\u5230\u8BCA\u65AD\u5BF9\u8C61\uFF09", 6e3);
+                return;
+              }
+              const c = e.chunks || {};
+              const rec = c.recorded || 0;
+              const sent = c.sent || 0;
+              let verdict = "";
+              if (!e.ticks) verdict = "\u2192 \u91C7\u6837\u6CA1\u8DD1\uFF08\u94FE\u8DEF\u672A\u542F\u52A8\uFF09";
+              else if (!e.micEnabled) verdict = "\u2192 \u9EA6\u514B\u98CE\u88AB\u9759\u97F3\uFF08\u70B9\u4E00\u4E0B\u9C7C\u8EAB\u6062\u590D\uFF09";
+              else if (e.db < -60) verdict = "\u2192 \u9EA6\u514B\u98CE\u6536\u4E0D\u5230\u58F0\u97F3\uFF08\u67E5\u7CFB\u7EDF\u8F93\u5165\u8BBE\u5907/\u6743\u9650\uFF09";
+              else if (rec === 0) verdict = "\u2192 \u6CA1\u5F00\u59CB\u5F55\u97F3";
+              else if ((c.uploadCalled || 0) === 0) verdict = "\u2192 \u4E0A\u4F20\u6CA1\u88AB\u89E6\u53D1\uFF08VAD \u6CA1\u5224\u51FA\u8BF4\u8BDD\uFF09";
+              else if ((c.asrBusyDrop || 0) > 0 && (c.uploaded || 0) === 0) verdict = "\u2192 \u8BC6\u522B\u5360\u7EBF\uFF0C\u5168\u88AB\u4E22\u5F03";
+              else if ((c.uploaded || 0) > 0 && (c.recognized || 0) === 0) verdict = "\u2192 \u8BC6\u522B\u670D\u52A1\u6CA1\u8FD4\u56DE\u6587\u5B57";
+              else if (sent === 0 && (c.recognized || 0) > 0) verdict = "\u2192 \u8BC6\u522B\u6210\u529F\u4F46\u88AB\u5524\u9192\u8BCD/\u56DE\u58F0\u62E6\u4E86";
+              else if (sent > 0) verdict = "\u2192 \u94FE\u8DEF\u5DF2\u901A\uFF08\u5DF2\u4EA4\u7ED9\u5BF9\u8BDD\uFF09";
+              const line = "\u8033\u6735\u81EA\u68C0\uFF1A\u97F3\u91CF " + Math.round(e.db) + "dB\uFF5C\u5E95\u566A " + Math.round(e.noiseDb) + "dB\uFF5C\u9608\u503C " + Math.round(e.onsetDb) + "dB\n\u9EA6\u514B\u98CE " + (e.micEnabled ? "\u5F00" : "\u5173") + "\uFF5C\u91C7\u6837 " + (e.ticks || 0) + " \u6B21\uFF5C\u542F\u52A8 " + (e.ctxState || "?") + "\n\u5F55\u97F3\u6BB5 " + rec + "\uFF5C\u4E0A\u4F20 " + (c.uploaded || 0) + "\uFF5C\u8BC6\u522B " + (c.recognized || 0) + "\uFF5C\u53D1\u9001 " + sent + "\n\u4E22\uFF1A\u592A\u77ED " + (c.small || 0) + "\uFF5C\u9759\u97F3\u7A97 " + (c.muted || 0) + "\uFF5C\u5360\u7EBF " + (c.asrBusyDrop || 0) + "\uFF5C\u56DE\u58F0 " + (c.echo || 0) + "\uFF5C\u672A\u5524\u9192 " + (c.nowake || 0) + "\n" + verdict;
+              showBubble(line, 15e3);
+              try {
+                navigator.clipboard.writeText(JSON.stringify(e));
+              } catch (e2) {
+              }
+            } catch (e) {
+              showBubble("\u81EA\u68C0\u5931\u8D25\uFF1A" + String(e && e.message), 5e3);
+            }
             return;
           }
           if (action === "wake") {

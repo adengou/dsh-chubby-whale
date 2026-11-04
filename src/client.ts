@@ -897,7 +897,35 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           }).catch(() => showBubble('弹琴失败'))
           return
         }
-        if (action === 'wake') {
+        if (action === 'ear-check') {
+          // 耳朵自检：把 __chubbyWhale.ear 的关键数字直接摆到气泡里，不用开控制台
+          try {
+            const e = (window as any).__chubbyWhale && (window as any).__chubbyWhale.ear
+            if (!e) { showBubble('耳朵还没起来（没拿到诊断对象）', 6000); return }
+            const c = e.chunks || {}
+            const rec = c.recorded || 0
+            const sent = c.sent || 0
+            let verdict = ''
+            if (!e.ticks) verdict = '→ 采样没跑（链路未启动）'
+            else if (!e.micEnabled) verdict = '→ 麦克风被静音（点一下鱼身恢复）'
+            else if (e.db < -60) verdict = '→ 麦克风收不到声音（查系统输入设备/权限）'
+            else if (rec === 0) verdict = '→ 没开始录音'
+            else if ((c.uploadCalled || 0) === 0) verdict = '→ 上传没被触发（VAD 没判出说话）'
+            else if ((c.asrBusyDrop || 0) > 0 && (c.uploaded || 0) === 0) verdict = '→ 识别占线，全被丢弃'
+            else if ((c.uploaded || 0) > 0 && (c.recognized || 0) === 0) verdict = '→ 识别服务没返回文字'
+            else if (sent === 0 && (c.recognized || 0) > 0) verdict = '→ 识别成功但被唤醒词/回声拦了'
+            else if (sent > 0) verdict = '→ 链路已通（已交给对话）'
+            const line = '耳朵自检：音量 ' + Math.round(e.db) + 'dB｜底噪 ' + Math.round(e.noiseDb)
+              + 'dB｜阈值 ' + Math.round(e.onsetDb) + 'dB\n'
+              + '麦克风 ' + (e.micEnabled ? '开' : '关') + '｜采样 ' + (e.ticks || 0) + ' 次｜启动 ' + (e.ctxState || '?') + '\n'
+              + '录音段 ' + rec + '｜上传 ' + (c.uploaded || 0) + '｜识别 ' + (c.recognized || 0) + '｜发送 ' + sent + '\n'
+              + '丢：太短 ' + (c.small || 0) + '｜静音窗 ' + (c.muted || 0) + '｜占线 ' + (c.asrBusyDrop || 0) + '｜回声 ' + (c.echo || 0) + '｜未唤醒 ' + (c.nowake || 0) + '\n'
+              + verdict
+            showBubble(line, 15000)
+            try { navigator.clipboard.writeText(JSON.stringify(e)) } catch (e2) { }
+          } catch (e: any) { showBubble('自检失败：' + String(e && e.message), 5000) }
+          return
+        }        if (action === 'wake') {
           // 语音待命：控制 VAD 录音循环（关掉就真停麦克风，打开重新 boot）
           const nowOn = !earOnRef.current
           earOnRef.current = nowOn
