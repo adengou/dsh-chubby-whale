@@ -85,6 +85,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   let epMode: 'ape' | 'classic' = (() => { try { return localStorage.getItem('chubby-endpoint') === 'ape' ? 'ape' : 'classic' } catch (e) { return 'classic' } })()
   const ape = new Ape()
   let lastApe: any = null
+  let lastSeg: any = null
 
   const stats: VoiceStats = {
     windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrTexts: 0, heard: 0,
@@ -229,6 +230,7 @@ export function createVoice(opts: VoiceOptions): Voice {
       }, ASR_TIMEOUT_MS)
       const data = await res.json()
       if (!data || !data.ok) { stats.asrFail++; stats.lastError = 'asr: ' + String((data && data.error) || 'failed'); return }
+      try { lastSeg = { mode: epMode, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) } } catch (e) { }
       const text = String(data.text || '').trim()
       if (!text) return
       stats.asrTexts++
@@ -244,7 +246,8 @@ export function createVoice(opts: VoiceOptions): Voice {
       stats.lastError = 'asr-ex: ' + String((e && e.name) || e)
     } finally {
       if (status === 'recognizing') setStatus('listening')
-      scheduleNext(150)
+      // 只有录音器空闲时才排下一段：否则会打断正在录的段（会丢开头几个字）
+      if (!rec || rec.state === "inactive") scheduleNext(150)
     }
   }
 
@@ -402,8 +405,6 @@ export function createVoice(opts: VoiceOptions): Voice {
         const blob = new Blob(parts, { type: 'audio/webm' })
         parts = []
         void onWindowDone(blob)
-        // 关键：立刻开始录下一段，不要等识别返回（原来识别期间麦克风是"瞎"的，主人接话就丢）
-        scheduleNext(120)
       }
       rec.onerror = (e: any) => { stats.lastError = 'recorder: ' + String(e && e.error && e.error.name) ; scheduleNext(800) }
       micOn(true)
@@ -472,7 +473,7 @@ export function createVoice(opts: VoiceOptions): Voice {
     speaking: () => ttsBusy,
     recognizing: () => status === 'recognizing',
     setEndpointMode: (m: 'ape' | 'classic') => { epMode = m; try { localStorage.setItem('chubby-endpoint', m) } catch (e) { } },
-    endpointInfo: () => ({ mode: epMode, apex: lastApe ? { floorDb: Math.round(lastApe.floorDb), onsetTh: Math.round(lastApe.onsetTh), offsetTh: Math.round(lastApe.offsetTh), quietTargetMs: lastApe.quietTargetMs, speechMs: lastApe.speechMs, quietMs: lastApe.quietMs } : null }),
+    lastSegment: () => lastSeg,
     setVoiceName: (n: string) => { voiceName = n || voiceName },
     mute: (on: boolean) => { muted = on; micOn(!on) },
     stats,

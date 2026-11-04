@@ -674,6 +674,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               + '\n录音段 ' + st.windows + '｜上传 ' + st.uploaded + '｜识别出字 ' + st.asrTexts + '｜交给对话 ' + st.heard
               + '\n丢：太安静 ' + st.skippedSilent + '｜回声/重复 ' + st.echoDropped + '｜识别失败 ' + st.asrFail
               + '\n端点检测：' + ((voiceRef.current && voiceRef.current.endpointInfo) ? (voiceRef.current.endpointInfo().mode === 'ape' ? '自适应' : '经典') : '?')
+              + (function () { try { const s = voiceRef.current && voiceRef.current.lastSegment ? voiceRef.current.lastSegment() : null; if (!s) return ''; return '\\n上一段：' + s.mode + '｜窗口 ' + s.winMs + 'ms｜说话 ' + s.peMs + 'ms｜静音 ' + s.quMs + 'ms' + (s.floor !== null ? '｜底噪 ' + s.floor + 'dB' : '') + (s.target ? '｜目标 ' + s.target + 'ms' : '') + '\\n识别结果：' + s.text } catch (e) { return '' } })()
               + '\n朗读：请求 ' + st.ttsRequests + '｜开播 ' + st.ttsPlayed + '｜失败 ' + st.ttsFail + '｜僵尸复位 ' + st.ttsZombie
               + (st.lastError ? '\n最近错误：' + st.lastError : '')
             showBubble(line, 15000)

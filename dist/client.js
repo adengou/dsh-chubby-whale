@@ -629,6 +629,7 @@
     })();
     const ape = new Ape();
     let lastApe = null;
+    let lastSeg = null;
     const stats = {
       windows: 0,
       skippedSilent: 0,
@@ -824,6 +825,10 @@
           stats.lastError = "asr: " + String(data && data.error || "failed");
           return;
         }
+        try {
+          lastSeg = { mode: epMode, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) };
+        } catch (e) {
+        }
         const text = String(data.text || "").trim();
         if (!text) return;
         stats.asrTexts++;
@@ -842,7 +847,7 @@
         stats.lastError = "asr-ex: " + String(e && e.name || e);
       } finally {
         if (status === "recognizing") setStatus("listening");
-        scheduleNext(150);
+        if (!rec || rec.state === "inactive") scheduleNext(150);
       }
     }
     function acceptText(text) {
@@ -1040,7 +1045,6 @@
           const blob = new Blob(parts, { type: "audio/webm" });
           parts = [];
           void onWindowDone(blob);
-          scheduleNext(120);
         };
         rec.onerror = (e) => {
           stats.lastError = "recorder: " + String(e && e.error && e.error.name);
@@ -1147,7 +1151,7 @@
         } catch (e) {
         }
       },
-      endpointInfo: () => ({ mode: epMode, apex: lastApe ? { floorDb: Math.round(lastApe.floorDb), onsetTh: Math.round(lastApe.onsetTh), offsetTh: Math.round(lastApe.offsetTh), quietTargetMs: lastApe.quietTargetMs, speechMs: lastApe.speechMs, quietMs: lastApe.quietMs } : null }),
+      lastSegment: () => lastSeg,
       setVoiceName: (n) => {
         voiceName = n || voiceName;
       },
@@ -2169,7 +2173,15 @@
                 showBubble("\u8BED\u97F3\u6A21\u5757\u8FD8\u6CA1\u8D77\u6765\uFF08\u8BED\u97F3\u5F85\u547D\u53EF\u80FD\u662F\u5173\u7684\uFF09", 6e3);
                 return;
               }
-              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u7AEF\u70B9\u68C0\u6D4B\uFF1A" + (voiceRef.current && voiceRef.current.endpointInfo ? voiceRef.current.endpointInfo().mode === "ape" ? "\u81EA\u9002\u5E94" : "\u7ECF\u5178" : "?") + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
+              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u7AEF\u70B9\u68C0\u6D4B\uFF1A" + (voiceRef.current && voiceRef.current.endpointInfo ? voiceRef.current.endpointInfo().mode === "ape" ? "\u81EA\u9002\u5E94" : "\u7ECF\u5178" : "?") + (function() {
+                try {
+                  const s = voiceRef.current && voiceRef.current.lastSegment ? voiceRef.current.lastSegment() : null;
+                  if (!s) return "";
+                  return "\\n\u4E0A\u4E00\u6BB5\uFF1A" + s.mode + "\uFF5C\u7A97\u53E3 " + s.winMs + "ms\uFF5C\u8BF4\u8BDD " + s.peMs + "ms\uFF5C\u9759\u97F3 " + s.quMs + "ms" + (s.floor !== null ? "\uFF5C\u5E95\u566A " + s.floor + "dB" : "") + (s.target ? "\uFF5C\u76EE\u6807 " + s.target + "ms" : "") + "\\n\u8BC6\u522B\u7ED3\u679C\uFF1A" + s.text;
+                } catch (e) {
+                  return "";
+                }
+              })() + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
               showBubble(line, 15e3);
               try {
                 navigator.clipboard.writeText(JSON.stringify(st));
