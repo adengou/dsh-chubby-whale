@@ -21,6 +21,8 @@ export function createMiscHandlers(opts: {
   clearChatCache?: () => Promise<number>
   /** 聊天缓存条目数 */
   chatCacheCount?: () => Promise<number>
+  /** 分类缓存统计（tts/chat/asr），用于菜单与自检显示 */
+  cacheStats?: () => Promise<Record<string, number>>
 }) {
   async function handleAsset(_req: any, res: any): Promise<void> {
     try {
@@ -116,8 +118,11 @@ export function createMiscHandlers(opts: {
       }
       let count = 0
       try { if (opts.chatCacheCount) count = await opts.chatCacheCount() } catch { }
+      let byType: Record<string, number> = {}
+      try { if (opts.cacheStats) byType = await opts.cacheStats() } catch { }
+      const total = Object.keys(byType).length ? Object.values(byType).reduce((a, b) => a + b, 0) : count
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, count }))
+      res.end(JSON.stringify({ ok: true, count: total, byType }))
     } catch (err: any) {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }))

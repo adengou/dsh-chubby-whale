@@ -143,6 +143,9 @@ export function apply(ctx, config) {
         loadPet: () => store.tickPet(), // 读取时结算饥饿/离线时长（照 C#）
         feedPet: store.feedPet,
         clearMemory: store.clearMemory,
+        chatCacheCount: () => chatCache.count(),
+        clearChatCache: () => chatCache.clear(),
+        cacheStats: async () => ({ tts: await ttsCache.count(), chat: await chatCache.count(), asr: await asrCache.count() }),
     });
     const reminders = createReminderHandlers({
         loadReminders: store.loadReminders,

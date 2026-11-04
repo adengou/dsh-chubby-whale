@@ -108,8 +108,15 @@ export function createMiscHandlers(opts) {
                     count = await opts.chatCacheCount();
             }
             catch { }
+            let byType = {};
+            try {
+                if (opts.cacheStats)
+                    byType = await opts.cacheStats();
+            }
+            catch { }
+            const total = Object.keys(byType).length ? Object.values(byType).reduce((a, b) => a + b, 0) : count;
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-            res.end(JSON.stringify({ ok: true, count }));
+            res.end(JSON.stringify({ ok: true, count: total, byType }));
         }
         catch (err) {
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
