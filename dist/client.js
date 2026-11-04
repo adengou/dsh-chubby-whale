@@ -1593,6 +1593,8 @@
       })();
       const storyNarratingRef = { current: false };
       const persona = createPersona();
+      let lastReplyText = "";
+      let lastReplyAt = 0;
       const latDiag = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 };
       function taleParts(rawTitle) {
         const t = String(rawTitle || "").trim();
@@ -2798,7 +2800,18 @@
                   window.__chubbyWhale.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now() };
                 } catch (e) {
                 }
-                speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE2 : "+0%" });
+                const rNow = Date.now();
+                const rpPlain = rp.replace(/[\s。，！？,.!?、…~～]/g, "");
+                if (lastReplyText && lastReplyAt && rNow - lastReplyAt < 3e4 && rpPlain === lastReplyText) {
+                  try {
+                    window.__chubbyWhale.dupReply = (window.__chubbyWhale.dupReply || 0) + 1;
+                  } catch (e) {
+                  }
+                } else {
+                  lastReplyText = rpPlain;
+                  lastReplyAt = rNow;
+                  speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE2 : "+0%" });
+                }
               }
             } catch {
             }

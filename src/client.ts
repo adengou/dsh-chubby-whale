@@ -45,7 +45,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     // 叙述语速（与 voice.ts 同源，localStorage 可调，默认 -25%）
     const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-narration-rate'); return (s && /^[+-]\\d{1,2}%$/.test(s)) ? s : '-25%' } catch (e) { return '-25%' } })()
     const storyNarratingRef = { current: false }
-    const persona = createPersona()   // 饭团人设：情绪状态机 + 台词库（data/persona.json）
+    const persona = createPersona()
+    let lastReplyText = ''   // 输出侧去重：上一句回复（30 秒窗口）
+    let lastReplyAt = 0   // 饭团人设：情绪状态机 + 台词库（data/persona.json）
     const latDiag: any = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 }
     // 音符表：覆盖 C3–E6（含升降号），与 data/melodies.json 实际用到的音名对齐
     /** 民间故事标题在 culture 路由里是「书名·标题」拼一起的：拆开还原 C# TaleBubble 的拼法 */
@@ -898,7 +900,16 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (data && data.reply && myEpoch === chatEpoch) {
               const rp = String(data.reply)
               try { (window as any).__chubbyWhale.lastChat = { stage: 'speak', reply: rp.slice(0, 40), at: Date.now() } } catch (e) { }
-      speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE : '+0%' })
+              // 输出侧去重：同一句回复 30 秒内不再重复念（服务端缓存会让相同提问得到相同回复）
+              const rNow = Date.now()
+              const rpPlain = rp.replace(/[\s。，！？,.!?、…~～]/g, '')
+              if (lastReplyText && lastReplyAt && rNow - lastReplyAt < 30000 && rpPlain === lastReplyText) {
+                try { (window as any).__chubbyWhale.dupReply = ((window as any).__chubbyWhale.dupReply || 0) + 1 } catch (e) { }
+              } else {
+                lastReplyText = rpPlain
+                lastReplyAt = rNow
+                speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE : '+0%' })
+              }
             }
           } catch { }
           scrollBody()
