@@ -539,7 +539,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
 
       async function runAction(action: string): Promise<void> {
         setMenu(null)
-        if (action === 'feed') { const r = persona.feed(); sayLine(r.text + (r.stageUp ? '（' + r.stage + '）' : ''), r.stageUp ? 6000 : 3500); animRef.current?.pushHeart(); try { fetch('/api/chubby-whale/pet?action=feed') } catch (e) { } ; return }
+        if (action === 'feed') { const r = persona.feed(); if (r.bowls % 8 === 0) { sayLine(persona.line('riceAccount'), 5000); try { fetch('/api/chubby-whale/pet?action=feed') } catch (e) { } ; return } sayLine(r.text + (r.stageUp ? '（' + r.stage + '）' : ''), r.stageUp ? 6000 : 3500); animRef.current?.pushHeart(); try { fetch('/api/chubby-whale/pet?action=feed') } catch (e) { } ; return }
         if (action === 'home') { homePos(); showBubble('回到角落啦'); return }
         if (action === 'bigger') { const s = Math.min(1.4, scale + 0.1); setScale(s); scaleRef.current = s; return }
         if (action === 'smaller') { const s = Math.max(0.7, scale - 0.1); setScale(s); scaleRef.current = s; return }
@@ -587,7 +587,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('念诗·' + p.title + '（' + author + '）', 15000)
               animRef.current?.talkFor(6000)
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + body.replace(/\n/g, '，')
-              speakText(speech, { rate: NARRATION_RATE, onDone: () => { sayLine(persona.line('poemDone'), 6000); try { speakText(persona.line('poemDone')) } catch (e) { } } })
+            sayLine(persona.line('poemStart'), 4000); setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => sayLine(persona.line('poemDone'), 6000) }) } catch (e) { } }, 600)
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
           return
@@ -926,6 +926,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         try { const hit = persona.reactTo(text); if (hit) { sayLine(hit.text, 4000); if (hit.event === 'praise') animRef.current?.pushHeart() } } catch (e) { }
         setInput('')
         setMessages((m: any[]) => [...m, { who: 'me', text }])
+        // 等待提示（人设 waiting）：只在语音提问时偶尔冒一句，概率 25%，不刷屏
+        try { if (opts && opts.voice && !ttsPlaying && Math.random() < 0.25) sayLine(persona.line('waiting'), 3000) } catch (e) { }
         setBusy(true)
         busyAtRef.current = Date.now()
         animRef.current?.talkFor(1200)

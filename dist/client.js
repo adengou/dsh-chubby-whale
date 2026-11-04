@@ -1446,7 +1446,7 @@
         "\u9A6C\u4E0A\u3002\u9505\u91CC\u7684\u6C14\u8FD8\u6CA1\u6563\u3002"
       ],
       retry: [
-        "\u8FD9\u7897\u6CA1\u76DB\u597D\uFF0C\u6211\u91CD\u6765\u4E00\u6B21\u3002",
+        "\u564E\u7740\u4E86\uFF0C\u6211\u987A\u4E00\u4E0B\u518D\u63A5\u7740\u8BF4\u3002",
         "\u521A\u624D\u90A3\u53E5\u6ED1\u6389\u4E86\uFF0C\u6211\u91CD\u65B0\u8BF4\u3002",
         "\u7B49\u4E00\u4E0B\uFF0C\u6211\u628A\u8BDD\u6361\u8D77\u6765\u3002"
       ],
@@ -2486,6 +2486,15 @@
           setMenu(null);
           if (action === "feed") {
             const r = persona.feed();
+            if (r.bowls % 8 === 0) {
+              sayLine(persona.line("riceAccount"), 5e3);
+              try {
+                fetch("/api/chubby-whale/pet?action=feed");
+              } catch (e) {
+              }
+              ;
+              return;
+            }
             sayLine(r.text + (r.stageUp ? "\uFF08" + r.stage + "\uFF09" : ""), r.stageUp ? 6e3 : 3500);
             animRef.current?.pushHeart();
             try {
@@ -2599,13 +2608,13 @@
                 showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + author + "\uFF09", 15e3);
                 animRef.current?.talkFor(6e3);
                 const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + body.replace(/\n/g, "\uFF0C");
-                speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
-                  sayLine(persona.line("poemDone"), 6e3);
+                sayLine(persona.line("poemStart"), 4e3);
+                setTimeout(() => {
                   try {
-                    speakText(persona.line("poemDone"));
+                    speakText(speech, { rate: NARRATION_RATE2, onDone: () => sayLine(persona.line("poemDone"), 6e3) });
                   } catch (e) {
                   }
-                } });
+                }, 600);
               } else showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230");
             }).catch(() => showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230"));
             return;
@@ -3066,6 +3075,10 @@
           }
           setInput("");
           setMessages((m) => [...m, { who: "me", text }]);
+          try {
+            if (opts && opts.voice && !ttsPlaying && Math.random() < 0.25) sayLine(persona.line("waiting"), 3e3);
+          } catch (e) {
+          }
           setBusy(true);
           busyAtRef.current = Date.now();
           animRef.current?.talkFor(1200);
