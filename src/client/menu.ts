@@ -19,17 +19,16 @@ export const EN_MAP: Record<string, string> = {
   '聊天语言 ▸': 'Chat language ▸',
   '界面语言 ▸': 'Interface language ▸',
   '语音待命：开': 'Voice standby: on',
+  '语音待命：关': 'Voice standby: off',
   '语音聊天：开': 'Voice chat: on',
+  '语音聊天：关': 'Voice chat: off',
+  '看张图…': 'Look at a picture…',
+  '停止说话': 'Stop talking',
   '余额：--': 'Balance: --',
   '停下歇会儿': 'Take a break',
   '回到右下角': 'Back to corner',
   '长大一点': 'Grow bigger',
   '变小一点': 'Shrink',
-  '今日简报：开': 'Daily briefing: on',
-  '现在简报一次': 'Brief me now',
-  '最近简报 ▸': 'Recent briefings ▸',
-  '口述公文：开始': 'Dictate: start',
-  '交给 DSH 助手…': 'Send to DSH…',
   '加个提醒…': 'Add reminder…',
   '提醒清单…': 'Reminders…',
   '文化气 ▸': 'Culture ▸',
@@ -55,7 +54,6 @@ export const EN_MAP: Record<string, string> = {
   '音色：Ana（英·女）': 'Voice: Ana (EN F)',
   '音色：Jenny（英·女）': 'Voice: Jenny (EN F)',
   '音色：Sonia（英·女·英式）': 'Voice: Sonia (EN-GB F)',
-  '暂无简报': 'No briefings yet',
 }
 
 export function tr(label: string, lang: string): string {
@@ -63,18 +61,22 @@ export function tr(label: string, lang: string): string {
   return EN_MAP[label] || label
 }
 
-export function buildMenu(version: string, state?: { voiceOn?: boolean; balance?: string; growth?: string }): MenuItem[] {
+export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: boolean; voiceChatOn?: boolean; balance?: string; growth?: string }): MenuItem[] {
   const voiceOn = state && state.voiceOn ? true : false
+  const earOn = state && state.earOn ? true : false
+  const voiceChatOn = state && state.voiceChatOn ? true : false
   const balanceText = (state && state.balance) ? state.balance : '--'
   const growthText = (state && state.growth) ? state.growth : '--'
   return [
     { type: 'item', label: '喂它一口', action: 'feed' },
+    { type: 'item', label: '看张图…', action: 'vision' },
     { type: 'sep' },
     { type: 'sub', label: '弹首曲子 ▸', items: MELODIES.map((m) => ({ type: 'item' as const, label: '弹《' + m + '》', action: 'music:' + m })) },
     { type: 'item', label: '停止弹奏', action: 'music-stop' },
     { type: 'sep' },
     { type: 'item', label: '打字说两句', action: 'type' },
     { type: 'item', label: voiceOn ? '语音朗读：开' : '语音朗读：关', action: 'voice' },
+    { type: 'item', label: '停止说话', action: 'tts-stop' },
     { type: 'sub', label: '换个声音 ▸', items: [
       { type: 'item', label: '自动（按语言选音色）', action: 'voice:auto' },
       { type: 'item', label: '音色：晓伊（中·女）', action: 'voice:zh-CN-XiaoyiNeural' },
@@ -95,22 +97,14 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; balance?
       { type: 'item', label: 'English', action: 'lang:en' },
     ] },
     { type: 'sep' },
-    { type: 'item', label: '语音待命：开', action: 'wake' },
-    { type: 'item', label: '语音聊天：开', action: 'chatmode' },
+    { type: 'item', label: '语音待命：' + (earOn ? '开' : '关'), action: 'wake' },
+    { type: 'item', label: '语音聊天：' + (voiceChatOn ? '开' : '关'), action: 'chatmode' },
     
     { type: 'item', label: '停下歇会儿', action: 'pause' },
     { type: 'item', label: '回到右下角', action: 'home' },
     { type: 'item', label: '长大一点', action: 'bigger' },
     { type: 'item', label: '变小一点', action: 'smaller' },
     { type: 'sep' },
-    { type: 'item', label: '今日简报：开', action: 'briefing' },
-    { type: 'item', label: '现在简报一次', action: 'briefing-now' },
-    { type: 'sub', label: '最近简报 ▸', items: [
-      { type: 'item', label: '暂无简报', action: 'briefing-recent' },
-    ] },
-    { type: 'sep' },
-    { type: 'item', label: '口述公文：开始', action: 'dictate' },
-    { type: 'item', label: '交给 DSH 助手…', action: 'dsh' },
     { type: 'item', label: '加个提醒…', action: 'remind-add' },
     { type: 'item', label: '提醒清单…', action: 'remind-list' },
     { type: 'sep' },
@@ -126,6 +120,7 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; balance?
     { type: 'item', label: '清除记忆…', action: 'clear-memory' },
     { type: 'item', label: '让它游走（退出）', action: 'hide' },
     { type: 'sep' },
+    { type: 'item', label: '余额：' + balanceText, action: 'balance' },
     { type: 'item', label: '鱼粮账本', action: 'fishfood' },
     { type: 'item', label: '成长：' + growthText, action: 'growth' },
     { type: 'item', label: '版本：v' + version, action: 'version' },

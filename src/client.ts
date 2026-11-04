@@ -4,6 +4,7 @@
  */
 import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
+import { handleFileDrop, VISION_PROMPT } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { splitTtsSegments, normalizeRate } from './shared/tts.js'
 import { parseDue, cleanReminderText } from './shared/time.js'
@@ -26,7 +27,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
 
     // ===== TTS：60~80 字分段队列，边播边请求下一段 =====
     interface TtsJob { text: string; rate: string; onDone?: () => void }
-    let ttsAudio: any = null
+    let ttsAudioRef: any = null
+    let ttsUrl = ''
+    let ttsEpoch = 0
     const ttsQueue: TtsJob[] = []
     let ttsPlaying = false
     function currentVoice(): string {
@@ -37,6 +40,23 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       const cb = job.onDone
       job.onDone = undefined
       try { cb() } catch (e) { }
+    }
+    // 停止说话：真的把当前音频停掉、清空队列、回收 URL（照 C# Speech.Stop）
+    function stopTts(): void {
+      try {
+        ttsEpoch++
+        while (ttsQueue.length > 0) finishTtsJob(ttsQueue.shift() as TtsJob)
+        const a = ttsAudioRef
+        ttsAudioRef = null
+        if (a) {
+          try { a.onended = null; a.onerror = null } catch (e) { }
+          try { a.pause() } catch (e) { }
+          try { a.currentTime = 0 } catch (e) { }
+        }
+        if (ttsUrl) { try { URL.revokeObjectURL(ttsUrl) } catch (e) { } ; ttsUrl = '' }
+        ttsPlaying = false
+        try { const ss = (window as any).speechSynthesis; if (ss && ss.speaking) ss.cancel() } catch (e) { }
+      } catch (e) { ttsPlaying = false }
     }
     function speakText(text: string, opts?: { rate?: string; onDone?: () => void }): void {
       try {
@@ -55,6 +75,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       if (ttsPlaying) return
       if (ttsQueue.length === 0) return
       let job: TtsJob | null = null
+      const epoch = ttsEpoch
       try {
         ttsPlaying = true
         job = ttsQueue.shift() as TtsJob
@@ -67,6 +88,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (!r.ok) throw new Error('tts http ' + r.status)
           return r.arrayBuffer()
         }).then((buf: ArrayBuffer) => {
+          // 取音频期间被「停止说话」了：这一段就别再响了
+          if (epoch !== ttsEpoch) return
           const jobRef = job as TtsJob
           let settled = false
           const settle = () => {
@@ -78,9 +101,10 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           }
           const blob = new Blob([buf], { type: 'audio/mpeg' })
           const url = URL.createObjectURL(blob)
+          ttsUrl = url
           const audio = new Audio(url)
-          ttsAudio = audio
-          audio.onended = () => { try { URL.revokeObjectURL(url) } catch { } ; settle() }
+          ttsAudioRef = audio
+          audio.onended = () => { try { URL.revokeObjectURL(url) } catch { } ; if (ttsUrl === url) ttsUrl = '' ; settle() }
           audio.onerror = () => { settle() }
           audio.play().catch(() => {
             try {
@@ -96,26 +120,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       } catch (e) { ttsPlaying = false; if (job) finishTtsJob(job) }
     }
 
-    let recognition: any = null
-    function startVoiceChat(onText: (t: string) => void): void {
-      try {
-        const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-            if (!SR) { showBubble('这个浏览器不支持语音听写，换 Edge 或 Chrome 试试', 5000); return }
-        if (recognition) { try { recognition.stop() } catch { } }
-        recognition = new SR()
-        recognition.lang = 'zh-CN'
-        recognition.interimResults = false
-        recognition.maxAlternatives = 1
-        recognition.onresult = (e: any) => {
-          try {
-            const t = e.results[0][0].transcript
-            if (t) onText(t)
-          } catch { }
-        }
-        recognition.onend = () => { recognition = null }
-        recognition.start()
-      } catch (e) { }
-    }
     const NOTE_FREQ: any = { 'C4': 261.63, 'D4': 293.66, 'E4': 329.63, 'F4': 349.23, 'G4': 392.00, 'A4': 440.00, 'B4': 493.88, 'C5': 523.25, 'D5': 587.33, 'E5': 659.25, 'F5': 698.46, 'G5': 783.99, 'A5': 880.00, 'B5': 987.77 }
     let melodyCtx: any = null
     let melodyOscs: any[] = []
@@ -164,6 +168,13 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       const wokeRef = R.useRef({ at: 0 })
       const voiceOnRef = R.useRef((() => { try { return localStorage.getItem('chubby-voice') !== 'off' } catch (e) { return true } })())
       const [voiceOn, setVoiceOn] = R.useState((() => { try { return localStorage.getItem('chubby-voice') !== 'off' } catch (e) { return true } })())
+      // 语音待命 / 语音聊天：真开关（默认都开，持久化在 chubby-ear / chubby-voicechat）
+      const earOnRef = R.useRef((() => { try { return localStorage.getItem('chubby-ear') !== 'off' } catch (e) { return true } })())
+      const [earOn, setEarOn] = R.useState(earOnRef.current)
+      const voiceChatOnRef = R.useRef((() => { try { return localStorage.getItem('chubby-voicechat') !== 'off' } catch (e) { return true } })())
+      const [voiceChatOn, setVoiceChatOn] = R.useState(voiceChatOnRef.current)
+      // 录音循环的启停句柄（由 VAD 的 effect 注入：关掉语音待命时真停麦克风）
+      const earCtlRef = R.useRef({ stop: () => { }, boot: () => { } })
       const [balanceLabel, setBalanceLabel] = R.useState('--')
       const [growthLabel, setGrowthLabel] = R.useState('--')
       const WAKE_WORDS = ['大肥鱼', '肥鲸', '肥鱼', '小鱼', '蓝鱼', '小蓝鱼', '鱼鱼', '肥肥']
@@ -180,9 +191,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       const [subOpen, setSubOpen] = R.useState('')
       const [balanceText, setBalanceText] = R.useState('')
       const [lang, setLang] = R.useState((() => { try { return localStorage.getItem('chubby-lang') || 'zh' } catch { return 'zh' } })())
-      const dictateRef = R.useRef({ on: false, text: '' })
-      const [dictateOn, setDictateOn] = R.useState(false)
-      const [dictText, setDictText] = R.useState('')
       const [chatOpen, setChatOpen] = R.useState(false)
       const [messages, setMessages] = R.useState([] as any[])
       const [input, setInput] = R.useState('')
@@ -359,8 +367,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }, 3000)
       }
 
-      // 菜单动作
-      function runAction(action: string): void {
+      // 菜单动作（async：里面要用 await，比如剪贴板；onClick 直接调用即可）
+      async function runAction(action: string): Promise<void> {
         setMenu(null)
         if (action === 'feed') { showBubble('好吃！谢谢主人～'); animRef.current?.pushHeart(); try { fetch('/api/chubby-whale/pet?action=feed') } catch (e) { } ; return }
         if (action === 'home') { homePos(); showBubble('回到角落啦'); return }
@@ -369,8 +377,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (action === 'hide') { setHidden(true); return }
         if (action === 'version') { showBubble('肥鲸 v' + VERSION); return }
         if (action === 'type') { voiceModeRef.current = false; setChatOpen(true); return }
-        if (action === 'pause') { showBubble('歇会儿…'); return }
+        if (action === 'pause') { stopTts(); stopMelody(); showBubble('歇会儿…'); return }
         if (action === 'music-stop') { stopMelody(); showBubble('停下啦'); return }
+        if (action === 'tts-stop') { stopTts(); showBubble('好，不说了'); return }
         if (action === 'fishfood') { fetch('/api/chubby-whale/fishfood').then((r: any) => r.json()).then((d: any) => { if (d && d.ok) { showBubble('鱼粮账本：聊天 ' + d.chatTokens + ' tokens，说书 ' + d.storyTokens + ' tokens，共 ' + d.total, 5000) } else showBubble('鱼粮查不到') }).catch(() => showBubble('鱼粮查不到')); return }
         if (action === 'growth') { Promise.all([fetch('/api/chubby-whale/growth').then((r: any) => r.json()), fetch('/api/chubby-whale/state').then((r: any) => r.json())]).then(([g, s]) => { if (g && g.ok) { const nx = g.nextExp > 0 ? ('（经验 ' + g.exp + '/' + g.nextExp + '）') : '（满级）'; const it = (s && s.intimacy) || 0; showBubble('成长：' + g.stage + nx + ' · 亲密度 ' + it + '/100', 5000) } else showBubble('成长查不到') }).catch(() => showBubble('成长查不到')); return }
         if (action === 'intimacy') {
@@ -434,23 +443,30 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }
         if (action.startsWith('music:')) {
           const name = action.slice(6)
+          // 弹琴前先停朗读（C#：if (Speech.IsSpeaking) Speech.Stop()）
+          stopTts()
           fetch('/api/chubby-whale/melody?name=' + encodeURIComponent(name)).then((r: any) => r.json()).then((d: any) => {
             if (d && d.ok && d.song) { playMelody(d.song.notes, d.song.bpm); showBubble('弹《' + d.song.name + '》♪') } else showBubble('这首曲子没找到')
           }).catch(() => showBubble('弹琴失败'))
           return
-        }        if (action === 'briefing-now') {
-          fetch('/api/chubby-whale/briefing').then((r: any) => r.json()).then((d: any) => {
-            if (d && d.ok) { showBubble(d.text, 12000); animRef.current?.talkFor(6000) } else showBubble('简报没做出来')
-          }).catch(() => showBubble('简报连不上'))
+        }
+        if (action === 'wake') {
+          // 语音待命：控制 VAD 录音循环（关掉就真停麦克风，打开重新 boot）
+          const nowOn = !earOnRef.current
+          earOnRef.current = nowOn
+          setEarOn(nowOn)
+          try { localStorage.setItem('chubby-ear', nowOn ? 'on' : 'off') } catch (e) { }
+          if (nowOn) { try { earCtlRef.current.boot() } catch (e) { } ; showBubble('语音待命：开，本鲸又听着啦') }
+          else { try { earCtlRef.current.stop() } catch (e) { } ; showBubble('语音待命：关，麦克风停啦') }
           return
         }
-        if (action === 'briefing') {
-          showBubble('简报是开着的，点「现在简报一次」就能看～')
-          return
-        }        if (action === 'chatmode' || action === 'wake') {
-          setChatOpen(true)
-          startVoiceChat((t: string) => { setInput(t) })
-          showBubble('我在听，说完按发送就好～')
+        if (action === 'chatmode') {
+          // 语音聊天：只决定识别到的话要不要送给模型
+          const nowOn = !voiceChatOnRef.current
+          voiceChatOnRef.current = nowOn
+          setVoiceChatOn(nowOn)
+          try { localStorage.setItem('chubby-voicechat', nowOn ? 'on' : 'off') } catch (e) { }
+          showBubble(nowOn ? '语音聊天：开，本鲸会接话' : '语音聊天：关，只听不接话')
           return
         }
         if (action === 'voice') {
@@ -458,6 +474,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           voiceOnRef.current = nowOn
           setVoiceOn(nowOn)
           try { localStorage.setItem('chubby-voice', nowOn ? 'on' : 'off') } catch (e) { }
+          if (!nowOn) stopTts()
           showBubble(nowOn ? '语音朗读：开' : '语音朗读：关（省着点用）')
           return
         }        if (action === 'clear-memory') {
@@ -471,8 +488,11 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           return
         }        if (action === 'balance') {
           fetch('/api/chubby-whale/balance').then((r: any) => r.json()).then((d: any) => {
-            if (d && d.ok && d.balance != null) showBubble('余额：¥' + d.balance, 5000)
-            else showBubble('余额查不到')
+            if (d && d.ok && d.balance != null) {
+              setBalanceText('余额 ¥' + d.balance)
+              setBalanceLabel('¥' + d.balance)
+              showBubble('余额还有 ' + d.balance + ' 元', 5000)
+            } else showBubble('余额查不到')
           }).catch(() => showBubble('余额查不到'))
           return
         }
@@ -481,23 +501,11 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try { localStorage.setItem('chubby-chatlang', cl) } catch { }
           showBubble(cl === 'en' ? '聊天语言：English' : '聊天语言：中文')
           return
-        }
-        if (action === 'briefing-recent') {
-          showBubble('最近简报：还没存档（简报不保存历史）', 4000)
-          return
         }        if (action === 'lang:zh' || action === 'lang:en') {
           const l = action === 'lang:en' ? 'en' : 'zh'
           try { localStorage.setItem('chubby-lang', l) } catch { }
           setLang(l)
           showBubble(l === 'en' ? 'Language: English' : '界面语言：中文')
-          return
-        }        if (action === 'dsh') {
-          try {
-            const q = (window as any).prompt('要把什么问题交给 DSH 助手？（会复制到剪贴板）')
-            if (!q) return
-            try { await (navigator as any).clipboard.writeText(q) } catch (e) { }
-            showBubble('已复制：「' + String(q).slice(0, 40) + '」— 去 DSH 会话里粘贴就行～', 5000)
-          } catch (e) { }
           return
         }        if (action === 'vision') {
           try {
@@ -518,7 +526,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 showBubble('本鲸看看这张图…', 3000)
                 setChatOpen(false)
                 const hdr = file.type || 'image/jpeg'
-                const res = await fetch('/api/chubby-whale/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: '', image: b64, imageMime: hdr }) })
+                const res = await fetch('/api/chubby-whale/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: VISION_PROMPT, image: b64, imageMime: hdr }) })
                 const d = await res.json()
                 const reply = (d && d.reply) || '这条鱼看不懂这张图……'
                 showBubble('（看图）' + reply, 10000)
@@ -527,37 +535,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             }
             input.click()
           } catch (e) { showBubble('打不开文件选择', 4000) }
-          return
-        }        if (action === 'dictate') {
-          // 切换口述：开始（录音识别累积）/ 结束（导出 txt）
-          if (!dictateRef.current.on) {
-            dictateRef.current.on = true
-            dictateRef.current.text = ''
-            setDictateOn(true)
-            setDictText('')
-            startDictation((t: string) => {
-              dictateRef.current.text += t
-              setDictText(dictateRef.current.text)
-              showBubble('（口述）' + t, 2500)
-            })
-            showBubble('口述开始，说话就会转成文字～', 3000)
-          } else {
-            dictateRef.current.on = false
-            setDictateOn(false)
-            const body = dictateRef.current.text || '（还没录到内容）'
-            try {
-              const blob = new Blob([body], { type: 'text/plain;charset=utf-8' })
-              const url = URL.createObjectURL(blob)
-              const a = document.createElement('a')
-              a.href = url
-              a.download = '口述公文-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.txt'
-              document.body.appendChild(a)
-              a.click()
-              document.body.removeChild(a)
-              URL.revokeObjectURL(url)
-            } catch (e) { }
-            showBubble('口述结束，已导出 txt（' + body.length + ' 字）', 4000)
-          }
           return
         }        if (action === 'test-tts') {
           showBubble('测试语音：主人听得到吗？', 4000)
@@ -734,6 +711,11 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               }
               voiceModeRef.current = true
               setChatOpen(false)
+              if (!voiceChatOnRef.current) {
+                // 语音聊天关着：只听不接话，冒个气泡就好
+                showBubble('（听到）' + t + '｜语音聊天关着，先不接话', 4000)
+                return
+              }
               showBubble('（听到）' + t, 3000)
               sendText(t)
             }
@@ -808,20 +790,39 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (started) return
           started = true
           try { (document as any).removeEventListener('pointerdown', onFirstGesture); (document as any).removeEventListener('keydown', onFirstGesture) } catch { }
+          if (!earOnRef.current) return
           boot()
         }
+        // 关掉「语音待命」：真的把录音链停掉（定时器 + MediaRecorder + 音轨 + AudioContext）
+        function stopEar(): void {
+          stopped = true
+          if (watchTimer) { try { clearTimeout(watchTimer) } catch { } watchTimer = null }
+          if (startTimer) { try { clearTimeout(startTimer) } catch { } startTimer = null }
+          try { if (mr && mr.state !== 'inactive') mr.stop() } catch { }
+          try { if (actx) actx.close() } catch { }
+          try { if (stream) stream.getTracks().forEach((t: any) => t.stop()) } catch { }
+          mr = null; actx = null; stream = null; analyser = null
+        }
+        // 再打开：重新拿麦克风并起循环
+        function bootEar(): void {
+          stopped = false
+          lastHeardText = ''
+          lastHeardAt = 0
+          started = true
+          try { (document as any).removeEventListener('pointerdown', onFirstGesture); (document as any).removeEventListener('keydown', onFirstGesture) } catch { }
+          boot()
+        }
+        earCtlRef.current.stop = stopEar
+        earCtlRef.current.boot = bootEar
         try {
           (document as any).addEventListener('pointerdown', onFirstGesture)
           (document as any).addEventListener('keydown', onFirstGesture)
         } catch { }
         return () => {
-          stopped = true
-          // 停掉 watch/start 的定时器链，避免卸载后还多跑一轮
-          if (watchTimer) { try { clearTimeout(watchTimer) } catch { } watchTimer = null }
-          if (startTimer) { try { clearTimeout(startTimer) } catch { } startTimer = null }
-          try { if (mr && mr.state === 'recording') mr.stop() } catch { }
-          try { if (actx) actx.close() } catch { }
-          try { if (stream) stream.getTracks().forEach((t: any) => t.stop()) } catch { }
+          try { (document as any).removeEventListener('pointerdown', onFirstGesture); (document as any).removeEventListener('keydown', onFirstGesture) } catch { }
+          stopEar()
+          earCtlRef.current.stop = () => { }
+          earCtlRef.current.boot = () => { }
         }
       }, [])
       // Canvas 动画

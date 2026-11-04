@@ -7,3 +7,10 @@ data/story_progress.json
 *.log
 config.json
 data/cache/
+
+# 运行态数据（不进仓库）
+data/reminders.json
+data/culture-seen.json
+data/poem-seen.json
+dist/data/
+data/pet_state.json

@@ -19,6 +19,7 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "data",
     "dist",
     "cordis.patch.yml",
     "assets",
@@ -48,6 +49,6 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && esbuild src/client.ts --bundle --format=iife --external:react --outfile=dist/client.js",
-    "prepare": "npm run build"
+    "prepublishOnly": "npm run build"
   }
 }
