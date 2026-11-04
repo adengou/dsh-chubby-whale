@@ -28,7 +28,8 @@ export type VoiceStats = {
   ttsRequests: number      // 朗读请求数
   ttsPlayed: number        // 真正开始播放
   ttsFail: number          // 合成/播放失败
-  ttsZombie: number        // 僵尸复位次数
+  ttsZombie: number
+  dupDropped?: number      // 因重复被丢掉的识别结果（防重复回答）
   lastError: string
 }
 
@@ -125,6 +126,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   let lastText = ''
   let lastTextAt = 0
   const spokenRecent: Array<{ text: string; at: number }> = []
+  const recentHeard: Array<{ text: string; at: number }> = []
 
   // ---- 朗读 ----
 type Job = { seq: number; text: string; rate: string; narration: boolean; attempts: number; onDone?: () => void }
@@ -270,6 +272,18 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
       if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return false
       if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return false
     }
+    // 加强去重：VAD 把一句话切成两段时，ASR 常返回相同/相近文本 → 会重复回答。
+    // 与最近 20 秒内听过的 3 句比较：完全相同，或前 8 字相同，视为同一次发言。
+    for (const h of recentHeard) {
+      if (now - h.at > 20000) continue
+      const hp = h.text.replace(/[\s。，！？,.!?、…~～]/g, '')
+      if (!hp) continue
+      const same = plain === hp
+      const sameHead = plain.length >= 8 && hp.length >= 8 && plain.slice(0, 8) === hp.slice(0, 8)
+      if (same || sameHead) { try { stats.dupDropped = (stats.dupDropped || 0) + 1 } catch (e) { } ; return false }
+    }
+    recentHeard.push({ text, at: now })
+    while (recentHeard.length > 3) recentHeard.shift()
     if (text === lastText && now - lastTextAt < 8000) return false
     lastText = text
     lastTextAt = now

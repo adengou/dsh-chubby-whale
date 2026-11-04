@@ -678,6 +678,7 @@
     let lastText = "";
     let lastTextAt = 0;
     const spokenRecent = [];
+    const recentHeard = [];
     const ttsQ = [];
     let ttsBusy = false;
     let ttsAudio = null;
@@ -872,6 +873,23 @@
         if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return false;
         if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return false;
       }
+      for (const h of recentHeard) {
+        if (now - h.at > 2e4) continue;
+        const hp = h.text.replace(/[\s。，！？,.!?、…~～]/g, "");
+        if (!hp) continue;
+        const same = plain === hp;
+        const sameHead = plain.length >= 8 && hp.length >= 8 && plain.slice(0, 8) === hp.slice(0, 8);
+        if (same || sameHead) {
+          try {
+            stats.dupDropped = (stats.dupDropped || 0) + 1;
+          } catch (e) {
+          }
+          ;
+          return false;
+        }
+      }
+      recentHeard.push({ text, at: now });
+      while (recentHeard.length > 3) recentHeard.shift();
       if (text === lastText && now - lastTextAt < 8e3) return false;
       lastText = text;
       lastTextAt = now;
@@ -2467,7 +2485,7 @@
                 showBubble("\u8BED\u97F3\u6A21\u5757\u8FD8\u6CA1\u8D77\u6765\uFF08\u8BED\u97F3\u5F85\u547D\u53EF\u80FD\u662F\u5173\u7684\uFF09", 6e3);
                 return;
               }
-              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u7AEF\u70B9\u68C0\u6D4B\uFF1A" + (voiceRef.current && voiceRef.current.endpointInfo ? voiceRef.current.endpointInfo().mode === "ape" ? "\u81EA\u9002\u5E94" : "\u7ECF\u5178" : "?") + (function() {
+              const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u53BB\u91CD\uFF1A\u91CD\u590D\u4E22\u5F03 " + (st.dupDropped || 0) + " \u6B21\uFF08\u540C\u4E00\u53E5\u8BDD\u88AB\u5207\u6210\u4E24\u6BB5\u65F6\u7528\uFF09\n\u7AEF\u70B9\u68C0\u6D4B\uFF1A" + (voiceRef.current && voiceRef.current.endpointInfo ? voiceRef.current.endpointInfo().mode === "ape" ? "\u81EA\u9002\u5E94" : "\u7ECF\u5178" : "?") + (function() {
                 try {
                   const t = voiceRef.current && voiceRef.current.lastTtsInfo ? voiceRef.current.lastTtsInfo() : null;
                   if (!t) return "";
