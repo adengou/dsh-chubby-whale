@@ -35,7 +35,7 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
   const mem = new Map<string, { v: any; size: number; at: number; ttl: number }>()
   const MEM_ITEMS = opts.memLimit || 500
   const MEM_BYTES = opts.memBytes || 32 * 1024 * 1024   // 内存里最多放 32MB
-  const MAX_FILES = opts.maxFiles || 800
+  const MAX_FILES = opts.maxFiles || 1200
   let memBytes = 0
   let ensured = false
 
