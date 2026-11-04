@@ -455,7 +455,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (!(document as any).getElementById('chubby-whale-style')) {
             const st = (document as any).createElement('style')
             st.id = 'chubby-whale-style'
-            st.textContent = '.chubby-bubble{position:fixed;z-index:10002;max-width:250px;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 "Microsoft YaHei",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}' +
+            st.textContent = '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 "Microsoft YaHei",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}' +
               '.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}' +
               '.chubby-bubble.show{opacity:1;}'
             ;(document as any).head.appendChild(st)
