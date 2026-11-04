@@ -119,6 +119,35 @@ try {
   ok('菜单可读', false, String(e.message))
 }
 
+
+// ---------- ④ 相似度算法（回声 / 重复发言） ----------
+console.log('\n[4] 相似度算法 client/sim.ts')
+try {
+  const sim = await import('../src/client/sim.ts')
+  const cases = [
+    // [说明, a, b, 期望相似度区间]
+    ['同一句只差标点', '你好呀。', '你好呀', 1],
+    ['同一句被切成两段', '今天天气不错你给我讲个笑话吧', '不错你给我讲个笑话吧', null],
+    ['完全不同的问句', '今天天气怎么样', '讲个聊斋故事', null],
+    ['短词回声', 'master', 'master', 1],
+  ]
+  const s1 = sim.similarity('你好呀。', '你好呀')
+  ok('标点差异 → 相似度 1', s1 > 0.99, 'v=' + s1.toFixed(2))
+  const s2 = sim.similarity('今天天气不错你给我讲个笑话吧', '不错你给我讲个笑话吧')
+  ok('句中截断 → 相似度 > 0.6', s2 > 0.6, 'v=' + s2.toFixed(2))
+  const s3 = sim.similarity('今天天气怎么样', '讲个聊斋故事')
+  ok('不同问句 → 相似度 < 0.2', s3 < 0.2, 'v=' + s3.toFixed(2))
+
+  const now = Date.now()
+  const recent = [{ text: '今天天气不错你给我讲个笑话吧', at: now - 1000 }]
+  ok('8 秒内同一句判为重复', sim.isRepeat('不错你给我讲个笑话吧', { recent, windowMs: 8000, threshold: 0.9, minLen: 4, now }) === true)
+  ok('隔了 30 秒不再当重复', sim.isRepeat('不错你给我讲个笑话吧', { recent, windowMs: 8000, threshold: 0.9, minLen: 4, now: now + 30000 }) === false)
+  ok('不同问句不误判', sim.isRepeat('讲个聊斋故事', { recent, windowMs: 8000, threshold: 0.9, minLen: 4, now }) === false)
+  ok('master 回声判为重复', sim.isRepeat('master', { recent: [{ text: 'master', at: now - 500 }], windowMs: 8000, threshold: 0.9, minLen: 4, now }) === true)
+} catch (e) {
+  ok('能加载 sim.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

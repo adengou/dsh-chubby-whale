@@ -14,6 +14,7 @@
  */
 
 import { Ape } from './ape.js'
+import { isRepeat, normalizeText, similarity } from './sim.js'
 
 export type VoiceStatus = 'idle' | 'listening' | 'recognizing' | 'thinking' | 'speaking'
 
@@ -274,15 +275,11 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
       // 短词回声：主人说 "master"，本鲸回复里也含 master，麦克风会把它听回去 → 就变成"说两遍"
       if (plain.length >= 3 && now - s.at < 6000 && target.indexOf(plain) >= 0) { try { stats.echoDropped++ } catch (e) { } ; return false }
     }
-    // 加强去重：VAD 把一句话切成两段时，ASR 常返回相同/相近文本 → 会重复回答。
-    // 与最近 20 秒内听过的 3 句比较：完全相同，或前 8 字相同，视为同一次发言。
-    for (const h of recentHeard) {
-      if (now - h.at > 20000) continue
-      const hp = h.text.replace(/[\s。，！？,.!?、…~～]/g, '')
-      if (!hp) continue
-      const same = plain === hp
-      const sameHead = plain.length >= 8 && hp.length >= 8 && plain.slice(0, 8) === hp.slice(0, 8)
-      if (same || sameHead) { try { stats.dupDropped = (stats.dupDropped || 0) + 1 } catch (e) { } ; return false }
+    // 去重统一走 client/sim.ts 的相似度算法（bigram Jaccard）：
+    // 窗口 8 秒、阈值 0.90 —— 只挡"刚说过的同一句被切成两段"，主人隔一会儿再说不会被吞。
+    if (isRepeat(plain, { recent: recentHeard, windowMs: 8000, threshold: 0.9, minLen: 4, now })) {
+      try { stats.dupDropped = (stats.dupDropped || 0) + 1 } catch (e) { }
+      return false
     }
     recentHeard.push({ text, at: now })
     while (recentHeard.length > 3) recentHeard.shift()

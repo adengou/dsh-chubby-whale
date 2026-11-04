@@ -605,6 +605,50 @@
     }
   };
 
+  // src/client/sim.ts
+  function normalizeText(s) {
+    return String(s || "").toLowerCase().replace(/[\s\u3000]+/g, "").replace(/[\s。，！？、；：,.!?;:"'”’“”（）()【】\[\]<>《》~～`@#$%^&*_+=|\\/-]/g, "");
+  }
+  function bigrams(s) {
+    const out = /* @__PURE__ */ new Set();
+    const t = String(s || "");
+    if (!t) return out;
+    if (t.length === 1) {
+      out.add(t);
+      return out;
+    }
+    for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
+    return out;
+  }
+  function similarity(a, b) {
+    const A = bigrams(normalizeText(a));
+    const B = bigrams(normalizeText(b));
+    if (A.size === 0 || B.size === 0) return 0;
+    let inter = 0;
+    for (const g of A) if (B.has(g)) inter++;
+    const union = A.size + B.size - inter;
+    return union === 0 ? 0 : inter / union;
+  }
+  function isRepeat(text, opts) {
+    const threshold = opts.threshold === void 0 ? 0.85 : opts.threshold;
+    const minLen = opts.minLen === void 0 ? 4 : opts.minLen;
+    const windowMs = opts.windowMs === void 0 ? 2e4 : opts.windowMs;
+    const now = opts.now === void 0 ? Date.now() : opts.now;
+    const cur = normalizeText(text);
+    if (!cur) return false;
+    for (const item of opts.recent || []) {
+      if (now - Number(item && item.at || 0) > windowMs) continue;
+      const prev = normalizeText(item && item.text ? item.text : "");
+      if (!prev) continue;
+      if (cur === prev) return true;
+      const shortOne = cur.length <= prev.length ? cur : prev;
+      const longOne = cur.length <= prev.length ? prev : cur;
+      if (shortOne.length >= minLen && longOne.indexOf(shortOne) >= 0) return true;
+      if (cur.length >= minLen && prev.length >= minLen && similarity(cur, prev) >= threshold) return true;
+    }
+    return false;
+  }
+
   // src/client/voice.ts
   var WINDOW_MS = 6e3;
   var EARLY_STOP_QUIET = 700;
@@ -881,20 +925,12 @@
           return false;
         }
       }
-      for (const h of recentHeard) {
-        if (now - h.at > 2e4) continue;
-        const hp = h.text.replace(/[\s。，！？,.!?、…~～]/g, "");
-        if (!hp) continue;
-        const same = plain === hp;
-        const sameHead = plain.length >= 8 && hp.length >= 8 && plain.slice(0, 8) === hp.slice(0, 8);
-        if (same || sameHead) {
-          try {
-            stats.dupDropped = (stats.dupDropped || 0) + 1;
-          } catch (e) {
-          }
-          ;
-          return false;
+      if (isRepeat(plain, { recent: recentHeard, windowMs: 8e3, threshold: 0.9, minLen: 4, now })) {
+        try {
+          stats.dupDropped = (stats.dupDropped || 0) + 1;
+        } catch (e) {
         }
+        return false;
       }
       recentHeard.push({ text, at: now });
       while (recentHeard.length > 3) recentHeard.shift();
