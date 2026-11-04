@@ -1050,7 +1050,11 @@
           fillerLoading = false;
         }
       }
+      let fillerAt = 0;
       function playFiller() {
+        const nowF = Date.now();
+        if (nowF - fillerAt < 3e3) return;
+        fillerAt = nowF;
         try {
           if (!fillerBuf) {
             prefetchFiller();
@@ -2605,9 +2609,27 @@
               startChunk();
             }, delay);
           }
-          function acceptHeard(rawText, source, asrMs) {
+          function acceptHeard(rawText, source, asrMs, peakDb) {
             try {
               let t = String(rawText || "").trim();
+              const HALLU = ["\u55EF", "\u5443", "\u554A", "\u54E6", "\u8C22\u8C22\u89C2\u770B", "\u8C22\u8C22\u5927\u5BB6", "\u5B57\u5E55", "\u8BF7\u4E0D\u541D\u70B9\u8D5E", "\u8BA2\u9605", "\u8F6C\u53D1", "\u6253\u8D4F", "\u518D\u89C1", "byebye"];
+              const lowT = t.replace(/[\s。，！？,.!?、…~～]/g, "");
+              if (HALLU.indexOf(lowT) >= 0) {
+                try {
+                  earDiag.chunks.hallucination = (earDiag.chunks.hallucination || 0) + 1;
+                } catch (e) {
+                }
+                ;
+                return;
+              }
+              if (typeof peakDb === "number" && peakDb < -48) {
+                try {
+                  earDiag.chunks.hallucination = (earDiag.chunks.hallucination || 0) + 1;
+                } catch (e) {
+                }
+                ;
+                return;
+              }
               if (!t || t.length < 2) return;
               try {
                 earDiag.chunks.recognized = (earDiag.chunks.recognized || 0) + 1;
@@ -2775,7 +2797,7 @@
                 return;
               }
               if (d && d.ok && d.text && d.text.trim().length >= 2) {
-                acceptHeard(String(d.text), "asr", asrMs);
+                acceptHeard(String(d.text), "asr", asrMs, vad.peakDb);
               }
             } catch (e) {
             } finally {

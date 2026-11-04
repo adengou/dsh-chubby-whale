@@ -169,7 +169,11 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }).then((r: any) => (r.ok ? r.arrayBuffer() : null)).then((b: any) => { if (b && b.byteLength > 1000) fillerBuf = b }).catch(() => { }).finally(() => { fillerLoading = false })
       } catch (e) { fillerLoading = false }
     }
+    let fillerAt = 0
     function playFiller(): void {
+      const nowF = Date.now()
+      if (nowF - fillerAt < 3000) return      // 节流：3 秒内只「嗯」一次，避免连续重复
+      fillerAt = nowF
       try {
         if (!fillerBuf) { prefetchFiller(); return }
         const url = URL.createObjectURL(new Blob([fillerBuf], { type: 'audio/mpeg' }))
@@ -1265,9 +1269,14 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           startTimer = setTimeout(() => { startTimer = null; startChunk() }, delay)
         }
         /** 收到一段识别文本（自建 ASR 或浏览器 Web Speech），统一走这里 */
-        function acceptHeard(rawText: string, source: 'asr' | 'ws', asrMs?: number) {
+        function acceptHeard(rawText: string, source: 'asr' | 'ws', asrMs?: number, peakDb?: number) {
           try {
             let t = String(rawText || '').trim()
+            // 静音幻觉：ASR 在纯静音上也会编出文字（常见「嗯」「谢谢观看」），必须挡掉
+            const HALLU = ['嗯','呃','啊','哦','谢谢观看','谢谢大家','字幕','请不吝点赞','订阅','转发','打赏','再见','byebye']
+            const lowT = t.replace(/[\s。，！？,.!?、…~～]/g, '')
+            if (HALLU.indexOf(lowT) >= 0) { try { earDiag.chunks.hallucination = (earDiag.chunks.hallucination || 0) + 1 } catch (e) { } ; return }
+            if (typeof peakDb === 'number' && peakDb < -48) { try { earDiag.chunks.hallucination = (earDiag.chunks.hallucination || 0) + 1 } catch (e) { } ; return }
             if (!t || t.length < 2) return
             try { earDiag.chunks.recognized = (earDiag.chunks.recognized || 0) + 1 } catch (e) { }
             try { earDiag.lastSource = source; earDiag.lastHeard = t.slice(0, 30) } catch (e) { }
@@ -1350,7 +1359,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               return
             }
             if (d && d.ok && d.text && d.text.trim().length >= 2) {
-              acceptHeard(String(d.text), 'asr', asrMs)
+              acceptHeard(String(d.text), 'asr', asrMs, vad.peakDb)
             }
           } catch (e) { } finally {
             asrBusy = false        // 释放识别位（无论成功失败都要放，否则耳朵永久占线）
