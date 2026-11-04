@@ -2192,7 +2192,16 @@
               else if ((c.nowake || 0) > 0 && (c.nowakeAccepted || 0) === 0) verdict = "\u2192 \u8BC6\u522B\u5230\u4E86\u4F46\u88AB\u5524\u9192\u8BCD\u62E6\uFF08\u8BF4\u300C\u5927\u80A5\u9C7C\u300D\u5F00\u5934\uFF0C\u6216\u6253\u5F00\u8BED\u97F3\u804A\u5929\uFF09";
               else if (sent === 0 && (c.recognized || 0) > 0) verdict = "\u2192 \u8BC6\u522B\u6210\u529F\u4F46\u88AB\u56DE\u58F0/\u5524\u9192\u5224\u5B9A\u62E6\u4E86";
               else if (sent > 0) verdict = "\u2192 \u94FE\u8DEF\u5DF2\u901A\uFF08\u5DF2\u4EA4\u7ED9\u5BF9\u8BDD\uFF09";
-              const line = "\u8033\u6735\u81EA\u68C0\uFF1A\u97F3\u91CF " + Math.round(e.db) + "dB\uFF5C\u5E95\u566A " + Math.round(e.noiseDb) + "dB\uFF5C\u9608\u503C " + Math.round(e.onsetDb) + "dB\n\u901A\u9053 " + (e.mode || "?") + "\uFF08\u6D4F\u89C8\u5668\u8BC6\u522B " + (e.wsAvailable ? "\u53EF\u7528" : "\u4E0D\u53EF\u7528") + (e.wsError ? "\uFF0C\u9519\u8BEF " + e.wsError : "") + "\uFF09\n\u9EA6\u514B\u98CE " + (e.micEnabled ? "\u5F00" : "\u5173") + "\uFF5C\u5F85\u547D " + (e.earOn === false ? "\u5173" : "\u5F00") + "\uFF5C\u6743\u9650 " + (e.perm || "?") + "\n\u91C7\u6837 " + (e.ticks || 0) + " \u6B21\uFF5C\u542F\u52A8 " + (e.ctxState || "?") + "\uFF5C\u5F00\u9EA6\u5C1D\u8BD5 " + (e.bootAttempts || 0) + " \u6B21\uFF08\u5931\u8D25 " + (e.bootFail || 0) + "\uFF09\n\u5F55\u97F3\u6BB5 " + rec + "\uFF5C\u4E0A\u4F20 " + (c.uploaded || 0) + "\uFF5C\u8BC6\u522B " + (c.recognized || 0) + "\uFF5C\u53D1\u9001 " + sent + "\n\u4E0A\u4F20\u88AB\u8C03\u7528 " + (c.uploadCalled || 0) + "\uFF5C\u770B\u95E8\u72D7 " + (c.watchdog || 0) + "\uFF5C\u590D\u6D3B\u9EA6 " + (e.revived || 0) + "\uFF5C\u8F6C\u7801\u5931\u8D25 " + (c.b64Fail || 0) + "\n\u4E22\uFF1A\u592A\u77ED " + (c.small || 0) + "\uFF5C\u9759\u97F3\u7A97 " + (c.muted || 0) + "\uFF5C\u5360\u7EBF " + (c.asrBusyDrop || 0) + "\uFF5C\u56DE\u58F0 " + (c.echo || 0) + "\uFF5C\u672A\u5524\u9192 " + (c.nowake || 0) + "\n" + verdict;
+              const line = "\u8033\u6735\u81EA\u68C0\uFF1A\u97F3\u91CF " + Math.round(e.db) + "dB\uFF5C\u5E95\u566A " + Math.round(e.noiseDb) + "dB\uFF5C\u9608\u503C " + Math.round(e.onsetDb) + "dB\n\u901A\u9053 " + (e.mode || "?") + "\uFF08\u6D4F\u89C8\u5668\u8BC6\u522B " + (e.wsAvailable ? "\u53EF\u7528" : "\u4E0D\u53EF\u7528") + (e.wsError ? "\uFF0C\u9519\u8BEF " + e.wsError : "") + "\uFF09\n\u9EA6\u514B\u98CE " + (e.micEnabled ? "\u5F00" : "\u5173") + "\uFF5C\u5F85\u547D " + (e.earOn === false ? "\u5173" : "\u5F00") + "\uFF5C\u6743\u9650 " + (e.perm || "?") + "\n\u91C7\u6837 " + (e.ticks || 0) + " \u6B21\uFF5C\u542F\u52A8 " + (e.ctxState || "?") + "\uFF5C\u5F00\u9EA6\u5C1D\u8BD5 " + (e.bootAttempts || 0) + " \u6B21\uFF08\u5931\u8D25 " + (e.bootFail || 0) + "\uFF09\n\u5F55\u97F3\u6BB5 " + rec + "\uFF5C\u4E0A\u4F20 " + (c.uploaded || 0) + "\uFF5C\u8BC6\u522B " + (c.recognized || 0) + "\uFF5C\u53D1\u9001 " + sent + "\n\u5BF9\u8BDD " + (function() {
+                try {
+                  const w = window.__chubbyWhale;
+                  const c2 = w && w.lastChat;
+                  if (!c2) return "(\u8FD8\u6CA1\u804A\u8FC7)";
+                  return String(c2.stage) + (c2.err ? "(" + c2.err + ")" : "") + (c2.reply ? " " + c2.reply : "");
+                } catch (e2) {
+                  return "?";
+                }
+              })() + "\n\u4E0A\u4F20\u88AB\u8C03\u7528 " + (c.uploadCalled || 0) + "\uFF5C\u770B\u95E8\u72D7 " + (c.watchdog || 0) + "\uFF5C\u590D\u6D3B\u9EA6 " + (e.revived || 0) + "\uFF5C\u8F6C\u7801\u5931\u8D25 " + (c.b64Fail || 0) + "\n\u4E22\uFF1A\u592A\u77ED " + (c.small || 0) + "\uFF5C\u9759\u97F3\u7A97 " + (c.muted || 0) + "\uFF5C\u5360\u7EBF " + (c.asrBusyDrop || 0) + "\uFF5C\u56DE\u58F0 " + (c.echo || 0) + "\uFF5C\u672A\u5524\u9192 " + (c.nowake || 0) + "\n" + verdict;
               let vadOk = "";
               try {
                 const quiet = simulate(new Array(30).fill(-65), 60);
@@ -2456,6 +2465,16 @@
             window.__chubbyWhale.ttsSkip = "empty-text";
           } catch (e) {
           }
+          try {
+            window.__chubbyWhale.lastChat = { stage: "entry", busy: !!busy, tts: !!ttsPlaying, at: Date.now() };
+          } catch (e) {
+          }
+          if (busy) {
+            try {
+              window.__chubbyWhale.lastChat.stage = "blocked-busy";
+            } catch (e) {
+            }
+          }
           if (busy) {
             if (opts && opts.voice) showBubble("\u672C\u9CB8\u8FD8\u5728\u60F3\u4E0A\u4E00\u53E5\u5462\uFF0C\u7A0D\u7B49\uFF5E", 2500);
             return;
@@ -2519,6 +2538,10 @@
             }
             if (myEpoch !== chatEpoch) return;
             const reply = data?.reply || "\u4E3B\u4EBA\u2026\u2026\u672C\u9CB8\u8D70\u795E\u4E86\u3002";
+            try {
+              window.__chubbyWhale.lastChat = { stage: "fetched", reply: String(reply).slice(0, 40), at: Date.now() };
+            } catch (e) {
+            }
             setMessages((m) => [...m, { who: "fish", text: reply }]);
             if (voiceModeRef.current) {
               showBubble("\uFF08\u8BF4\uFF09" + reply, 8e3);
@@ -2537,6 +2560,10 @@
               if (data && data.reply && myEpoch === chatEpoch) {
                 const rp = String(data.reply);
                 noteSpoken(rp);
+                try {
+                  window.__chubbyWhale.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now() };
+                } catch (e) {
+                }
                 speakText(rp, { rate: rp.length >= 80 ? "-15%" : "+0%" });
               }
             } catch {

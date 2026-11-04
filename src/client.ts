@@ -973,6 +973,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               + '麦克风 ' + (e.micEnabled ? '开' : '关') + '｜待命 ' + (e.earOn === false ? '关' : '开') + '｜权限 ' + (e.perm || '?') + '\n'
               + '采样 ' + (e.ticks || 0) + ' 次｜启动 ' + (e.ctxState || '?') + '｜开麦尝试 ' + (e.bootAttempts || 0) + ' 次（失败 ' + (e.bootFail || 0) + '）\n'
               + '录音段 ' + rec + '｜上传 ' + (c.uploaded || 0) + '｜识别 ' + (c.recognized || 0) + '｜发送 ' + sent + '\n'
+              + '对话 ' + (function () { try { const w: any = (window as any).__chubbyWhale; const c = w && w.lastChat; if (!c) return '(还没聊过)'; return String(c.stage) + (c.err ? '(' + c.err + ')' : '') + (c.reply ? ' ' + c.reply : '') } catch (e) { return '?' } })() + '\n'
               + '上传被调用 ' + (c.uploadCalled || 0) + '｜看门狗 ' + (c.watchdog || 0) + '｜复活麦 ' + (e.revived || 0) + '｜转码失败 ' + (c.b64Fail || 0) + '\n'
               + '丢：太短 ' + (c.small || 0) + '｜静音窗 ' + (c.muted || 0) + '｜占线 ' + (c.asrBusyDrop || 0) + '｜回声 ' + (c.echo || 0) + '｜未唤醒 ' + (c.nowake || 0) + '\n'
               + verdict
@@ -1162,6 +1163,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (!text) return
         try { (window as any).__chubbyWhale.ttsSkip = 'empty-text' } catch (e) { }
         // 占线保护：上一条还在想就拒绝（不排队），避免两条回复抢同一个话筒
+        try { (window as any).__chubbyWhale.lastChat = { stage: 'entry', busy: !!busy, tts: !!ttsPlaying, at: Date.now() } } catch (e) { }
+        if (busy) { try { (window as any).__chubbyWhale.lastChat.stage = 'blocked-busy' } catch (e) { } }
         if (busy) { if (opts && opts.voice) showBubble('本鲸还在想上一句呢，稍等～', 2500); return }
         // 用户提问永远优先：先打断正在播的旁白（说书/念诗）再回答
         if (storyNarratingRef.current || ttsPlaying || ttsQueue.length > 0) {
@@ -1194,6 +1197,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           try { latDiag.chatMs = Math.round(performance.now() - tChat); latDiag.updates++ } catch (e) { }
           if (myEpoch !== chatEpoch) return   // 主人已经问了新问题：这条旧回复作废（防串线）
           const reply = data?.reply || '主人……本鲸走神了。'
+          try { (window as any).__chubbyWhale.lastChat = { stage: 'fetched', reply: String(reply).slice(0, 40), at: Date.now() } } catch (e) { }
           setMessages((m: any[]) => [...m, { who: 'fish', text: reply }])
           if (voiceModeRef.current) { showBubble('（说）' + reply, 8000) }
           if (data && data.upgraded) showBubble('本鲸又长大一点啦！', 4000)
@@ -1208,6 +1212,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             if (data && data.reply && myEpoch === chatEpoch) {
               const rp = String(data.reply)
               noteSpoken(rp)
+              try { (window as any).__chubbyWhale.lastChat = { stage: 'speak', reply: rp.slice(0, 40), at: Date.now() } } catch (e) { }
       speakText(rp, { rate: rp.length >= 80 ? '-15%' : '+0%' })
             }
           } catch { }
