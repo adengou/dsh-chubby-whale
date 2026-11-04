@@ -3,6 +3,9 @@
  */
 import { readFile } from 'node:fs/promises';
 import { growthStage } from '../store.js';
+import { fetchJson, isTimeoutError } from '../http.js';
+/** 余额查询超时：15 秒 */
+const BALANCE_TIMEOUT = 15 * 1000;
 export function createMiscHandlers(opts) {
     async function handleAsset(_req, res) {
         try {
@@ -28,21 +31,27 @@ export function createMiscHandlers(opts) {
                 res.end(JSON.stringify({ ok: false, error: 'NO_KEY', balance: null }));
                 return;
             }
-            const resp = await fetch('https://api.deepseek.com/user/balance', { headers: { authorization: `Bearer ${key}` } });
-            if (!resp.ok) {
+            const r = await fetchJson('https://api.deepseek.com/user/balance', { headers: { authorization: `Bearer ${key}` } }, BALANCE_TIMEOUT);
+            if (!r.ok) {
+                console.error('[misc] BALANCE-HTTP ' + r.status);
                 res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-                res.end(JSON.stringify({ ok: false, error: `HTTP ${resp.status}`, balance: null }));
+                res.end(JSON.stringify({ ok: false, error: `HTTP ${r.status}`, balance: null }));
                 return;
             }
-            const data = await resp.json();
+            const data = r.data;
             const infos = data?.balance_infos || [];
             const cny = infos.find((x) => x.currency === 'CNY') || infos[0] || null;
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
             res.end(JSON.stringify({ ok: true, balance: cny ? cny.total_balance : null, currency: cny ? cny.currency : 'CNY' }));
         }
         catch (err) {
+            // 超时/网络错误：照旧回 ok:false + balance:null，日志里留 BALANCE-TIMEOUT 标签
+            if (isTimeoutError(err))
+                console.error('[misc] BALANCE-TIMEOUT ' + BALANCE_TIMEOUT + 'ms 无响应，已中止');
+            else
+                console.error('[misc] BALANCE-ERR ' + String(err?.message || err));
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-            res.end(JSON.stringify({ ok: false, error: String(err?.message || err), balance: null }));
+            res.end(JSON.stringify({ ok: false, error: isTimeoutError(err) ? 'timeout' : String(err?.message || err), balance: null }));
         }
     }
     async function handleGrowth(_req, res) {

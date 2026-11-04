@@ -3,12 +3,17 @@
  * 用于：TTS 音频、聊天回复、ASR 识别结果（按内容 hash 缓存，省 token/时间）
  * 内存：条目数 + 总字节双上限，LRU 淘汰（音频 Buffer 很占内存，必须限总量）
  * 磁盘：超过 MAX_FILES 时按 mtime 删最旧的一半（不读文件内容）
+ * 过期：内存条目记写入时间 at（+ 可选 ttl），getJson 带 maxAgeMs 时内存命中也校验，不再让旧值顶掉 TTL
  */
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir, readdir, unlink, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 export function hashKey(text) {
     return createHash('sha1').update(text).digest('hex');
+}
+/** 短指纹（md5 前 8 位）：拼缓存 key 用（如长期记忆摘要的指纹） */
+export function shortHash(text) {
+    return createHash('md5').update(String(text || '')).digest('hex').slice(0, 8);
 }
 /** 二进制内容 hash（ASR 音频用完整字节，避免只取前 4000 字符撞 key） */
 export function hashBytes(buf) {
@@ -46,16 +51,20 @@ export function createCache(opts) {
         }
         catch { }
     }
-    function remember(key, value) {
+    /** 从内存拿掉一条（同步扣减字节计数，避免计数漂移） */
+    function forget(key) {
+        const hit = mem.get(key);
+        if (hit) {
+            memBytes -= hit.size;
+            mem.delete(key);
+        }
+    }
+    function remember(key, value, ttlMs = 0) {
         const size = sizeOf(value);
         if (size > MEM_BYTES)
             return; // 单个对象就超上限：不驻留内存
-        const old = mem.get(key);
-        if (old) {
-            memBytes -= old.size;
-            mem.delete(key);
-        }
-        mem.set(key, { v: value, size });
+        forget(key);
+        mem.set(key, { v: value, size, at: Date.now(), ttl: ttlMs > 0 ? ttlMs : 0 });
         memBytes += size;
         while (mem.size > MEM_ITEMS || memBytes > MEM_BYTES) {
             const oldest = mem.keys().next().value;
@@ -67,24 +76,48 @@ export function createCache(opts) {
             mem.delete(oldest);
         }
     }
+    /** 内存条目是否还新鲜：带 ttl 的按写入时间算，没 ttl 的永不过期 */
+    function fresh(hit, maxAgeMs) {
+        const ttl = maxAgeMs > 0 ? maxAgeMs : hit.ttl;
+        return ttl <= 0 || Date.now() - hit.at <= ttl;
+    }
     function memGet(key) {
         const hit = mem.get(key);
         if (!hit)
             return undefined;
+        if (!fresh(hit, 0)) {
+            forget(key);
+            return undefined;
+        }
         // 命中后挪到队尾（LRU）
         mem.delete(key);
         mem.set(key, hit);
         return hit.v;
     }
     /**
-     * 读缓存。maxAgeMs > 0 时按文件 mtime 判断过期（ASR 用 7 天）。
+     * 读缓存。maxAgeMs > 0 时按 mtime / 内存写入时间判断过期（ASR 与聊天缓存用 7 天）。
+     * 注意：内存命中也必须校验过期，否则文件早就过期了内存里还一直往回给。
      */
     async function getJson(key, ext = 'json', maxAgeMs = 0) {
         const hit = mem.get(key);
         if (hit) {
-            mem.delete(key);
-            mem.set(key, hit);
-            return hit.v;
+            let alive = fresh(hit, maxAgeMs);
+            if (alive && maxAgeMs > 0) {
+                // 要 TTL 时再用磁盘 mtime 复核一次：文件可能被外部删掉/回拨，不能只信内存里的 at
+                try {
+                    const st = await stat(join(opts.dir, key + '.' + ext));
+                    alive = Date.now() - st.mtimeMs <= maxAgeMs;
+                }
+                catch {
+                    alive = false;
+                }
+            }
+            if (alive) {
+                mem.delete(key);
+                mem.set(key, hit); // 命中后挪到队尾（LRU）
+                return hit.v;
+            }
+            forget(key);
         }
         try {
             const file = join(opts.dir, key + '.' + ext);
@@ -107,8 +140,8 @@ export function createCache(opts) {
             return null;
         }
     }
-    async function setJson(key, value, ext = 'json') {
-        remember(key, value);
+    async function setJson(key, value, ext = 'json', maxAgeMs = 0) {
+        remember(key, value, maxAgeMs);
         try {
             await ensure();
             if (ext === 'json')

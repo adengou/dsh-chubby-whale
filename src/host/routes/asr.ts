@@ -2,15 +2,23 @@
  * host/routes/asr.ts —— 语音识别路由（硅基流动 Qwen3-ASR）
  * POST JSON { audio: base64, format: 'webm'|'wav'|'mp3' } → { text }
  * Key 来源：插件 config.json 的 siliconflowKey > 环境变量 SILICONFLOW_API_KEY
+ * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB；外呼超时 60 秒
  */
 import { readFileSync } from 'node:fs'
 import { hashBytes } from '../cache.js'
+import { fetchJson, isBodyTooLarge, isTimeoutError, readBody, sendTooLarge } from '../http.js'
 import { join } from 'node:path'
 
 const ASR_MODEL = 'Qwen/Qwen3-ASR-1.7B'
 const ENDPOINT = 'https://api.siliconflow.cn/v1/audio/transcriptions'
 /** 识别结果的缓存有效期：7 天（音频字节内容 hash，同一个录音重放可直接命中） */
 const ASR_CACHE_MAX_AGE = 7 * 24 * 3600 * 1000
+/** 请求体上限（base64 之后）：12MB */
+const ASR_MAX_BODY = 12 * 1024 * 1024
+/** 解码后的音频上限：8MB */
+const ASR_MAX_AUDIO = 8 * 1024 * 1024
+/** 外呼超时：60 秒 */
+const ASR_TIMEOUT = 60 * 1000
 
 export function readSiliconFlowKey(pluginDir: string): string {
   try {
@@ -26,16 +34,38 @@ export function readSiliconFlowKey(pluginDir: string): string {
 export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
   return async function handleAsr(req: any, res: any): Promise<void> {
     try {
-      const chunks: Buffer[] = []
-      for await (const chunk of req) chunks.push(chunk as Buffer)
-      const raw = Buffer.concat(chunks).toString('utf8')
+      let raw: Buffer
+      try {
+        raw = await readBody(req, ASR_MAX_BODY)
+      } catch (err: any) {
+        if (isBodyTooLarge(err)) {
+          console.error('[asr] BODY-TOO-LARGE > ' + ASR_MAX_BODY + ' bytes')
+          sendTooLarge(res)
+          return
+        }
+        throw err
+      }
+      const text = raw.toString('utf8')
       let body: any = {}
-      try { body = raw ? JSON.parse(raw) : {} } catch { body = {} }
+      try { body = text ? JSON.parse(text) : {} } catch { body = {} }
       const audioB64 = typeof body?.audio === 'string' ? body.audio : ''
       const format = typeof body?.format === 'string' ? body.format : 'webm'
       if (!audioB64) {
         res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ ok: false, error: 'empty audio' }))
+        return
+      }
+      // 先判 base64 长度（content-length 缺失时的兜底），再解码
+      if (audioB64.length > ASR_MAX_BODY) {
+        console.error('[asr] BODY-TOO-LARGE base64=' + audioB64.length)
+        sendTooLarge(res)
+        return
+      }
+      const buf = Buffer.from(audioB64, 'base64')
+      // 解码后再判音频上限（8MB）
+      if (buf.length > ASR_MAX_AUDIO) {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ ok: false, error: 'audio too large', text: '' }))
         return
       }
       const key = readSiliconFlowKey(opts.pluginDir)
@@ -44,7 +74,6 @@ export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
         res.end(JSON.stringify({ ok: false, error: 'NO_KEY', text: '' }))
         return
       }
-      const buf = Buffer.from(audioB64, 'base64')
       // 用完整音频字节做 key（只取前 4000 字符容易撞 key）
       const ck = hashBytes(buf)
       if (opts.cache) {
@@ -54,11 +83,6 @@ export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
           res.end(JSON.stringify({ ok: true, text: hit.text, cached: true }))
           return
         }
-      }
-      if (buf.length > 8 * 1024 * 1024) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: 'audio too large', text: '' }))
-        return
       }
       // 构造 multipart
       const boundary = '----chubbywhale' + Math.random().toString(36).slice(2, 10)
@@ -72,25 +96,34 @@ export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
       )
       const tail = Buffer.from('\r\n--' + boundary + '--\r\n')
       const payload = Buffer.concat([head, buf, tail])
-      const resp = await fetch(ENDPOINT, {
-        method: 'POST',
-        headers: {
-          authorization: 'Bearer ' + key,
-          'content-type': 'multipart/form-data; boundary=' + boundary,
-        },
-        body: payload,
-      })
-      if (!resp.ok) {
-        const detail = await resp.text().catch(() => '')
+      let r: any = null
+      try {
+        r = await fetchJson(ENDPOINT, {
+          method: 'POST',
+          headers: {
+            authorization: 'Bearer ' + key,
+            'content-type': 'multipart/form-data; boundary=' + boundary,
+          },
+          body: payload,
+        }, ASR_TIMEOUT)
+      } catch (err: any) {
+        // 超时/网络错误：用户看到的仍是 ok:false + 空文本，日志里留标签
+        if (isTimeoutError(err)) console.error('[asr] ASR-TIMEOUT ' + ASR_TIMEOUT + 'ms 无响应，已中止')
+        else console.error('[asr] ASR-NETWORK ' + String(err?.message || err))
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: 'HTTP ' + resp.status + ' ' + detail.slice(0, 200), text: '' }))
+        res.end(JSON.stringify({ ok: false, error: isTimeoutError(err) ? 'timeout' : String(err?.message || err), text: '' }))
         return
       }
-      const data: any = await resp.json()
-      const text = String(data?.text || '').trim()
-      if (opts.cache && text) { try { await opts.cache.setJson(ck, { text }) } catch { } }
+      if (!r.ok) {
+        console.error('[asr] ASR-HTTP ' + r.status)
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ ok: false, error: 'HTTP ' + r.status + ' ' + String(r.text || '').slice(0, 200), text: '' }))
+        return
+      }
+      const text2 = String(r.data?.text || '').trim()
+      if (opts.cache && text2) { try { await opts.cache.setJson(ck, { text: text2 }) } catch { } }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, text }))
+      res.end(JSON.stringify({ ok: true, text: text2 }))
     } catch (err: any) {
       try {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
