@@ -346,13 +346,28 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
     })
   }
 
+  /**
+   * 自适应停顿：照真人换气节奏给不同标点不同停顿
+   *   。！？ → 260ms（一句结束，标准值照参考实现）
+   *   ，、； → 140ms（句内小停顿，别拖）
+   *   其他   → 200ms（没标点时取中）
+   */
+  function narrationPauseFor(text: string): number {
+    const t = String(text || '').trim()
+    if (!t) return 200
+    const last = t.slice(-1)
+    if (/[。！？!?…]/.test(last)) return 260
+    if (/[，、；,;]/.test(last)) return 140
+    return 200
+  }
+
   function finishJob(j: Job): void {
     ttsBusy = false
     mutedUntil = Date.now() + ECHO_MUTE_MS
     setTimeout(() => { if (!ttsBusy && !muted) micOn(true) }, ECHO_MUTE_MS)
     try { j.onDone && j.onDone() } catch (e) { }
     // 叙述模式：段间 260ms 换气停顿（C# NarrationPauseMs）
-    if (j.narration && ttsQ.length > 0) setTimeout(() => pumpTts(), 260)
+    if (j.narration && ttsQ.length > 0) setTimeout(() => pumpTts(), narrationPauseFor(j.text))
     else pumpTts()
   }
 

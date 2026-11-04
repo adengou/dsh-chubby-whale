@@ -1002,6 +1002,14 @@
         }
       });
     }
+    function narrationPauseFor(text) {
+      const t = String(text || "").trim();
+      if (!t) return 200;
+      const last = t.slice(-1);
+      if (/[。！？!?…]/.test(last)) return 260;
+      if (/[，、；,;]/.test(last)) return 140;
+      return 200;
+    }
     function finishJob(j) {
       ttsBusy = false;
       mutedUntil = Date.now() + ECHO_MUTE_MS;
@@ -1012,7 +1020,7 @@
         j.onDone && j.onDone();
       } catch (e) {
       }
-      if (j.narration && ttsQ.length > 0) setTimeout(() => pumpTts(), 260);
+      if (j.narration && ttsQ.length > 0) setTimeout(() => pumpTts(), narrationPauseFor(j.text));
       else pumpTts();
     }
     function pumpTts() {
