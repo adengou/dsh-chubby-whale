@@ -187,5 +187,36 @@ export function createCache(opts) {
     }
     // 内存直写：和 setJson 一样经 remember 打 at（可选 ttl），过期判定不会拿到没有时间的条目
     function memSet(key, value, ttlMs = 0) { remember(key, value, ttlMs); }
-    return { getJson, setJson, memGet, memSet };
+    /** 清空缓存（内存 + 磁盘文件）；用于「清空聊天缓存」「清除记忆」 */
+    async function clear() {
+        let n = 0;
+        try {
+            mem.clear();
+            memBytes = 0;
+        }
+        catch { }
+        try {
+            await ensure();
+            const files = await readdir(opts.dir);
+            for (const f of files) {
+                try {
+                    await unlink(join(opts.dir, f));
+                    n++;
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return n;
+    }
+    /** 统计当前磁盘缓存条目数（给菜单/状态用） */
+    async function count() {
+        try {
+            return (await readdir(opts.dir)).length;
+        }
+        catch {
+            return 0;
+        }
+    }
+    return { getJson, setJson, memGet, memSet, clear, count };
 }

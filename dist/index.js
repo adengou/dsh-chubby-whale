@@ -5,7 +5,7 @@
  */
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { mkdirSync, existsSync, copyFileSync, cpSync } from 'node:fs';
+import { mkdirSync, existsSync, copyFileSync, cpSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readApiKey } from './host/config.js';
 import { createStore } from './host/store.js';
@@ -82,6 +82,36 @@ export function apply(ctx, config) {
         return;
     }
     migrateRuntimeData();
+    // 插件自己的偏好（目前只有聊天缓存开关），存运行目录，不进仓库
+    const PREFS_FILE = join(RUNTIME_DIR, 'prefs.json');
+    function loadPrefs() {
+        try {
+            return JSON.parse(readFileSync(PREFS_FILE, 'utf8'));
+        }
+        catch {
+            return {};
+        }
+    }
+    function savePrefs(p) {
+        try {
+            mkdirSync(RUNTIME_DIR, { recursive: true });
+            writeFileSync(PREFS_FILE, JSON.stringify(p), 'utf8');
+        }
+        catch { }
+    }
+    const chatCacheOn = () => {
+        try {
+            return loadPrefs().chatCache !== false;
+        }
+        catch {
+            return true;
+        }
+    };
+    const setChatCache = (on) => {
+        const p = loadPrefs();
+        p.chatCache = on;
+        savePrefs(p);
+    };
     const store = createStore(RUNTIME_DIR);
     const ttsCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'tts') });
     const chatCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'chat') });
@@ -147,6 +177,24 @@ export function apply(ctx, config) {
             reg('/api/chubby-whale/fishfood', misc.handleFishfood);
             reg('/api/chubby-whale/pet', misc.handlePet);
             reg('/api/chubby-whale/clear-memory', misc.handleClearMemory);
+            reg('/api/chubby-whale/cache', misc.handleCache);
+            reg('/api/chubby-whale/cache-toggle', (req, res) => {
+                // POST {enabled:boolean} 切换聊天缓存开关；GET 读当前状态
+                let body = '';
+                req.on('data', (c) => { body += String(c); });
+                req.on('end', () => {
+                    try {
+                        if (body) {
+                            const j = JSON.parse(body);
+                            if (typeof j.enabled === 'boolean')
+                                setChatCache(j.enabled);
+                        }
+                    }
+                    catch { }
+                    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+                    res.end(JSON.stringify({ ok: true, enabled: chatCacheOn() }));
+                });
+            });
             reg('/api/chubby-whale/story/books', story.handleBooks);
             reg('/api/chubby-whale/story/start', story.handleStoryStart);
             reg('/api/chubby-whale/story/next', story.handleStoryNext);

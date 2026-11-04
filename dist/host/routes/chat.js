@@ -101,7 +101,8 @@ export function createChatHandler(opts) {
             // 只按「语言|问题」算 key 会让同一句话永远命中第一条回复；这里加 history 长度 + 摘要短指纹
             const cacheKey = chatCacheKey(effLang, message, isVoice);
             // 缓存查找排在 Key 检查之前：没配 Key 时本地缓存照样能用
-            if (opts.cache && !imageB64 && cacheable) {
+            const cacheOn = !opts.cacheEnabled || opts.cacheEnabled() !== false;
+            if (cacheOn && opts.cache && !imageB64 && cacheable) {
                 const cached = await opts.cache.getJson(cacheKey, 'json', CHAT_CACHE_TTL);
                 if (cached && typeof cached.reply === 'string' && cached.reply.trim().length > 0) {
                     let intimacy = 0;

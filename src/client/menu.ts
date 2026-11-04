@@ -50,6 +50,9 @@ export const EN_MAP: Record<string, string> = {
   '成语辨析': 'Idiom',
   '出个对联': 'Couplet',
   '清除记忆…': 'Clear memory…',
+  '清空聊天缓存…': 'Clear chat cache…',
+  '聊天缓存：开': 'Chat cache: on',
+  '聊天缓存：关': 'Chat cache: off',
   '让它游走（退出）': 'Let it go (exit)',
   '鱼粮账本': 'Token ledger',
   '中文': '中文',
@@ -101,6 +104,7 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
   const voiceChatOn = state && state.voiceChatOn ? true : false
   const chatLang = (state && state.chatLang) ? String(state.chatLang) : 'auto'
   const ttsVoice = (state && state.ttsVoice) ? String(state.ttsVoice) : DEFAULT_VOICE
+  const chatCacheOn = !(state && state.chatCacheOn === false)
   const voiceTick = (voice: string): string => (ttsVoice === voice ? '✓ ' : '')
   const balanceText = (state && state.balance) ? state.balance : '--'
   const growthText = (state && state.growth) ? state.growth : '--'
@@ -157,6 +161,8 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
       { type: 'item', label: '出个对联', action: 'culture-couplet' },
     ] },
     { type: 'item', label: '清除记忆…', action: 'clear-memory' },
+    { type: 'item', label: '清空聊天缓存…', action: 'cache-clear' },
+    { type: 'item', label: (chatCacheOn ? '聊天缓存：开' : '聊天缓存：关'), action: 'cache-toggle' },
     { type: 'item', label: '让它游走（退出）', action: 'hide' },
     { type: 'sep' },
     { type: 'item', label: '余额：' + balanceText, action: 'balance' },

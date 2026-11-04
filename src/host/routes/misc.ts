@@ -17,6 +17,10 @@ export function createMiscHandlers(opts: {
   loadPet?: () => any
   feedPet?: () => any
   clearMemory?: () => void
+  /** 清空聊天缓存（清除记忆时一并清） */
+  clearChatCache?: () => Promise<number>
+  /** 聊天缓存条目数 */
+  chatCacheCount?: () => Promise<number>
 }) {
   async function handleAsset(_req: any, res: any): Promise<void> {
     try {
@@ -100,11 +104,35 @@ export function createMiscHandlers(opts: {
     }
   }
 
+  /** 聊天缓存：GET 看条数，DELETE 清空 */
+  async function handleCache(req: any, res: any): Promise<void> {
+    try {
+      if (req.method === 'DELETE') {
+        let n = 0
+        try { if (opts.clearChatCache) n = await opts.clearChatCache() } catch { }
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ ok: true, cleared: n }))
+        return
+      }
+      let count = 0
+      try { if (opts.chatCacheCount) count = await opts.chatCacheCount() } catch { }
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, count }))
+    } catch (err: any) {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }))
+    }
+  }
+
   async function handleClearMemory(_req: any, res: any): Promise<void> {
     try {
       if (opts.clearMemory) opts.clearMemory()
+      // 连聊天缓存一起清：否则「它把主人忘了，却还说着同一句话」
+      let cleared = 0
+      try { if (opts.clearChatCache) cleared = await opts.clearChatCache() } catch { }
+      try { res.setHeader && res.setHeader('x-cache-cleared', String(cleared)) } catch { }
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true }))
+      res.end(JSON.stringify({ ok: true, cacheCleared: typeof cleared === 'number' ? cleared : 0 }))
     } catch (err: any) {
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }))
@@ -116,5 +144,5 @@ export function createMiscHandlers(opts: {
     res.end(JSON.stringify({ ok: true, name: 'dsh-chubby-whale', key: Boolean(opts.getKey()) }))
   }
 
-  return { handleAsset, handleState, handleBalance, handleStatus, handleGrowth, handleFishfood, handlePet, handleClearMemory }
+  return { handleAsset, handleState, handleBalance, handleStatus, handleGrowth, handleFishfood, handlePet, handleClearMemory, handleCache }
 }

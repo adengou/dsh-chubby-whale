@@ -715,6 +715,24 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           if (!nowOn) stopTts()
           showBubble(nowOn ? '语音朗读：开' : '语音朗读：关（省着点用）')
           return
+        }        if (action === 'cache-clear') {
+          fetch('/api/chubby-whale/cache', { method: 'DELETE' })
+            .then((r: any) => r.json())
+            .then((d: any) => showBubble(d && d.ok ? ('聊天缓存清空啦（' + (d.cleared || 0) + ' 条）') : '缓存清空失败', 5000))
+            .catch(() => showBubble('缓存清空失败', 4000))
+          return
+        }
+        if (action === 'cache-toggle') {
+          const nowOn = !chatCacheOnRef.current
+          chatCacheOnRef.current = nowOn
+          setChatCacheOn(nowOn)
+          fetch('/api/chubby-whale/cache-toggle', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ enabled: nowOn }),
+          }).then((r: any) => r.json()).then((d: any) => {
+            showBubble(d && d.ok ? ('聊天缓存：' + (d.enabled ? '开（省 token）' : '关（每次重新回答）')) : '切换失败', 5000)
+          }).catch(() => showBubble('切换失败', 4000))
+          return
         }        if (action === 'clear-memory') {
           try {
             if (!(window as any).confirm('清除肥鲸对主人的聊天记忆？（成长/鱼粮/说书记录不受影响）')) return
@@ -1149,7 +1167,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           h('div', { style: { padding: '8px 14px', borderBottom: '1px solid #1f4a85', color: '#9FD8FF', fontSize: 12, display: 'flex', justifyContent: 'space-between' } },
             h('span', null, (lang === 'en' ? 'Fat Whale · v' : '肥鲸 · v') + VERSION),
             h('span', { style: { color: '#FFD166' } }, balanceText)),
-          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel })),
+          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel })),
         ) : null,
         h('div', { style: chatPanelStyle(chatOpen) },
           h('div', { style: headStyle },

@@ -142,6 +142,9 @@
     "\u6210\u8BED\u8FA8\u6790": "Idiom",
     "\u51FA\u4E2A\u5BF9\u8054": "Couplet",
     "\u6E05\u9664\u8BB0\u5FC6\u2026": "Clear memory\u2026",
+    "\u6E05\u7A7A\u804A\u5929\u7F13\u5B58\u2026": "Clear chat cache\u2026",
+    "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00": "Chat cache: on",
+    "\u804A\u5929\u7F13\u5B58\uFF1A\u5173": "Chat cache: off",
     "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09": "Let it go (exit)",
     "\u9C7C\u7CAE\u8D26\u672C": "Token ledger",
     "\u4E2D\u6587": "\u4E2D\u6587",
@@ -187,6 +190,7 @@
     const voiceChatOn = state && state.voiceChatOn ? true : false;
     const chatLang = state && state.chatLang ? String(state.chatLang) : "auto";
     const ttsVoice = state && state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
+    const chatCacheOn2 = !(state && state.chatCacheOn === false);
     const voiceTick = (voice) => ttsVoice === voice ? "\u2713 " : "";
     const balanceText = state && state.balance ? state.balance : "--";
     const growthText = state && state.growth ? state.growth : "--";
@@ -242,6 +246,8 @@
         { type: "item", label: "\u51FA\u4E2A\u5BF9\u8054", action: "culture-couplet" }
       ] },
       { type: "item", label: "\u6E05\u9664\u8BB0\u5FC6\u2026", action: "clear-memory" },
+      { type: "item", label: "\u6E05\u7A7A\u804A\u5929\u7F13\u5B58\u2026", action: "cache-clear" },
+      { type: "item", label: chatCacheOn2 ? "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00" : "\u804A\u5929\u7F13\u5B58\uFF1A\u5173", action: "cache-toggle" },
       { type: "item", label: "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09", action: "hide" },
       { type: "sep" },
       { type: "item", label: "\u4F59\u989D\uFF1A" + balanceText, action: "balance" },
@@ -1526,6 +1532,23 @@
             showBubble(nowOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173\uFF08\u7701\u7740\u70B9\u7528\uFF09");
             return;
           }
+          if (action === "cache-clear") {
+            fetch("/api/chubby-whale/cache", { method: "DELETE" }).then((r) => r.json()).then((d) => showBubble(d && d.ok ? "\u804A\u5929\u7F13\u5B58\u6E05\u7A7A\u5566\uFF08" + (d.cleared || 0) + " \u6761\uFF09" : "\u7F13\u5B58\u6E05\u7A7A\u5931\u8D25", 5e3)).catch(() => showBubble("\u7F13\u5B58\u6E05\u7A7A\u5931\u8D25", 4e3));
+            return;
+          }
+          if (action === "cache-toggle") {
+            const nowOn = !chatCacheOnRef.current;
+            chatCacheOnRef.current = nowOn;
+            setChatCacheOn(nowOn);
+            fetch("/api/chubby-whale/cache-toggle", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ enabled: nowOn })
+            }).then((r) => r.json()).then((d) => {
+              showBubble(d && d.ok ? "\u804A\u5929\u7F13\u5B58\uFF1A" + (d.enabled ? "\u5F00\uFF08\u7701 token\uFF09" : "\u5173\uFF08\u6BCF\u6B21\u91CD\u65B0\u56DE\u7B54\uFF09") : "\u5207\u6362\u5931\u8D25", 5e3);
+            }).catch(() => showBubble("\u5207\u6362\u5931\u8D25", 4e3));
+            return;
+          }
           if (action === "clear-memory") {
             try {
               if (!window.confirm("\u6E05\u9664\u80A5\u9CB8\u5BF9\u4E3B\u4EBA\u7684\u804A\u5929\u8BB0\u5FC6\uFF1F\uFF08\u6210\u957F/\u9C7C\u7CAE/\u8BF4\u4E66\u8BB0\u5F55\u4E0D\u53D7\u5F71\u54CD\uFF09")) return;
@@ -2097,7 +2120,7 @@
               h("span", null, (lang === "en" ? "Fat Whale \xB7 v" : "\u80A5\u9CB8 \xB7 v") + VERSION),
               h("span", { style: { color: "#FFD166" } }, balanceText)
             ),
-            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, ttsVoice: (() => {
+            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, chatCacheOn, ttsVoice: (() => {
               try {
                 return localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
               } catch (e) {
