@@ -6,9 +6,7 @@ import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chat
 import { buildMenu, tr } from './client/menu.js'
 import { handleFileDrop, VISION_PROMPT } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
-import { createChannels } from './client/channel.js'
-import { createWebSpeech } from './client/webspeech.js'
-import { createVadState, resetVadSegment, stepVad, simulate as simulateVad } from './client/vad.js'
+import { createVoice } from './client/voice.js'
 import { splitTtsSegments, normalizeRate, cleanTtsText } from './shared/tts.js'
 import { parseDue, cleanReminderText } from './shared/time.js'
 ;(window as any).__ModuleLoader__.load({
@@ -38,300 +36,13 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       } catch (e) { return '' }
     })()
 
-    // ===== TTS：首段更短 + 边播边预取下一段（照 C# Speech.cs 的流水线）=====
-    interface TtsJob {
-      id: number
-      /** 同一次 speakText 的段共享一个组号：组内叙述段之间才留换气停顿 */
-      group: number
-      text: string
-      rate: string
-      narration: boolean
-      onDone?: () => void
-    }
-    let ttsAudioRef: any = null
-    let ttsUrl = ''
-    let ttsEpoch = 0
-    let ttsJobSeq = 0
-    let ttsGroupSeq = 0
-    const ttsQueue: TtsJob[] = []
-    /** 预取缓存：段 id → 已发出的合成请求（当前段开播时就把下一段压上去） */
-    const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
-    let ttsPlaying = false
-    let ttsBusySince = 0
-    // 三条独占资源通道：麦克风 / ASR / 扬声器（同通道串行，跨通道并发）
-    const channels = createChannels()
-    // ===== 并发纪律（防串线/占线/插队）=====
-    // chatEpoch：每次发起对话 +1；回来的响应若纪元已变，一律丢弃（旧答案绝不能盖掉新问题）
+    let ttsPlaying = false   // UI 用：是否正在说（由新语音模块状态回调更新）
+    const channels: any = { mic: { stats: {} }, asr: { stats: {} }, speak: { stats: {} } }
     let chatEpoch = 0
-    // asrBusy：识别请求同时只允许一个在途，避免多段音频的结果乱序返回
     let asrBusy = false
     let asrBusyAt = 0   // 识别位占用的起始时刻（用于僵尸复位与状态显示）
-    // 说书/讲古/念诗期间为 true：耳朵完全静音，避免本鱼自己的声音把自己打断
     const storyNarratingRef = { current: false }
-    // 耳朵实时诊断：主人可在控制台看 __chubbyWhale.ear 了解当前音量/噪声底/阈值
-    // 端到端延迟打点（毫秒）：主人随时可看 __chubbyWhale.lat 判断瓶颈在哪一段
     const latDiag: any = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 }
-    const earDiag: any = {
-      db: 0, noiseDb: -60, onsetDb: -50, speechMs: 0, quietMs: 0, calibrating: true,
-      ctxState: 'unknown', lastError: '', asrMs: 0,
-      // 分段计数：每一环丢了多少，直接回答「接不住」到底丢在哪一环
-      chunks: { recorded: 0, small: 0, muted: 0, uploaded: 0, asrFail: 0, empty: 0, echo: 0, nowake: 0, sent: 0 },
-    }
-    /** 粗略判定：这句听来的话是不是本鱼自己刚说过的回声 */
-    function looksLikeEcho(heard: string): boolean {
-      try {
-        const norm = (s: string) => String(s || '').replace(/[\s，。、；：！？,.!?;:（）()「」“”"'’"…—-]/g, '')
-        const h = norm(heard)
-        if (h.length < 4) return false
-        const now = Date.now()
-        for (const rec of spokenRecent) {
-          if (now - rec.at > 15000) continue
-          const r = norm(rec.text)
-          if (!r) continue
-          if (r.indexOf(h) >= 0 || h.indexOf(r) >= 0) return true
-          // 逐字命中率：至少 60% 的字出现在本鱼说过的话里，判为回声
-          let hit = 0
-          for (const ch of h) if (r.indexOf(ch) >= 0) hit++
-          if (hit / h.length >= 0.6) return true
-        }
-        return false
-      } catch (e) { return false }
-    }
-
-    let ttsCurrentJob: TtsJob | null = null
-    /** 叙述段间的换气停顿截止时刻（C# NarrationPauseMs = 260） */
-    let ttsPauseUntil = 0
-    let ttsPauseTimer: any = null
-    function currentVoice(): string {
-      // 默认音色：晓伊（照主人要求与 C# 版默认一致）
-    try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' }
-    }
-    function finishTtsJob(job: TtsJob): void {
-      if (!job || !job.onDone) return
-      const cb = job.onDone
-      job.onDone = undefined
-      try { cb() } catch (e) { }
-    }
-    /**
-     * 纯前端兜底朗读：本机没装 python/edge-tts（服务端 501）时用浏览器内置语音，
-     * 保证"没有外部依赖也听得到声音"。resolve(null) 表示这段已经用浏览器念完了。
-     */
-    function speakWithBrowserTts(job: TtsJob): Promise<null> {
-      try {
-        const ss = (window as any).speechSynthesis
-        const Us = (window as any).SpeechSynthesisUtterance
-        if (!ss || !Us) return Promise.resolve(null)
-        const u = new Us(String(job.text || '').slice(0, 300))
-        u.lang = /[\u4e00-\u9fa5]/.test(job.text) ? 'zh-CN' : 'en-US'
-        return new Promise<null>((resolve) => {
-          let done = false
-          const finish = () => { if (!done) { done = true; resolve(null) } }
-          u.onend = finish
-          u.onerror = finish
-          try { ss.cancel(); ss.speak(u) } catch (e) { finish() }
-          setTimeout(finish, 12000)
-        })
-      } catch (e) { return Promise.resolve(null) }
-    }
-    /** 合成一段音频；失败返回 null（播放端跳过这一段，绝不把整条队列卡死） */
-    function fetchTts(job: TtsJob): Promise<ArrayBuffer | null> {
-      try {
-        return fetch('/api/chubby-whale/tts', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text: job.text, voice: currentVoice(), rate: job.rate }),
-        }).then((r: any) => {
-          const ct = String((r.headers && r.headers.get && r.headers.get('content-type')) || '')
-          // 服务端 501 / JSON 错误 = 没有 edge-tts，改走浏览器朗读
-          if (r.status === 501 || ct.indexOf('application/json') >= 0) throw new Error('TTS_UNAVAILABLE')
-          if (!r.ok) throw new Error('tts http ' + r.status)
-          return r.arrayBuffer()
-        }).catch((err: any) => {
-          if (String((err && err.message) || err).indexOf('TTS_UNAVAILABLE') >= 0) return speakWithBrowserTts(job)
-          return null
-        })
-      } catch (e) { return Promise.resolve(null) }
-    }
-    /** 把队首那段的合成先压上去（已在预取里就不重复发） */
-    // ===== 垫音：识别到主人说话后立刻「嗯」一声，掩盖后面 3-8 秒的等待 =====
-    let fillerBuf: ArrayBuffer | null = null
-    let fillerLoading = false
-    function prefetchFiller(): void {
-      if (fillerBuf || fillerLoading) return
-      try { if (localStorage.getItem('chubby-voice') === 'off') return } catch (e) { }
-        try { if (localStorage.getItem('chubby-voice') === 'off') { (window as any).__chubbyWhale.ttsSkip = 'voice-off（菜单里语音朗读是关的）'; return } } catch (e) { }
-        try { (window as any).__chubbyWhale.ttsSkip = '' } catch (e) { }
-      fillerLoading = true
-      try {
-        fetch('/api/chubby-whale/tts', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text: '嗯，本鱼在听。', voice: (function () { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })() }),
-        }).then((r: any) => (r.ok ? r.arrayBuffer() : null)).then((b: any) => { if (b && b.byteLength > 1000) fillerBuf = b }).catch(() => { }).finally(() => { fillerLoading = false })
-      } catch (e) { fillerLoading = false }
-    }
-    let fillerAt = 0
-    function playFiller(): void {
-      const nowF = Date.now()
-      if (nowF - fillerAt < 3000) return      // 节流：3 秒内只「嗯」一次，避免连续重复
-      fillerAt = nowF
-      try {
-        if (!fillerBuf) { prefetchFiller(); return }
-        const url = URL.createObjectURL(new Blob([fillerBuf], { type: 'audio/mpeg' }))
-        const a = new Audio(url)
-        a.volume = 0.9
-        a.onended = () => { try { URL.revokeObjectURL(url) } catch (e) { } }
-        a.play().catch(() => { try { URL.revokeObjectURL(url) } catch (e) { } })
-      } catch (e) { }
-    }
-    function prefetchNextTts(): void {
-      const next = ttsQueue[0]
-      if (!next) return
-      if (!ttsPrefetch.has(next.id)) ttsPrefetch.set(next.id, fetchTts(next))
-    }
-    // 停止说话：真的把当前音频停掉、清空队列、回收 URL（照 C# Speech.Stop）
-    function stopTts(): void {
-      try {
-        ttsEpoch++
-        ttsPauseUntil = 0
-        if (ttsPauseTimer) { try { clearTimeout(ttsPauseTimer) } catch (e) { } ; ttsPauseTimer = null }
-        while (ttsQueue.length > 0) finishTtsJob(ttsQueue.shift() as TtsJob)
-        // 正在播的那一段已经从队列里摘走了：这里补一次收尾，别让 onDone 永远不触发
-        if (ttsCurrentJob) { finishTtsJob(ttsCurrentJob); ttsCurrentJob = null }
-        ttsPrefetch.clear()
-        const a = ttsAudioRef
-        ttsAudioRef = null
-        if (a) {
-          try { a.onended = null; a.onerror = null } catch (e) { }
-          try { a.pause() } catch (e) { }
-          try { a.currentTime = 0 } catch (e) { }
-        }
-        if (ttsUrl) { try { URL.revokeObjectURL(ttsUrl) } catch (e) { } ; ttsUrl = '' }
-        ttsPlaying = false
-      setTimeout(() => { try { if (!ttsPlaying) unmuteMic() } catch (e) { } }, ECHO_MUTE_MS)
-      echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
-        try { const ss = (window as any).speechSynthesis; if (ss && ss.speaking) ss.cancel() } catch (e) { }
-      } catch (e) { ttsPlaying = false }
-    }
-    function speakText(text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
-      try {
-        if (!text) return
-        try { (window as any).__chubbyWhale.ttsSkip = 'empty-text' } catch (e) { }
-        try { if (localStorage.getItem('chubby-voice') === 'off') return } catch (e) { }
-        try { if (localStorage.getItem('chubby-voice') === 'off') { (window as any).__chubbyWhale.ttsSkip = 'voice-off（菜单里语音朗读是关的）'; return } } catch (e) { }
-        try { (window as any).__chubbyWhale.ttsSkip = '' } catch (e) { }
-        // 模型回复里的 markdown/emoji 念出来很怪：入队前先清洗（照 C# TextTools.Clean）
-        const clean = cleanTtsText(text)
-        if (!clean) return
-        const rate = normalizeRate(opts && opts.rate, '+0%')
-        // 叙述（-15%）段与段之间留 260ms 换气停顿（C# NarrationPauseMs）
-        const narration = (opts && typeof opts.narration === 'boolean') ? opts.narration : rate === '-15%'
-        // 说书一段 2000+ 字：首段 14 字内先开口，其余按标点切 80 字内逐段请求
-        const segs = splitTtsSegments(clean, 80)
-        const group = ++ttsGroupSeq
-        for (let i = 0; i < segs.length; i++) {
-          ttsQueue.push({
-            id: ++ttsJobSeq,
-            group,
-            text: segs[i],
-            rate,
-            narration,
-            onDone: (i === segs.length - 1) ? (opts && opts.onDone) : undefined,
-          })
-        }
-        // 队列本来是空的：先把第一段合成压上去，第一声更快
-        prefetchNextTts()
-        playNextTts()
-      } catch (e) { }
-    }
-    function playNextTts(): void {
-      if (ttsPlaying) return
-      if (ttsQueue.length === 0) return
-      // 叙述段间的换气停顿：到点再起下一段（期间新来的句子排在后面一起等）
-      const wait = ttsPauseUntil - Date.now()
-      if (wait > 0) {
-        if (!ttsPauseTimer) {
-          ttsPauseTimer = setTimeout(() => { ttsPauseTimer = null; playNextTts() }, wait)
-        }
-        return
-      }
-      const epoch = ttsEpoch
-      const job = ttsQueue.shift() as TtsJob
-      ttsPlaying = true
-      ttsBusySince = Date.now()
-      try { setStatus() } catch (e) { }
-      muteMic()   // 出声即闭麦（物理层，浏览器不再采样）
-      ttsCurrentJob = job
-      try {
-        const pending = ttsPrefetch.get(job.id) || fetchTts(job)
-        ttsPrefetch.delete(job.id)
-        // 关键：当前段刚开始取，就把下一段的合成压上去 —— 边播边合成，段间没有空档
-        prefetchNextTts()
-        pending.then((buf: ArrayBuffer | null) => {
-          // 取音频期间被「停止说话」了：这一段就别再响了（收尾已在 stopTts 里做过）
-          if (epoch !== ttsEpoch) { finishTtsJob(job); return }
-          if (!buf) {
-            // 合成失败：跳过这一段，接着播后面的
-            if (ttsCurrentJob === job) ttsCurrentJob = null
-            finishTtsJob(job)
-            ttsPlaying = false
-      setTimeout(() => { try { if (!ttsPlaying) unmuteMic() } catch (e) { } }, ECHO_MUTE_MS)
-      echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
-            playNextTts()
-            return
-          }
-          let settled = false
-          const settle = () => {
-            if (settled) return
-            settled = true
-            if (ttsCurrentJob === job) ttsCurrentJob = null
-            try { URL.revokeObjectURL(url) } catch { }
-            if (ttsUrl === url) ttsUrl = ''
-            finishTtsJob(job)
-            ttsPlaying = false
-      setTimeout(() => { try { if (!ttsPlaying) unmuteMic() } catch (e) { } }, ECHO_MUTE_MS)
-      echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
-            // 叙述：同一组还有下一段时留 260ms 换气，别一口气念到底
-            const next = ttsQueue[0]
-            if (job.narration && next && next.group === job.group) ttsPauseUntil = Date.now() + 260
-            playNextTts()
-          }
-          const blob = new Blob([buf], { type: 'audio/mpeg' })
-          const url = URL.createObjectURL(blob)
-          ttsUrl = url
-          const audio = new Audio(url)
-          ttsAudioRef = audio
-          audio.onended = settle
-          audio.onerror = settle
-          audio.play().catch(() => {
-          try { latDiag.firstAudioMs = Math.round(performance.now() - (latDiag.speechEndAt || performance.now())) ; latDiag.totalMs = Math.round((latDiag.asrMs || 0) + (latDiag.chatMs || 0)) } catch (e) { }
-            try {
-              const u = new (window as any).SpeechSynthesisUtterance(job.text.slice(0, 300))
-              u.lang = /[\u4e00-\u9fa5]/.test(job.text) ? 'zh-CN' : 'en-US'
-              u.onend = settle
-              u.onerror = settle
-              ;(window as any).speechSynthesis.cancel()
-              ;(window as any).speechSynthesis.speak(u)
-            } catch (e) { settle() }
-          })
-        }).catch(() => {
-          if (ttsCurrentJob === job) ttsCurrentJob = null
-          finishTtsJob(job)
-          ttsPlaying = false
-      setTimeout(() => { try { if (!ttsPlaying) unmuteMic() } catch (e) { } }, ECHO_MUTE_MS)
-      echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
-          playNextTts()
-        })
-      } catch (e) {
-        if (ttsCurrentJob === job) ttsCurrentJob = null
-        ttsPlaying = false
-      setTimeout(() => { try { if (!ttsPlaying) unmuteMic() } catch (e) { } }, ECHO_MUTE_MS)
-      echoMuteUntil.t = Date.now() + ECHO_MUTE_MS
-        finishTtsJob(job)
-        playNextTts()
-      }
-    }
-
     // 音符表：覆盖 C3–E6（含升降号），与 data/melodies.json 实际用到的音名对齐
     /** 民间故事标题在 culture 路由里是「书名·标题」拼一起的：拆开还原 C# TaleBubble 的拼法 */
     function taleParts(rawTitle: string): { title: string; book: string } {
@@ -565,7 +276,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       // ===== 常驻状态行（照旧算法：闲时显示「在听…」，忙时显示当前在做什么）=====
       // 普通气泡（听到/回复/提醒）是临时覆盖：到期后自动回到常驻状态。
       function statusText(): string {
-        if (ttsPlaying || ttsQueue.length > 0) return '在说…'
+        if (ttsPlaying) return '在说…'
         if (busy) return '在想…'
         return '在听…'
       }
@@ -674,21 +385,6 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         const t0 = setTimeout(() => { try { refreshBalance() } catch (e) { } }, 2000)
         // 状态行 2 秒周期刷新：常驻气泡只会在被调用时更新，靠事件驱动容易漏（就曾卡在「识别中…」）
         const tStatus = setInterval(() => {
-          // 朗读僵尸复位：播完没回调（浏览器偶发）会让 ttsPlaying 永远为 true，
-          // 之后所有回复都进不了播放队列 → 主人只听到填充音「嗯，本鱼在听」
-          try {
-            const audio: any = ttsAudioRef
-            const dead = !audio || audio.paused || audio.ended || audio.readyState === 0
-            if (ttsPlaying && dead && Date.now() - ttsBusySince > 3000) {
-              ttsPlaying = false
-              try { if (ttsCurrentJob) (window as any).__chubbyWhale.ttsZombie = ((window as any).__chubbyWhale.ttsZombie || 0) + 1 } catch (e) { }
-              ttsCurrentJob = null
-              ttsBusySince = 0
-              try { playNextTts() } catch (e) { }
-              try { setStatus() } catch (e) { }
-            }
-          } catch (e) { }
-          try { setStatus() } catch (e) { }
           // 占线自愈：一次请求异常不能让后续提问永远被「还在想上一句」挡住
           try {
             if (busyRef.current && Date.now() - busyAtRef.current > 35000) {
@@ -816,7 +512,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (dueTimerRef.current) return
         if (dueQueueRef.current.length === 0) return
         // 提醒是低优先级：本鱼正在说/在想/在说书时排队等，绝不插队抢话筒
-        if (ttsPlaying || ttsQueue.length > 0 || storyNarratingRef.current || busy) {
+        if (ttsPlaying || storyNarratingRef.current || busy) {
           dueTimerRef.current = setTimeout(() => {
             dueTimerRef.current = null
             pumpDueReminders()
@@ -962,7 +658,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                   setTimeout(() => {
                     try {
                       const d = (window as any).__chubbyWhale.melodyVoice
-                      if (d && !ttsPlaying && ttsQueue.length === 0) d.err = 'TTS 未开始（可能被浏览器拦或合成失败）'
+              if (d && !ttsPlaying) d.err = 'TTS 未开始（可能被浏览器拦或合成失败）'
                     } catch (e) { }
                   }, 1200)
                 } catch (e: any) { try { (window as any).__chubbyWhale.melodyVoice = { requested: false, err: String(e) } } catch (e2) { } }
@@ -972,60 +668,19 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           return
         }
         if (action === 'ear-check') {
-          // 耳朵自检：把 __chubbyWhale.ear 的关键数字直接摆到气泡里，不用开控制台
+          // 语音自检：直接读新语音模块（client/voice.ts）的统计，不用开控制台
           try {
-            const e = (window as any).__chubbyWhale && (window as any).__chubbyWhale.ear
-            if (!e) { showBubble('耳朵还没起来（没拿到诊断对象）', 6000); return }
-            const c = e.chunks || {}
-            const rec = c.recorded || 0
-            const sent = c.sent || 0
-            let verdict = ''
-            if (e.mode === 'webspeech' && !e.wsError) verdict = '→ 走浏览器识别通道（最省事）'
-            else if (e.wsError) verdict = '→ 浏览器识别不可用（' + e.wsError + '），已退回自建识别'
-            else if (e.earOn === false) verdict = '→ 语音待命是关的（右键菜单点「语音待命」打开）'
-            else if (!e.hasMediaDevices) verdict = '→ 浏览器没提供麦克风接口（非 https/localhost？）'
-            else if (e.bootFail > 0) verdict = '→ 开麦失败：' + String(e.lastError || '未知') + '（点地址栏小锁允许麦克风）'
-            else if (!e.ticks) verdict = '→ 采样没跑（链路未启动）'
-            else if (!e.micEnabled) verdict = '→ 麦克风轨道不可用（可能被静音或没拿到轨道）'
-            else if (e.db < -60) verdict = '→ 麦克风收不到声音（查系统输入设备/权限）'
-            else if (rec === 0) verdict = '→ 没开始录音'
-            else if ((c.uploadCalled || 0) === 0) verdict = '→ 上传没被触发（VAD 没判出说话）'
-            else if ((c.asrBusyDrop || 0) > 0 && (c.uploaded || 0) === 0) verdict = '→ 识别占线，全被丢弃'
-            else if ((c.uploaded || 0) > 0 && (c.recognized || 0) === 0) verdict = '→ 识别服务没返回文字'
-            else if ((c.nowake || 0) > 0 && (c.nowakeAccepted || 0) === 0) verdict = '→ 识别到了但被唤醒词拦（说「大肥鱼」开头，或打开语音聊天）'
-            else if (sent === 0 && (c.recognized || 0) > 0) verdict = '→ 识别成功但被回声/唤醒判定拦了'
-            else if (sent > 0) verdict = '→ 链路已通（已交给对话）'
-            const line = '耳朵自检：音量 ' + Math.round(e.db) + 'dB｜底噪 ' + Math.round(e.noiseDb)
-              + 'dB｜阈值 ' + Math.round(e.onsetDb) + 'dB\n'
-              + '通道 ' + (e.mode || '?') + '（浏览器识别 ' + (e.wsAvailable ? '可用' : '不可用') + (e.wsError ? '，错误 ' + e.wsError : '') + '）\n'
-              + '麦克风 ' + (e.micEnabled ? '开' : '关') + '｜待命 ' + (e.earOn === false ? '关' : '开') + '｜权限 ' + (e.perm || '?') + '\n'
-              + '采样 ' + (e.ticks || 0) + ' 次｜启动 ' + (e.ctxState || '?') + '｜开麦尝试 ' + (e.bootAttempts || 0) + ' 次（失败 ' + (e.bootFail || 0) + '）\n'
-              + '录音段 ' + rec + '｜上传 ' + (c.uploaded || 0) + '｜识别 ' + (c.recognized || 0) + '｜发送 ' + sent + '\n'
-              + '对话 ' + (function () { try { const w: any = (window as any).__chubbyWhale; const c = w && w.lastChat; if (!c) return '(还没聊过)'; return String(c.stage) + (c.err ? '(' + c.err + ')' : '') + (c.reply ? ' ' + c.reply : '') } catch (e) { return '?' } })() + '\n'
-              + '上传被调用 ' + (c.uploadCalled || 0) + '｜看门狗 ' + (c.watchdog || 0) + '｜复活麦 ' + (e.revived || 0) + '｜转码失败 ' + (c.b64Fail || 0) + '\n'
-              + '丢：太短 ' + (c.small || 0) + '｜静音窗 ' + (c.muted || 0) + '｜占线 ' + (c.asrBusyDrop || 0) + '｜回声 ' + (c.echo || 0) + '｜未唤醒 ' + (c.nowake || 0) + '\n'
-              + verdict
-            // VAD 现场自检：用合成电平序列跑一遍被测过的判定逻辑，证明算法本机可用
-            let vadOk = ''
-            try {
-              const quiet = simulateVad(new Array(30).fill(-65), 60)
-              const speak = simulateVad([...new Array(17).fill(-65), ...new Array(17).fill(-35), ...new Array(20).fill(-65)], 60)
-              const ok1 = quiet.events.length === 0
-              const ok2 = speak.events.length === 1 && speak.events[0].why === 'ended'
-              vadOk = '\nVAD 自检：静音不误触 ' + (ok1 ? '✅' : '❌') + '｜说一句能收尾 ' + (ok2 ? '✅' : '❌') + '（' + (speak.events[0] ? Math.round(speak.events[0].atMs) + 'ms' : '无') + '）'
-            } catch (e) { vadOk = '\nVAD 自检：异常 ' + String(e) }
-            showBubble(line + vadOk, 15000)
-            try { navigator.clipboard.writeText(JSON.stringify(e)) } catch (e2) { }
+            const v: any = (window as any).__chubbyWhale && (window as any).__chubbyWhale.voice
+            const st: any = v ? v.stats : null
+            if (!st) { showBubble('语音模块还没起来（语音待命可能是关的）', 6000); return }
+            const line = '语音自检（新模块）：' + String(v.status())
+              + '\n录音段 ' + st.windows + '｜上传 ' + st.uploaded + '｜识别出字 ' + st.asrTexts + '｜交给对话 ' + st.heard
+              + '\n丢：太安静 ' + st.skippedSilent + '｜回声/重复 ' + st.echoDropped + '｜识别失败 ' + st.asrFail
+              + '\n朗读：请求 ' + st.ttsRequests + '｜开播 ' + st.ttsPlayed + '｜失败 ' + st.ttsFail + '｜僵尸复位 ' + st.ttsZombie
+              + (st.lastError ? '\n最近错误：' + st.lastError : '')
+            showBubble(line, 15000)
+            try { navigator.clipboard.writeText(JSON.stringify(st)) } catch (e) { }
           } catch (e: any) { showBubble('自检失败：' + String(e && e.message), 5000) }
-          return
-        }        if (action === 'wake') {
-          // 语音待命：控制 VAD 录音循环（关掉就真停麦克风，打开重新 boot）
-          const nowOn = !earOnRef.current
-          earOnRef.current = nowOn
-          setEarOn(nowOn)
-          try { localStorage.setItem('chubby-ear', nowOn ? 'on' : 'off') } catch (e) { }
-          if (nowOn) { try { earCtlRef.current.boot() } catch (e) { } ; showBubble('语音待命：开，本鲸又听着啦') ; try { restoreIdleStatus() } catch (e) { } }
-          else { try { earCtlRef.current.stop() } catch (e) { } ; showBubble('语音待命：关，麦克风停啦') ; try { restoreIdleStatus() } catch (e) { } }
           return
         }
         if (action === 'chatmode') {
@@ -1195,7 +850,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (busy) { try { (window as any).__chubbyWhale.lastChat.stage = 'blocked-busy' } catch (e) { } }
         if (busy && Date.now() - busyAtRef.current < 35000) { if (opts && opts.voice) showBubble('本鲸还在想上一句呢，稍等～', 2500); return }
         // 用户提问永远优先：先打断正在播的旁白（说书/念诗）再回答
-        if (storyNarratingRef.current || ttsPlaying || ttsQueue.length > 0) {
+        if (storyNarratingRef.current || ttsPlaying) {
           try { stopTts() } catch (e) { }
           storyNarratingRef.current = false
           try { storyBusyRef.current = false } catch (e) { }
@@ -1256,7 +911,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
           w.say = (t: string) => { try { sendText(String(t || ""), { voice: true }) } catch (e) { } }
           w.sayStop = () => { try { stopTts() } catch (e) { } }
-          w.busyNow = () => ({ busy: busyRef.current, age: Date.now() - busyAtRef.current, tts: ttsPlaying, queue: ttsQueue.length })
+          w.busyNow = () => ({ busy: busyRef.current, age: Date.now() - busyAtRef.current, tts: ttsPlaying })
         } catch (e) { }
       }, [])
       // 提醒轮询（每 20 秒检查一次，与 C# 一致）——到点的全部排队，逐条播报
@@ -1272,373 +927,47 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }, 20000)
         return () => clearInterval(timer)
       }, [])
-      // 语音待命（VAD 版，照 C# 版）：连续录音，静音 700ms 判定说完，立即上传识别
+      // ===== 语音模块（client/voice.ts，2026-11 从零重写）=====
+      // 旧实现（自研 VAD + WebSpeech + 三通道 + 朗读队列）已整体删除。
+      // 新模块只有一个状态机：idle → listening → recognizing → thinking → speaking。
+      const voiceRef = R.useRef<any>(null)
       R.useEffect(() => {
-        let stopped = false
-        try {
-          earDiag.earOn = !!earOnRef.current
-          earDiag.hasMediaDevices = !!(navigator && navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
-          earDiag.secure = !!window.isSecureContext
-          if (navigator && navigator.permissions && navigator.permissions.query) {
-            navigator.permissions.query({ name: 'microphone' }).then((p: any) => { earDiag.perm = String(p.state) }).catch(() => { earDiag.perm = 'query-failed' })
-          }
-        } catch (e) { }
-        let lastHeardText = ''
-        let lastHeardAt = 0
-        let stream: any = null
-        let mr: any = null
-        let actx: any = null
-        let analyser: any = null
-        let chunks: any[] = []
-        let raf = 0
-        let started = false
-        let chunkStartedAt = 0
-        let lastTickAt = 0
-        let watchTimer: any = null
-        let forceTimer: any = null   // 看门狗：不管 VAD 是否判出，每 5 秒强制定段上传
-        let wsCtl: any = null   // 浏览器自带识别通道（Web Speech）
-        let startTimer: any = null
-        function blobToBase64(blob: any): Promise<string> {
-          return new Promise((resolve) => {
-            try {
-              const fr = new FileReader()
-              fr.onloadend = () => { const s = String(fr.result || ''); resolve(s.indexOf(',') >= 0 ? s.slice(s.indexOf(',') + 1) : s) }
-              fr.readAsDataURL(blob)
-            } catch (e) { resolve('') }
-          })
-        }
-        function scheduleStart(delay: number): void {
-          if (stopped) return
-          if (startTimer) clearTimeout(startTimer)
-          startTimer = setTimeout(() => { startTimer = null; startChunk() }, delay)
-        }
-        /** 收到一段识别文本（自建 ASR 或浏览器 Web Speech），统一走这里 */
-        function acceptHeard(rawText: string, source: 'asr' | 'ws', asrMs?: number, peakDb?: number) {
-          try {
-            let t = String(rawText || '').trim()
-            // 静音幻觉：ASR 在纯静音上也会编出文字（常见「嗯」「谢谢观看」），必须挡掉
-            const HALLU = ['嗯','呃','啊','哦','谢谢观看','谢谢大家','字幕','请不吝点赞','订阅','转发','打赏','再见','byebye']
-            const lowT = t.replace(/[\s。，！？,.!?、…~～]/g, '')
-            if (HALLU.indexOf(lowT) >= 0) { try { earDiag.chunks.hallucination = (earDiag.chunks.hallucination || 0) + 1 } catch (e) { } ; return }
-            if (typeof peakDb === 'number' && peakDb < -48) { try { earDiag.chunks.hallucination = (earDiag.chunks.hallucination || 0) + 1 } catch (e) { } ; return }
-            if (!t || t.length < 2) return
-            try { earDiag.chunks.recognized = (earDiag.chunks.recognized || 0) + 1 } catch (e) { }
-            try { earDiag.lastSource = source; earDiag.lastHeard = t.slice(0, 30) } catch (e) { }
-            if (ttsPlaying) return
-            if (ttsQueue.length > 0) return
-            let narrating = false
-            try { narrating = storyNarratingRef.current } catch (e) { }
-            if (narrating) return
-            if (looksLikeEcho(t)) { try { earDiag.chunks.echo++ } catch (e) { } ; return }
-            if (t === lastHeardText && Date.now() - lastHeardAt < 6000) return
-            lastHeardText = t
-            lastHeardAt = Date.now()
-            if (/[。，！？,.!?]{3,}/.test(t) || t.length > 60) return
-            const hasWake = WAKE_WORDS.some(function (w) { return t.indexOf(w) >= 0 })
-            if (hasWake) {
-              wokeRef.current.at = Date.now()
-              try { t = t.replace(/大肥鱼|肥鲸|肥鱼|小鱼|蓝鱼|小蓝鱼|鱼鱼|肥肥/g, '').trim() } catch (e) { }
-              if (!t) { showBubble('我在～主人说～', 3000); return }
-            } else {
-              const wokeRecent = Date.now() - wokeRef.current.at < 120000
-              if (!wokeRecent) {
-                if (voiceChatOnRef.current) {
-                  try { earDiag.chunks.nowakeAccepted = (earDiag.chunks.nowakeAccepted || 0) + 1 } catch (e) { }
-                } else {
-                  try { earDiag.chunks.nowake++ } catch (e) { }
-                  return
-                }
-              }
-            }
-            voiceModeRef.current = true
-            setChatOpen(false)
-            if (!voiceChatOnRef.current) {
-              showBubble('（听到）' + t + '｜语音聊天关着，先不接话', 4000)
-              return
-            }
-            playFiller()
-            showBubble('（听到）' + t + '｜本鱼在想…', 3000)
-            sendText(t, { voice: true })
-            try { setTimeout(() => setStatus(), 50) } catch (e) { }
-            try { earDiag.chunks.sent++ } catch (e) { }
-          } catch (e) { }
-        }
-
-
-        async function uploadChunk() {
-        try { earDiag.chunks.uploadCalled = (earDiag.chunks.uploadCalled || 0) + 1 } catch (e) { }
-        if (asrBusy) { try { earDiag.chunks.asrBusyDrop = (earDiag.chunks.asrBusyDrop || 0) + 1 } catch (e) { } ; return }
-        asrBusy = true
-        asrBusyAt = Date.now()
+        if (!earOnRef.current) return
+        const v = createVoice({
+          onHeard: (text: string) => {
+            try { voiceModeRef.current = true } catch (e) { }
+            try { playFiller() } catch (e) { }
+            try { showBubble('（听到）' + text + '｜本鱼在想…', 3000) } catch (e) { }
+            try { sendText(text, { voice: true }) } catch (e) { }
+          },
+          onStatus: (st: any) => {
+            ttsPlaying = st === 'speaking'
             try { setStatus() } catch (e) { }
-          // 所有 return 都走 finally → 录音循环一定会重启（不再因为「没叫唤醒词」装死）
-          try {
-            // stopped 只影响"是否排下一段录音"，绝不阻止把已录好的音频传出去。
-            // （原来这里静默 return，导致「上传被调用 36 次、上传 0、所有丢弃计数都是 0」的怪现象）
-            if (stopped) { try { earDiag.chunks.stoppedSkip = (earDiag.chunks.stoppedSkip || 0) + 1 } catch (e) { } }
-            const blob = new Blob(chunks, { type: 'audio/webm' })
-            try { earDiag.chunks.lastBlobBytes = blob.size } catch (e) { }
-            chunks = []
-            if (blob.size < 1200) { try { earDiag.chunks.small++ } catch (e) { } ; return }
-            // 本鱼刚说完话的 700ms 里听到的多半是自己的回声/混响：直接丢，别上传浪费钱
-            if (Date.now() < echoMuteUntil.t) { try { earDiag.chunks.muted++ } catch (e) { } ; return }
-            const b64 = await blobToBase64(blob)
-            if (!b64) { try { earDiag.chunks.b64Fail = (earDiag.chunks.b64Fail || 0) + 1 } catch (e) { } ; return }
-            const t0 = performance.now()
-            try { earDiag.chunks.uploaded++ } catch (e) { }
-            const r = await fetch('/api/chubby-whale/asr', {
-              // 客户端也要有超时：服务端 60s 不代表浏览器会等，网络卡死会永久占着识别位（表现就是一直「识别中…」）
-              signal: (typeof AbortSignal !== 'undefined' && (AbortSignal as any).timeout) ? (AbortSignal as any).timeout(15000) : undefined,
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ audio: b64, format: 'webm' }),
-            })
-            const d = await r.json()
-            const asrMs = Math.round(performance.now() - t0)
-            try { latDiag.asrMs = asrMs } catch (e) { }
-            // 本鱼刚说过的话被麦克风听回来（回声）：直接丢，别自言自语
-            if (d && d.ok && d.text && looksLikeEcho(String(d.text))) {
-              try { earDiag.chunks.echo++ } catch (e) { }
-              try { console.log('[chubby-whale] 丢弃回声（' + asrMs + 'ms）：' + String(d.text).slice(0, 40)) } catch (e) { }
-              return
-            }
-            if (d && d.ok && d.text && d.text.trim().length >= 2) {
-              acceptHeard(String(d.text), 'asr', asrMs, vad.peakDb)
-            }
-          } catch (e) { } finally {
-            asrBusy = false        // 释放识别位（无论成功失败都要放，否则耳朵永久占线）
-            try { setStatus() } catch (e) { }   // 常驻状态行必须重算，否则一直停在「识别中…」
-            if (!stopped) scheduleStart(350)
-          }
-        }
-        // ===== 耳朵算法：RMS(dBFS) + 自适应噪声底 + 双阈值滞回 + 最短语音 =====
-        // 设计理由：
-        //  ① 用 dBFS 而非频谱平均值：振幅与人耳感知近似对数，固定线性阈值在安静/嘈杂环境都不可用
-        //  ② 噪声底用指数滑动平均跟随环境：风扇、空调一开一变，阈值自动跟着变
-        //  ③ 双阈值滞回：起判用高阈值（明显高于噪声）防误触发，停判用低阈值防句子被中途切断
-        //  ④ 最短语音 150ms：咳嗽、键盘、关门声不会触发一次识别
-        const timeBuf = new Float32Array(1024)
-        // 判定逻辑在 client/vad.ts（纯函数，已用合成序列单测 5 个场景），这里只持状态
-        const vad = createVadState()
-        const CALIB_MS = 400
-        const calibStart = performance.now()
-
-        function readDb(): number {
-          analyser.getFloatTimeDomainData(timeBuf)
-          let sum = 0
-          for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i]
-          const rms = Math.sqrt(sum / timeBuf.length)
-          return 20 * Math.log10(rms + 1e-8)
-        }
-
-        function watch() {
-          try {
-            if (stopped || !analyser) return
-            const db = readDb()
-            try { earDiag.ticks = (earDiag.ticks || 0) + 1; earDiag.state = { started: !!started, stopped: !!stopped, mr: mr ? String(mr.state) : 'none' } } catch (e) { }
-            const now = performance.now()
-            const dt = Math.min(250, Math.max(0, now - lastTickAt))
-            lastTickAt = now
-            if (!chunkStartedAt) chunkStartedAt = now   // 防御：为 0 时自愈，别让 elapsed 变成天文数字
-            const elapsed = now - chunkStartedAt
-            const calibrating = now - calibStart < CALIB_MS
-            // 一切判定交给 client/vad.ts 的 stepVad（纯函数，单测覆盖 5 个场景）
-            const step = stepVad(vad, db, dt)
-            try {
-              earDiag.db = Math.round(db * 10) / 10
-              earDiag.noiseDb = Math.round((vad.noiseDb ?? -60) * 10) / 10
-              earDiag.onsetDb = Math.round(step.onsetDb * 10) / 10
-              earDiag.speechMs = Math.round(vad.speechMs)
-              earDiag.quietMs = Math.round(vad.quietMs)
-              earDiag.calibrating = calibrating
-              earDiag.micEnabled = !!(micTrackRef.current && micTrackRef.current.enabled)
-            } catch (e) { }
-            const ended = !calibrating && step.ended
-            const tooLong = step.tooLong
-            if ((ended || tooLong) && mr.state === 'recording') {
-              try { mr.stop() } catch { }
-              setTimeout(uploadChunk, 100)
-              try { latDiag.speechEndAt = performance.now() } catch (e) { }
-              return
-            }
-            if (!stopped) scheduleWatch(60)
-          } catch (e) { if (!stopped) scheduleWatch(100) }
-        }
-        function scheduleWatch(delay: number): void {
-          if (stopped) return
-          if (watchTimer) clearTimeout(watchTimer)
-          watchTimer = setTimeout(() => { watchTimer = null; watch() }, delay)
-        }
-        function startChunk() {
-          if (stopped || !mr) return
-          try {
-            // 上一段还没 stop 时不能直接 start()（会抛异常并无限重试），先停，稍后再起
-            if (mr.state !== 'inactive') {
-              try { mr.stop() } catch (e) { }
-              scheduleStart(200)
-              return
-            }
-            chunks = []
-            // 每段开始复位判定状态（噪声底保留：环境是连续的）
-            resetVadSegment(vad)
-            asrBusy = false   // 兜底：每段开始强制释放识别位，避免异常遗留导致永久占线
-            try { const tr3 = micTrackRef.current; if (tr3 && tr3.enabled === false) { tr3.enabled = true; earDiag.micEnabled = true; earDiag.revived = (earDiag.revived || 0) + 1 } } catch (e) { }
-            try { earDiag.chunks.recorded++ } catch (e) { }
-            chunkStartedAt = performance.now()   // ← 之前丢了这一行：elapsed 恒为巨大数，第一拍就判"太长"
-            lastTickAt = chunkStartedAt
-            mr.start()
-            scheduleWatch(100)
-          } catch (e) { scheduleStart(1000) }
-        }
-        // 首次手势监听：两个分开摘，一个抛错不能把另一个漏在页面上
-        function detachGesture(): void {
-          try { (document as any).removeEventListener('pointerdown', onFirstGesture) } catch { }
-          try { (document as any).removeEventListener('keydown', onFirstGesture) } catch { }
-        }
-        function attachGesture(): void {
-          try { (document as any).addEventListener('pointerdown', onFirstGesture) } catch { }
-          try { (document as any).addEventListener('keydown', onFirstGesture) } catch { }
-        }
-        async function boot() {
-          try { earDiag.bootAttempts = (earDiag.bootAttempts || 0) + 1 } catch (e) { }
-          if (stopped) return
-          try {
-            // 关键：开启浏览器自带的回声消除/降噪/自动增益。
-            // 这是抑制"本鱼听见自己"最根本的一层（浏览器 AEC 比任何后处理都准）
-            const s = await (navigator as any).mediaDevices.getUserMedia({
-              audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
-                channelCount: 1,
-              },
-            })
-            // 拿麦期间被「语音待命：关」了：别再把麦克风挂着
-            if (stopped) { try { s.getTracks().forEach((t: any) => t.stop()) } catch (e) { } ; return }
-            stream = s
-            try { earDiag.bootOk = true; earDiag.lastError = '' } catch (e) { }
-            try { const tr = s.getAudioTracks && s.getAudioTracks()[0]; if (tr) micTrackRef.current = tr } catch (e) { }
-            try { const tr2 = micTrackRef.current; if (tr2) { tr2.enabled = true; earDiag.micEnabled = true } } catch (e) { }
-            actx = new (window as any).AudioContext()
-            try { await (actx as any).resume() } catch (e) { }
-            try { earDiag.ctxState = String(actx.state) } catch (e) { }
-            if (actx && actx.state === 'suspended') {
-              // 浏览器自动播放策略把上下文挂起时，分析器读数恒为 0，必须等用户手势再恢复
-              showBubble('麦克风还没激活：点一下页面任意位置就好', 6000)
-              try { document.addEventListener('pointerdown', () => { try { actx.resume() } catch (e) { } }, { once: true }) } catch (e) { }
-            }
-            const src = actx.createMediaStreamSource(stream)
-            analyser = actx.createAnalyser()
-            analyser.fftSize = 1024      // 时域 1024 点 ≈ 21ms @48k：够算 RMS，又不会太钝
-            analyser.smoothingTimeConstant = 0
-            src.connect(analyser)
-            mr = new (window as any).MediaRecorder(stream)
-            mr.ondataavailable = (e: any) => { if (e && e.data && e.data.size > 0) chunks.push(e.data) }
-            mr.onstop = () => { }
-            mr.onerror = (ev: any) => { try { earDiag.lastError = 'recorder: ' + String(ev && ev.error && ev.error.name) } catch (e) { } }
-            detachGesture()                 // 麦克风真拿到了才摘监听
-            showBubble('本鲸在听（千问识别），说完就会接话～', 3000)
-            try { setTimeout(() => setStatus(), 300) } catch (e) { }
-            // ===== 优先用浏览器自带语音识别（Web Speech）=====
-            // 它内部已做 VAD 与流式识别，不用我们判段；国内网络可能连不上，故失败即退回自建链路。
-            try {
-              const ws = createWebSpeech({
-                onFinal: (text: string) => { acceptHeard(text, 'ws') },
-                onError: (code: string) => {
-                  earDiag.wsError = code
-                  // 云端不可达 / 无权限：立刻切回自建 ASR（MediaRecorder + 硅基流动）
-                  // aborted / no-speech / audio-capture 等也一律退回自建链路：宁可多录，也别哑巴
-                  if (code !== 'no-speech') {
-                    try { earDiag.mode = 'asr-fallback' } catch (e) { }
-                    try { if (wsCtl) wsCtl.stop() } catch (e) { }
-                    try { if (!mr) { } else { startChunk() } } catch (e) { }
-                  }
-                },
-              })
-              wsCtl = ws
-              try { (window as any).__chubbyWs = ws } catch (e) { }
-              earDiag.wsAvailable = ws.available
-              if (ws.available) {
-                earDiag.mode = 'webspeech'
-                ws.start()
-                try { earDiag.wsRunning = true } catch (e) { }
-              } else {
-                earDiag.mode = 'asr'
-              }
-            } catch (e) {
-              earDiag.mode = 'asr'
-              try { startChunk() } catch (e2) { }
-            }
-            startChunk()
-            // 看门狗：VAD 失灵也要能说话。每 5 秒不强判定直接收段上传，
-            // 这一段路径与被主体验证过的手动录音完全一致（拿麦→录→上传）。
-            try {
-              if (forceTimer) clearInterval(forceTimer)
-              forceTimer = setInterval(() => {
-                try {
-            if (stopped) return
-                  const tr = micTrackRef.current
-                  if (tr && tr.enabled === false) { tr.enabled = true; earDiag.revived = (earDiag.revived || 0) + 1 }
-                  // 僵尸复位：识别位占了 20 秒还没回来说明请求卡死，强制释放
-                  if (asrBusy && Date.now() - asrBusyAt > 20000) { asrBusy = false; try { earDiag.chunks.asrZombie = (earDiag.chunks.asrZombie || 0) + 1 } catch (e) { } ; try { setStatus() } catch (e) { } }
-                  if (mr && mr.state === ('recording' as any)) {
-                    try { earDiag.chunks.watchdog = (earDiag.chunks.watchdog || 0) + 1 } catch (e) { }
-                    try { mr.stop() } catch (e) { }
-                    setTimeout(uploadChunk, 120)
-                  }
-                } catch (e) { }
-              }, 5000)
-            } catch (e) { }
-          } catch (e) {
-            // 拿麦失败（没授权/没有设备）：允许下一次手势再试，别把开始标志焊死
-            started = false
-            if (stopped) return             // 卸载/关待命期间失败：监听不能再加回去
-            attachGesture()
-            try { earDiag.bootFail = (earDiag.bootFail || 0) + 1; earDiag.lastError = 'getUserMedia: ' + String((e && (e as any).name) || e) ; earDiag.ctxState = 'boot-failed' } catch (e2) { }
-            showBubble('麦克风打不开：点地址栏小锁允许麦克风', 6000)
-          }
-        }
-        function onFirstGesture() {
-          if (started || stopped) return
-          started = true
-          detachGesture()
-          if (!earOnRef.current) return
-          boot()
-        }
-        // 关掉「语音待命」：真的把录音链停掉（定时器 + MediaRecorder + 音轨 + AudioContext）
-        function stopEar(): void {
-          stopped = true
-          if (forceTimer) { try { clearInterval(forceTimer) } catch (e) { } forceTimer = null }
-          try { if (wsCtl) wsCtl.stop() } catch (e) { }
-          if (watchTimer) { try { clearTimeout(watchTimer) } catch { } watchTimer = null }
-          if (startTimer) { try { clearTimeout(startTimer) } catch { } startTimer = null }
-          try { if (mr && mr.state !== 'inactive') mr.stop() } catch { }
-          try { if (actx) actx.close() } catch { }
-          try { if (stream) stream.getTracks().forEach((t: any) => t.stop()) } catch { }
-          mr = null; actx = null; stream = null; analyser = null
-        }
-        // 再打开：重新拿麦克风并起循环
-        function bootEar(): void {
-          stopped = false
-          lastHeardText = ''
-          lastHeardAt = 0
-          started = true
-          detachGesture()
-          boot()
-        }
-        earCtlRef.current.stop = stopEar
-        earCtlRef.current.boot = bootEar
-        attachGesture()
-        // 「语音随时待命」：挂载后立刻尝试开麦（已授权时无需手势）；失败会自动退回首次点击再试
-        try { if (earOnRef.current) onFirstGesture() } catch (e) { }
-        return () => {
-          // 卸载必须无条件摘监听：否则页面里点一下还会去开麦
-          detachGesture()
-          stopEar()
-          earCtlRef.current.stop = () => { }
-          earCtlRef.current.boot = () => { }
-        }
+          },
+          onDiag: (d: any) => { try { (window as any).__chubbyWhale.voiceDiag = d } catch (e) { } },
+        })
+        voiceRef.current = v
+        try {
+          const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
+          w.voice = v
+          w.say = (t: string) => { try { sendText(String(t || ''), { voice: true }) } catch (e) { } }
+          w.busyNow = () => ({ busy: busyRef.current, age: Date.now() - busyAtRef.current, tts: ttsPlaying })
+        } catch (e) { }
+        void v.start()
+        return () => { try { v.stop() } catch (e) { } ; voiceRef.current = null }
       }, [])
+
+      // ---- 旧调用点兼容层：全部转到新模块 ----
+      function speakText(text: string, o?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
+        try { if (localStorage.getItem('chubby-voice') === 'off') { try { (window as any).__chubbyWhale.ttsSkip = 'voice-off' } catch (e) { } ; return } } catch (e) { }
+        try { if (voiceRef.current) voiceRef.current.speak(text, o) } catch (e) { }
+      }
+      function stopTts(): void { try { if (voiceRef.current) voiceRef.current.stopSpeaking() } catch (e) { } }
+      function playFiller(): void { try { if (voiceRef.current) voiceRef.current.playFiller() } catch (e) { } }
+      function muteMic(): void { try { if (voiceRef.current) voiceRef.current.mute(true) } catch (e) { } }
+      function unmuteMic(): void { try { if (voiceRef.current) voiceRef.current.mute(false) } catch (e) { } }
+      function prefetchFiller(): void { }
+      function prefetchNextTts(): void { }
       // Canvas 动画
       R.useEffect(() => {
         const canvas = canvasRef.current
