@@ -2760,10 +2760,14 @@
                 showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + author + "\uFF09", 15e3);
                 animRef.current?.talkFor(6e3);
                 const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + collapsePoemBody(body);
+                storyNarratingRef.current = true;
                 sayLine(persona.line("poemStart"), 4e3);
                 setTimeout(() => {
                   try {
-                    speakText(speech, { rate: NARRATION_RATE2, onDone: () => sayLine(persona.line("poemDone"), 6e3) });
+                    speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
+                      storyNarratingRef.current = false;
+                      sayLine(persona.line("poemDone"), 6e3);
+                    } });
                   } catch (e) {
                   }
                 }, 600);
@@ -3126,10 +3130,14 @@
               const body = String(p.text || "");
               showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + String(p.author || "\u4F5A\u540D") + "\uFF09", 15e3);
               const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + String(p.author || "\u4F5A\u540D") + "\u3002" + collapsePoemBody(body);
+              storyNarratingRef.current = true;
               sayLine(persona.line("poemStart"), 4e3);
               setTimeout(() => {
                 try {
-                  speakText(speech, { rate: NARRATION_RATE2, onDone: () => sayLine(persona.line("poemDone"), 6e3) });
+                  speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
+                    storyNarratingRef.current = false;
+                    sayLine(persona.line("poemDone"), 6e3);
+                  } });
                 } catch (e) {
                 }
               }, 600);
@@ -3451,6 +3459,25 @@
               } catch (e) {
               }
               try {
+                if (storyNarratingRef.current) {
+                  if (/停|别念|不念|够了|算了|打住/.test(String(text || ""))) {
+                    try {
+                      stopTts();
+                    } catch (e) {
+                    }
+                    storyNarratingRef.current = false;
+                    showBubble("\u597D\uFF0C\u4E0D\u5FF5\u4E86", 2500);
+                  } else {
+                    try {
+                      window.__chubbyWhale.narrDrop = (window.__chubbyWhale.narrDrop || 0) + 1;
+                    } catch (e) {
+                    }
+                  }
+                  return;
+                }
+              } catch (e) {
+              }
+              try {
                 showBubble("\uFF08\u542C\u5230\uFF09" + text + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
               } catch (e) {
               }
@@ -3503,6 +3530,7 @@
           }
         }
         function stopTts() {
+          storyNarratingRef.current = false;
           try {
             if (voiceRef.current) voiceRef.current.stopSpeaking();
           } catch (e) {

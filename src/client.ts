@@ -600,7 +600,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('念诗·' + p.title + '（' + author + '）', 15000)
               animRef.current?.talkFor(6000)
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + collapsePoemBody(body)
-            sayLine(persona.line('poemStart'), 4000); setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => sayLine(persona.line('poemDone'), 6000) }) } catch (e) { } }, 600)
+            storyNarratingRef.current = true
+            sayLine(persona.line('poemStart'), 4000); setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000) } }) } catch (e) { } }, 600)
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
           return
@@ -882,8 +883,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const body = String(p.text || '')
             showBubble('念诗·' + p.title + '（' + String(p.author || '佚名') + '）', 15000)
             const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + String(p.author || '佚名') + '。' + collapsePoemBody(body)
+            storyNarratingRef.current = true
             sayLine(persona.line('poemStart'), 4000)
-            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => sayLine(persona.line('poemDone'), 6000) }) } catch (e) { } }, 600)
+            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000) } }) } catch (e) { } }, 600)
           }).catch(() => showBubble('诗册没读到', 4000))
           return true
         }
@@ -1105,6 +1107,20 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         const v = createVoice({
           onHeard: (text: string) => {
             try { voiceModeRef.current = true } catch (e) { }
+            // 叙述锁：念诗/说书进行中，麦克风拾到的内容不当作新发言
+            // （否则会掐断朗读、变成"自言自语"）；只放行明确的"停"指令
+            try {
+              if (storyNarratingRef.current) {
+                if (/停|别念|不念|够了|算了|打住/.test(String(text || ''))) {
+                  try { stopTts() } catch (e) { }
+                  storyNarratingRef.current = false
+                  showBubble('好，不念了', 2500)
+                } else {
+                  try { (window as any).__chubbyWhale.narrDrop = ((window as any).__chubbyWhale.narrDrop || 0) + 1 } catch (e) { }
+                }
+                return
+              }
+            } catch (e) { }
             try { showBubble('（听到）' + text + '｜本鱼在想…', 3000) } catch (e) { }
             try { sendText(text, { voice: true }) } catch (e) { }
           },
@@ -1127,7 +1143,10 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         try { if (localStorage.getItem('chubby-voice') === 'off') { try { (window as any).__chubbyWhale.ttsSkip = 'voice-off' } catch (e) { } ; return } } catch (e) { }
         try { if (voiceRef.current) voiceRef.current.speak(text, o) } catch (e) { }
       }
-      function stopTts(): void { try { if (voiceRef.current) voiceRef.current.stopSpeaking() } catch (e) { } }
+      function stopTts(): void {
+        storyNarratingRef.current = false   // 停止朗读 = 解除叙述锁，避免锁忘了放
+        try { if (voiceRef.current) voiceRef.current.stopSpeaking() } catch (e) { }
+      }
       function muteMic(): void { try { if (voiceRef.current) voiceRef.current.mute(true) } catch (e) { } }
       function unmuteMic(): void { try { if (voiceRef.current) voiceRef.current.mute(false) } catch (e) { } }
       function prefetchFiller(): void { }
