@@ -114,17 +114,18 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
   const balanceText = (state && state.balance) ? state.balance : '--'
   const growthText = (state && state.growth) ? state.growth : '--'
   return [
+    // ── 吃饭与看图 ──
     { type: 'item', label: '投喂一碗', action: 'feed' },
     { type: 'item', label: '看张图…', action: 'vision' },
     { type: 'sep' },
+    // ── 曲子 ──
     { type: 'sub', label: '弹首曲子 ▸', items: MELODIES.map((m) => ({ type: 'item' as const, label: '弹《' + m + '》', action: 'music:' + m })) },
     { type: 'item', label: '停止弹奏', action: 'music-stop' },
     { type: 'sep' },
+    // ── 说话与耳朵（语音类全放一起）──
     { type: 'item', label: '跟她说两句', action: 'type' },
     { type: 'item', label: voiceOn ? '语音朗读：开' : '语音朗读：关', action: 'voice' },
     { type: 'item', label: '停止说话', action: 'tts-stop' },
-    { type: 'item', label: '端点检测：经典/自适应', action: 'endpoint' },
-    { type: 'item', label: '耳朵自检（听力诊断）', action: 'ear-check' },
     { type: 'sub', label: '换个声音 ▸', items: [
       { type: 'item', label: voiceTick('zh-CN-XiaoyiNeural') + '音色：晓伊（中·女）', action: 'voice:zh-CN-XiaoyiNeural' },
       { type: 'item', label: voiceTick('zh-CN-XiaoxiaoNeural') + '音色：晓晓（中·女）', action: 'voice:zh-CN-XiaoxiaoNeural' },
@@ -136,6 +137,12 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
       { type: 'item', label: voiceTick('en-GB-SoniaNeural') + '音色：Sonia（英·女·英式）', action: 'voice:en-GB-SoniaNeural' },
       { type: 'item', label: voiceTick('auto') + '自动（按语言选音色）', action: 'voice:auto' },
     ] },
+    { type: 'item', label: '语音待命：' + (earOn ? '开' : '关'), action: 'wake' },
+    { type: 'item', label: '语音聊天：' + (voiceChatOn ? '开' : '关'), action: 'chatmode' },
+    { type: 'item', label: '端点检测：经典/自适应', action: 'endpoint' },
+    { type: 'item', label: '耳朵自检（听力诊断）', action: 'ear-check' },
+    { type: 'sep' },
+    // ── 语言 ──
     { type: 'sub', label: '聊天语言 ▸', items: [
       { type: 'item', label: (chatLang === 'auto' ? '✓ ' : '') + '自动', action: 'chat-lang:auto' },
       { type: 'item', label: (chatLang === 'zh' ? '✓ ' : '') + '中文', action: 'chat-lang:zh' },
@@ -146,17 +153,17 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
       { type: 'item', label: 'English', action: 'lang:en' },
     ] },
     { type: 'sep' },
-    { type: 'item', label: '语音待命：' + (earOn ? '开' : '关'), action: 'wake' },
-    { type: 'item', label: '语音聊天：' + (voiceChatOn ? '开' : '关'), action: 'chatmode' },
-    
+    // ── 位置与大小 ──
     { type: 'item', label: '让她歇会儿', action: 'pause' },
     { type: 'item', label: '回碗里待着', action: 'home' },
     { type: 'item', label: '长大一点', action: 'bigger' },
     { type: 'item', label: '变小一点', action: 'smaller' },
     { type: 'sep' },
+    // ── 饭点提醒 ──
     { type: 'item', label: '记个饭点…', action: 'remind-add' },
     { type: 'item', label: '提醒清单…', action: 'remind-list' },
     { type: 'sep' },
+    // ── 文化气 ──
     { type: 'sub', label: '文化气 ▸', items: [
       { type: 'item', label: '说书（连载）', action: 'culture-story' },
       { type: 'item', label: '接着说', action: 'culture-story-next' },
@@ -167,11 +174,14 @@ export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: 
       { type: 'item', label: '成语辨析', action: 'culture-idiom' },
       { type: 'item', label: '出个对联', action: 'culture-couplet' },
     ] },
+    { type: 'sep' },
+    // ── 记忆、缓存与退出 ──
     { type: 'item', label: '清除记忆…', action: 'clear-memory' },
     { type: 'item', label: '清空聊天缓存…', action: 'cache-clear' },
     { type: 'item', label: (chatCacheOn ? '聊天缓存：开' : '聊天缓存：关'), action: 'cache-toggle' },
     { type: 'item', label: '让它游走（退出）', action: 'hide' },
     { type: 'sep' },
+    // ── 账本与版本（版本永远在最底下）──
     { type: 'item', label: '鱼粮账本', action: 'fishfood' },
     { type: 'item', label: '成长：' + growthText, action: 'growth' },
     { type: 'item', label: '版本：v' + version, action: 'version' },

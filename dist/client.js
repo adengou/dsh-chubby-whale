@@ -200,17 +200,18 @@
     const balanceText = state && state.balance ? state.balance : "--";
     const growthText = state && state.growth ? state.growth : "--";
     return [
+      // ── 吃饭与看图 ──
       { type: "item", label: "\u6295\u5582\u4E00\u7897", action: "feed" },
       { type: "item", label: "\u770B\u5F20\u56FE\u2026", action: "vision" },
       { type: "sep" },
+      // ── 曲子 ──
       { type: "sub", label: "\u5F39\u9996\u66F2\u5B50 \u25B8", items: MELODIES.map((m) => ({ type: "item", label: "\u5F39\u300A" + m + "\u300B", action: "music:" + m })) },
       { type: "item", label: "\u505C\u6B62\u5F39\u594F", action: "music-stop" },
       { type: "sep" },
+      // ── 说话与耳朵（语音类全放一起）──
       { type: "item", label: "\u8DDF\u5979\u8BF4\u4E24\u53E5", action: "type" },
       { type: "item", label: voiceOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173", action: "voice" },
       { type: "item", label: "\u505C\u6B62\u8BF4\u8BDD", action: "tts-stop" },
-      { type: "item", label: "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94", action: "endpoint" },
-      { type: "item", label: "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09", action: "ear-check" },
       { type: "sub", label: "\u6362\u4E2A\u58F0\u97F3 \u25B8", items: [
         { type: "item", label: voiceTick("zh-CN-XiaoyiNeural") + "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoyiNeural" },
         { type: "item", label: voiceTick("zh-CN-XiaoxiaoNeural") + "\u97F3\u8272\uFF1A\u6653\u6653\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoxiaoNeural" },
@@ -222,6 +223,12 @@
         { type: "item", label: voiceTick("en-GB-SoniaNeural") + "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09", action: "voice:en-GB-SoniaNeural" },
         { type: "item", label: voiceTick("auto") + "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09", action: "voice:auto" }
       ] },
+      { type: "item", label: "\u8BED\u97F3\u5F85\u547D\uFF1A" + (earOn ? "\u5F00" : "\u5173"), action: "wake" },
+      { type: "item", label: "\u8BED\u97F3\u804A\u5929\uFF1A" + (voiceChatOn ? "\u5F00" : "\u5173"), action: "chatmode" },
+      { type: "item", label: "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94", action: "endpoint" },
+      { type: "item", label: "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09", action: "ear-check" },
+      { type: "sep" },
+      // ── 语言 ──
       { type: "sub", label: "\u804A\u5929\u8BED\u8A00 \u25B8", items: [
         { type: "item", label: (chatLang === "auto" ? "\u2713 " : "") + "\u81EA\u52A8", action: "chat-lang:auto" },
         { type: "item", label: (chatLang === "zh" ? "\u2713 " : "") + "\u4E2D\u6587", action: "chat-lang:zh" },
@@ -232,16 +239,17 @@
         { type: "item", label: "English", action: "lang:en" }
       ] },
       { type: "sep" },
-      { type: "item", label: "\u8BED\u97F3\u5F85\u547D\uFF1A" + (earOn ? "\u5F00" : "\u5173"), action: "wake" },
-      { type: "item", label: "\u8BED\u97F3\u804A\u5929\uFF1A" + (voiceChatOn ? "\u5F00" : "\u5173"), action: "chatmode" },
+      // ── 位置与大小 ──
       { type: "item", label: "\u8BA9\u5979\u6B47\u4F1A\u513F", action: "pause" },
       { type: "item", label: "\u56DE\u7897\u91CC\u5F85\u7740", action: "home" },
       { type: "item", label: "\u957F\u5927\u4E00\u70B9", action: "bigger" },
       { type: "item", label: "\u53D8\u5C0F\u4E00\u70B9", action: "smaller" },
       { type: "sep" },
+      // ── 饭点提醒 ──
       { type: "item", label: "\u8BB0\u4E2A\u996D\u70B9\u2026", action: "remind-add" },
       { type: "item", label: "\u63D0\u9192\u6E05\u5355\u2026", action: "remind-list" },
       { type: "sep" },
+      // ── 文化气 ──
       { type: "sub", label: "\u6587\u5316\u6C14 \u25B8", items: [
         { type: "item", label: "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09", action: "culture-story" },
         { type: "item", label: "\u63A5\u7740\u8BF4", action: "culture-story-next" },
@@ -252,11 +260,14 @@
         { type: "item", label: "\u6210\u8BED\u8FA8\u6790", action: "culture-idiom" },
         { type: "item", label: "\u51FA\u4E2A\u5BF9\u8054", action: "culture-couplet" }
       ] },
+      { type: "sep" },
+      // ── 记忆、缓存与退出 ──
       { type: "item", label: "\u6E05\u9664\u8BB0\u5FC6\u2026", action: "clear-memory" },
       { type: "item", label: "\u6E05\u7A7A\u804A\u5929\u7F13\u5B58\u2026", action: "cache-clear" },
       { type: "item", label: chatCacheOn ? "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00" : "\u804A\u5929\u7F13\u5B58\uFF1A\u5173", action: "cache-toggle" },
       { type: "item", label: "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09", action: "hide" },
       { type: "sep" },
+      // ── 账本与版本（版本永远在最底下）──
       { type: "item", label: "\u9C7C\u7CAE\u8D26\u672C", action: "fishfood" },
       { type: "item", label: "\u6210\u957F\uFF1A" + growthText, action: "growth" },
       { type: "item", label: "\u7248\u672C\uFF1Av" + version, action: "version" }
