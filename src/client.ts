@@ -771,7 +771,10 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         }
         async function boot() {
           try {
-            stream = await (navigator as any).mediaDevices.getUserMedia({ audio: true })
+            const s = await (navigator as any).mediaDevices.getUserMedia({ audio: true })
+            // 拿麦期间被「语音待命：关」了：别再把麦克风挂着
+            if (stopped) { try { s.getTracks().forEach((t: any) => t.stop()) } catch (e) { } ; return }
+            stream = s
             actx = new (window as any).AudioContext()
             const src = actx.createMediaStreamSource(stream)
             analyser = actx.createAnalyser()
@@ -873,7 +876,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             e.preventDefault()
             e.stopPropagation()
             const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]
-            handleFileDrop(file, { showBubble, speakText })
+            handleFileDrop(file, { showBubble, speakText }).catch(() => { })
           },
           onClick: () => { if (dragRef.current.moved > 8) return; animRef.current?.talkFor(1200) },
         },

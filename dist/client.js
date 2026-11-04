@@ -1587,7 +1587,16 @@
           }
           async function boot() {
             try {
-              stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+              if (stopped) {
+                try {
+                  s.getTracks().forEach((t) => t.stop());
+                } catch (e) {
+                }
+                ;
+                return;
+              }
+              stream = s;
               actx = new window.AudioContext();
               const src = actx.createMediaStreamSource(stream);
               analyser = actx.createAnalyser();
@@ -1734,7 +1743,8 @@
                 e.preventDefault();
                 e.stopPropagation();
                 const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-                handleFileDrop(file, { showBubble, speakText });
+                handleFileDrop(file, { showBubble, speakText }).catch(() => {
+                });
               },
               onClick: () => {
                 if (dragRef.current.moved > 8) return;
