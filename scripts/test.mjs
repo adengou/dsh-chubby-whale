@@ -1895,6 +1895,37 @@ try {
   ok('能加载 endpoint.ts', false, String(e.message))
 }
 
+
+// ---------- ㊲ 叙述进度：说书与念诗交替时不串味 ----------
+console.log('\n[37] 叙述进度交替 client/narration-progress.ts')
+try {
+  const np = await import('../src/client/narration-progress.ts')
+  // 1) 念诗
+  np.startProgress('念诗·雨霖铃', ['寒蝉凄切。', '对长亭晚，骤雨初歇。'], '念首诗——雨霖铃，宋，柳永。')
+  const p1 = np.bumpProgress('念首诗——雨霖铃，宋，柳永。')
+  const p2 = np.bumpProgress('寒蝉凄切。')
+  ok('念诗：开场白不带句数', p1.indexOf('第 ') < 0, p1)
+  ok('念诗：第一句显示 1/2', p2.indexOf('第 1/2') >= 0, p2)
+  np.stopProgress()
+
+  // 2) 换成说书：不能带着上一首诗的计数
+  const story = np.bumpProgress('话说，今天给主人讲一段《聊斋》，画皮。')
+  ok('念诗结束后 → 说书不再带句数', story === '', '[' + story + ']')
+  np.startProgress('说书·聊斋', ['话说……', '正文……'], '')
+  const s1 = np.bumpProgress('话说……')
+  ok('说书：按自己的行数计（1/2）', s1.indexOf('第 1/2') >= 0 && s1.indexOf('聊斋') >= 0, s1)
+  np.stopProgress()
+
+  // 3) 再说书切回念诗：同样不串
+  np.startProgress('念诗·静夜思', ['床前明月光。'], '')
+  const back = np.bumpProgress('床前明月光。')
+  ok('说书结束 → 念诗从 1/1 重新开始', back.indexOf('第 1/1') >= 0 && back.indexOf('静夜思') >= 0, back)
+  np.stopProgress()
+  ok('最后 stop 后无进度残留', np.progressActive() === false && np.bumpProgress('任意一句。') === '')
+} catch (e) {
+  ok('能加载 narration-progress.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
