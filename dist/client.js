@@ -13,6 +13,9 @@
     return value;
   }
 
+  // src/client/version.ts
+  var VERSION = "1.0.1";
+
   // src/client/styles.ts
   var W = 240;
   var H = 213;
@@ -20,7 +23,6 @@
   var CH = 426;
   var SX = CW / 1696;
   var SY = CH / 1504;
-  var VERSION = "0.1.0";
   var stageStyle = (scale, hidden) => ({
     position: "fixed",
     left: 0,

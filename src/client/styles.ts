@@ -8,7 +8,7 @@ export const CW = 480
 export const CH = 426
 export const SX = CW / 1696
 export const SY = CH / 1504
-export const VERSION = '0.1.0'
+export { VERSION } from './version.js'
 
 export const stageStyle = (scale: number, hidden: boolean) => ({
   position: 'fixed' as const,

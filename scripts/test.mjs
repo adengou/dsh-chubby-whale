@@ -393,6 +393,20 @@ try {
   ok('能加载 menu.ts', false, String(e.message))
 }
 
+
+// ---------- ⑭ 版本号唯一真源 ----------
+console.log('\n[14] 版本号（package.json → client/version.ts）')
+try {
+  const { readFileSync: rf } = await import('node:fs')
+  const pkgV = JSON.parse(rf('package.json', 'utf8')).version
+  const ver = await import('../src/client/version.ts')
+  ok('客户端 VERSION 与 package.json 一致', ver.VERSION === pkgV, 'client=' + ver.VERSION + ' pkg=' + pkgV)
+  const styles = rf('src/client/styles.ts', 'utf8')
+  ok('styles.ts 不再硬编码版本号', styles.indexOf('export const VERSION') < 0)
+} catch (e) {
+  ok('能加载 client/version.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
