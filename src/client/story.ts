@@ -10,6 +10,9 @@
 import { getJson, postJson, clientHeaders } from './http.js'
 import { estimateSpeakMs } from './text.js'
 import { normalizeRate } from '../shared/tts.js'
+
+/** 讲故事语速（主人反馈 -30% 仍略快 → -35%）；念诗走叙述语速 -25% */
+const STORY_RATE = '-35%'
 import type { Persona } from './persona.js'
 
 export type StoryRefs = {
@@ -69,8 +72,9 @@ export function createStoryController(host: StoryHost): StoryController {
     refs.busy.current = true
     host.narrate(estimateSpeakMs(text))
     host.speak(text, {
-      // 故事语速以宿主给的为准（当前 -30%）；缺失时回退到叙述语速设置（念诗 -25%）
-      rate: normalizeRate(d && d.rate, host.narrationRate),
+      // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
+      // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
+      rate: normalizeRate(STORY_RATE, host.narrationRate),
       onDone: () => {
         refs.busy.current = false
         refs.narrating.current = false
