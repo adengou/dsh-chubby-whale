@@ -110,11 +110,9 @@ try {
   const menu = readFileSync('src/client/menu.ts', 'utf8')
   const idxVersion = menu.lastIndexOf("action: 'version'")
   const idxLastItem = menu.lastIndexOf("type: 'item'")
-  ok('菜单含版本项', idxVersion > 0)
-  // 版本项必须是最后一个 item（后面只允许 return / ] 之类）
-  const tail = menu.slice(idxVersion)
-  const laterItems = (tail.match(/type: 'item'/g) || []).length
-  ok('版本项在最下面', idxVersion > idxLastItem - 1 && laterItems <= 1, '之后还有 ' + Math.max(0, laterItems - 1) + ' 个 item')
+  // 需求变更（2026-11-05）：版本号只在菜单标题栏显示，菜单项里不再重复出现
+  const idxVersion = menu.lastIndexOf("action: 'version'")
+  ok('菜单不含版本项（版本只在标题栏）', idxVersion < 0)
 } catch (e) {
   ok('菜单可读', false, String(e.message))
 }
