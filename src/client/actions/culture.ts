@@ -5,6 +5,10 @@
  * 新增菜单动作时只改这里（+ client/menu.ts 的菜单数据），不动 client.ts。
  */
 
+import { pickCouplet } from '../duilian.js'
+
+let lastCouplet = ''
+
 import type { ActionHost, ActionTable } from '../actions.js'
 import { getJson } from '../http.js'
 import { estimateMelodySeconds } from '../melody.js'
@@ -97,7 +101,10 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
   })
 
   table.define('culture-couplet', (host) => {
-    host.bubble('对联小鲸还在整理，回头给你出一对～')
+    const c = pickCouplet(lastCouplet)
+    lastCouplet = c.upper
+    host.bubble('上联：' + c.upper + '（先对一对，本鲸 6 秒后揭晓下联）', 5600)
+    setTimeout(() => { try { host.bubble('下联：' + c.lower + '\n——' + c.source, 7000) } catch (e) { } }, 6000)
   })
 
   // —— 弹首曲子：先停朗读，再弹；弹完顺带说一句（带自检记录）——
