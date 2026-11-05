@@ -10,21 +10,14 @@ import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { normalizeStoryChunks } from '../data/normalize.js'
+import type { StoryChunk } from '../ports.js'
+
+export type { StoryChunk }
 
 /** 内存里最多留几本书：一本 JSON 可能几 MB，无限缓存会一直涨 */
 const BOOK_CACHE_MAX = 2
 /** 单本书解析超时：30 秒 */
 const READ_TIMEOUT_MS = 30000
-
-export interface StoryChunk {
-  book: string
-  title: string
-  piece: number
-  total: number
-  text: string
-  /** 原数组序号（进度 key 用它，避免回目里 piece 重复导致误判） */
-  index: number
-}
 
 export interface StoryRepo {
   /** 数据目录下所有 .json 书名（排序后） */

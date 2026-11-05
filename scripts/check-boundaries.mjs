@@ -96,6 +96,18 @@ function checkFile(file) {
     if (here === 'shared' && target) violations.push(`B2 ${rel}:${i + 1} 公共层反向依赖上层：${spec}`)
   }
 
+  // B5 端口层零反依赖：host/ports.ts 只能引用 shared/ 或自身类型，不许 import 具体实现
+  if (rel.endsWith('host/ports.ts')) {
+    const forbidden = ["'./tts-engine.js'", "'./store.js'", "'./data/", "'./repos/", "'./routes/", "'./story/", "'./personality"]
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/from '([^']+)'/)
+      if (!m) continue
+      if (forbidden.some((f) => m[1].indexOf(f) === 0)) {
+        violations.push(`B5 ${rel}:${i + 1} 端口层反向依赖具体实现：${m[1]}`)
+      }
+    }
+  }
+
   // B3 全局挂载（要能认 (window as any).x = / window['x'] = 这类写法）
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]

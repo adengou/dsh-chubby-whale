@@ -5,8 +5,33 @@
  * index.ts 负责把真实实现注进来，测试可注入内存假实现。
  * 每个接口只覆盖一个路由用到的字段，不追求把整个 store 塞进来。
  */
-import type { TtsEngine } from './tts-engine.js'
-import type { StoryChunk } from './story/repo.js'
+// 端口层自己定义数据结构，绝不 import 具体实现（依赖方向：实现 → 端口）
+
+/** 说书的一块正文（story/repo 产出、路由消费；定义放端口层避免反向依赖） */
+export interface StoryChunk {
+  book: string
+  title: string
+  piece: number
+  total: number
+  text: string
+  /** 原数组序号（进度 key 用它，避免回目里 piece 重复导致误判） */
+  index: number
+}
+
+/** TTS 合成请求（引擎与路由共用；定义放端口层） */
+export interface TtsSynthRequest {
+  text: string
+  voice: string
+  rate?: string
+  pitch?: string
+}
+
+/** TTS 引擎端口：路由只要"能合成成 mp3 字节"这一件事 */
+export interface TtsEngine {
+  synthesize(req: TtsSynthRequest): Promise<Buffer>
+  /** 预热：提前把常驻 worker 拉起来（只导入依赖，不合成），首句能省约 1.3 秒 */
+  warm?(): Promise<void>
+}
 
 /** 数据源类型：本地 data/（默认）或云端 adengou.cn/culture/v1/ */
 export type DataSourceKind = 'local' | 'cloud'

@@ -22,19 +22,10 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { buildEdgeTtsArgs } from '../shared/tts.js'
+import type { TtsEngine, TtsSynthRequest } from './ports.js'
 
-export interface TtsSynthRequest {
-  text: string
-  voice: string
-  rate: string
-  pitch: string
-}
-
-export interface TtsEngine {
-  synthesize(req: TtsSynthRequest): Promise<Buffer>
-  /** 预热：提前把常驻 worker 拉起来（只导入依赖，不合成），首句能省约 1.3 秒 */
-  warm?(): Promise<void>
-}
+// 类型定义在端口层（host/ports.ts）；这里再导出，保持旧导入路径可用
+export type { TtsEngine, TtsSynthRequest }
 
 /** 常驻 worker 的 python 源码：导入一次 edge_tts，之后逐行收 JSON、合成、回写文件 */
 const WORKER_SOURCE = `
