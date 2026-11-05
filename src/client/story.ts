@@ -11,8 +11,17 @@ import { getJson, postJson, clientHeaders } from './http.js'
 import { estimateSpeakMs } from './text.js'
 import { normalizeRate } from '../shared/tts.js'
 
-/** 讲故事语速（主人反馈 -30% 仍略快 → -35%）；念诗走叙述语速 -25% */
+/** 讲故事默认语速（主人反馈 -30% 仍略快 → -35%）；念诗走叙述语速 -25% */
 const STORY_RATE = '-35%'
+
+/** 读当前说书语速：菜单里选过就用选的，否则用默认；非法值一律回默认 */
+function storyRate(): string {
+  try {
+    const s = localStorage.getItem('chubby-story-rate')
+    if (s && /^-\d{1,2}%$/.test(s)) return s
+  } catch (e) { }
+  return STORY_RATE
+}
 import type { Persona } from './persona.js'
 
 export type StoryRefs = {
@@ -55,7 +64,13 @@ export type StoryController = {
 
 export function createStoryController(host: StoryHost): StoryController {
   const refs = host.refs
-  const titleOf = (d: any): string => '正在讲《' + String((d && d.book) || '') + '》' + (d && d.title ? '｜' + d.title : '')
+  const titleOf = (d: any): string => {
+    const total = Number(d && d.total) || 1
+    const piece = Number(d && d.piece) || 1
+    // 长故事在数据里被切成多段：气泡里标出「第几段」，主人能知道还剩多少
+    const seg = total > 1 ? '（第 ' + piece + '/' + total + ' 段）' : ''
+    return '正在讲《' + String((d && d.book) || '') + '》' + (d && d.title ? '｜' + d.title : '') + seg
+  }
 
   function playPiece(d: any): void {
     const text = String((d && d.text) || '')
@@ -74,7 +89,7 @@ export function createStoryController(host: StoryHost): StoryController {
     host.speak(text, {
       // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
       // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
-      rate: normalizeRate(STORY_RATE, host.narrationRate),
+      rate: normalizeRate(storyRate(), host.narrationRate),
       onDone: () => {
         refs.busy.current = false
         refs.narrating.current = false

@@ -303,6 +303,12 @@
       { type: "sub", label: "\u6587\u5316\u6C14 \u25B8", items: [
         { type: "item", label: "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09", action: "culture-story" },
         { type: "item", label: "\u8FDE\u64AD\uFF1A" + (state.storyAuto === false ? "\u5173" : "\u5F00") + "\uFF08\u8BB2\u5B8C\u4E00\u6BB5\u81EA\u52A8\u63A5\u4E0B\u4E00\u6BB5\uFF09", action: "story-auto" },
+        { type: "sub", label: "\u8BF4\u4E66\u8BED\u901F\uFF1A" + (state.storyRate || "-35%") + " \u25B8", items: [
+          { type: "item", label: ((state.storyRate || "-35%") === "-25%" ? "\u2713 " : "") + "\u7A0D\u5FEB -25%", action: "story-rate:-25%" },
+          { type: "item", label: ((state.storyRate || "-35%") === "-30%" ? "\u2713 " : "") + "\u9002\u4E2D -30%", action: "story-rate:-30%" },
+          { type: "item", label: ((state.storyRate || "-35%") === "-35%" ? "\u2713 " : "") + "\u504F\u6162 -35%\uFF08\u9ED8\u8BA4\uFF09", action: "story-rate:-35%" },
+          { type: "item", label: ((state.storyRate || "-35%") === "-40%" ? "\u2713 " : "") + "\u5F88\u6162 -40%", action: "story-rate:-40%" }
+        ] },
         { type: "item", label: "\u63A5\u7740\u8BF4", action: "culture-story-next" },
         { type: "item", label: "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66", action: "story-reset" },
         { type: "item", label: "\u5FF5\u9996\u8BD7", action: "poem" },
@@ -2866,6 +2872,18 @@
       }
       host.bubble(next ? "\u8FDE\u64AD\uFF1A\u5F00\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u81EA\u52A8\u63A5\u4E0B\u4E00\u6BB5" : "\u8FDE\u64AD\uFF1A\u5173\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u5C31\u505C", 4e3);
     });
+    table.definePrefix("story-rate:", (host, suffix) => {
+      const rate = String(suffix || "");
+      if (!/^-\d{1,2}%$/.test(rate)) {
+        host.bubble("\u8FD9\u4E2A\u8BED\u901F\u503C\u4E0D\u8BA4", 3e3);
+        return;
+      }
+      try {
+        localStorage.setItem("chubby-story-rate", rate);
+      } catch (e) {
+      }
+      host.bubble("\u8BF4\u4E66\u8BED\u901F\uFF1A" + rate, 4e3);
+    });
     table.define("culture-tale", (host) => {
       getJson("/culture?type=minsu").then((d) => {
         if (!(d && d.ok && d.item)) {
@@ -4337,9 +4355,22 @@
 
   // src/client/story.ts
   var STORY_RATE = "-35%";
+  function storyRate() {
+    try {
+      const s = localStorage.getItem("chubby-story-rate");
+      if (s && /^-\d{1,2}%$/.test(s)) return s;
+    } catch (e) {
+    }
+    return STORY_RATE;
+  }
   function createStoryController(host) {
     const refs = host.refs;
-    const titleOf = (d) => "\u6B63\u5728\u8BB2\u300A" + String(d && d.book || "") + "\u300B" + (d && d.title ? "\uFF5C" + d.title : "");
+    const titleOf = (d) => {
+      const total = Number(d && d.total) || 1;
+      const piece = Number(d && d.piece) || 1;
+      const seg = total > 1 ? "\uFF08\u7B2C " + piece + "/" + total + " \u6BB5\uFF09" : "";
+      return "\u6B63\u5728\u8BB2\u300A" + String(d && d.book || "") + "\u300B" + (d && d.title ? "\uFF5C" + d.title : "") + seg;
+    };
     function playPiece(d) {
       const text = String(d && d.text || "");
       if (d && d.book) refs.book.current = String(d.book);
@@ -4356,7 +4387,7 @@
       host.speak(text, {
         // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
         // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
-        rate: normalizeRate(STORY_RATE, host.narrationRate),
+        rate: normalizeRate(storyRate(), host.narrationRate),
         onDone: () => {
           refs.busy.current = false;
           refs.narrating.current = false;
@@ -6270,6 +6301,13 @@
                 return localStorage.getItem("chubby-story-auto") !== "0";
               } catch (e) {
                 return true;
+              }
+            })(), storyRate: (() => {
+              try {
+                const s = localStorage.getItem("chubby-story-rate") || "-35%";
+                return /^-\d{1,2}%$/.test(s) ? s : "-35%";
+              } catch (e) {
+                return "-35%";
               }
             })(), ttsVoice: (() => {
               try {

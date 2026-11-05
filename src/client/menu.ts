@@ -151,6 +151,8 @@ export interface MenuState {
   storyBooksTried?: boolean
   /** 说书连播开关（缺省视为开：讲完一段自动接下一段） */
   storyAuto?: boolean
+  /** 说书语速（缺省 -35%）：-25% / -30% / -35% / -40% */
+  storyRate?: string
 }
 
 export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
@@ -227,6 +229,12 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     { type: 'sub', label: '文化气 ▸', items: [
       { type: 'item', label: '说书（连载）', action: 'culture-story' },
       { type: 'item', label: '连播：' + (state.storyAuto === false ? '关' : '开') + '（讲完一段自动接下一段）', action: 'story-auto' },
+      { type: 'sub', label: '说书语速：' + (state.storyRate || '-35%') + ' ▸', items: [
+        { type: 'item', label: ((state.storyRate || '-35%') === '-25%' ? '✓ ' : '') + '稍快 -25%', action: 'story-rate:-25%' },
+        { type: 'item', label: ((state.storyRate || '-35%') === '-30%' ? '✓ ' : '') + '适中 -30%', action: 'story-rate:-30%' },
+        { type: 'item', label: ((state.storyRate || '-35%') === '-35%' ? '✓ ' : '') + '偏慢 -35%（默认）', action: 'story-rate:-35%' },
+        { type: 'item', label: ((state.storyRate || '-35%') === '-40%' ? '✓ ' : '') + '很慢 -40%', action: 'story-rate:-40%' },
+      ] },
       { type: 'item', label: '接着说', action: 'culture-story-next' },
       { type: 'item', label: '从头讲这本书', action: 'story-reset' },
       { type: 'item', label: '念首诗', action: 'poem' },

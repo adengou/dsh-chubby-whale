@@ -62,6 +62,13 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
     try { localStorage.setItem('chubby-story-auto', next ? '1' : '0') } catch (e) { }
     host.bubble(next ? '连播：开——讲完这段自动接下一段' : '连播：关——讲完这段就停', 4000)
   })
+  // 说书语速：菜单里选一档，立即生效（只影响说书；念诗仍走叙述语速 -25%）
+  table.definePrefix('story-rate:', (host, suffix) => {
+    const rate = String(suffix || '')
+    if (!/^-\d{1,2}%$/.test(rate)) { host.bubble('这个语速值不认', 3000); return }
+    try { localStorage.setItem('chubby-story-rate', rate) } catch (e) { }
+    host.bubble('说书语速：' + rate, 4000)
+  })
 
   // —— 民间故事：标题 + 出处 + 整篇（超 6000 字才截），叙述语速 ——
   table.define('culture-tale', (host) => {
