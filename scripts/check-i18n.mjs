@@ -6,7 +6,13 @@
 import fs from 'node:fs'
 const p = new URL('../src/client/menu.ts', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
 const t = fs.readFileSync(p, 'utf8')
-const labels = [...new Set([...t.matchAll(/label:\s*'([^']+)'/g)].map((m) => m[1]))]
+// label 可能是三元表达式（voiceOn ? '语音朗读：开' : '语音朗读：关'），要把同一行里的字符串都收进来
+const labels = []
+for (const line of t.split(/\r?\n/)) {
+  if (!line.includes('label:')) continue
+  for (const m of line.matchAll(/'([^']+)'/g)) labels.push(m[1])
+}
+const uniqLabels = [...new Set(labels)]
 function keysOf(name) {
   const i = t.indexOf('const ' + name)
   if (i < 0) return []
@@ -25,15 +31,15 @@ const covered = (s) => {
   if (m && exact.has(m[1] + '：')) return true
   return false
 }
-const missing = labels.filter((s) => !covered(s))
+const missing = uniqLabels.filter((s) => !covered(s))
 // TOGGLE_EN 的键是前缀（'语音朗读：'），实际 label 是 '语音朗读：开/关'，两者都算用到了
 const dead = [...exact].filter((k) =>
-  !labels.includes(k) &&
-  !labels.includes(k + '开') &&
-  !labels.includes(k + '关') &&
+  !uniqLabels.includes(k) &&
+  !uniqLabels.includes(k + '开') &&
+  !uniqLabels.includes(k + '关') &&
   !dyn.some((d) => k.startsWith(d))
 )
-console.log('菜单文案 ' + labels.length + ' 项 / 精确键 ' + exact.size + ' / 动态前缀 ' + dyn.length)
+console.log('菜单文案 ' + uniqLabels.length + ' 项 / 精确键 ' + exact.size + ' / 动态前缀 ' + dyn.length)
 console.log(missing.length ? '缺英文: ' + missing.join(' / ') : '缺英文: 0 ✅')
 console.log(dead.length ? '死键: ' + dead.join(' / ') : '死键: 0 ✅')
 process.exit(missing.length + dead.length === 0 ? 0 : 1)
