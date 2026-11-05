@@ -17,6 +17,7 @@ import { Ape } from './ape.js'
 import { deepFreeze } from '../shared/immutable.js'
 import { isRepeat } from './sim.js'
 import { echoKey } from './text.js'
+import { isNoiseText } from '../shared/noise.js'
 import { isPlaybackZombie } from './playback.js'
 
 export type VoiceStatus = 'idle' | 'listening' | 'recognizing' | 'thinking' | 'speaking'
@@ -94,8 +95,7 @@ const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-nar
 const TTS_WATCH_MS = 1000        // 朗读看门狗间隔
 const TTS_ZOMBIE_MS = 2500       // 这么久没在播就复位
 
-/** 识别服务常把静音/气口编成的词，一律当噪声 */
-const NOISE_TEXTS = ['嗯', '呃', '啊', '哦', '嗯嗯', '谢谢观看', '谢谢大家', '字幕', '请不吝点赞', '订阅', '转发', '打赏', '再见', '本鱼在听', '嗯本鱼在听']
+// 噪声判定与宿主共用一份（shared/noise.ts），避免两边各写一套、缓存又把噪声写进去
 
 /**
  * 可用的音色 —— 与菜单「换个声音 ▸」的列表一一对应，也是 /tts 请求前的白名单。
@@ -319,7 +319,7 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     const plainKey = echoKey(text)
     // 单字放行白名单：主人喊「停！」也要能打断说书/朗读
     if (plain.length < 2 && !/^[停别不]$/.test(plain)) return false
-    if (NOISE_TEXTS.indexOf(plain) >= 0) return false
+    if (isNoiseText(plain)) return false
     if (/^本鱼在听/.test(plain)) return false
     // 自己刚说过的话（回声）
     const now = Date.now()
@@ -494,6 +494,10 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     // 当前段开播前就把下一段合成压上去（C# 的 prefetch）
     const next = ttsQ[0]
     if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next))
+    // 叙述（念诗/说书）句子短、段间停顿明显：再多预取一段，减少"等合成"的空档。
+    // 普通聊天首段短、后面长，只预取一段就够，避免把 worker 队列塞满。
+    const next2 = ttsQ[1]
+    if (job.narration && next2 && !ttsPrefetch.has(next2.seq)) ttsPrefetch.set(next2.seq, synth(next2))
 
     cur.then((buf) => {
       // 令牌校验必须放最前：这一段如果已被 stopSpeaking / 看门狗作废，

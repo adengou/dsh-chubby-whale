@@ -1205,6 +1205,42 @@
     };
   }
 
+  // src/shared/noise.ts
+  var NOISE_TEXTS = [
+    "\u55EF",
+    "\u5443",
+    "\u554A",
+    "\u54E6",
+    "\u6069",
+    "\u55EF\u55EF",
+    "\u554A\u554A",
+    "\u8C22\u8C22\u89C2\u770B",
+    "\u8C22\u8C22\u5927\u5BB6",
+    "\u5B57\u5E55",
+    "\u8BF7\u4E0D\u541D\u70B9\u8D5E",
+    "\u70B9\u8D5E",
+    "\u8BA2\u9605",
+    "\u8F6C\u53D1",
+    "\u6253\u8D4F",
+    "\u518D\u89C1",
+    "\u672C\u9C7C\u5728\u542C",
+    "\u55EF\u672C\u9C7C\u5728\u542C",
+    "\u5B57\u5E55\u7531",
+    "\u660E\u955C\u4E0E\u70B9\u70B9"
+  ];
+  deepFreeze(NOISE_TEXTS);
+  function normalizeNoiseKey(text) {
+    return String(text == null ? "" : text).replace(/\s+/g, "").replace(/[。，、！？；：,.!?;:…~～·""''（）()【】\[\]]/g, "").toLowerCase();
+  }
+  function isNoiseText(text) {
+    const k = normalizeNoiseKey(text);
+    if (!k) return true;
+    if (k.length <= 1) return true;
+    if (NOISE_TEXTS.indexOf(k) >= 0) return true;
+    if (k.length <= 6 && /^([\u4e00-\u9fa5])\1{2,}$/.test(k)) return true;
+    return false;
+  }
+
   // src/client/playback.ts
   function isPlaybackZombie(p) {
     const zombieMs = p.zombieMs === void 0 ? 2500 : p.zombieMs;
@@ -1234,7 +1270,6 @@
   })();
   var TTS_WATCH_MS = 1e3;
   var TTS_ZOMBIE_MS = 2500;
-  var NOISE_TEXTS = ["\u55EF", "\u5443", "\u554A", "\u54E6", "\u55EF\u55EF", "\u8C22\u8C22\u89C2\u770B", "\u8C22\u8C22\u5927\u5BB6", "\u5B57\u5E55", "\u8BF7\u4E0D\u541D\u70B9\u8D5E", "\u8BA2\u9605", "\u8F6C\u53D1", "\u6253\u8D4F", "\u518D\u89C1", "\u672C\u9C7C\u5728\u542C", "\u55EF\u672C\u9C7C\u5728\u542C"];
   var TTS_VOICES = [
     "zh-CN-XiaoyiNeural",
     "zh-CN-XiaoxiaoNeural",
@@ -1502,7 +1537,7 @@
       const plain = text.replace(/[\s。，！？,.!?、…~～]/g, "");
       const plainKey = echoKey(text);
       if (plain.length < 2 && !/^[停别不]$/.test(plain)) return false;
-      if (NOISE_TEXTS.indexOf(plain) >= 0) return false;
+      if (isNoiseText(plain)) return false;
       if (/^本鱼在听/.test(plain)) return false;
       const now = Date.now();
       for (const s of spokenRecent) {
@@ -1683,6 +1718,8 @@
       ttsPrefetch.delete(job.seq);
       const next = ttsQ[0];
       if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next));
+      const next2 = ttsQ[1];
+      if (job.narration && next2 && !ttsPrefetch.has(next2.seq)) ttsPrefetch.set(next2.seq, synth(next2));
       cur.then((buf) => {
         if (myToken !== speakToken) return;
         ttsSynthAt = 0;

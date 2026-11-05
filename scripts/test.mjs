@@ -302,6 +302,22 @@ try {
   ok('能加载回归模块', false, String(e.message))
 }
 
+
+// ---------- ⑩ 噪声判定（客户端与宿主共用） ----------
+console.log('\n[10] 噪声判定 shared/noise.ts')
+try {
+  const nz = await import('../src/shared/noise.ts')
+  ok('气口「嗯。」判为噪声', nz.isNoiseText('嗯。') === true)
+  ok('重复「嗯嗯嗯」判为噪声', nz.isNoiseText('嗯嗯嗯') === true)
+  ok('片头词「谢谢观看」判为噪声', nz.isNoiseText('谢谢观看') === true)
+  ok('空文本判为噪声', nz.isNoiseText('') === true && nz.isNoiseText(null) === true)
+  ok('正常短句不是噪声', nz.isNoiseText('大肥鱼') === false)
+  ok('正常长句不是噪声', nz.isNoiseText('今天天气不错，讲个聊斋吧') === false)
+  ok('带标点的正常句不被误杀', nz.isNoiseText('你好，我是肥鲸。') === false)
+} catch (e) {
+  ok('能加载 noise.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

@@ -5,6 +5,7 @@
  * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB；外呼超时 60 秒
  */
 import { hashBytes } from '../cache.js'
+import { isNoiseText } from '../../shared/noise.js'
 import { fetchJson, isTimeoutError, sendTooLarge } from '../http.js'
 import { readJsonBody } from '../body.js'
 import { sendJson, sendError } from '../respond.js'
@@ -106,8 +107,11 @@ export function createAsrHandler(opts: AsrRouteDeps) {
         return
       }
       const recognized = String(r.data?.text || '').trim()
-      if (opts.cache && recognized) { try { await opts.cache.setJson(ck, { text: recognized }) } catch { } }
-      sendJson(res, { ok: true, text: recognized })
+      // 静音/气口/片头片尾会被识别成"嗯""谢谢观看"这类编词：
+      // ① 不写缓存（缓存里曾堆满 17 字节的噪声条目）② 当空文本返回，别让上层当真话
+      const noise = isNoiseText(recognized)
+      if (opts.cache && recognized && !noise) { try { await opts.cache.setJson(ck, { text: recognized }) } catch { } }
+      sendJson(res, { ok: true, text: noise ? '' : recognized, noise: noise || undefined })
     } catch (err: any) {
       try { sendError(res, err, { text: '' }) } catch { }
     }
