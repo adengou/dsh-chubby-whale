@@ -17,7 +17,14 @@ function keysOf(name) {
 }
 const exact = new Set([...keysOf('EN_MAP'), ...keysOf('TOGGLE_EN')])
 const dyn = [...t.matchAll(/label\.startsWith\('([^']+)'\)/g)].map((m) => m[1])
-const covered = (s) => exact.has(s) || dyn.some((d) => s.startsWith(d))
+// 「X：开/关」可由 TOGGLE_EN 的「X：」前缀数组翻译（tr 按开/关取索引）
+const covered = (s) => {
+  if (exact.has(s)) return true
+  if (dyn.some((d) => s.startsWith(d))) return true
+  const m = s.match(/^(.*)：[开关]$/)
+  if (m && exact.has(m[1] + '：')) return true
+  return false
+}
 const missing = labels.filter((s) => !covered(s))
 const dead = [...exact].filter((k) => !labels.includes(k) && !dyn.some((d) => k.startsWith(d)))
 console.log('菜单文案 ' + labels.length + ' 项 / 精确键 ' + exact.size + ' / 动态前缀 ' + dyn.length)
