@@ -108,8 +108,6 @@ if (splitForTts) {
 console.log('\n[3] 右键菜单')
 try {
   const menu = readFileSync('src/client/menu.ts', 'utf8')
-  const idxVersion = menu.lastIndexOf("action: 'version'")
-  const idxLastItem = menu.lastIndexOf("type: 'item'")
   // 需求变更（2026-11-05）：版本号只在菜单标题栏显示，菜单项里不再重复出现
   const idxVersion = menu.lastIndexOf("action: 'version'")
   ok('菜单不含版本项（版本只在标题栏）', idxVersion < 0)
