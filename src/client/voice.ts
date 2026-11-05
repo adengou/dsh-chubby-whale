@@ -46,6 +46,8 @@ export type VoiceOptions = {
   apiBase?: string
   /** 说话人音色 */
   voiceName?: string
+  /** 每段真正开播时回调（用于气泡跟着显示"当前念到哪一句"） */
+  onSegment?: (text: string) => void
 }
 
 export type Voice = {
@@ -432,6 +434,7 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
         else finishJob(job)
         return
       }
+      try { opts.onSegment && opts.onSegment(job.text) } catch (e) { }
       const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
       const a = new Audio(url)
       ttsAudio = a

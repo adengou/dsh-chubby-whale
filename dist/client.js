@@ -1121,6 +1121,10 @@
           else finishJob(job);
           return;
         }
+        try {
+          opts.onSegment && opts.onSegment(job.text);
+        } catch (e) {
+        }
         const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
         const a = new Audio(url);
         ttsAudio = a;
@@ -1953,6 +1957,7 @@
       })();
       const storyNarratingRef = { current: false };
       const persona = createPersona();
+      let lastPoemSpeech = "";
       let lastLineNorm = "";
       let lastLineAt = 0;
       let greetedOnce = false;
@@ -2760,6 +2765,7 @@
                 showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + author + "\uFF09", 15e3);
                 animRef.current?.talkFor(6e3);
                 const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + collapsePoemBody(body);
+                lastPoemSpeech = speech;
                 storyNarratingRef.current = true;
                 sayLine(persona.line("poemStart"), 4e3);
                 setTimeout(() => {
@@ -3117,6 +3123,38 @@
           }, 0);
         }
         function tryLocalRoute(text) {
+          const t0 = String(text || "").trim();
+          if (/^(再来|再念|换)(一)?(首|个)/.test(t0)) {
+            showBubble("\uFF08\u70B9\u64AD\uFF09\u597D\uFF0C\u518D\u5FF5\u4E00\u9996", 3e3);
+            fetch("/api/chubby-whale/poem").then((r) => r.json()).then((d) => {
+              const p = d && d.ok && d.item ? d.item : null;
+              if (!p) {
+                showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230", 4e3);
+                return;
+              }
+              const body = String(p.text || "");
+              showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + String(p.author || "\u4F5A\u540D") + "\uFF09", 15e3);
+              const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + String(p.author || "\u4F5A\u540D") + "\u3002" + collapsePoemBody(body);
+              lastPoemSpeech = speech;
+              storyNarratingRef.current = true;
+              sayLine(persona.line("poemStart"), 4e3);
+              setTimeout(() => {
+                try {
+                  speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
+                    storyNarratingRef.current = false;
+                    sayLine(persona.line("poemDone"), 6e3);
+                  } });
+                } catch (e) {
+                }
+              }, 600);
+            }).catch(() => showBubble("\u8BD7\u518C\u6CA1\u8BFB\u5230", 4e3));
+            return true;
+          }
+          if (/^(继续|接着说|接着讲|往下讲)$/.test(t0)) {
+            showBubble("\uFF08\u70B9\u64AD\uFF09\u63A5\u7740\u8BF4", 3e3);
+            startStory(storyBookRef.current || "");
+            return true;
+          }
           const hit = detectIntent(text);
           if (!hit) return false;
           if (hit.kind === "poem") {
@@ -3130,6 +3168,7 @@
               const body = String(p.text || "");
               showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + String(p.author || "\u4F5A\u540D") + "\uFF09", 15e3);
               const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + String(p.author || "\u4F5A\u540D") + "\u3002" + collapsePoemBody(body);
+              lastPoemSpeech = speech;
               storyNarratingRef.current = true;
               sayLine(persona.line("poemStart"), 4e3);
               setTimeout(() => {
@@ -3492,6 +3531,15 @@
             onDiag: (d) => {
               try {
                 window.__chubbyWhale.voiceDiag = d;
+              } catch (e) {
+              }
+            },
+            // 念诗/说书：气泡跟着当前句走，主人能看到"念到哪了"
+            onSegment: (seg) => {
+              try {
+                if (!storyNarratingRef.current) return;
+                const t = String(seg || "").replace(/^念首诗——/, "").trim();
+                if (t) showBubble(t, 8e3);
               } catch (e) {
               }
             }

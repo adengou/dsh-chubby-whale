@@ -48,6 +48,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-narration-rate'); return (s && /^[+-]\\d{1,2}%$/.test(s)) ? s : '-25%' } catch (e) { return '-25%' } })()
     const storyNarratingRef = { current: false }
     const persona = createPersona()
+    let lastPoemSpeech = ''   // 刚念过的诗（朗读稿），支持「再念刚才那首」
     let lastLineNorm = ''   // 人设台词去重：上一句台词的规范化文本
     let lastLineAt = 0
     let greetedOnce = false   // 打招呼只打一次（防挂载重复）
@@ -600,6 +601,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               showBubble('念诗·' + p.title + '（' + author + '）', 15000)
               animRef.current?.talkFor(6000)
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + collapsePoemBody(body)
+            lastPoemSpeech = speech
             storyNarratingRef.current = true
             sayLine(persona.line('poemStart'), 4000); setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000) } }) } catch (e) { } }, 600)
             } else showBubble('诗册没读到')
@@ -873,6 +875,28 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       // ===== 点播本地路由：讲故事 / 背诗 / 讲典故 直接读本地素材，不调模型（省 token、内容完整）=====
       // 点播路由：关键词与书名别名表已抽到 client/intent.ts（纯函数，npm test 覆盖）
       function tryLocalRoute(text: string): boolean {
+        // 追问：接着念诗 / 接着说书（主人不必重新"点播"一次）
+        const t0 = String(text || '').trim()
+        if (/^(再来|再念|换)(一)?(首|个)/.test(t0)) {
+          showBubble('（点播）好，再念一首', 3000)
+          fetch('/api/chubby-whale/poem').then((r: any) => r.json()).then((d: any) => {
+            const p = (d && d.ok && d.item) ? d.item : null
+            if (!p) { showBubble('诗册没读到', 4000); return }
+            const body = String(p.text || '')
+            showBubble('念诗·' + p.title + '（' + String(p.author || '佚名') + '）', 15000)
+            const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + String(p.author || '佚名') + '。' + collapsePoemBody(body)
+            lastPoemSpeech = speech
+            storyNarratingRef.current = true
+            sayLine(persona.line('poemStart'), 4000)
+            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000) } }) } catch (e) { } }, 600)
+          }).catch(() => showBubble('诗册没读到', 4000))
+          return true
+        }
+        if (/^(继续|接着说|接着讲|往下讲)$/.test(t0)) {
+          showBubble('（点播）接着说', 3000)
+          startStory(storyBookRef.current || '')
+          return true
+        }
         const hit = detectIntent(text)
         if (!hit) return false
         if (hit.kind === 'poem') {
@@ -883,6 +907,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             const body = String(p.text || '')
             showBubble('念诗·' + p.title + '（' + String(p.author || '佚名') + '）', 15000)
             const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + String(p.author || '佚名') + '。' + collapsePoemBody(body)
+            lastPoemSpeech = speech
             storyNarratingRef.current = true
             sayLine(persona.line('poemStart'), 4000)
             setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000) } }) } catch (e) { } }, 600)
@@ -1128,6 +1153,14 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             ttsPlaying = st === 'speaking'
           },
           onDiag: (d: any) => { try { (window as any).__chubbyWhale.voiceDiag = d } catch (e) { } },
+          // 念诗/说书：气泡跟着当前句走，主人能看到"念到哪了"
+          onSegment: (seg: string) => {
+            try {
+              if (!storyNarratingRef.current) return
+              const t = String(seg || '').replace(/^念首诗——/, '').trim()
+              if (t) showBubble(t, 8000)
+            } catch (e) { }
+          },
         })
         voiceRef.current = v
         try {
