@@ -1764,6 +1764,7 @@
       let t = String(s || "");
       t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, " ");
       t = t.replace(/[\*＊]/g, " ");
+      t = t.replace(/([，。！？；：、])\s+/g, "$1");
       return t.replace(/\s{2,}/g, " ").trim();
     }
     function speak(text, o) {

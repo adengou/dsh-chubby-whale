@@ -677,6 +677,8 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     let t = String(s || '')
     t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, ' ')
     t = t.replace(/[\*＊]/g, ' ')
+    // 剥完动作后别留"主人， 白饭"这种标点后空格
+    t = t.replace(/([，。！？；：、])\s+/g, '$1')
     return t.replace(/\s{2,}/g, ' ').trim()
   }
 
