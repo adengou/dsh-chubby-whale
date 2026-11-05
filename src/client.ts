@@ -603,7 +603,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + collapsePoemBody(body)
             lastPoemSpeech = speech
             storyNarratingRef.current = true
-            sayLine(persona.line('poemStart'), 4000); setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000) } }) } catch (e) { } }, 600)
+            sayLine(persona.line('poemStart'), 4000); setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' }) } }) } catch (e) { } }, 600)
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
           return
@@ -888,7 +888,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             lastPoemSpeech = speech
             storyNarratingRef.current = true
             sayLine(persona.line('poemStart'), 4000)
-            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000) } }) } catch (e) { } }, 600)
+            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' }) } }) } catch (e) { } }, 600)
           }).catch(() => showBubble('诗册没读到', 4000))
           return true
         }
@@ -910,7 +910,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             lastPoemSpeech = speech
             storyNarratingRef.current = true
             sayLine(persona.line('poemStart'), 4000)
-            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000) } }) } catch (e) { } }, 600)
+            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' }) } }) } catch (e) { } }, 600)
           }).catch(() => showBubble('诗册没读到', 4000))
           return true
         }
@@ -1186,7 +1186,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       function prefetchNextTts(): void { }
 
       /** 人设台词：气泡 + 语音一起出（语音朗读关着时只出气泡；正在说别的话时不打断） */
-      function sayLine(text: string, ms = 3500): void {
+      function sayLine(text: string, ms = 3500, voiceOpts?: { rate?: string; pitch?: string }): void {
         // 同一句台词 25 秒内只说一次：挂载重复/事件连发时不会连着说两遍
         const norm = String(text || '').replace(/[\\s。，！？,.!?、…~～]/g, '')
         const nowL = Date.now()
@@ -1198,7 +1198,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         try {
           if (localStorage.getItem('chubby-voice') === 'off') return
           const v: any = voiceRef.current
-          if (v && v.speak && !v.speaking()) v.speak(text, { rate: '+0%' })
+          if (v && v.speak && !v.speaking()) v.speak(text, { rate: (voiceOpts && voiceOpts.rate) || '+0%', pitch: (voiceOpts && voiceOpts.pitch) || '' })
         } catch (e) { }
       }
       /** 统一的回复朗读入口：长回复走叙述语速，同一句回复 30 秒内不重复念 */

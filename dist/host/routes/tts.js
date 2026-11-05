@@ -38,7 +38,9 @@ export function createTtsHandler(opts) {
             }
             // 请求体里带了合法 rate 就用它（说书 -15%），没带默认 +0%
             const rate = normalizeRate(body?.rate, '+0%');
-            const pitch = isZh ? '+10Hz' : '+15Hz';
+            // 音高：允许请求体指定（带情绪的语气），非法值回落到默认
+            const pitchIn = typeof body?.pitch === 'string' ? body.pitch.trim() : '';
+            const pitch = /^[+-]\d{1,3}Hz$/.test(pitchIn) ? pitchIn : (isZh ? '+10Hz' : '+15Hz');
             if (!msg) {
                 res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
                 res.end(JSON.stringify({ ok: false, error: 'empty text' }));

@@ -1002,7 +1002,7 @@
       return fetchWithTimeout(apiBase + "/tts", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: job.text, voice: voiceName, rate: job.rate })
+        body: JSON.stringify({ text: job.text, voice: voiceName, rate: job.rate, pitch: job.pitch || "" })
       }, TTS_TIMEOUT_MS).then((r) => {
         if (!r.ok) throw new Error("tts-http-" + r.status);
         return r.arrayBuffer();
@@ -1540,11 +1540,13 @@
         "\u8FD9\u9996\u6709\u70B9\u957F\uFF0C\u6211\u4E00\u53E5\u4E00\u53E5\u6765\u3002"
       ],
       poemDone: [
-        "\u2026\u2026\u5FF5\u5B8C\u4E86\u3002\u54EA\u53E5\u6CA1\u542C\u6E05\uFF0C\u6211\u518D\u5FF5\u4E00\u904D\u3002",
-        "\u5FF5\u5B8C\u4E86\u3002\u7C73\u90FD\u51C9\u4E86\uFF0C\u4E0D\u8FC7\u6CA1\u5173\u7CFB\u3002",
-        "\u8FD9\u8BD7\u91CC\u6709\u98CE\uFF0C\u4E5F\u6709\u8FDC\u8DEF\u3002",
-        "\u80CC\u5B8C\u4E86\u3002\u6211\u53EA\u6F0F\u4E86\u534A\u4E2A\u5B57\uFF0C\u771F\u7684\u3002",
-        "\u2026\u2026\u521A\u624D\u6709\u4E00\u53E5\u6211\u5FF5\u8F7B\u4E86\uFF0C\u4F60\u542C\u51FA\u6765\u4E86\u5417\uFF1F"
+        "\u80CC\u5B8C\u5566\u2014\u2014\u4E3B\u4EBA\uFF0C\u8FD9\u4E00\u53E3\u6C14\u618B\u5F97\u597D\u957F\u3002",
+        "\u2026\u2026\u5FF5\u5B8C\u4E86\u3002\u4E3B\u4EBA\uFF0C\u4F60\u542C\u8FDB\u53BB\u51E0\u53E5\uFF1F",
+        "\u80CC\u5B8C\u5566\uFF01\u8981\u4E0D\u8981\u6211\u518D\u5FF5\u4E00\u9996\uFF1F",
+        "\u5FF5\u5B8C\u5566\u3002\u521A\u624D\u5DEE\u70B9\u5728\u300C\u6768\u67F3\u5CB8\u300D\u90A3\u513F\u6253\u7ED3\u3002",
+        "\u80CC\u5B8C\u4E86\u2026\u2026\u55D3\u5B50\u6709\u70B9\u54D1\uFF0C\u4E0D\u8FC7\u5FC3\u91CC\u8212\u670D\u3002",
+        "\u2026\u2026\u55EF\uFF0C\u6574\u9996\u90FD\u5728\u3002\u4E3B\u4EBA\uFF0C\u597D\u542C\u5417\uFF1F",
+        "\u5FF5\u5B8C\u5566\u3002\u5B57\u90FD\u6CA1\u4E22\uFF0C\u6211\u6570\u8FC7\u7684\u3002"
       ],
       poemMissed: [
         "\u521A\u624D\u6709\u4E00\u53E5\u6211\u6F0F\u4E86\uFF0C\u91CD\u65B0\u6765\u3002",
@@ -2786,7 +2788,7 @@
                   try {
                     speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
                       storyNarratingRef.current = false;
-                      sayLine(persona.line("poemDone"), 6e3);
+                      sayLine(persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
                     } });
                   } catch (e) {
                   }
@@ -3156,7 +3158,7 @@
                 try {
                   speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
                     storyNarratingRef.current = false;
-                    sayLine(persona.line("poemDone"), 6e3);
+                    sayLine(persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
                   } });
                 } catch (e) {
                 }
@@ -3189,7 +3191,7 @@
                 try {
                   speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
                     storyNarratingRef.current = false;
-                    sayLine(persona.line("poemDone"), 6e3);
+                    sayLine(persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
                   } });
                 } catch (e) {
                 }
@@ -3614,7 +3616,7 @@
         }
         function prefetchNextTts() {
         }
-        function sayLine(text, ms = 3500) {
+        function sayLine(text, ms = 3500, voiceOpts) {
           const norm = String(text || "").replace(/[\\s。，！？,.!?、…~～]/g, "");
           const nowL = Date.now();
           if (norm && norm === lastLineNorm && nowL - lastLineAt < 25e3) {
@@ -3635,7 +3637,7 @@
           try {
             if (localStorage.getItem("chubby-voice") === "off") return;
             const v = voiceRef.current;
-            if (v && v.speak && !v.speaking()) v.speak(text, { rate: "+0%" });
+            if (v && v.speak && !v.speaking()) v.speak(text, { rate: voiceOpts && voiceOpts.rate || "+0%", pitch: voiceOpts && voiceOpts.pitch || "" });
           } catch (e) {
           }
         }

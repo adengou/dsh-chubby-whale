@@ -133,7 +133,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   const recentHeard: Array<{ text: string; at: number }> = []
 
   // ---- 朗读 ----
-type Job = { seq: number; text: string; rate: string; narration: boolean; attempts: number; onDone?: () => void }
+type Job = { seq: number; text: string; rate: string; pitch?: string; narration: boolean; attempts: number; onDone?: () => void }
   const ttsQ: Job[] = []
   let ttsBusy = false
   let ttsAudio: HTMLAudioElement | null = null
@@ -336,7 +336,7 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
     return fetchWithTimeout(apiBase + '/tts', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: job.text, voice: voiceName, rate: job.rate }),
+      body: JSON.stringify({ text: job.text, voice: voiceName, rate: job.rate, pitch: job.pitch || '' }),
     }, TTS_TIMEOUT_MS).then((r) => {
       if (!r.ok) throw new Error('tts-http-' + r.status)
       return r.arrayBuffer()
@@ -568,7 +568,7 @@ type Job = { seq: number; text: string; rate: string; narration: boolean; attemp
     setStatus('idle')
   }
 
-  function speak(text: string, o?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
+  function speak(text: string, o?: { rate?: string; pitch?: string; narration?: boolean; onDone?: () => void }): void {
     const raw = String(text || '')
     // 叙述判定照 C#：≥80 字算长文/典故/诗词 → 降速 -15%，段间 260ms 换气
     const narration = o && typeof o.narration === 'boolean' ? o.narration : raw.length >= 80
