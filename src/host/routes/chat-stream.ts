@@ -15,7 +15,8 @@
  */
 
 import { readBody, isBodyTooLarge, sendTooLarge } from '../http.js'
-import { chatCacheKey } from './chat.js'
+import { chatCacheKey, recentHistory, HISTORY_IN_PROMPT } from './chat.js'
+import { shortHash } from '../cache.js'
 import { parseSseBuffer } from '../../shared/sse.js'
 
 const CHAT_URL = 'https://api.deepseek.com/chat/completions'
@@ -71,8 +72,15 @@ export function createChatStreamHandler(opts: {
         'x-accel-buffering': 'no',
       })
 
+      // 先读上下文：缓存 key 带上下文指纹；prompt 只带最近几条（省 token）
+      const memSummary = (() => { try { return String(opts.loadMemorySummary ? opts.loadMemorySummary() : '') } catch { return '' } })()
+      let history: any[] = []
+      try { history = opts.loadHistory() || [] } catch { history = [] }
+      const prevUser = recentHistory(history, HISTORY_IN_PROMPT).filter((m: any) => m && m.role === 'user').slice(-1)[0]
+      const ctxFp = (() => { try { return shortHash(memSummary) + '|' + shortHash(String((prevUser && prevUser.content) || '')) } catch (e) { return '' } })()
+
       const cacheOn = !opts.cacheEnabled || opts.cacheEnabled() !== false
-      const cacheKey = chatCacheKey(lang, message, isVoice)
+      const cacheKey = chatCacheKey(lang, message, isVoice, ctxFp)
       // 与普通 /chat 一致：太短的消息不缓存
       const cacheable = message.length >= (isVoice ? 2 : 6)
 
@@ -95,11 +103,8 @@ export function createChatStreamHandler(opts: {
         return
       }
 
-      const memSummary = (() => { try { return String(opts.loadMemorySummary ? opts.loadMemorySummary() : '') } catch { return '' } })()
       const messages: any[] = [{ role: 'system', content: opts.systemPrompt + (lang === 'en' ? '\n【Language】Answer in English.' : '\n【语言规则】主人用中文提问，请用中文回答。') + (memSummary ? ('\n（关于主人的长期记忆：' + memSummary + '）') : '') }]
-      let history: any[] = []
-      try { history = opts.loadHistory() || [] } catch { history = [] }
-      for (const m of history) {
+      for (const m of recentHistory(history, HISTORY_IN_PROMPT)) {
         if (m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string') messages.push({ role: m.role, content: m.content })
       }
       messages.push({ role: 'user', content: message })

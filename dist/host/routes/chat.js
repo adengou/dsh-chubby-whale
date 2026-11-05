@@ -9,7 +9,7 @@ const CHAT_TIMEOUT = 30 * 1000; // 主聊天：30 秒
 const SUMMARY_TIMEOUT = 20 * 1000; // 长期记忆摘要：20 秒
 const CHAT_CACHE_TTL = 7 * 24 * 3600 * 1000; // 聊天回复缓存 7 天
 const CHAT_MAX_BODY = 6 * 1024 * 1024; // 6MB（图片 base64 约 4MB * 1.34）
-const HISTORY_IN_PROMPT = 8; // 只把最近 8 条历史喂给模型（4 轮）；更早的靠长期记忆摘要，省 token
+export const HISTORY_IN_PROMPT = 8; // 只把最近 8 条历史喂给模型（4 轮）；更早的靠长期记忆摘要，省 token
 const NET_FALLBACK = '主人，本鲸一时想不起来话（网络或接口有点问题）……';
 /** 后台压缩长期记忆（不 await，失败只记日志） */
 async function summarizeMemory(key, convo, oldSummary, save) {
