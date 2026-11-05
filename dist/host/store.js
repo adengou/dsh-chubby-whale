@@ -51,7 +51,7 @@ export function createStore(dataDir) {
     /** 原子写 JSON：写 file.tmp → fsync → rename 覆盖（Windows 的 rename 可以覆盖已存在文件） */
     function writeJsonAtomic(file, obj) {
         ensure();
-        const tmp = file + '.tmp';
+        const tmp = file + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp';
         const text = JSON.stringify(obj);
         const fd = openSync(tmp, 'w');
         try {

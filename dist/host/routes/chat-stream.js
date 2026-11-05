@@ -69,6 +69,17 @@ export function createChatStreamHandler(opts) {
                 connection: 'keep-alive',
                 'x-accel-buffering': 'no',
             });
+            // 立刻把 SSE 头刷出去，客户端不必等首帧；同时记录客户端断开
+            try {
+                res.flushHeaders && res.flushHeaders();
+            }
+            catch { }
+            let clientGone = false;
+            try {
+                if (typeof res.on === 'function')
+                    res.on('close', () => { clientGone = true; });
+            }
+            catch { }
             // 先读上下文：缓存 key 带上下文指纹；prompt 只带最近几条（省 token）
             const memSummary = (() => { try {
                 return String(opts.loadMemorySummary ? opts.loadMemorySummary() : '');
@@ -154,6 +165,7 @@ export function createChatStreamHandler(opts) {
                 res.end();
                 return;
             }
+            let aborted = false;
             const reader = upstream.body.getReader();
             const dec = new TextDecoder();
             let buf = '';
@@ -182,11 +194,21 @@ export function createChatStreamHandler(opts) {
                 }
             }
             catch (err) {
+                aborted = true;
                 send({ error: 'stream: ' + String(err?.message || err) });
             }
             finally {
                 if (timer)
                     clearTimeout(timer);
+            }
+            // 流中断或客户端已断开：这段回复是半截的，绝不能写进缓存和记忆（否则被永久命中）
+            if (aborted || clientGone) {
+                try {
+                    res.end();
+                }
+                catch { }
+                ;
+                return;
             }
             const text = reply.trim() || '主人……本鲸刚刚走神了。';
             // 收尾：写缓存 / 记忆 / token（与普通 /chat 同口径）

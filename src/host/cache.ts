@@ -6,7 +6,7 @@
  * 过期：内存条目记写入时间 at（+ 可选 ttl），getJson 带 maxAgeMs 时内存命中也校验，不再让旧值顶掉 TTL
  */
 import { createHash } from 'node:crypto'
-import { readFile, writeFile, mkdir, readdir, unlink, stat } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, readdir, unlink, stat, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export function hashKey(text: string): string {
@@ -122,8 +122,12 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
     remember(key, value, maxAgeMs)
     try {
       await ensure()
-      if (ext === 'json') await writeFile(join(opts.dir, key + '.' + ext), JSON.stringify(value), 'utf8')
-      else await writeFile(join(opts.dir, key + '.' + ext), value)
+      // 原子写：先写唯一临时文件再 rename 覆盖（并发同 key 不会交错产出坏文件）
+      const target = join(opts.dir, key + '.' + ext)
+      const tmp = target + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp'
+      if (ext === 'json') await writeFile(tmp, JSON.stringify(value), 'utf8')
+      else await writeFile(tmp, value)
+      try { await rename(tmp, target) } catch (e) { try { await unlink(tmp) } catch { } ; throw e }
       await prune()
     } catch { }
   }

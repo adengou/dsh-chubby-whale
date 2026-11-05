@@ -9,7 +9,7 @@
  * 菜单「从头讲这本书」：POST /story/reset?book=书名，清该书的 book|index 进度。
  */
 import { readdir } from 'node:fs/promises';
-import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, statSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 export const STORY_AUTHORS = {
@@ -61,10 +61,25 @@ export function createStoryHandlers(opts) {
     }
     function saveProgress() {
         try {
-            mkdirSync(opts.dataDir, { recursive: true });
-            writeFileSync(PROGRESS, JSON.stringify(progress), 'utf8');
+            mkdirSync(opts.runtimeDir || opts.dataDir, { recursive: true });
+            // 原子写：唯一临时文件 + rename，截断坏文件会让进度静默清零
+            const tmp = PROGRESS + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp';
+            writeFileSync(tmp, JSON.stringify(progress), 'utf8');
+            try {
+                renameSync(tmp, PROGRESS);
+            }
+            catch (e) {
+                try {
+                    unlinkSync(tmp);
+                }
+                catch { }
+                ;
+                throw e;
+            }
         }
-        catch { }
+        catch (e) {
+            console.error('STORY-PROGRESS-SAVE-FAIL ' + String(e?.message || e));
+        }
     }
     function storyKey(book, index) {
         return String(book || '') + '|' + String(index);

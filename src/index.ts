@@ -116,6 +116,7 @@ export function apply(ctx: any, config?: any): void {
     cache: chatCache,
     loadMemorySummary: store.loadMemorySummary,
     saveMemorySummary: store.saveMemorySummary,
+    cacheEnabled: chatCacheOn,
   })
   const chatStream = createChatStreamHandler({
     getKey,
@@ -125,9 +126,11 @@ export function apply(ctx: any, config?: any): void {
     addTokens: store.addTokens,
     cache: chatCache,
     loadMemorySummary: store.loadMemorySummary,
+    cacheEnabled: chatCacheOn,
   })
   const story = createStoryHandlers({
     dataDir: DATA_DIR,
+    runtimeDir: RUNTIME_DIR,
     workerPath: join(__dirname, 'story-worker.js'),
   })
   const misc = createMiscHandlers({
