@@ -170,6 +170,10 @@
     "\u7A0D\u5FEB -25%": "A bit faster -25%",
     "\u9002\u4E2D -30%": "Medium -30%",
     "\u504F\u6162 -35%\uFF08\u9ED8\u8BA4\uFF09": "Slower -35% (default)",
+    "\u7A0D\u5FEB -15%": "A bit faster -15%",
+    "\u9002\u4E2D -20%": "Medium -20%",
+    "\u504F\u6162 -25%\uFF08\u9ED8\u8BA4\uFF09": "Slower -25% (default)",
+    "\u5F88\u6162 -30%": "Very slow -30%",
     "\u5F88\u6162 -40%": "Very slow -40%",
     "\u63A5\u7740\u8BF4": "Continue story",
     "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66": "Restart this book",
@@ -238,6 +242,7 @@
     }
     if (label.startsWith("\u8BF4\u4E66\u8BED\u901F\uFF1A")) return label.replace("\u8BF4\u4E66\u8BED\u901F\uFF1A", "Story speed: ");
     if (label.startsWith("\u8FDE\u64AD\uFF1A")) return label.indexOf("\u5F00") >= 0 ? "Auto-continue: on" : "Auto-continue: off";
+    if (label.startsWith("\u5FF5\u8BD7\u8BED\u901F\uFF1A")) return label.replace("\u5FF5\u8BD7\u8BED\u901F\uFF1A", "Poem speed: ");
     return label;
   }
   var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
@@ -318,6 +323,12 @@
         { type: "item", label: "\u63A5\u7740\u8BF4", action: "culture-story-next" },
         { type: "item", label: "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66", action: "story-reset" },
         { type: "item", label: "\u5FF5\u9996\u8BD7", action: "poem" },
+        { type: "sub", label: "\u5FF5\u8BD7\u8BED\u901F\uFF1A" + (state.poemRate || "-25%") + " \u25B8", items: [
+          { type: "item", label: ((state.poemRate || "-25%") === "-15%" ? "\u2713 " : "") + "\u7A0D\u5FEB -15%", action: "poem-rate:-15%" },
+          { type: "item", label: ((state.poemRate || "-25%") === "-20%" ? "\u2713 " : "") + "\u9002\u4E2D -20%", action: "poem-rate:-20%" },
+          { type: "item", label: ((state.poemRate || "-25%") === "-25%" ? "\u2713 " : "") + "\u504F\u6162 -25%\uFF08\u9ED8\u8BA4\uFF09", action: "poem-rate:-25%" },
+          { type: "item", label: ((state.poemRate || "-25%") === "-30%" ? "\u2713 " : "") + "\u5F88\u6162 -30%", action: "poem-rate:-30%" }
+        ] },
         { type: "item", label: "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B", action: "culture-tale" },
         { type: "item", label: "\u8BB2\u4E2A\u5178\u6545", action: "culture-allusion" },
         { type: "item", label: "\u6210\u8BED\u8FA8\u6790", action: "culture-idiom" },
@@ -2505,6 +2516,28 @@
     };
   }
 
+  // src/client/narration-progress.ts
+  var current = null;
+  function startProgress(label, lines, intro = "") {
+    const lens = (lines || []).map((l) => String(l || "").replace(/\s+/g, "").length).filter((n) => n > 0);
+    const cum = [];
+    let sum = 0;
+    for (const n of lens) {
+      sum += n;
+      cum.push(sum);
+    }
+    current = {
+      label: String(label || ""),
+      lineLens: lens,
+      cum,
+      introLen: String(intro || "").replace(/\s+/g, "").length,
+      spoken: 0
+    };
+  }
+  function stopProgress() {
+    current = null;
+  }
+
   // src/client/duilian.ts
   var COUPLETS = [
     {
@@ -2823,19 +2856,38 @@
   }
 
   // src/client/actions/culture.ts
+  function poemRate(fallback) {
+    try {
+      const v = localStorage.getItem("chubby-poem-rate");
+      if (v && /^-\d{1,2}%$/.test(v)) return v;
+    } catch (e) {
+    }
+    return fallback;
+  }
   function recitePoem(host, poem) {
     const body = String(poem.text || "");
     const author = String(poem.author || "\u4F5A\u540D");
-    host.bubble("\u5FF5\u8BD7\xB7" + poem.title + "\uFF08" + author + "\uFF09", 15e3);
+    const lines = body.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    const totalLines = lines.length;
+    const intro = "\u5FF5\u9996\u8BD7\u2014\u2014" + poem.title + "\uFF0C" + (poem.dynasty ? poem.dynasty + "\uFF0C" : "") + author + "\u3002";
+    try {
+      startProgress("\u5FF5\u8BD7\xB7" + String(poem.title || ""), lines, intro);
+    } catch (e) {
+    }
+    host.bubble("\u5FF5\u8BD7\xB7" + poem.title + "\uFF08" + author + "\uFF09" + (totalLines > 1 ? "\xB7 \u5171 " + totalLines + " \u53E5" : ""), 15e3);
     host.talkFor(6e3);
-    const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + poem.title + "\uFF0C" + (poem.dynasty ? poem.dynasty + "\uFF0C" : "") + author + "\u3002" + collapsePoemBody(body);
+    const speech = intro + collapsePoemBody(body);
     host.narrate(estimateSpeakMs(speech));
     host.say(host.persona.line("poemStart"), 4e3);
     setTimeout(() => {
       try {
         host.speak(speech, {
-          rate: host.narrationRate,
+          rate: poemRate(host.narrationRate),
           onDone: () => {
+            try {
+              stopProgress();
+            } catch (e) {
+            }
             host.clearNarrate();
             host.say(host.persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
           }
@@ -2877,6 +2929,18 @@
       } catch (e) {
       }
       host.bubble(next ? "\u8FDE\u64AD\uFF1A\u5F00\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u81EA\u52A8\u63A5\u4E0B\u4E00\u6BB5" : "\u8FDE\u64AD\uFF1A\u5173\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u5C31\u505C", 4e3);
+    });
+    table.definePrefix("poem-rate:", (host, suffix) => {
+      const rate = String(suffix || "");
+      if (!/^-\d{1,2}%$/.test(rate)) {
+        host.bubble("\u8FD9\u4E2A\u8BED\u901F\u503C\u4E0D\u8BA4", 3e3);
+        return;
+      }
+      try {
+        localStorage.setItem("chubby-poem-rate", rate);
+      } catch (e) {
+      }
+      host.bubble("\u5FF5\u8BD7\u8BED\u901F\uFF1A" + rate, 4e3);
     });
     table.definePrefix("story-rate:", (host, suffix) => {
       const rate = String(suffix || "");
@@ -6314,6 +6378,13 @@
                 return /^-\d{1,2}%$/.test(s) ? s : "-35%";
               } catch (e) {
                 return "-35%";
+              }
+            })(), poemRate: (() => {
+              try {
+                const s = localStorage.getItem("chubby-poem-rate") || "-25%";
+                return /^-\d{1,2}%$/.test(s) ? s : "-25%";
+              } catch (e) {
+                return "-25%";
               }
             })(), ttsVoice: (() => {
               try {

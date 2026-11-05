@@ -58,6 +58,10 @@ export const EN_MAP: Record<string, string> = {
   '稍快 -25%': 'A bit faster -25%',
   '适中 -30%': 'Medium -30%',
   '偏慢 -35%（默认）': 'Slower -35% (default)',
+  '稍快 -15%': 'A bit faster -15%',
+  '适中 -20%': 'Medium -20%',
+  '偏慢 -25%（默认）': 'Slower -25% (default)',
+  '很慢 -30%': 'Very slow -30%',
   '很慢 -40%': 'Very slow -40%',
   '接着说': 'Continue story',
   '从头讲这本书': 'Restart this book',
@@ -133,6 +137,7 @@ export function tr(label: string, lang: string): string {
   // 说书语速（运行时拼百分比）与连播（带说明括注）：动态标签，按前缀翻
   if (label.startsWith('说书语速：')) return label.replace('说书语速：', 'Story speed: ')
   if (label.startsWith('连播：')) return label.indexOf('开') >= 0 ? 'Auto-continue: on' : 'Auto-continue: off'
+  if (label.startsWith('念诗语速：')) return label.replace('念诗语速：', 'Poem speed: ')
   return label
 }
 
@@ -245,6 +250,12 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
       { type: 'item', label: '接着说', action: 'culture-story-next' },
       { type: 'item', label: '从头讲这本书', action: 'story-reset' },
       { type: 'item', label: '念首诗', action: 'poem' },
+      { type: 'sub', label: '念诗语速：' + (state.poemRate || '-25%') + ' ▸', items: [
+        { type: 'item', label: ((state.poemRate || '-25%') === '-15%' ? '✓ ' : '') + '稍快 -15%', action: 'poem-rate:-15%' },
+        { type: 'item', label: ((state.poemRate || '-25%') === '-20%' ? '✓ ' : '') + '适中 -20%', action: 'poem-rate:-20%' },
+        { type: 'item', label: ((state.poemRate || '-25%') === '-25%' ? '✓ ' : '') + '偏慢 -25%（默认）', action: 'poem-rate:-25%' },
+        { type: 'item', label: ((state.poemRate || '-25%') === '-30%' ? '✓ ' : '') + '很慢 -30%', action: 'poem-rate:-30%' },
+      ] },
       { type: 'item', label: '讲个民间故事', action: 'culture-tale' },
       { type: 'item', label: '讲个典故', action: 'culture-allusion' },
       { type: 'item', label: '成语辨析', action: 'culture-idiom' },

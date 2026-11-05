@@ -10,6 +10,16 @@ import type { ActionHost, ActionTable } from '../actions.js'
 import { getJson } from '../http.js'
 import { estimateMelodySeconds } from '../melody.js'
 import { collapsePoemBody, collapseText, taleParts, estimateSpeakMs } from '../text.js'
+import { startProgress, stopProgress } from '../narration-progress.js'
+
+/** 念诗语速：菜单里选过就用选的（-15%/-20%/-25%/-30%），否则沿用叙述语速 -25% */
+function poemRate(fallback: string): string {
+  try {
+    const v = localStorage.getItem('chubby-poem-rate')
+    if (v && /^-\d{1,2}%$/.test(v)) return v
+  } catch (e) { }
+  return fallback
+}
 
 /** 念诗需要的最小能力集（菜单动作与点播路由共用） */
 export type ReciteHost = Pick<ActionHost, 'bubble' | 'talkFor' | 'narrate' | 'clearNarrate' | 'say' | 'speak' | 'persona' | 'narrationRate'>
@@ -18,16 +28,22 @@ export type ReciteHost = Pick<ActionHost, 'bubble' | 'talkFor' | 'narrate' | 'cl
 export function recitePoem(host: ReciteHost, poem: any): void {
   const body = String(poem.text || '')
   const author = String(poem.author || '佚名')
-  host.bubble('念诗·' + poem.title + '（' + author + '）', 15000)
+  const lines = body.split(/\r?\n/).map((x) => x.trim()).filter(Boolean)
+  const totalLines = lines.length
+  const intro = '念首诗——' + poem.title + '，' + (poem.dynasty ? poem.dynasty + '，' : '') + author + '。'
+  // 进度：按诗句字数累计，气泡显示「第 x/N 句」；开场白要传进去，否则会被算成第 1 句
+  try { startProgress('念诗·' + String(poem.title || ''), lines, intro) } catch (e) { }
+  host.bubble('念诗·' + poem.title + '（' + author + '）' + (totalLines > 1 ? '· 共 ' + totalLines + ' 句' : ''), 15000)
   host.talkFor(6000)
-  const speech = '念首诗——' + poem.title + '，' + (poem.dynasty ? poem.dynasty + '，' : '') + author + '。' + collapsePoemBody(body)
+  const speech = intro + collapsePoemBody(body)
   host.narrate(estimateSpeakMs(speech))
   host.say(host.persona.line('poemStart'), 4000)
   setTimeout(() => {
     try {
       host.speak(speech, {
-        rate: host.narrationRate,
+        rate: poemRate(host.narrationRate),
         onDone: () => {
+          try { stopProgress() } catch (e) { }
           host.clearNarrate()
           host.say(host.persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' })
         },
@@ -62,7 +78,14 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
     try { localStorage.setItem('chubby-story-auto', next ? '1' : '0') } catch (e) { }
     host.bubble(next ? '连播：开——讲完这段自动接下一段' : '连播：关——讲完这段就停', 4000)
   })
-  // 说书语速：菜单里选一档，立即生效（只影响说书；念诗仍走叙述语速 -25%）
+  // 念诗语速：菜单里选一档，立即生效
+  table.definePrefix('poem-rate:', (host, suffix) => {
+    const rate = String(suffix || '')
+    if (!/^-\d{1,2}%$/.test(rate)) { host.bubble('这个语速值不认', 3000); return }
+    try { localStorage.setItem('chubby-poem-rate', rate) } catch (e) { }
+    host.bubble('念诗语速：' + rate, 4000)
+  })
+  // 说书语速：菜单里选一档，立即生效（只影响说书）
   table.definePrefix('story-rate:', (host, suffix) => {
     const rate = String(suffix || '')
     if (!/^-\d{1,2}%$/.test(rate)) { host.bubble('这个语速值不认', 3000); return }

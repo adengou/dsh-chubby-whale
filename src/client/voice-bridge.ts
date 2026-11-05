@@ -15,6 +15,7 @@
 import { createVoice, normalizeVoiceName, readStoredVoiceName } from './voice.js'
 import type { Voice } from './voice.js'
 import type { NarrationLock } from './narration.js'
+import { bumpProgress } from './narration-progress.js'
 import { createWakeGate, normalizeWakeText } from './wake.js'
 
 export type VoiceBridgeHost = {
