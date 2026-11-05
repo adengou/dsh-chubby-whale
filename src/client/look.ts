@@ -39,11 +39,13 @@ deepFreeze(TIER_EXP)
 export const TIER_NAMES = ['初识', '熟络', '黏人']
 deepFreeze(TIER_NAMES)
 
+/** 外观档位（冻结：lookFor 会把元素直接交给 UI，冻结后外部改不动） */
 const LOOKS: Look[] = [
   { tier: 0, label: '初识', scale: 1, dots: 2, halo: 0, tailEveryMs: 14000 },
   { tier: 1, label: '熟络', scale: 1.04, dots: 4, halo: 0.12, tailEveryMs: 9000 },
   { tier: 2, label: '黏人', scale: 1.08, dots: 6, halo: 0.22, tailEveryMs: 5500 },
 ]
+deepFreeze(LOOKS)
 
 /** 经验值 → 外观档位（0/1/2）；负数与非法值按 0 处理 */
 export function tierOf(exp: number): number {

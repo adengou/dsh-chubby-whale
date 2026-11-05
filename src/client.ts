@@ -33,14 +33,30 @@ import { createRecover } from './client/recover.js'
   factory: (require: any) => {
     const R = require('react')
     // 早期错误记录器：抓住宿主插槽渲染我们组件时抛的异常（模块加载即安装）
+    // 三条硬要求：① 环形缓冲（只留最近 50 条，长时间运行不涨内存）
+    //            ② 补丁幂等（模块重复加载不叠加，不会把日志打两遍）
+    //            ③ 不覆盖已存在的数组（别的模块可能已经挂过）
     try {
-      (window as any).__chubbyErrors = []
-      const origErr = console.error
-      console.error = function (...a: any[]) {
-        try { (window as any).__chubbyErrors.push(a.map((x: any) => (x && x.stack) ? x.stack : String(x)).join(' ').slice(0, 800)) } catch (e) { }
-        return (origErr as any).apply(console, a as any)
-      } as any
-      window.addEventListener('error', (e: any) => { try { (window as any).__chubbyErrors.push('window.error: ' + (e.message || '') + ' | ' + ((e.error && e.error.stack) || '')) } catch (e2) { } })
+      const wErr: any = window as any
+      if (!Array.isArray(wErr.__chubbyErrors)) wErr.__chubbyErrors = []
+      const pushErr = (line: string): void => {
+        try {
+          const arr: string[] = wErr.__chubbyErrors
+          arr.push(String(line || '').slice(0, 800))
+          while (arr.length > 50) arr.shift()
+        } catch (e) { }
+      }
+      if (!wErr.__chubbyErrPatched) {
+        wErr.__chubbyErrPatched = true
+        const origErr = console.error
+        console.error = function (...a: any[]) {
+          pushErr(a.map((x: any) => (x && x.stack) ? x.stack : String(x)).join(' '))
+          return (origErr as any).apply(console, a as any)
+        } as any
+        window.addEventListener('error', (e: any) => {
+          pushErr('window.error: ' + (e.message || '') + ' | ' + ((e.error && e.error.stack) || ''))
+        })
+      }
     } catch (e) { }
     const h = R.createElement
 

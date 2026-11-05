@@ -54,9 +54,9 @@ export function recitePoem(host: ReciteHost, poem: any): void {
 
 import { pickCouplet } from '../duilian.js'
 
-let lastCouplet = ''
-
 export function registerCultureActions(table: ActionTable<ActionHost>): void {
+  // 上一副对联放在闭包里：模块级单例会在"重复注册/测试多实例"之间串味
+  let lastCouplet = ''
   // —— 念首诗 ——
   table.define('poem', (host) => {
     getJson('/poem').then((d: any) => {

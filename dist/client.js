@@ -625,6 +625,7 @@
     { tier: 1, label: "\u719F\u7EDC", scale: 1.04, dots: 4, halo: 0.12, tailEveryMs: 9e3 },
     { tier: 2, label: "\u9ECF\u4EBA", scale: 1.08, dots: 6, halo: 0.22, tailEveryMs: 5500 }
   ];
+  deepFreeze(LOOKS);
   function tierOf(exp) {
     const e = Number(exp);
     if (!isFinite(e) || e <= 0) return 0;
@@ -2974,8 +2975,8 @@
       }
     }, 600);
   }
-  var lastCouplet = "";
   function registerCultureActions(table) {
+    let lastCouplet = "";
     table.define("poem", (host) => {
       getJson("/poem").then((d) => {
         const p = d && d.ok && d.item ? d.item : null;
@@ -5388,21 +5389,27 @@
     factory: (require2) => {
       const R = require2("react");
       try {
-        window.__chubbyErrors = [];
-        const origErr = console.error;
-        console.error = function(...a) {
+        const wErr = window;
+        if (!Array.isArray(wErr.__chubbyErrors)) wErr.__chubbyErrors = [];
+        const pushErr = (line) => {
           try {
-            window.__chubbyErrors.push(a.map((x) => x && x.stack ? x.stack : String(x)).join(" ").slice(0, 800));
+            const arr = wErr.__chubbyErrors;
+            arr.push(String(line || "").slice(0, 800));
+            while (arr.length > 50) arr.shift();
           } catch (e) {
           }
-          return origErr.apply(console, a);
         };
-        window.addEventListener("error", (e) => {
-          try {
-            window.__chubbyErrors.push("window.error: " + (e.message || "") + " | " + (e.error && e.error.stack || ""));
-          } catch (e2) {
-          }
-        });
+        if (!wErr.__chubbyErrPatched) {
+          wErr.__chubbyErrPatched = true;
+          const origErr = console.error;
+          console.error = function(...a) {
+            pushErr(a.map((x) => x && x.stack ? x.stack : String(x)).join(" "));
+            return origErr.apply(console, a);
+          };
+          window.addEventListener("error", (e) => {
+            pushErr("window.error: " + (e.message || "") + " | " + (e.error && e.error.stack || ""));
+          });
+        }
       } catch (e) {
       }
       const h = R.createElement;

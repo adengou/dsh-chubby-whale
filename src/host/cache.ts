@@ -72,6 +72,17 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
     return ttl <= 0 || Date.now() - hit.at <= ttl
   }
 
+  /**
+   * 命中返回前统一做一份拷贝：
+   * 直接把内部对象递出去，调用方一改就污染缓存（同一 key 下次拿到被改过的值）。
+   * Buffer 要特判 —— structuredClone 会把 Buffer 变成 Uint8Array，TTS 会因此播不出声。
+   */
+  function cloneHit(v: any): any {
+    if (v == null || typeof v !== 'object') return v
+    if (Buffer.isBuffer(v)) return Buffer.from(v)
+    try { return structuredClone(v) } catch { return v }
+  }
+
   function memGet(key: string): any | undefined {
     const hit = mem.get(key)
     if (!hit) return undefined
@@ -79,7 +90,7 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
     // 命中后挪到队尾（LRU）
     mem.delete(key)
     mem.set(key, hit)
-    return hit.v
+    return cloneHit(hit.v)
   }
 
   /**
@@ -100,7 +111,7 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
       if (alive) {
         mem.delete(key)
         mem.set(key, hit)                    // 命中后挪到队尾（LRU）
-        return hit.v
+        return cloneHit(hit.v)
       }
       forget(key)
     }
@@ -115,12 +126,13 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
       const buf = await readFile(file)
       const val = ext === 'json' ? JSON.parse(buf.toString('utf8')) : buf
       remember(key, val)
-      return val
+      return cloneHit(val)
     } catch { return null }
   }
 
   async function setJson(key: string, value: any, ext = 'json', maxAgeMs = 0): Promise<void> {
-    remember(key, value, maxAgeMs)
+    // 存入时也拷贝一份：调用方之后改自己那份，不该影响缓存内容
+    remember(key, cloneHit(value), maxAgeMs)
     try {
       await ensure()
       // 原子写：先写唯一临时文件再 rename 覆盖（并发同 key 不会交错产出坏文件）
