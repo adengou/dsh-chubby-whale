@@ -7,8 +7,8 @@ import { imageToB64 } from './image.js'
 
 /** 一次最多吃 4MB（C# 是 12MB，网页版请求体小一点更稳） */
 export const MAX_DROP_BYTES = 4 * 1024 * 1024
-/** 文档只取前 8000 字，别把上下文撑爆 */
-export const MAX_TEXT_CHARS = 8000
+/** 文档只取前 4000 字（原先 8000）：总结效果几乎无差，输入 token 省一半 */
+export const MAX_TEXT_CHARS = 4000
 /** 图片问题：非空提示词（服务端 message: '' 会 400） */
 export const VISION_PROMPT = '看看这张图，说说你看到了什么'
 const TEXT_EXTS = ['.txt', '.md', '.json', '.log', '.csv']
@@ -41,7 +41,7 @@ export function isTextFile(file: any): boolean {
   return false
 }
 
-/** 文档正文 → 送给模型的 message（截前 8000 字） */
+/** 文档正文 → 送给模型的 message（截前 4000 字） */
 export function buildTextPrompt(text: string): string {
   return '总结一下这篇文档：\n' + String(text || '').slice(0, MAX_TEXT_CHARS)
 }

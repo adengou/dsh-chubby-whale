@@ -23,6 +23,12 @@ export type ZombieInput = {
   busy: boolean
   /** 本段开始的时刻 */
   busySince: number
+  /**
+   * 本段最近一次"有进展"的时刻（开播 / 播放进度前进 / 收到新 chunk）。
+   * 有值时停滞判定改用它，不再用 busySince —— 长段播到一半卡住时，段开始时刻
+   * 早就超过 zombieMs，按它算会一上来就误判成僵尸。缺省仍回退到 busySince。
+   */
+  lastProgressAt?: number
   /** 本段合成开始的时刻（0 表示还没开始合成） */
   synthAt: number
   /** 当前时刻 */
@@ -40,5 +46,7 @@ export function isPlaybackZombie(p: ZombieInput): boolean {
   if (p.hasAudio && p.audioPlaying) return false
   // 没有音频、但合成还在进行中且没超时 → 正常等待，不是僵尸
   if (!p.hasAudio && p.synthAt > 0 && p.now - p.synthAt < synthTimeoutMs) return false
-  return p.now - p.busySince >= zombieMs
+  // 停滞从"最后一次有进展"算起；没给进展时刻（旧调用点）才退回段开始时刻
+  const since = (typeof p.lastProgressAt === 'number' && p.lastProgressAt > 0) ? p.lastProgressAt : p.busySince
+  return p.now - since >= zombieMs
 }

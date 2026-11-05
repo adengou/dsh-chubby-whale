@@ -366,7 +366,7 @@
 
   // src/client/dropzone.ts
   var MAX_DROP_BYTES = 4 * 1024 * 1024;
-  var MAX_TEXT_CHARS = 8e3;
+  var MAX_TEXT_CHARS = 4e3;
   var VISION_PROMPT = "\u770B\u770B\u8FD9\u5F20\u56FE\uFF0C\u8BF4\u8BF4\u4F60\u770B\u5230\u4E86\u4EC0\u4E48";
   var TEXT_EXTS = [".txt", ".md", ".json", ".log", ".csv"];
   function isImageFile(file) {
@@ -745,7 +745,8 @@
     if (!p.busy) return false;
     if (p.hasAudio && p.audioPlaying) return false;
     if (!p.hasAudio && p.synthAt > 0 && p.now - p.synthAt < synthTimeoutMs) return false;
-    return p.now - p.busySince >= zombieMs;
+    const since = typeof p.lastProgressAt === "number" && p.lastProgressAt > 0 ? p.lastProgressAt : p.busySince;
+    return p.now - since >= zombieMs;
   }
 
   // src/client/voice.ts
@@ -827,6 +828,8 @@
     let ttsAudio = null;
     let ttsBusySince = 0;
     let ttsSynthAt = 0;
+    let ttsProgressAt = 0;
+    let ttsCurJob = null;
     let ttsWatch = null;
     let mutedUntil = 0;
     let speakToken = 0;
@@ -935,6 +938,7 @@
       }
     }
     async function onWindowDone(blob) {
+      if (!running) return;
       stats.windows++;
       if (epMode === "ape") {
         const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150);
@@ -1053,6 +1057,9 @@
           audioPlaying,
           busy: ttsBusy,
           busySince: ttsBusySince,
+          // 停滞按"最后一次有进展"算：长段播到一半卡住时，段开始时刻早就过阈值了，
+          // 还用 busySince 会一上来就误判；播放进度、缓冲、开播都算有新进展。
+          lastProgressAt: ttsProgressAt,
           synthAt: ttsSynthAt,
           now: Date.now(),
           zombieMs: TTS_ZOMBIE_MS,
@@ -1060,8 +1067,12 @@
         });
         if (!zombie) return;
         stats.ttsZombie++;
+        const dead = ttsCurJob;
+        ttsCurJob = null;
+        speakToken++;
         try {
           if (ttsAudio) {
+            ttsAudio.pause();
             ttsAudio.onended = null;
             ttsAudio.onerror = null;
           }
@@ -1069,8 +1080,26 @@
         }
         ttsAudio = null;
         ttsSynthAt = 0;
+        ttsProgressAt = 0;
         ttsBusy = false;
-        pumpTts();
+        mutedUntil = Date.now() + ECHO_MUTE_MS;
+        micOn(!muted);
+        if (dead) {
+          try {
+            finishJob(dead);
+          } catch (e) {
+          }
+        } else {
+          pumpTts();
+        }
+        if (!ttsBusy && ttsQ.length === 0) {
+          setTimeout(() => {
+            try {
+              if (!ttsBusy && !muted) micOn(true);
+            } catch (e) {
+            }
+          }, ECHO_MUTE_MS);
+        }
       } catch (e) {
       }
     }
@@ -1122,6 +1151,8 @@
     }
     function finishJob(j) {
       ttsBusy = false;
+      if (ttsCurJob === j) ttsCurJob = null;
+      ttsProgressAt = 0;
       mutedUntil = Date.now() + ECHO_MUTE_MS;
       setTimeout(() => {
         if (!ttsBusy && !muted) micOn(true);
@@ -1142,6 +1173,8 @@
       }
       ttsBusy = true;
       ttsBusySince = Date.now();
+      ttsProgressAt = Date.now();
+      ttsCurJob = job;
       const myToken = ++speakToken;
       setStatus("speaking");
       micOn(false);
@@ -1152,11 +1185,8 @@
       const next = ttsQ[0];
       if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next));
       cur.then((buf) => {
+        if (myToken !== speakToken) return;
         ttsSynthAt = 0;
-        if (myToken !== speakToken) {
-          ttsBusy = false;
-          return;
-        }
         if (!buf) {
           if (job.attempts < 3) {
             job.attempts++;
@@ -1206,6 +1236,17 @@
         const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
         const a = new Audio(url);
         ttsAudio = a;
+        ttsProgressAt = Date.now();
+        const bump = () => {
+          ttsProgressAt = Date.now();
+        };
+        try {
+          a.onplaying = bump;
+          a.ontimeupdate = bump;
+          a.onprogress = bump;
+          a.onloadeddata = bump;
+        } catch (e) {
+        }
         const finish = () => {
           if (myToken !== speakToken) {
             try {
@@ -1234,6 +1275,14 @@
         a.onended = finish;
         a.onerror = finish;
         a.play().catch(() => {
+          if (myToken !== speakToken) {
+            try {
+              URL.revokeObjectURL(url);
+            } catch (e) {
+            }
+            ;
+            return;
+          }
           stats.ttsFail++;
           try {
             lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
@@ -1352,6 +1401,10 @@
           if (e.data && e.data.size > 0) parts.push(e.data);
         };
         rec.onstop = () => {
+          if (!running) {
+            parts = [];
+            return;
+          }
           const blob = new Blob(parts, { type: "audio/webm" });
           parts = [];
           void onWindowDone(blob);
@@ -1389,6 +1442,10 @@
       if (ttsWatch) {
         clearInterval(ttsWatch);
         ttsWatch = null;
+      }
+      try {
+        stopSpeaking();
+      } catch (e) {
       }
       try {
         if (rec && rec.state !== "inactive") rec.stop();
@@ -1430,8 +1487,14 @@
     }
     function stopSpeaking() {
       ttsSynthAt = 0;
+      ttsProgressAt = 0;
+      ttsCurJob = null;
       speakToken++;
       ttsQ.length = 0;
+      try {
+        ttsPrefetch.clear();
+      } catch (e) {
+      }
       try {
         if (ttsAudio) {
           ttsAudio.pause();
@@ -3063,6 +3126,110 @@
             }
             return;
           }
+          if (action === "wake") {
+            const nowOn = !earOnRef.current;
+            try {
+              localStorage.setItem("chubby-ear", nowOn ? "on" : "off");
+            } catch (e) {
+            }
+            earOnRef.current = nowOn;
+            setEarOn(nowOn);
+            if (!nowOn) {
+              try {
+                if (voiceRef.current) voiceRef.current.stop();
+              } catch (e) {
+              }
+              try {
+                stopTts();
+              } catch (e) {
+              }
+              showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5173\uFF08\u672C\u9CB8\u4E0D\u542C\u5566\uFF09", 2500);
+              return;
+            }
+            try {
+              let v = voiceRef.current;
+              if (!v) {
+                v = createVoice({
+                  onHeard: (text) => {
+                    try {
+                      voiceModeRef.current = true;
+                    } catch (e) {
+                    }
+                    try {
+                      if (Date.now() < narrateUntil) {
+                        if (/停|别念|不念|够了|算了|打住/.test(String(text || ""))) {
+                          try {
+                            stopTts();
+                          } catch (e) {
+                          }
+                          clearNarrating();
+                          showBubble("\u597D\uFF0C\u4E0D\u5FF5\u4E86", 2500);
+                        }
+                        return;
+                      }
+                    } catch (e) {
+                    }
+                    try {
+                      showBubble("\uFF08\u542C\u5230\uFF09" + text + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
+                    } catch (e) {
+                    }
+                    try {
+                      sendText(text, { voice: true });
+                    } catch (e) {
+                    }
+                  },
+                  onStatus: (st) => {
+                    ttsPlaying = st === "speaking";
+                    if (ttsPlaying) {
+                      try {
+                        lastSpeakingAt = Date.now();
+                      } catch (e) {
+                      }
+                    }
+                  },
+                  onDiag: (d) => {
+                    try {
+                      window.__chubbyWhale.voiceDiag = d;
+                    } catch (e) {
+                    }
+                  },
+                  onSegment: (seg) => {
+                    try {
+                      if (!storyNarratingRef.current) return;
+                      const t = String(seg || "").replace(/^念首诗——/, "").trim();
+                      if (t) showBubble(t, 8e3);
+                    } catch (e) {
+                    }
+                  }
+                });
+                voiceRef.current = v;
+                try {
+                  const w = window.__chubbyWhale || (window.__chubbyWhale = {});
+                  w.voice = v;
+                } catch (e) {
+                }
+                try {
+                  window.addEventListener("beforeunload", () => {
+                    try {
+                      v.stop();
+                    } catch (e) {
+                    }
+                  });
+                } catch (e) {
+                }
+              }
+              Promise.resolve(v.start()).then(() => {
+                try {
+                  if (v.status() === "idle") showBubble("\u9EA6\u514B\u98CE\u6CA1\u6253\u5F00\uFF1A" + String(v.stats && v.stats.lastError || "\u770B\u770B\u6743\u9650\uFF1F"), 5e3);
+                  else showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5F00\uFF08\u672C\u9CB8\u542C\u7740\u5462\uFF09", 2500);
+                } catch (e) {
+                }
+              }).catch((e) => showBubble("\u9EA6\u514B\u98CE\u6CA1\u6253\u5F00\uFF1A" + String(e && e.message || e), 5e3));
+            } catch (e) {
+              showBubble("\u8BED\u97F3\u5F85\u547D\u6CA1\u5F00\u6210\uFF1A" + String(e && e.message || e), 5e3);
+            }
+            return;
+          }
           if (action === "chatmode") {
             const nowOn = !voiceChatOnRef.current;
             voiceChatOnRef.current = nowOn;
@@ -3721,6 +3888,14 @@
           clearNarrating();
           try {
             if (voiceRef.current) voiceRef.current.stopSpeaking();
+          } catch (e) {
+          }
+          try {
+            storyBusyRef.current = false;
+          } catch (e) {
+          }
+          try {
+            storyNarratingRef.current = false;
           } catch (e) {
           }
         }

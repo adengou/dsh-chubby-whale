@@ -167,8 +167,14 @@ export function createCache(opts) {
         catch { }
     }
     /** 文件太多时按 mtime 删最旧的一半；只 stat，不读内容 */
+    /** prune 节流：每次写都全量 readdir+stat 会把磁盘扫描串进回复延迟，30 秒最多扫一次 */
+    let lastPruneAt = 0;
     async function prune() {
         try {
+            const nowMs = Date.now();
+            if (nowMs - lastPruneAt < 30000)
+                return;
+            lastPruneAt = nowMs;
             const files = await readdir(opts.dir);
             if (files.length <= MAX_FILES)
                 return;

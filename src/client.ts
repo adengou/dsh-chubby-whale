@@ -747,6 +747,73 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           } catch (e: any) { showBubble('自检失败：' + String(e && e.message), 5000) }
           return
         }
+        if (action === 'wake') {
+          // 语音待命：菜单里一直有这一项，但之前没有分支，点了完全没反应。
+          // 打开 = 建/启语音模块；关闭 = 停录音（stop() 内部已顺带清朗读队列、停音频）。
+          const nowOn = !earOnRef.current
+          try { localStorage.setItem('chubby-ear', nowOn ? 'on' : 'off') } catch (e) { }
+          earOnRef.current = nowOn
+          setEarOn(nowOn)
+          if (!nowOn) {
+            // 停录音即可；实例留着下次复用，避免反复重建麦克风
+            try { if (voiceRef.current) voiceRef.current.stop() } catch (e) { }
+            try { stopTts() } catch (e) { }
+            showBubble('语音待命：关（本鲸不听啦）', 2500)
+            return
+          }
+          try {
+            let v: any = voiceRef.current
+            if (!v) {
+              // 初始 chubby-ear=off 时上面的 effect 直接跳过创建，这里补建一次，
+              // 回调与那个 effect 保持一致：识别→送对话、状态→ttsPlaying、逐句气泡。
+              v = createVoice({
+                onHeard: (text: string) => {
+                  try { voiceModeRef.current = true } catch (e) { }
+                  // 叙述锁：念诗/说书拾到的话不当作新发言（只放行明确的"停"）
+                  try {
+                    if (Date.now() < narrateUntil) {
+                      if (/停|别念|不念|够了|算了|打住/.test(String(text || ''))) {
+                        try { stopTts() } catch (e) { }
+                        clearNarrating()
+                        showBubble('好，不念了', 2500)
+                      }
+                      return
+                    }
+                  } catch (e) { }
+                  try { showBubble('（听到）' + text + '｜本鱼在想…', 3000) } catch (e) { }
+                  try { sendText(text, { voice: true }) } catch (e) { }
+                },
+                onStatus: (st: any) => {
+                  ttsPlaying = st === 'speaking'
+                  if (ttsPlaying) { try { lastSpeakingAt = Date.now() } catch (e) { } }
+                },
+                onDiag: (d: any) => { try { (window as any).__chubbyWhale.voiceDiag = d } catch (e) { } },
+                onSegment: (seg: string) => {
+                  try {
+                    if (!storyNarratingRef.current) return
+                    const t = String(seg || '').replace(/^念首诗——/, '').trim()
+                    if (t) showBubble(t, 8000)
+                  } catch (e) { }
+                },
+              })
+              voiceRef.current = v
+              try { const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {}) ; w.voice = v } catch (e) { }
+              // 补建的实例不归那个 effect 的 cleanup 管：关页面时自己把麦克风放掉，
+              // 免得轨道悬着（只在"初始关着、后来手动打开"这条路上才会走到这里）
+              try { window.addEventListener('beforeunload', () => { try { v.stop() } catch (e) { } }) } catch (e) { }
+            }
+            // start() 自己不抛错（内部兜底），失败靠状态/统计判断，不把异常甩到渲染层
+            Promise.resolve(v.start()).then(() => {
+              try {
+                if (v.status() === 'idle') showBubble('麦克风没打开：' + String((v.stats && v.stats.lastError) || '看看权限？'), 5000)
+                else showBubble('语音待命：开（本鲸听着呢）', 2500)
+              } catch (e) { }
+            }).catch((e: any) => showBubble('麦克风没打开：' + String((e && e.message) || e), 5000))
+          } catch (e: any) {
+            showBubble('语音待命没开成：' + String((e && e.message) || e), 5000)
+          }
+          return
+        }
         if (action === 'chatmode') {
           // 语音聊天：只决定识别到的话要不要送给模型
           const nowOn = !voiceChatOnRef.current
@@ -1211,6 +1278,10 @@ import { parseDue, cleanReminderText } from './shared/time.js'
       function stopTts(): void {
         clearNarrating()   // 停止朗读 = 解除叙述锁
         try { if (voiceRef.current) voiceRef.current.stopSpeaking() } catch (e) { }
+        // 说书锁也一起放：stopSpeaking 作废了当前段，它原本的 onDone 不会再来，
+        // storyBusy 卡在 true 的话「接着说 / 说书」会永远回"正讲着呢"。
+        try { storyBusyRef.current = false } catch (e) { }
+        try { storyNarratingRef.current = false } catch (e) { }
       }
       function muteMic(): void { try { if (voiceRef.current) voiceRef.current.mute(true) } catch (e) { } }
       function unmuteMic(): void { try { if (voiceRef.current) voiceRef.current.mute(false) } catch (e) { } }

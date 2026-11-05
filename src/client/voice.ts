@@ -139,6 +139,8 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
   let ttsAudio: HTMLAudioElement | null = null
   let ttsBusySince = 0
   let ttsSynthAt = 0   // 本段开始合成的时刻（0 = 未在合成）；看门狗据此区分"合成中"与"僵死"
+  let ttsProgressAt = 0  // 本段最近一次"有进展"的时刻（开播/播放进度/收到新 chunk）；看门狗按它判停滞
+  let ttsCurJob: Job | null = null  // 当前正在处理的段：看门狗复位时要给它结账（回调 onDone）
   let ttsWatch: any = null
   let mutedUntil = 0
   let speakToken = 0
@@ -219,6 +221,9 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
   }
 
   async function onWindowDone(blob: Blob): Promise<void> {
+    // 已停止（关语音待命/卸载）：这段不能再上传，也不能把状态从 idle 回写成
+    // recognizing/listening —— 那正是"关了还在听"的来源。
+    if (!running) return
     stats.windows++
     // 太安静：直接丢（识别服务对静音会编词，浪费钱还制造幻觉）
     if (epMode === 'ape') {
@@ -313,6 +318,9 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
         audioPlaying,
         busy: ttsBusy,
         busySince: ttsBusySince,
+        // 停滞按"最后一次有进展"算：长段播到一半卡住时，段开始时刻早就过阈值了，
+        // 还用 busySince 会一上来就误判；播放进度、缓冲、开播都算有新进展。
+        lastProgressAt: ttsProgressAt,
         synthAt: ttsSynthAt,
         now: Date.now(),
         zombieMs: TTS_ZOMBIE_MS,
@@ -320,12 +328,32 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       })
       if (!zombie) return
       // 真僵死：有音频却不动，或合成超时 → 复位，继续下一段
+      // 复位必须把"被丢弃那一段"的账结清：① 上层在等 onDone（说书/念诗锁）会永远卡住；
+      // ② pumpTts 开播前闭了麦，不恢复就再也听不见（整只鱼变聋）。
       stats.ttsZombie++
-      try { if (ttsAudio) { ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }
+      const dead = ttsCurJob
+      ttsCurJob = null
+      // 令牌作废：在途的合成回调/play 回调回来时被 token 校验拦住，不会把这一段又开播一遍
+      speakToken++
+      try { if (ttsAudio) { ttsAudio.pause(); ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }
       ttsAudio = null
       ttsSynthAt = 0
+      ttsProgressAt = 0
       ttsBusy = false
-      pumpTts()
+      // 先开麦：队列空时 pumpTts 只会切回 listening，不会恢复麦克风
+      mutedUntil = Date.now() + ECHO_MUTE_MS
+      micOn(!muted)
+      if (dead) {
+        // 走 finishJob：它负责复位 busy、设回声静音窗、回调 onDone（解开上层锁），
+        // 队列还有下一段时顺带接着 pump
+        try { finishJob(dead) } catch (e) { }
+      } else {
+        pumpTts()
+      }
+      // 兜底：队列空时无论如何都要让麦克风最终是开的（可能被别的路径又关掉）
+      if (!ttsBusy && ttsQ.length === 0) {
+        setTimeout(() => { try { if (!ttsBusy && !muted) micOn(true) } catch (e) { } }, ECHO_MUTE_MS)
+      }
     } catch (e) { }
   }
 
@@ -381,6 +409,8 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
 
   function finishJob(j: Job): void {
     ttsBusy = false
+    if (ttsCurJob === j) ttsCurJob = null
+    ttsProgressAt = 0
     mutedUntil = Date.now() + ECHO_MUTE_MS
     setTimeout(() => { if (!ttsBusy && !muted) micOn(true) }, ECHO_MUTE_MS)
     try { j.onDone && j.onDone() } catch (e) { }
@@ -395,6 +425,8 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     if (!job) { setStatus('listening'); return }
     ttsBusy = true
     ttsBusySince = Date.now()
+    ttsProgressAt = Date.now()
+    ttsCurJob = job
     const myToken = ++speakToken
     setStatus('speaking')
     micOn(false)
@@ -408,8 +440,11 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next))
 
     cur.then((buf) => {
+      // 令牌校验必须放最前：这一段如果已被 stopSpeaking / 看门狗作废，
+      // 回调再去改 ttsBusy / ttsSynthAt 就会把"新段"的状态一起清掉，
+      // 新段要么立刻被判僵尸，要么被旧段顶掉重播。
+      if (myToken !== speakToken) return
       ttsSynthAt = 0
-      if (myToken !== speakToken) { ttsBusy = false; return }
       if (!buf) {
         // 失败：最多重试 3 次（每次间隔递增）。绝不静默跳过——跳过就是'少内容'。
         if (job.attempts < 3) {
@@ -439,6 +474,11 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
       const a = new Audio(url)
       ttsAudio = a
+      ttsProgressAt = Date.now()
+      // 播放进度/缓冲/开播都算"有进展"：长段播到一半卡死时，看门狗才等到真正停滞再复位，
+      // 而不是按段开始时刻一刀切。
+      const bump = () => { ttsProgressAt = Date.now() }
+      try { a.onplaying = bump; a.ontimeupdate = bump; a.onprogress = bump; a.onloadeddata = bump } catch (e) { }
       const finish = () => {
         if (myToken !== speakToken) { try { URL.revokeObjectURL(url) } catch (e) { } return }
         try { a.onended = null; a.onerror = null } catch (e) { }
@@ -451,6 +491,9 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       a.onended = finish
       a.onerror = finish
       a.play().catch(() => {
+        // 令牌校验：过期段只收回自己的 objectURL，绝不能清掉新段的 ttsAudio，
+        // 也不能把旧 job unshift 回去（那会变成"新段播一半被旧段顶掉重播"）
+        if (myToken !== speakToken) { try { URL.revokeObjectURL(url) } catch (e) { } ; return }
         stats.ttsFail++
         try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
         try { a.onended = null; a.onerror = null; URL.revokeObjectURL(url) } catch (e) { }
@@ -537,6 +580,8 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       rec = new MediaRecorder(stream)
       rec.ondataavailable = (e: BlobEvent) => { if (e.data && e.data.size > 0) parts.push(e.data) }
       rec.onstop = () => {
+        // 已经 stop() 了：这段残响不能再走识别（哪怕录音器自己又 stop 了一次）
+        if (!running) { parts = []; return }
         const blob = new Blob(parts, { type: 'audio/webm' })
         parts = []
         void onWindowDone(blob)
@@ -562,6 +607,9 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     if (tickTimer) { clearTimeout(tickTimer); tickTimer = null }
     if (restartTimer) { clearTimeout(restartTimer); restartTimer = null }
     if (ttsWatch) { clearInterval(ttsWatch); ttsWatch = null }
+    // 朗读侧一起收：原来只停录音，说书/回复还在播、队列还留着，
+    // 结果是"关了语音待命，声音没停、麦克风还被静音"，点菜单也不对。
+    try { stopSpeaking() } catch (e) { }
     try { if (rec && rec.state !== 'inactive') rec.stop() } catch (e) { }
     try { if (actx) actx.close() } catch (e) { }
     try { if (stream) stream.getTracks().forEach((t) => t.stop()) } catch (e) { }
@@ -592,8 +640,13 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
 
   function stopSpeaking(): void {
     ttsSynthAt = 0
+    ttsProgressAt = 0
+    ttsCurJob = null
     speakToken++
     ttsQ.length = 0
+    // 预合成也算旧队列的一部分：不清掉的话，stop 之后开新段会捡起上一轮的音频，
+    // 表现是"刚停止就冒出一句旧的"
+    try { ttsPrefetch.clear() } catch (e) { }
     try { if (ttsAudio) { ttsAudio.pause(); ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }
     ttsAudio = null
     ttsBusy = false
