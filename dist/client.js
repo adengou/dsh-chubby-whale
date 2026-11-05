@@ -1743,18 +1743,23 @@
       }
     }
     const ttsPrefetch = /* @__PURE__ */ new Map();
+    const ttsAborts = /* @__PURE__ */ new Set();
     let ttsSeq = 0;
     function synth(job) {
+      const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      if (ctl) ttsAborts.add(ctl);
       return fetchWithTimeout(apiBase + "/tts", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text: job.text, voice: voiceName, rate: job.rate, pitch: job.pitch || "" })
-      }, TTS_TIMEOUT_MS).then((r) => {
+      }, TTS_TIMEOUT_MS, ctl ? ctl.signal : void 0).then((r) => {
         if (!r.ok) throw new Error("tts-http-" + r.status);
         return r.arrayBuffer();
       }).catch((e) => {
         stats.lastError = "tts: " + String(e && e.name || e);
         return null;
+      }).finally(() => {
+        if (ctl) ttsAborts.delete(ctl);
       });
     }
     function speakViaBrowser(text) {
@@ -1997,7 +2002,7 @@
         }
       });
     }
-    async function fetchWithTimeout(url, init, ms2) {
+    async function fetchWithTimeout(url, init, ms2, outer) {
       const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timer = ctl ? setTimeout(() => {
         try {
@@ -2005,8 +2010,16 @@
         } catch (e) {
         }
       }, ms2) : null;
+      let sig = ctl ? ctl.signal : void 0;
+      if (outer) {
+        try {
+          sig = ctl && typeof AbortSignal.any === "function" ? AbortSignal.any([ctl.signal, outer]) : outer || ctl.signal;
+        } catch (e) {
+          sig = outer || sig;
+        }
+      }
       try {
-        return await fetch(url, ctl ? { ...init, signal: ctl.signal } : init);
+        return await fetch(url, sig ? { ...init, signal: sig } : init);
       } finally {
         if (timer) clearTimeout(timer);
       }
@@ -2138,6 +2151,19 @@
       ttsQ.length = 0;
       try {
         ttsPrefetch.clear();
+      } catch (e) {
+      }
+      try {
+        for (const c of ttsAborts) {
+          try {
+            c.abort();
+          } catch (e) {
+          }
+        }
+      } catch (e) {
+      }
+      try {
+        ttsAborts.clear();
       } catch (e) {
       }
       try {

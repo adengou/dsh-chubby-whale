@@ -257,6 +257,22 @@ try {
   ok('第一句显示 1/N', np.bumpProgress('寒蝉凄切。').includes('（第 1/3 句）'))
   ok('第二句显示 2/N', np.bumpProgress('对长亭晚，骤雨初歇。').includes('（第 2/3 句）'))
   ok('末句封顶 3/3', np.bumpProgress('念去去、千里烟波，暮霭沉沉楚天阔。').includes('（第 3/3 句）'))
+  // 工厂隔离：两个实例各自独立（念诗与说书将来同时用时不会互相踩）
+  const pa = np.createProgress()
+  const pb = np.createProgress()
+  pa.start('A', ['甲一。', '甲二。'], '开场A。')
+  pb.start('B', ['乙一。'], '')
+  pa.bump('开场A。')
+  const paText = pa.bump('甲一。')
+  const pbText = pb.bump('乙一。')
+  ok('两个进度实例互不干扰', paText.indexOf('A') === 0 && pbText.indexOf('B') === 0 && paText !== pbText, paText + ' | ' + pbText)
+  pa.stop()
+  ok('一个实例停止不影响另一个', pa.active() === false && pb.active() === true)
+
+  // 停止说话时取消在途合成（代码契约：stopSpeaking 里要 abort 所有 ttsAborts）
+  const { readFileSync: rf3 } = await import('node:fs')
+  const vSrc = rf3('src/client/voice.ts', 'utf8')
+  ok('停止说话会取消在途 TTS 请求', vSrc.indexOf('ttsAborts') >= 0 && vSrc.indexOf('for (const c of ttsAborts)') >= 0)
   np.stopProgress()
   ok('stopProgress 后不再出进度', np.bumpProgress('多情自古伤离别。') === '')
 

@@ -421,20 +421,26 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
   }
 
   const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
+/** 在途的合成请求：停止说话时一起 abort（服务器那边也会跟着断，不再白算一整段） */
+const ttsAborts = new Set<AbortController>()
   let ttsSeq = 0
 
   // 合成一段（带超时）。失败返回 null —— 对应 C# 的 wav == null
   function synth(job: Job): Promise<ArrayBuffer | null> {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
+    if (ctl) ttsAborts.add(ctl)
     return fetchWithTimeout(apiBase + '/tts', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: job.text, voice: voiceName, rate: job.rate, pitch: job.pitch || '' }),
-    }, TTS_TIMEOUT_MS).then((r) => {
+    }, TTS_TIMEOUT_MS, ctl ? ctl.signal : undefined).then((r) => {
       if (!r.ok) throw new Error('tts-http-' + r.status)
       return r.arrayBuffer()
     }).catch((e: any) => {
       stats.lastError = 'tts: ' + String((e && e.name) || e)
       return null
+    }).finally(() => {
+      if (ctl) ttsAborts.delete(ctl)
     })
   }
 
@@ -623,11 +629,20 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     })
   }
 
-  async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
+  async function fetchWithTimeout(url: string, init: RequestInit, ms: number, outer?: AbortSignal): Promise<Response> {
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
     const timer = ctl ? setTimeout(() => { try { ctl.abort() } catch (e) { } }, ms) : null
+    // 外部 signal（停止说话）与超时任何一个触发都要中断请求
+    let sig: AbortSignal | undefined = ctl ? ctl.signal : undefined
+    if (outer) {
+      try {
+        sig = (ctl && typeof (AbortSignal as any).any === 'function')
+          ? (AbortSignal as any).any([ctl.signal, outer])
+          : (outer || ctl.signal)
+      } catch (e) { sig = outer || sig }
+    }
     try {
-      return await fetch(url, ctl ? { ...init, signal: ctl.signal } : init)
+      return await fetch(url, sig ? { ...init, signal: sig } : init)
     } finally {
       if (timer) clearTimeout(timer)
     }
@@ -725,6 +740,9 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     // 预合成也算旧队列的一部分：不清掉的话，stop 之后开新段会捡起上一轮的音频，
     // 表现是"刚停止就冒出一句旧的"
     try { ttsPrefetch.clear() } catch (e) { }
+    // 在途的合成请求也取消：否则停止后服务器还在算，结果也没人要
+    try { for (const c of ttsAborts) { try { c.abort() } catch (e) { } } } catch (e) { }
+    try { ttsAborts.clear() } catch (e) { }
     try { if (ttsAudio) { ttsAudio.pause(); ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }
     ttsAudio = null
     ttsBusy = false
