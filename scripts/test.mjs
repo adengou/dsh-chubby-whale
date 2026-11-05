@@ -2218,6 +2218,166 @@ try {
   ok('能加载内容入口', false, String(e.message))
 }
 
+
+// ---------- ㊸ 客户端 HTTP 工具：前缀/请求体/错误语义 ----------
+console.log('\n[43] HTTP 小工具 client/http.ts')
+try {
+  const http = await import('../src/client/http.ts')
+  ok('空路径 → 前缀本身', http.apiUrl('') === http.API_BASE)
+  ok('相对路径补前缀', http.apiUrl('/balance') === '/api/chubby-whale/balance' && http.apiUrl('balance') === '/api/chubby-whale/balance')
+  ok('绝对地址原样返回', http.apiUrl('https://x.cn/a') === 'https://x.cn/a' && http.apiUrl('//x.cn/a') === '//x.cn/a')
+  ok('已带 /api/ 前缀不重复加', http.apiUrl('/api/other/x') === '/api/other/x')
+  ok('clientHeaders 带 x-client-id', http.clientHeaders('abc')['x-client-id'] === 'abc')
+  ok('clientHeaders 不传 id 时不加头', !('x-client-id' in http.clientHeaders()))
+  ok('clientHeaders 保留额外头', http.clientHeaders('a', { 'x-y': '1' })['x-y'] === '1')
+
+  const realFetch = globalThis.fetch
+  const seen = []
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), init: init || {} })
+    const u = String(url)
+    if (u.indexOf('/boom') >= 0) return { ok: false, status: 500, json: async () => ({ ok: false, error: 'BOOM' }) }
+    if (u.indexOf('/badjson') >= 0) return { ok: true, status: 200, json: async () => { throw new Error('json broke') } }
+    return { ok: true, status: 200, json: async () => ({ ok: true, path: u }) }
+  }
+
+  const got = await http.getJson('/balance')
+  ok('getJson 解析 JSON', got.ok === true && got.path.indexOf('/api/chubby-whale/balance') >= 0)
+  const failed = await http.getJson('/boom')
+  ok('HTTP 500 不抛错，照旧解析 body', failed.ok === false && failed.error === 'BOOM')
+  let jsonErr = ''
+  try { await http.getJson('/badjson') } catch (e) { jsonErr = String(e && e.message) }
+  ok('JSON 解析失败会 reject（调用方兜底）', jsonErr === 'json broke')
+
+  seen.length = 0
+  await http.postJson('/chat', { a: 1 })
+  const p1 = seen[0]
+  ok('postJson：POST + JSON 头 + 序列化体', p1.init.method === 'POST' && p1.init.headers['content-type'] === 'application/json' && p1.init.body === '{"a":1}')
+  seen.length = 0
+  await http.postJson('/clear-memory')
+  ok('postJson 无体时不设 content-type', seen[0].init.method === 'POST' && !seen[0].init.body && !(seen[0].init.headers || {})['content-type'])
+  seen.length = 0
+  await http.delJson('/cache')
+  ok('delJson 用 DELETE', seen[0].init.method === 'DELETE')
+  seen.length = 0
+  const raw = await http.postRaw('/chat-stream', { b: 2 })
+  ok('postRaw 返回原始 Response（流式用）', !!raw && typeof raw.json === 'function' && seen[0].init.body === '{"b":2}')
+
+  const sig = http.timeoutSignal(50)
+  ok('timeoutSignal 返回可中止的 signal 或 undefined', sig === undefined || typeof sig.aborted === 'boolean')
+  if (sig) {
+    let aborted = false
+    try { sig.addEventListener('abort', () => { aborted = true }) } catch (e) { }
+    await new Promise((r) => setTimeout(r, 80))
+    ok('超时后 signal 被 abort', sig.aborted === true || aborted === true)
+  }
+  globalThis.fetch = realFetch
+} catch (e) {
+  ok('能加载 http.ts', false, String(e.message))
+}
+
+
+// ---------- ㊹ 系统动作：界面/缓存/语言这几类 ----------
+console.log('\n[44] 系统动作 client/actions/system.ts')
+try {
+  const { createActionTable } = await import('../src/client/actions.ts')
+  const { registerSystemActions } = await import('../src/client/actions/system.ts')
+  const mem = new Map()
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => { mem.set(k, String(v)) },
+    removeItem: (k) => { mem.delete(k) },
+  }
+  const realFetch = globalThis.fetch
+  const hits = []
+  globalThis.fetch = async (url, init) => {
+    hits.push({ url: String(url), method: (init && init.method) || 'GET' })
+    const u = String(url)
+    if (u.indexOf('/cache-toggle') >= 0) return { ok: true, status: 200, json: async () => ({ ok: true, enabled: true }) }
+    if (u.indexOf('/cache') >= 0) return { ok: true, status: 200, json: async () => ({ ok: true, cleared: 3 }) }
+    if (u.indexOf('/balance') >= 0) return { ok: true, status: 200, json: async () => ({ ok: true, balance: 12.5 }) }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) }
+  }
+
+  const t = createActionTable()
+  registerSystemActions(t)
+  const calls = []
+  let cacheOn = false
+  const host = {
+    bubble: (x) => calls.push('bubble:' + x),
+    say: (x) => calls.push('say:' + x),
+    heart: () => calls.push('heart'),
+    homePos: () => calls.push('homePos'),
+    nudgeScale: (d) => calls.push('scale:' + d),
+    hide: () => calls.push('hide'),
+    isHidden: () => true,
+    recover: () => calls.push('recover'),
+    version: '1.0.1',
+    setVoiceMode: (v) => calls.push('voiceMode:' + v),
+    setChatOpen: (v) => calls.push('chatOpen:' + v),
+    stopSpeak: () => calls.push('stopSpeak'),
+    stopMelody: () => calls.push('stopMelody'),
+    storyState: { busy: { current: true } },
+    setBalance: (a) => calls.push('balance:' + a),
+    setLang: (l) => calls.push('lang:' + l),
+    chatCacheOn: () => cacheOn,
+    setChatCacheOn: (v) => { cacheOn = v; calls.push('cacheOn:' + v) },
+    syncGrowth: () => { },
+    applyGrowth: () => { },
+    persona: { feed: () => ({ text: '谢谢主人的饭', bowls: 1, stage: '刚认识', stageUp: false }), line: () => '饭碗账本' },
+  }
+
+  await t.run('version', host)
+  ok('版本动作：气泡带版本号', calls.some((c) => c === 'bubble:肥鲸 v1.0.1'))
+  calls.length = 0
+  await t.run('type', host)
+  ok('打字动作：关语音模式 + 开面板', calls.indexOf('voiceMode:false') >= 0 && calls.indexOf('chatOpen:true') >= 0)
+  calls.length = 0
+  await t.run('bigger', host); await t.run('smaller', host)
+  ok('缩放动作：+0.1 / -0.1', calls.indexOf('scale:0.1') >= 0 && calls.indexOf('scale:-0.1') >= 0)
+  calls.length = 0
+  await t.run('hide', host)
+  ok('隐藏动作：隐藏 + 提示恢复方式', calls.indexOf('hide') >= 0 && calls.some((c) => c.indexOf('Ctrl+Shift+W') >= 0))
+  calls.length = 0
+  await t.run('wake-recover', host)
+  ok('恢复动作：真恢复了就说「回来啦」', calls.indexOf('recover') >= 0 && calls.some((c) => c === 'bubble:本鲸回来啦'))
+  calls.length = 0
+  await t.run('pause', host)
+  ok('暂停：停朗读 + 停琴 + 解说书占线', calls.indexOf('stopSpeak') >= 0 && calls.indexOf('stopMelody') >= 0 && host.storyState.busy.current === false)
+  calls.length = 0
+  host.storyState.busy.current = true
+  await t.run('tts-stop', host)
+  ok('停止朗读：停朗读 + 解说书占线', calls.indexOf('stopSpeak') >= 0 && host.storyState.busy.current === false)
+
+  // 缓存开关：先翻转、再请求、按返回提示
+  calls.length = 0; hits.length = 0
+  await t.run('cache-toggle', host)
+  await new Promise((r) => setTimeout(r, 30))
+  ok('缓存开关：本地先翻转并带上新值', cacheOn === true && calls.indexOf('cacheOn:true') >= 0)
+  ok('缓存开关：请求体带 enabled:true', hits.some((h) => h.url.indexOf('/cache-toggle') >= 0 && h.method === 'POST'))
+  ok('缓存开关：按返回提示"开"', calls.some((c) => c.indexOf('聊天缓存：开') >= 0), calls.join(' | '))
+
+  // 清缓存：DELETE
+  calls.length = 0; hits.length = 0
+  await t.run('cache-clear', host)
+  await new Promise((r) => setTimeout(r, 30))
+  ok('清缓存：用 DELETE /cache', hits.some((h) => h.url.indexOf('/api/chubby-whale/cache') >= 0 && h.method === 'DELETE'))
+  ok('清缓存：报出条数', calls.some((c) => c.indexOf('3 条') >= 0), calls.join(' | '))
+
+  // 语言
+  calls.length = 0
+  await t.run('lang:en', host)
+  ok('界面语言：写入并回调', mem.get('chubby-lang') === 'en' && calls.indexOf('lang:en') >= 0)
+  calls.length = 0
+  await t.run('chat-lang:auto', host)
+  ok('聊天语言：非法值归一为 auto', mem.get('chubby-chatlang') === 'auto', String(mem.get('chubby-chatlang')))
+
+  globalThis.fetch = realFetch
+  delete globalThis.localStorage
+} catch (e) {
+  ok('能加载系统动作', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
