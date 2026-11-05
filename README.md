@@ -175,10 +175,14 @@ Key 读取优先级：`config.json` → 专属环境变量（`CHUBBY_WHALE_DEEPS
 
 ```
 npm install
-npm run build      # tsc + esbuild → dist/
+npm run build      # 生成版本号 + tsc + 客户端 tsc + esbuild → dist/
+npm test           # 导入规则/模块边界/诊断键/文字体检/单测/两端冒烟/判停基准
+node tools/tts-bench.mjs           # TTS 耗时实测（对运行中的实例）
+node tools/voice-bench.mjs --chat  # 语音链路测点（--chat 会花少量额度）
 ```
 
 `src/client.ts` 由 esbuild 单独打包成 IIFE（tsconfig 里 exclude），其余模块走 tsc。
+宿主侧改动要重启 dsh web 才生效，客户端改完 `Ctrl+F5` 即可；待生效清单见 `docs/待重启生效.md`。
 ## 数据热更新（改内容不用重启）
 
 `data/story/*.json`、`data/culture/*.json`、`data/poems.json` 都按**文件修改时间**自动失效：
