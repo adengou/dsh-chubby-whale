@@ -1224,6 +1224,122 @@ try {
   ok('能加载提醒路由', false, String(e.message))
 }
 
+
+// ---------- ㉗ 流式聊天：SSE 事件 / 缓存 / 中断不落盘 ----------
+console.log('\n[27] 流式聊天 host/routes/chat-stream.ts')
+try {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-stream-test-'))
+  const { createCache } = await import('../src/host/cache.ts')
+  const { createChatStreamHandler } = await import('../src/host/routes/chat-stream.ts')
+  const cache = createCache({ dir, memBytes: 2 * 1024 * 1024 })
+
+  const mkSse = (pieces) => pieces.map((p) => 'data: ' + JSON.stringify({ choices: [{ delta: { content: p } }] }) + '\n\n').join('') + 'data: [DONE]\n\n'
+  let mode = { kind: 'ok', pieces: ['你好', '呀'] }
+  const fetchCalls = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    fetchCalls.push({ url, body: init && init.body })
+    if (mode.kind === 'throw') { const e = new Error('aborted'); e.name = 'AbortError'; throw e }
+    if (mode.kind === 'http500') return new Response('busy', { status: 500 })
+    return new Response(mkSse(mode.pieces), { status: 200, headers: { 'content-type': 'text/event-stream' } })
+  }
+
+  const appended = []
+  const tokens = []
+  const mkReq = (body) => {
+    const buf = Buffer.from(JSON.stringify(body))
+    return { method: 'POST', url: '/api/chubby-whale/chat-stream', headers: {}, destroy() { }, on() { }, resume() { }, async *[Symbol.asyncIterator]() { yield buf } }
+  }
+  const mkRes = () => {
+    const out = { code: 200, chunks: [], closed: false }
+    out.writeHead = (c) => { out.code = c }
+    out.write = (b) => { out.chunks.push(String(b)); return true }
+    out.end = (b) => { if (b) out.chunks.push(String(b)); out.writableEnded = true }
+    out.on = (ev, cb) => { if (ev === 'close') out.onClose = cb }
+    out.flushHeaders = () => { }
+    out.setHeader = () => { }
+    out.raw = () => out.chunks.join('')
+    out.events = () => out.raw().split('\n\n').filter((x) => x.indexOf('data: ') === 0).map((x) => { try { return JSON.parse(x.slice(6)) } catch (e) { return null } }).filter(Boolean)
+    return out
+  }
+  const deps = {
+    getKey: () => 'k',
+    loadHistory: () => [],
+    appendTurns: (u, r) => { appended.push([u, r]) },
+    systemPrompt: 'SYS',
+    addTokens: (kind, n) => { tokens.push([kind, n]) },
+    cache,
+    loadMemorySummary: () => '',
+    model: 'deepseek-flash',
+  }
+
+  // ① 正常流：逐段 delta + done；记忆写回
+  appended.length = 0
+  fetchCalls.length = 0
+  let res = mkRes()
+  await createChatStreamHandler(deps)(mkReq({ message: '主人今天好吗' }), res)
+  const ev1 = res.events()
+  const deltas = ev1.filter((e) => typeof e.delta === 'string').map((e) => e.delta)
+  const done1 = ev1.find((e) => e.done)
+  ok('正常流逐段推送 delta', deltas.join('') === '你好呀', deltas.join('|'))
+  ok('结束事件带完整回复', !!done1 && done1.reply === '你好呀' && done1.cached !== true)
+  ok('记忆写回一轮', appended.length === 1 && appended[0][1] === '你好呀')
+
+  // ② 同问题第二次：命中缓存，不再请求上游
+  appended.length = 0
+  fetchCalls.length = 0
+  res = mkRes()
+  await createChatStreamHandler(deps)(mkReq({ message: '主人今天好吗' }), res)
+  const ev2 = res.events()
+  const done2 = ev2.find((e) => e.done)
+  ok('第二次命中缓存（fetch 0 次）', fetchCalls.length === 0 && done2 && done2.cached === true, 'fetch=' + fetchCalls.length)
+  ok('缓存命中时 delta 一次性给出', ev2.filter((e) => typeof e.delta === 'string').map((e) => e.delta).join('') === '你好呀')
+
+  // ③ 空消息 → SSE error，不请求上游
+  fetchCalls.length = 0
+  res = mkRes()
+  await createChatStreamHandler(deps)(mkReq({ message: '   ' }), res)
+  ok('空消息 → error empty message', res.events().some((e) => e.error === 'empty message') && fetchCalls.length === 0)
+
+  // ④ 没有密钥 → error NO_KEY
+  const noKey = { ...deps, getKey: () => '' }
+  res = mkRes()
+  await createChatStreamHandler(noKey)(mkReq({ message: '在吗在吗在吗' }), res)
+  ok('没有密钥 → error NO_KEY', res.events().some((e) => e.error === 'NO_KEY'))
+
+  // ⑤ 上游 HTTP 500 → error HTTP 500，且不写记忆
+  appended.length = 0
+  mode = { kind: 'http500' }
+  res = mkRes()
+  await createChatStreamHandler(deps)(mkReq({ message: '另一句话试试' }), res)
+  ok('上游 500 → error HTTP 500', res.events().some((e) => /HTTP 500/.test(String(e.error))), JSON.stringify(res.events().slice(-1)))
+  ok('失败不写记忆', appended.length === 0)
+
+  // ⑥ 连接被中止 → error connect，且不写缓存/记忆
+  appended.length = 0
+  mode = { kind: 'throw' }
+  res = mkRes()
+  await createChatStreamHandler(deps)(mkReq({ message: '第三句话试试' }), res)
+  ok('上游中止 → error connect', res.events().some((e) => /connect/.test(String(e.error))), JSON.stringify(res.events().slice(-1)))
+  ok('中止不写记忆', appended.length === 0)
+  mode = { kind: 'ok', pieces: ['你好', '呀'] }
+
+  // ⑦ 短消息（<6 字、非语音）不缓存：两次都请求
+  fetchCalls.length = 0
+  const h = createChatStreamHandler(deps)
+  let r1 = mkRes(); await h(mkReq({ message: '在呢' }), r1)
+  let r2 = mkRes(); await h(mkReq({ message: '在呢' }), r2)
+  ok('短消息不缓存（两次都请求）', fetchCalls.length === 2, 'fetch=' + fetchCalls.length)
+
+  globalThis.fetch = realFetch
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载流式聊天路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
