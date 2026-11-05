@@ -3,7 +3,7 @@
  * 只依赖注入的读取器（load*）与动作（feedPet/clearMemory/…），不直接摸 store/cache 实现。
  */
 import { readFile } from 'node:fs/promises'
-import { growthStage } from '../store.js'
+import { growthStage } from '../../shared/growth.js'
 import { fetchJson, isTimeoutError } from '../http.js'
 import { sendJson, sendText, sendError, sendBuffer } from '../respond.js'
 

@@ -16,7 +16,7 @@
  *
  * 数据全部来自现有 store / cache / 人格仓储的读取器，不新增任何持久化文件，也不写盘。
  */
-import { growthStage } from '../store.js';
+import { growthStage } from '../../shared/growth.js';
 import { sendJson, sendError } from '../respond.js';
 /** 非负整数（NaN/负数/小数一律归零或取整，展示用不需要负值） */
 function count(value) {

@@ -6,31 +6,17 @@
  */
 import { readFileSync } from 'node:fs';
 import { deepFreeze } from '../../shared/immutable.js';
+import { GROWTH_STAGES, growthStage } from '../../shared/growth.js';
 import { join } from 'node:path';
 import { writeJsonAtomic, isMissingFileError, quarantineFile } from '../atomic.js';
-export const GROWTH_STAGES = [
-    { exp: 0, name: '初识' },
-    { exp: 200, name: '熟悉' },
-    { exp: 800, name: '亲密' },
-    { exp: 2500, name: '知心' },
-    { exp: 5000, name: '家人' },
-];
-deepFreeze(GROWTH_STAGES);
+// 阶段表与"经验→阶段"规则在 shared/growth.ts（纯函数，路由也能直接用）
+export { GROWTH_STAGES, growthStage };
 /** 每天最多涨 12 点经验（照 C# Growth.DailyCap） */
 export const EXP_DAILY_CAP = 12;
 /** 各来源的每日上限（照 C# Growth.SourceCap；未知来源按 3） */
 export const EXP_SOURCE_CAP = { chat: 5, praise: 6, feed: 6, story: 4, company: 6 };
 deepFreeze(EXP_SOURCE_CAP);
 export const EXP_SOURCE_DEFAULT_CAP = 3;
-export function growthStage(exp) {
-    let idx = 0;
-    for (let i = 0; i < GROWTH_STAGES.length; i++) {
-        if (exp >= GROWTH_STAGES[i].exp)
-            idx = i;
-    }
-    const next = idx + 1 < GROWTH_STAGES.length ? GROWTH_STAGES[idx + 1].exp : 0;
-    return { index: idx, name: GROWTH_STAGES[idx].name, nextExp: next };
-}
 /** 今天（本地时区）的 'YYYY-MM-DD'，跨天判断用 */
 function todayKey() {
     const d = new Date();

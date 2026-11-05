@@ -1411,6 +1411,56 @@ try {
   ok('能加载文化路由', false, String(e.message))
 }
 
+
+// ---------- ㉙ 今日简报 + 成长阶段规则 ----------
+console.log('\n[29] 今日简报 host/routes/briefing.ts + shared/growth.ts')
+try {
+  const { createBriefingHandlers } = await import('../src/host/routes/briefing.ts')
+  const growth = await import('../src/shared/growth.ts')
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.json = () => { try { return JSON.parse(Buffer.concat(out.chunks).toString('utf8')) } catch (e) { return null } }
+    return out
+  }
+  const realFetch = globalThis.fetch
+  let weather = { ok: true, body: '晴 +18°C' }
+  globalThis.fetch = async () => ({ ok: weather.ok, status: weather.ok ? 200 : 500, text: async () => weather.body })
+
+  const handlers = createBriefingHandlers({
+    loadGrowth: () => ({ exp: 200 }),
+    loadReminders: () => [{ done: false }, { done: true }, { done: false }],
+  })
+  let res = mkRes()
+  await handlers.handleBriefing({ url: '/api/chubby-whale/briefing' }, res)
+  const b = res.json()
+  ok('简报 ok 且有文本', b.ok === true && typeof b.text === 'string' && b.text.length > 0)
+  ok('简报含日期/星期', /星期[日一二三四五六]/.test(b.text), b.text.split('\n')[0])
+  ok('简报含天气', b.text.indexOf('北海天气：晴 +18°C') >= 0)
+  ok('简报含成长阶段（exp=200 → 熟悉）', b.text.indexOf('肥鲸成长：熟悉（200）') >= 0)
+  ok('简报只数未完成提醒（2 条）', b.text.indexOf('待办提醒：2 条') >= 0)
+
+  // 天气失败：简报仍要出（日期/成长/提醒不能陪葬）
+  weather = { ok: false, body: '' }
+  res = mkRes()
+  await handlers.handleBriefing({ url: '/api/chubby-whale/briefing' }, res)
+  const b2 = res.json()
+  ok('天气失败仍返回简报', b2.ok === true && b2.text.indexOf('北海天气') < 0 && /星期[日一二三四五六]/.test(b2.text))
+  weather = { ok: true, body: '晴 +18°C' }
+  globalThis.fetch = realFetch
+
+  // 成长阶段规则（纯函数）
+  ok('exp=0 → 初识，下一门槛 200', growth.growthStage(0).name === '初识' && growth.growthStage(0).nextExp === 200)
+  ok('exp=199 → 初识，下一门槛 200', growth.growthStage(199).name === '初识' && growth.growthStage(199).nextExp === 200)
+  ok('exp=200 → 熟悉', growth.growthStage(200).name === '熟悉')
+  ok('exp=99999 → 家人，无下一门槛', growth.growthStage(99999).name === '家人' && growth.growthStage(99999).nextExp === 0)
+  ok('阶段表共 5 档且被冻结', growth.GROWTH_STAGES.length === 5 && Object.isFrozen(growth.GROWTH_STAGES))
+} catch (e) {
+  ok('能加载简报路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

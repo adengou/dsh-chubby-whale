@@ -96,6 +96,19 @@ function checkFile(file) {
     if (here === 'shared' && target) violations.push(`B2 ${rel}:${i + 1} 公共层反向依赖上层：${spec}`)
   }
 
+  // B6 路由层不直接摸实现：routes/** 只能依赖 respond/body/http/ports/shared/data 纯函数，
+  //    要拿数据一律走注入的端口（否则改实现就会波及路由）
+  if (rel.includes('/host/routes/')) {
+    const forbiddenRoutes = ["'../store.js'", "'../repos/", "'../story/repo.js'", "'../cache.js'"]
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/from '([^']+)'/)
+      if (!m) continue
+      if (forbiddenRoutes.some((f) => m[1].indexOf(f) === 0)) {
+        violations.push(`B6 ${rel}:${i + 1} 路由直接依赖实现（应走注入端口）：${m[1]}`)
+      }
+    }
+  }
+
   // B5 端口层零反依赖：host/ports.ts 只能引用 shared/ 或自身类型，不许 import 具体实现
   if (rel.endsWith('host/ports.ts')) {
     const forbidden = ["'./tts-engine.js'", "'./store.js'", "'./data/", "'./repos/", "'./routes/", "'./story/", "'./personality"]
