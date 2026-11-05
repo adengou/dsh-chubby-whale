@@ -2460,6 +2460,94 @@ try {
   ok('能加载拖入文件模块', false, String(e.message))
 }
 
+
+// ---------- ㊻ 备份/导出/导入（客户端侧） ----------
+console.log('\n[46] 备份数据 client/actions/data.ts')
+try {
+  const data = await import('../src/client/actions/data.ts')
+
+  ok('备份文件名按本地日期', data.backupFileName(new Date(2026, 10, 6)) === 'chubby-whale-backup-2026-11-06.json', data.backupFileName(new Date(2026, 10, 6)))
+  ok('非法日期回落今天', /^chubby-whale-backup-\d{4}-\d{2}-\d{2}\.json$/.test(data.backupFileName(new Date('x'))))
+
+  ok('countOf 数字', data.countOf(3) === 3 && data.countOf(Number.NaN) === 0)
+  ok('countOf 数组取长度', data.countOf(['a', 'b']) === 2 && data.countOf([]) === 0)
+  ok('countOf 对象逐项求和', data.countOf({ a: 1, b: [1, 2], c: '3' }) === 6, String(data.countOf({ a: 1, b: [1, 2], c: '3' })))
+  ok('countOf 布尔/空返回 0', data.countOf(true) === 0 && data.countOf(null) === 0)
+
+  ok('导入结果：数组按字段数', data.formatImportResult({ ok: true, imported: ['a', 'b'], skipped: ['c'] }) === '导入了 2 个字段，跳过 1 个字段')
+  ok('导入结果：兼容 importedCount', data.formatImportResult({ importedCount: 2, skippedCount: 3 }) === '导入了 2 个字段，跳过 3 个字段')
+  ok('导入结果：空对象给 0/0', data.formatImportResult({}) === '导入了 0 个字段，跳过 0 个字段')
+
+  const stats = data.formatStats({
+    ok: true,
+    cache: { tts: 150, chat: 6, asr: 849 },
+    fishfood: { total: 327768 },
+    growth: { stage: '熟悉' },
+    intimacy: 100,
+    personality: { catchphrases: ['哼'], preferences: ['白饭'], notes: '备注', selfNarrative: '最近想吃鱼' },
+  })
+  ok('统计卡：缓存三行', stats.indexOf('tts 150 条｜chat 6 条｜asr 849 条') >= 0, stats.split('\n')[1])
+  ok('统计卡：鱼粮与成长', stats.indexOf('鱼粮：327768 tokens') >= 0 && stats.indexOf('成长：熟悉｜亲密度 100/100') >= 0)
+  ok('统计卡：人格要点最多三条', stats.split('人格要点：')[1].split('；').length === 3)
+  const emptyStats = data.formatStats(null)
+  ok('统计卡：空数据不崩', emptyStats.indexOf('tts 0 条') >= 0 && emptyStats.indexOf('成长：--') >= 0 && emptyStats.indexOf('人格要点：暂无') >= 0)
+
+  // downloadJson：注入假 document/URL/Blob，验证真的触发下载并清理
+  const events = []
+  const anchorEl = { style: {}, href: '', download: '', setAttribute() { }, click() { events.push('click') }, remove() { events.push('remove') } }
+  const parentEl = { appendChild(el) { events.push('append'); this.child = el }, removeChild() { events.push('removeChild') } }
+  const fakeDoc = { createElement: () => anchorEl, body: parentEl }
+  const fakeURL = { createObjectURL: () => { events.push('url'); return 'blob:x' }, revokeObjectURL: () => { events.push('revoke') } }
+  class FakeBlob { constructor(parts, opts) { this.parts = parts; this.opts = opts } }
+  ok('downloadJson 触发下载', data.downloadJson({ a: 1 }, 'x.json', { document: fakeDoc, url: fakeURL, BlobCtor: FakeBlob }) === true)
+  ok('downloadJson：节点挂上并点击', events.indexOf('append') >= 0 && events.indexOf('click') >= 0 && anchorEl.download === 'x.json')
+  await new Promise((r) => setTimeout(r, 10))
+  // 清理走 parent.removeChild（有父节点时）或 a.remove()（没有父节点时），两者都算过
+  ok('downloadJson：下载后清理（节点/URL）', (events.indexOf('remove') >= 0 || events.indexOf('removeChild') >= 0) && events.indexOf('revoke') >= 0, events.join(','))
+  ok('downloadJson：环境不具备返回 false', data.downloadJson({}, 'x.json', { document: null, url: fakeURL, BlobCtor: FakeBlob }) === false)
+
+  // readFileText / parseImportText
+  ok('读文件：File.text()', (await data.readFileText({ text: async () => 'abc' })) === 'abc')
+  let frRejected = ''
+  try { await data.readFileText(null) } catch (e) { frRejected = String(e.message) }
+  ok('读文件：没有文件会 reject', frRejected === 'no file')
+  ok('解析备份：对象/数组都收', JSON.stringify(data.parseImportText('{"a":1}')) === '{"a":1}' && Array.isArray(data.parseImportText('[1,2]')))
+  ok('解析备份：坏内容返回 null', data.parseImportText('不是 json') === null && data.parseImportText('') === null && data.parseImportText('null') === null && data.parseImportText('"str"') === null)
+
+  // exportBackup / importBackup 流程（注入宿主能力）
+  const bubbles = []
+  const env = { document: fakeDoc, url: fakeURL, BlobCtor: FakeBlob }
+  const host = { bubble: (t) => bubbles.push(t), getJson: async () => ({ ok: true, state: { intimacy: 100 } }), postJson: async () => ({ ok: true, imported: ['state', 'growth'], skipped: ['cache'] }), env, now: () => new Date(2026, 10, 6) }
+  data.exportBackup(host)
+  await new Promise((r) => setTimeout(r, 30))
+  ok('导出：提示下载的文件名', bubbles.some((b) => b === '备份已下载：chubby-whale-backup-2026-11-06.json'), bubbles.join(' | '))
+
+  bubbles.length = 0
+  const hostFail = { bubble: (t) => bubbles.push(t), getJson: async () => ({ ok: false }) }
+  data.exportBackup(hostFail)
+  await new Promise((r) => setTimeout(r, 30))
+  ok('导出失败：只轻提示', bubbles[0] === '导出没成功')
+
+  bubbles.length = 0
+  data.importBackup({ bubble: (t) => bubbles.push(t), pickFile: (cb) => cb(null), postJson: async () => ({}) })
+  await new Promise((r) => setTimeout(r, 20))
+  ok('导入：取消选择 → 轻提示', bubbles[0] === '没选备份文件')
+
+  bubbles.length = 0
+  const goodFile = { text: async () => JSON.stringify({ state: { intimacy: 1 } }) }
+  data.importBackup({ bubble: (t) => bubbles.push(t), pickFile: (cb) => cb(goodFile), postJson: async () => ({ ok: true, imported: ['state', 'growth'], skipped: ['cache'] }) })
+  await new Promise((r) => setTimeout(r, 30))
+  ok('导入：报告字段数', bubbles.some((b) => b === '导入了 2 个字段，跳过 1 个字段'), bubbles.join(' | '))
+
+  bubbles.length = 0
+  const badFile = { text: async () => '不是 json' }
+  data.importBackup({ bubble: (t) => bubbles.push(t), pickFile: (cb) => cb(badFile), postJson: async () => ({}) })
+  await new Promise((r) => setTimeout(r, 30))
+  ok('导入：坏文件 → 读不了', bubbles[0] === '备份文件读不了')
+} catch (e) {
+  ok('能加载备份数据模块', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
