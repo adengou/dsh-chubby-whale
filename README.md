@@ -1,5 +1,9 @@
 # dsh-chubby-whale（肥鲸）
 
+[![npm](https://img.shields.io/npm/v/dsh-chubby-whale.svg)](https://www.npmjs.com/package/dsh-chubby-whale)
+[![license](https://img.shields.io/npm/l/dsh-chubby-whale.svg)](LICENSE)
+[![Gitee](https://gitee.com/adengou/dsh-chubby-whale/badge/star.svg?theme=dark)](https://gitee.com/adengou/dsh-chubby-whale)
+
 DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下角。可拖拽（带惯性、位置记忆）、会眨眼、能说话、能说书念诗弹琴，也能听懂你说话。
 
 | 渠道 | 地址 |
@@ -7,8 +11,10 @@ DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下�
 | 主仓库（GitHub） | <https://github.com/adengou/dsh-chubby-whale> |
 | 镜像（Gitee） | <https://gitee.com/adengou/dsh-chubby-whale> |
 | npm | <https://www.npmjs.com/package/dsh-chubby-whale> |
+| 更新日志 | [CHANGELOG.md](CHANGELOG.md) |
 
 > 语音待命的信号处理设计与调参：见 [docs/耳朵算法.md](docs/耳朵算法.md)
+> 发版与三仓库对齐流程：见 [docs/发布流程.md](docs/发布流程.md)
 
 ## 安装（三种来源任选）
 
