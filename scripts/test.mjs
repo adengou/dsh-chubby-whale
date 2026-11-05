@@ -2662,6 +2662,35 @@ try {
   ok('能加载 intent.ts（诗名劫持用例）', false, String(e.message))
 }
 
+
+// ---------- ㊿ 书名/成语误劫持（与诗名同一类问题） ----------
+console.log('\n[50] 书名/成语误劫持 client/intent.ts')
+try {
+  const it = await import('../src/client/intent.ts')
+  const shouldPassToModel = ['我小时候看过西游记', '红楼梦里林黛玉', '水浒传真好看', '三国演义很好看', '成语接龙']
+  const leaked = shouldPassToModel.filter((t) => it.detectIntent(t) !== null)
+  ok('普通陈述不被书名/成语劫持', leaked.length === 0, leaked.join(' / '))
+
+  const stillWorks = [
+    ['讲个西游记', '西游记'], ['讲讲三国', '三国演义'], ['来段水浒', '水浒传'],
+    ['三国', '三国演义'], ['红楼梦', '红楼梦'], ['说书', ''],
+  ]
+  const bad = []
+  for (const [text, book] of stillWorks) {
+    const r = it.detectIntent(text)
+    if (!r || r.kind !== 'story') bad.push(text + ' 没识别为说书')
+    else if (r.book !== book) bad.push(text + ' → ' + r.book + '（应为 ' + book + '）')
+  }
+  ok('书名点播仍然有效', bad.length === 0, bad.join(' / '))
+
+  ok('成语点播仍然有效', (() => {
+    const a = it.detectIntent('讲个成语'); const b = it.detectIntent('来个典故'); const c = it.detectIntent('今天学个成语')
+    return a && a.kind === 'culture' && a.sub === 'chengyu' && b && b.kind === 'culture' && b.sub === 'idiom' && c && c.kind === 'culture'
+  })())
+} catch (e) {
+  ok('能加载 intent.ts（书名/成语用例）', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

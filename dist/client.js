@@ -4892,7 +4892,10 @@
       if (asks) return { kind: "poem", title: byTitle };
     }
     if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) return { kind: "poem" };
-    if (/典故|成语/.test(t)) return { kind: "culture", sub: /成语/.test(t) ? "chengyu" : "idiom" };
+    if (/典故|成语/.test(t)) {
+      const asksCulture = /讲|说|来|听|教|学|点|考/.test(t);
+      if (asksCulture) return { kind: "culture", sub: /成语/.test(t) ? "chengyu" : "idiom" };
+    }
     let book = "";
     for (const [re, name] of BOOK_ALIAS) {
       if (re.test(t)) {
@@ -4900,7 +4903,11 @@
         break;
       }
     }
-    if (book) return { kind: "story", book };
+    if (book) {
+      const bare = t.replace(/[\s。，！？、,.!?…~～]/g, "");
+      const asksBook = /讲|说书|听|来(一)?段|来(一)?回/.test(t) || bare.length <= book.length + 1;
+      if (asksBook) return { kind: "story", book };
+    }
     if (/讲故事|讲个故事|说书|来段|讲一段/.test(t)) return { kind: "story", book: "" };
     return null;
   }

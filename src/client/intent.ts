@@ -78,13 +78,22 @@ export function detectIntent(rawText: string): Intent {
   // ② 念诗 / 背诗
   if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) return { kind: 'poem' }
 
-  // ③ 典故 / 成语
-  if (/典故|成语/.test(t)) return { kind: 'culture', sub: /成语/.test(t) ? 'chengyu' : 'idiom' }
+  // ③ 典故 / 成语：同样要有"点播证据"（"成语接龙"不是让我讲典故）
+  if (/典故|成语/.test(t)) {
+    const asksCulture = /讲|说|来|听|教|学|点|考/.test(t)
+    if (asksCulture) return { kind: 'culture', sub: /成语/.test(t) ? 'chengyu' : 'idiom' }
+  }
 
   // ④ 讲故事 / 说书（可带书名）
+  //    书名同样是"日常词"（西游/水浒/红楼/三国…），"我小时候看过西游记"不是点播。
+  //    要么有讲故事动词，要么整句就是书名（"红楼梦"这种直接报书名）。
   let book = ''
   for (const [re, name] of BOOK_ALIAS) { if (re.test(t)) { book = name; break } }
-  if (book) return { kind: 'story', book }
+  if (book) {
+    const bare = t.replace(/[\s。，！？、,.!?…~～]/g, '')
+    const asksBook = /讲|说书|听|来(一)?段|来(一)?回/.test(t) || bare.length <= book.length + 1
+    if (asksBook) return { kind: 'story', book }
+  }
   if (/讲故事|讲个故事|说书|来段|讲一段/.test(t)) return { kind: 'story', book: '' }
   return null
 }
