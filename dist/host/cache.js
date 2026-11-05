@@ -182,7 +182,10 @@ export function createCache(opts) {
             }
             await prune();
         }
-        catch { }
+        catch (err) {
+            // 缓存写失败不能静默：磁盘满/权限问题只留内存状态，事后根本查不出来
+            console.error('[cache] WRITE-FAIL key=' + key + ' err=' + String(err?.message || err));
+        }
     }
     /** 文件太多时按 mtime 删最旧的一半；只 stat，不读内容 */
     /** prune 节流：每次写都全量 readdir+stat 会把磁盘扫描串进回复延迟，30 秒最多扫一次 */

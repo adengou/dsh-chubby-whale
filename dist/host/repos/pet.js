@@ -25,7 +25,9 @@ export function createPetRepo(dataDir) {
         try {
             writeJsonAtomic(PET, obj);
         }
-        catch { }
+        catch (err) {
+            console.error('[store] WRITE-FAIL ' + String(PET) + ' err=' + String(err?.message || err));
+        }
     }
     function tickPet() {
         const p = loadPet();

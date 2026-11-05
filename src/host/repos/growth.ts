@@ -61,7 +61,7 @@ export function createGrowthRepo(dataDir: string): GrowthRepo {
     return { exp: 0 }
   }
   function saveGrowth(obj: any): void {
-    try { writeJsonAtomic(GROWTH, obj) } catch { }
+    try { writeJsonAtomic(GROWTH, obj) } catch (err: any) { console.error('[store] WRITE-FAIL ' + String(GROWTH) + ' err=' + String(err?.message || err)) }
   }
   function addExp(amount: number, source?: string): { exp: number; stage: any; upgraded: boolean; prevStage: any; capped: boolean } {
     const g = loadGrowth()

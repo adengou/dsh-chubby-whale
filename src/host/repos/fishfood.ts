@@ -27,7 +27,7 @@ export function createTokenRepo(dataDir: string): TokenRepo {
     return { chatTokens: 0, storyTokens: 0 }
   }
   function saveFishfood(obj: any): void {
-    try { writeJsonAtomic(FISHFOOD, obj) } catch { }
+    try { writeJsonAtomic(FISHFOOD, obj) } catch (err: any) { console.error('[store] WRITE-FAIL ' + String(FISHFOOD) + ' err=' + String(err?.message || err)) }
   }
   /** 跨天/跨月把"今日/本月"清零（总量 totalTokens 不动，照 C# 的 date/month 滚动） */
   function rollFishfood(f: any): void {

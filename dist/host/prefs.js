@@ -27,7 +27,9 @@ export function createPrefs(runtimeDir) {
         try {
             writeJsonAtomic(PREFS_FILE, p);
         }
-        catch { }
+        catch (err) {
+            console.error('[prefs] WRITE-FAIL ' + String(PREFS_FILE) + ' err=' + String(err?.message || err));
+        }
     }
     const chatCacheEnabled = () => {
         try {

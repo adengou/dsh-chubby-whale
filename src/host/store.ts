@@ -49,7 +49,7 @@ export function createStore(dataDir: string) {
     }
   }
   function saveStoryProgress(obj: any): void {
-    try { writeJsonAtomic(STORY_PROGRESS, obj) } catch { }
+    try { writeJsonAtomic(STORY_PROGRESS, obj) } catch (err: any) { console.error('[store] WRITE-FAIL ' + String(STORY_PROGRESS) + ' err=' + String(err?.message || err)) }
   }
 
   return {

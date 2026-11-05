@@ -24,7 +24,9 @@ export function createTokenRepo(dataDir) {
         try {
             writeJsonAtomic(FISHFOOD, obj);
         }
-        catch { }
+        catch (err) {
+            console.error('[store] WRITE-FAIL ' + String(FISHFOOD) + ' err=' + String(err?.message || err));
+        }
     }
     /** 跨天/跨月把"今日/本月"清零（总量 totalTokens 不动，照 C# 的 date/month 滚动） */
     function rollFishfood(f) {

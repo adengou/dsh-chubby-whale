@@ -30,7 +30,7 @@ export function createPetRepo(dataDir: string): PetRepo {
     return { feeds: 0, hunger: 0, mood: 'normal', lastSeen: 0 }
   }
   function savePet(obj: any): void {
-    try { writeJsonAtomic(PET, obj) } catch { }
+    try { writeJsonAtomic(PET, obj) } catch (err: any) { console.error('[store] WRITE-FAIL ' + String(PET) + ' err=' + String(err?.message || err)) }
   }
   function tickPet(): any {
     const p = loadPet()

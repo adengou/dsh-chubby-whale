@@ -25,7 +25,9 @@ export function createReminderRepo(dataDir) {
         try {
             writeJsonAtomic(REMINDERS, arr);
         }
-        catch { }
+        catch (err) {
+            console.error('[store] WRITE-FAIL ' + String(REMINDERS) + ' err=' + String(err?.message || err));
+        }
     }
     function addReminder(text, at, repeat) {
         const arr = loadReminders();

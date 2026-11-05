@@ -23,7 +23,9 @@ export function createStateRepo(dataDir) {
         try {
             writeJsonAtomic(STATE, obj);
         }
-        catch { }
+        catch (err) {
+            console.error('[store] WRITE-FAIL ' + String(STATE) + ' err=' + String(err?.message || err));
+        }
     }
     return { loadState, saveState };
 }

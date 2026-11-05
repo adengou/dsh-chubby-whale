@@ -35,7 +35,7 @@ export function createPrefs(runtimeDir: string): PrefsRepo {
   }
   function save(p: PrefsData): void {
     // 原子写：写坏一次就整份偏好丢失（与 store 同一套工具）
-    try { writeJsonAtomic(PREFS_FILE, p) } catch { }
+    try { writeJsonAtomic(PREFS_FILE, p) } catch (err: any) { console.error('[prefs] WRITE-FAIL ' + String(PREFS_FILE) + ' err=' + String(err?.message || err)) }
   }
   const chatCacheEnabled = (): boolean => {
     try { return load().chatCache !== false } catch { return true }

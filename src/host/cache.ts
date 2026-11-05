@@ -142,7 +142,10 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
       else await writeFile(tmp, value)
       try { await rename(tmp, target) } catch (e) { try { await unlink(tmp) } catch { } ; throw e }
       await prune()
-    } catch { }
+    } catch (err: any) {
+      // 缓存写失败不能静默：磁盘满/权限问题只留内存状态，事后根本查不出来
+      console.error('[cache] WRITE-FAIL key=' + key + ' err=' + String(err?.message || err))
+    }
   }
 
   /** 文件太多时按 mtime 删最旧的一半；只 stat，不读内容 */

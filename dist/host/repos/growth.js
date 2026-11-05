@@ -56,7 +56,9 @@ export function createGrowthRepo(dataDir) {
         try {
             writeJsonAtomic(GROWTH, obj);
         }
-        catch { }
+        catch (err) {
+            console.error('[store] WRITE-FAIL ' + String(GROWTH) + ' err=' + String(err?.message || err));
+        }
     }
     function addExp(amount, source) {
         const g = loadGrowth();

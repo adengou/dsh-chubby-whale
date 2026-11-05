@@ -30,7 +30,7 @@ export function createReminderRepo(dataDir: string): ReminderRepo {
     return []
   }
   function saveReminders(arr: any[]): void {
-    try { writeJsonAtomic(REMINDERS, arr) } catch { }
+    try { writeJsonAtomic(REMINDERS, arr) } catch (err: any) { console.error('[store] WRITE-FAIL ' + String(REMINDERS) + ' err=' + String(err?.message || err)) }
   }
   function addReminder(text: string, at: string, repeat?: number): any {
     const arr = loadReminders()

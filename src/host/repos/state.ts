@@ -24,7 +24,7 @@ export function createStateRepo(dataDir: string): StateRepo {
     return { intimacy: 0 }
   }
   function saveState(obj: any): void {
-    try { writeJsonAtomic(STATE, obj) } catch { }
+    try { writeJsonAtomic(STATE, obj) } catch (err: any) { console.error('[store] WRITE-FAIL ' + String(STATE) + ' err=' + String(err?.message || err)) }
   }
 
   return { loadState, saveState }
