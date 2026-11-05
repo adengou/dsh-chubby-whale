@@ -1671,6 +1671,77 @@ try {
   ok('能加载人格路由', false, String(e.message))
 }
 
+
+// ---------- ㉝ 本地数据源：读盘 / 归一化 / 坏文件兜底 ----------
+console.log('\n[33] 本地数据源 host/data/local.ts')
+try {
+  const { mkdtempSync, writeFileSync: wf, mkdirSync, rmSync, utimesSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-local-test-'))
+  mkdirSync(join(dir, 'culture'), { recursive: true })
+  // 注意：本地诗词文件是 {poems:[…]}（不是 {items}），与 data/poems.json 真实结构一致
+  wf(join(dir, 'poems.json'), JSON.stringify({ poems: [
+    { title: '静夜思', author: '李白', dynasty: '唐', lines: ['床前明月光', '疑是地上霜'] },
+    { title: '静夜思', author: '李白', dynasty: '唐', lines: ['床前明月光'] },
+    { title: '', lines: ['垃圾条目'] },
+    { title: '无句子', lines: [] },
+  ] }))
+  wf(join(dir, 'culture', 'chengyu.json'), JSON.stringify([{ name: '一鼓作气', src: '左传', text: '振作士气' }]))
+  wf(join(dir, 'culture', 'idioms.json'), JSON.stringify({ items: [{ name: '七月流火', mean: '天气转凉', wrong: '天气炎热' }] }))
+  wf(join(dir, 'culture', 'minsu.json'), 'not-json')  // 坏文件
+  wf(join(dir, 'duilian.json'), JSON.stringify({ items: [{ upper: '风声雨声读书声', lower: '家事国事天下事' }] }))
+  wf(join(dir, 'daily.json'), JSON.stringify({ items: [{ date: '2026-11-06', text: '本地每日一句' }] }))
+
+  const story = {
+    listBooks: async () => ['聊斋'],
+    loadBook: async (b) => (b === '聊斋' ? [{ book: '聊斋', title: '画皮', piece: 1, total: 1, text: '故事', index: 0 }] : []),
+  }
+  const { createLocalDataPort } = await import('../src/host/data/local.ts')
+  const port = createLocalDataPort({ dataDir: dir, story })
+
+  const poems = await port.readPoemsChunk(0)
+  ok('诗词：归一化 + 去重（重复项/空标题/空句子都丢掉）', poems.items.length === 1 && poems.items[0].title === '静夜思', 'items=' + poems.items.length)
+  ok('诗词：本地只有第 0 片', poems.index === 0 && poems.total === 1)
+  const poems1 = await port.readPoemsChunk(3)
+  ok('诗词：其它片返回空（不回退重复喂）', poems1.items.length === 0 && poems1.total === 1)
+
+  const cy = await port.readCulture('chengyu')
+  ok('文化：成语（数组文件）', cy.length === 1 && cy[0].name === '一鼓作气')
+  const id = await port.readCulture('idiom')
+  ok('文化：成语辨析（{items} 文件）', id.length === 1 && id[0].wrong === '天气炎热')
+  const ms = await port.readCulture('minsu')
+  ok('文化：坏 JSON → 空数组且不抛', Array.isArray(ms) && ms.length === 0)
+
+  const dui = await port.readDuilian()
+  ok('对联：归一化', dui.items.length === 1 && dui.items[0].lower.indexOf('家事') === 0)
+  const daily = await port.readDaily()
+  ok('每日：归一化', daily.length === 1 && daily[0].text === '本地每日一句')
+  const idx = await port.readStoryIndex()
+  ok('书单：来自 story repo', idx.length === 1 && idx[0].book === '聊斋')
+  const book = await port.readStoryBook('聊斋')
+  ok('书：来自 story repo', book.length === 1 && book[0].title === '画皮')
+
+  // mtime 变化 → 缓存失效（改数据不重启）
+  wf(join(dir, 'poems.json'), JSON.stringify({ poems: [{ title: '新诗', author: '某', lines: ['新句'] }] }))
+  const future = new Date(Date.now() + 5000)
+  utimesSync(join(dir, 'poems.json'), future, future)
+  const poems2 = await port.readPoemsChunk(0)
+  ok('改数据后按 mtime 重新读（无需重启）', poems2.items[0].title === '新诗', poems2.items[0].title)
+
+  // 缺文件：都返回空，不抛
+  const emptyDir = mkdtempSync(join(tmpdir(), 'chubby-local-empty-'))
+  const empty = createLocalDataPort({ dataDir: emptyDir, story: { listBooks: async () => [], loadBook: async () => [] } })
+  const ep = await empty.readPoemsChunk(0)
+  const ec = await empty.readCulture('chengyu')
+  const ed = await empty.readDaily()
+  ok('缺文件时诗词/文化/每日都返回空', ep.items.length === 0 && ec.length === 0 && ed.length === 0)
+  rmSync(emptyDir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载本地数据源', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
