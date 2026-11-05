@@ -570,6 +570,37 @@ try {
   ok('能加载路由处理器', false, String(e.message))
 }
 
+
+// ---------- ⑱ 聊天缓存键：该分的分、该同的同 ----------
+console.log('\n[18] 聊天缓存键 chat-core + 语速归一 shared/tts')
+try {
+  const cc = await import('../src/host/chat-core.ts')
+  const base = { lang: 'zh', msg: '你好', isVoice: false, ctx: cc.chatContextFingerprint('记忆摘要A', []), model: 'deepseek-flash' }
+  const k1 = cc.chatCacheKey(base.lang, base.msg, base.isVoice, base.ctx, base.model)
+  const k2 = cc.chatCacheKey(base.lang, base.msg, base.isVoice, base.ctx, base.model)
+  ok('相同输入 → 相同键', k1 === k2)
+  ok('换一句话 → 换键', k1 !== cc.chatCacheKey('zh', '你好呀', false, base.ctx, base.model))
+  ok('换模型 → 换键（防不同模型串答案）', k1 !== cc.chatCacheKey('zh', '你好', false, base.ctx, 'other-model'))
+  ok('换语言 → 换键', k1 !== cc.chatCacheKey('en', '你好', false, base.ctx, base.model))
+  ok('语音/打字 → 换键', k1 !== cc.chatCacheKey('zh', '你好', true, base.ctx, base.model))
+  const otherCtx = cc.chatContextFingerprint('记忆摘要B', [])
+  ok('换记忆摘要 → 换键', k1 !== cc.chatCacheKey('zh', '你好', false, otherCtx, base.model))
+  // 同一句问题、只是历史不同 → 应当命中同一键（这是之前修过的"缓存永不命中"问题）
+  const ctxHistA = cc.chatContextFingerprint('记忆摘要A', [{ role: 'user', content: '上一句' }])
+  const ctxHistB = cc.chatContextFingerprint('记忆摘要A', [{ role: 'user', content: '完全不同的上一句' }])
+  ok('历史不同但摘要相同 → 同键（缓存能命中）', ctxHistA === ctxHistB)
+  // chatCacheKey 返回 hashKey 的摘要（不是带 v3| 前缀的明文），这里只锁"稳定摘要"这一事实
+  ok('键是稳定摘要（16 进制）', /^[0-9a-f]{16,}$/.test(k1), k1.slice(0, 16))
+
+  const t = await import('../src/shared/tts.ts')
+  ok('语速归一：-35% 原样', t.normalizeRate('-35%', '+0%') === '-35%')
+  ok('语速归一：非法值回落默认', t.normalizeRate('abc', '+0%') === '+0%')
+  // 注意：normalizeRate 只校验格式、不做范围夹取（-99% 格式合法就保留）——既有约定
+  ok('语速归一：格式合法就保留（不做范围夹取）', t.normalizeRate('-99%', '+0%') === '-99%', t.normalizeRate('-99%', '+0%'))
+} catch (e) {
+  ok('能加载 chat-core.ts / shared/tts.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
