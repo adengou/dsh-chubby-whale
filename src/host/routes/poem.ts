@@ -75,13 +75,37 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
     } catch { }
   }
 
-  async function handlePoem(_req: any, res: any): Promise<void> {
+  async function handlePoem(req: any, res: any): Promise<void> {
     try {
       const list = loadPoems()
       if (list.length === 0) {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ ok: true, item: null, reason: 'no-data' }))
         return
+      }
+      // 指定标题：按「完整标题 = 」优先，其次「包含」，命中就直接背这一首（不参与随机池）
+      let want = ''
+      try {
+        const u = new URL(String(req?.url || ''), 'http://local')
+        want = String(u.searchParams.get('title') || '').trim()
+      } catch { want = '' }
+      if (want) {
+        const exact = list.filter((p: any) => String(p.title || '').trim() === want)
+        const fuzzy = exact.length ? exact : list.filter((p: any) => String(p.title || '').includes(want))
+        const hit = fuzzy.length ? fuzzy[Math.floor(Math.random() * fuzzy.length)] : null
+        if (hit) {
+          const sn0 = loadSeen()
+          sn0.add(keyOf(hit))
+          saveSeen()
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({
+            ok: true,
+            matched: true,
+            item: { title: hit.title, author: hit.author, dynasty: hit.dynasty, text: hit.lines.join('\n') },
+          }))
+          return
+        }
+        // 没匹配到就回落随机（并告诉客户端 matched:false）
       }
       const sn = loadSeen()
       let pool = list.filter((p: any) => !sn.has(keyOf(p)))

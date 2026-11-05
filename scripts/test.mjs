@@ -178,6 +178,15 @@ try {
   ok('12 条关键词用例', bad.length === 0, bad.slice(0, 3).join(' / '))
   ok('提问不劫持', it.detectIntent('讲个故事吗？') === null && it.detectIntent('为什么天是蓝的') === null)
   ok('超长句不劫持', it.detectIntent('讲故事'.repeat(20)) === null)
+  // 诗名识别（634 个标题索引）
+  const t1 = it.detectIntent('背雨霖铃')
+  ok('「背雨霖铃」→ 指定诗名', !!t1 && t1.kind === 'poem' && t1.title === '雨霖铃', t1 ? JSON.stringify(t1) : 'null')
+  const t2 = it.detectIntent('来首水调歌头')
+  ok('「来首水调歌头」→ 指定诗名', !!t2 && t2.kind === 'poem' && t2.title === '水调歌头', t2 ? JSON.stringify(t2) : 'null')
+  const t3 = it.detectIntent('念一下静夜思')
+  ok('「念一下静夜思」→ 指定诗名', !!t3 && t3.kind === 'poem' && t3.title === '静夜思', t3 ? JSON.stringify(t3) : 'null')
+  ok('泛化「背首诗」仍走随机', (() => { const r = it.detectIntent('背首诗'); return !!r && r.kind === 'poem' && !r.title })())
+
 } catch (e) {
   ok('能加载 intent.ts', false, String(e.message))
 }

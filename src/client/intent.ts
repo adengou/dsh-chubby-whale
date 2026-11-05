@@ -10,8 +10,10 @@
  *   · 太长的一句（>30 字）也不劫持——那多半是在说话，不是在点播
  */
 
+import poemTitleData from '../../data/poem-titles.json' with { type: 'json' }
+
 export type Intent =
-  | { kind: 'poem' }
+  | { kind: 'poem'; title?: string }
   | { kind: 'culture'; sub: 'idiom' | 'chengyu' }
   | { kind: 'story'; book: string }
   | null
@@ -37,6 +39,19 @@ export const BOOK_ALIAS: Array<[RegExp, string]> = [
   [/镜花缘/, '镜花缘'],
 ]
 
+/** 诗名索引（按长度降序，保证「雨霖铃」优先于「雨」这类短名） */
+const POEM_TITLES: string[] = ((poemTitleData as any).titles || []).slice().sort((a: string, b: string) => b.length - a.length)
+
+/** 从一句话里认出诗名（认不出返回空串） */
+export function matchPoemTitle(text: string): string {
+  const t = String(text || '')
+  if (!t) return ''
+  for (const title of POEM_TITLES) {
+    if (title.length >= 2 && t.indexOf(title) >= 0) return title
+  }
+  return ''
+}
+
 /** 真提问的标记：命中则不劫持 */
 export function isQuestion(text: string): boolean {
   return /[?？]|为什么|怎么|如何/.test(String(text || ''))
@@ -48,13 +63,17 @@ export function detectIntent(rawText: string): Intent {
   if (!t || t.length > 30) return null
   if (isQuestion(t)) return null
 
-  // ① 念诗 / 背诗
+  // ① 点名要某首诗：直接按标题取（"背雨霖铃""来首水调歌头"）
+  const byTitle = matchPoemTitle(t)
+  if (byTitle) return { kind: 'poem', title: byTitle }
+
+  // ② 念诗 / 背诗
   if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) return { kind: 'poem' }
 
-  // ② 典故 / 成语
+  // ③ 典故 / 成语
   if (/典故|成语/.test(t)) return { kind: 'culture', sub: /成语/.test(t) ? 'chengyu' : 'idiom' }
 
-  // ③ 讲故事 / 说书（可带书名）
+  // ④ 讲故事 / 说书（可带书名）
   let book = ''
   for (const [re, name] of BOOK_ALIAS) { if (re.test(t)) { book = name; break } }
   if (book) return { kind: 'story', book }

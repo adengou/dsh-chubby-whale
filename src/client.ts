@@ -901,7 +901,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (!hit) return false
         if (hit.kind === 'poem') {
           showBubble('（点播）好，念一首', 3000)
-          fetch('/api/chubby-whale/poem').then((r: any) => r.json()).then((d: any) => {
+          fetch('/api/chubby-whale/poem' + ((hit.title || '') ? ('?title=' + encodeURIComponent(hit.title || '')) : '')).then((r: any) => r.json()).then((d: any) => {
             const p = (d && d.ok && d.item) ? d.item : null
             if (!p) { showBubble('诗册没读到', 4000); return }
             const body = String(p.text || '')
