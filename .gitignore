@@ -14,3 +14,5 @@ data/culture-seen.json
 data/poem-seen.json
 dist/data/
 data/pet_state.json
+# 校对备份（本地保留，不入库）
+data/*.bak-*
