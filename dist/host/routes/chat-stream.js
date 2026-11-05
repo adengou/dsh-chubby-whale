@@ -299,6 +299,12 @@ export function createChatStreamHandler(opts) {
             catch { }
             send({ done: true, reply: text, cached: false, firstDeltaMs: firstDeltaAt ? firstDeltaAt - started : 0, ms: Date.now() - started });
             res.end();
+            // L2 可变人格：完整回复收尾后才计数（中断/客户端断开/缓存命中都不算），不 await
+            try {
+                if (opts.onReply)
+                    opts.onReply();
+            }
+            catch { }
         }
         catch (err) {
             try {

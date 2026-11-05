@@ -1,4 +1,4 @@
-﻿/**
+/**
  * host/routes/story.ts —— 说书路由（薄 HTTP 层）
  * 选段/进度/连播队列在 host/story/player.ts，读盘与 Worker 缓存在 host/story/repo.ts；
  * 这里只解析请求参数、读 x-client-id、回 JSON。

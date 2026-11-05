@@ -1,4 +1,4 @@
-﻿/**
+/**
  * host/routes/chat-stream.ts —— 流式聊天（SSE）
  *
  * 目的：让肥鲸"边生成边开口"。原来必须等整段回复生成完才合成语音，
@@ -230,6 +230,8 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       try { if (typeof opts.appendTurns === 'function') opts.appendTurns(message, text) } catch { }
       send({ done: true, reply: text, cached: false, firstDeltaMs: firstDeltaAt ? firstDeltaAt - started : 0, ms: Date.now() - started })
       res.end()
+      // L2 可变人格：完整回复收尾后才计数（中断/客户端断开/缓存命中都不算），不 await
+      try { if (opts.onReply) opts.onReply() } catch { }
     } catch (err: any) {
       try {
         send({ error: String(err?.message || err) })

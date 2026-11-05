@@ -206,6 +206,12 @@ export function createChatHandler(opts) {
             }
             const saveSummary = opts.saveMemorySummary;
             sendJson(res, { ok: true, reply: reply || '主人……本鲸刚刚走神了。', intimacy: st.intimacy, upgraded });
+            // L2 可变人格：只对模型真实回复计数（缓存命中不算），不 await，不阻塞响应
+            try {
+                if (opts.onReply)
+                    opts.onReply();
+            }
+            catch { }
             if (wantSummary && saveSummary) {
                 summarizing = true;
                 void summarizeMemory(key, convo, memSummary || '（无）', saveSummary)

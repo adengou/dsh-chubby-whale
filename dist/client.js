@@ -469,10 +469,78 @@
     return { ok: false, kind: "unsupported", error: "unsupported type" };
   }
 
+  // src/client/look.ts
+  var TIER_EXP = [0, 200, 800];
+  var TIER_NAMES = ["\u521D\u8BC6", "\u719F\u7EDC", "\u9ECF\u4EBA"];
+  var LOOKS = [
+    { tier: 0, label: "\u521D\u8BC6", scale: 1, dots: 2, halo: 0, tailEveryMs: 14e3 },
+    { tier: 1, label: "\u719F\u7EDC", scale: 1.04, dots: 4, halo: 0.12, tailEveryMs: 9e3 },
+    { tier: 2, label: "\u9ECF\u4EBA", scale: 1.08, dots: 6, halo: 0.22, tailEveryMs: 5500 }
+  ];
+  function tierOf(exp) {
+    const e = Number(exp);
+    if (!isFinite(e) || e <= 0) return 0;
+    let idx = 0;
+    for (let i = 0; i < TIER_EXP.length; i++) {
+      if (e >= TIER_EXP[i]) idx = i;
+    }
+    return idx;
+  }
+  function lookFor(exp) {
+    return LOOKS[tierOf(exp)];
+  }
+  function lookForGrowth(info) {
+    if (!info || typeof info.exp !== "number") return LOOKS[0];
+    return LOOKS[tierOf(info.exp)];
+  }
+  var DEFAULT_GROWTH = { exp: 0, stage: "\u521D\u8BC6", nextExp: 200, tier: 0 };
+  function parseGrowth(d) {
+    if (!d || typeof d !== "object" || !d.ok) return null;
+    const raw = Number(d.exp);
+    if (!isFinite(raw)) return null;
+    const exp = Math.max(0, Math.floor(raw));
+    const tier = tierOf(exp);
+    const n = Number(d.nextExp);
+    let nextExp = 0;
+    if (isFinite(n) && n >= 0) nextExp = Math.floor(n);
+    else if (tier + 1 < TIER_EXP.length) nextExp = TIER_EXP[tier + 1];
+    const stage = typeof d.stage === "string" && d.stage ? d.stage : TIER_NAMES[tier];
+    return { exp, stage, nextExp, tier };
+  }
+  function fetchGrowth(getJson2) {
+    try {
+      return Promise.resolve(getJson2("/growth", { cache: "no-store" })).then((d) => parseGrowth(d)).catch(() => null);
+    } catch (e) {
+      return Promise.resolve(null);
+    }
+  }
+
   // src/client/anim.ts
   var EYE_L = { x: 679, y: 430, r: 68 };
   var EYE_R = { x: 860, y: 435, r: 68 };
   var MOUTH = { x: 779, y: 525, rw: 26, rh: 18 };
+  var FIN_DOTS = [
+    { x: 308, y: 115 },
+    { x: 317, y: 113 },
+    { x: 326, y: 116 },
+    { x: 334, y: 120 },
+    { x: 343, y: 125 },
+    { x: 350, y: 131 }
+  ];
+  var TAIL_TIP = { x: 391, y: 270 };
+  var WAG_MS = 900;
+  var WAG_JITTER = 0.2;
+  var HALO = { x: 240, y: 228, r0: 30, r1: 252 };
+  var DOT_BREATH_MS = 620;
+  var TAU = Math.PI * 2;
+  function pickDotIndexes(count) {
+    const n = FIN_DOTS.length;
+    const c = Math.max(2, Math.min(n, Math.round(Number(count)) || 2));
+    if (c >= n) return [0, 1, 2, 3, 4, 5];
+    const out = [];
+    for (let i = 0; i < c; i++) out.push(Math.round(i * (n - 1) / (c - 1)));
+    return out;
+  }
   function createAnimator(opts) {
     const { canvas, imgSrc, cw, ch, sx, sy, state } = opts;
     const ctx = canvas.getContext("2d");
@@ -483,6 +551,26 @@
     let blinkT = 0;
     let blinkClosed = false;
     let blinkGap = 3200 + Math.random() * 1800;
+    let look = opts.look || lookFor(0);
+    let dotIdx = pickDotIndexes(look.dots);
+    let nextWagAt = performance.now() + wagGap();
+    let wagStart = -1;
+    let splashes = [];
+    const haloGrads = [];
+    function wagGap() {
+      return Math.max(2500, look.tailEveryMs * (1 - WAG_JITTER + Math.random() * WAG_JITTER * 2));
+    }
+    function applyLook(next) {
+      look = next || lookFor(0);
+      dotIdx = pickDotIndexes(look.dots);
+      nextWagAt = performance.now() + wagGap();
+      try {
+        canvas.style.transform = "scale(" + look.scale + ")";
+        canvas.style.transformOrigin = "50% 100%";
+      } catch (e) {
+      }
+    }
+    applyLook(look);
     function drawEye(c, closed) {
       if (!closed) return;
       const p = { x: c.x * sx, y: c.y * sy };
@@ -531,13 +619,109 @@
         ctx.fillText("\u2764", x, y);
       }
     }
+    function haloGradient() {
+      const cached = haloGrads[look.tier];
+      if (cached) return cached;
+      const g = ctx.createRadialGradient(HALO.x, HALO.y, HALO.r0, HALO.x, HALO.y, HALO.r1);
+      g.addColorStop(0, "rgba(130,196,255,0.9)");
+      g.addColorStop(0.5, "rgba(80,150,240,0.38)");
+      g.addColorStop(1, "rgba(60,120,220,0)");
+      haloGrads[look.tier] = g;
+      return g;
+    }
+    function drawHalo(t) {
+      if (!(look.halo > 0)) return;
+      const breathe = 0.85 + 0.15 * Math.sin(t / 900);
+      ctx.save();
+      ctx.globalAlpha = look.halo * breathe;
+      ctx.fillStyle = haloGradient();
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.restore();
+    }
+    function drawFinDots(t) {
+      if (!look.dots || !dotIdx.length) return;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (let i = 0; i < dotIdx.length; i++) {
+        const p = FIN_DOTS[dotIdx[i]];
+        const pulse = 0.7 + 0.3 * Math.sin(t / DOT_BREATH_MS + i * 1.15);
+        ctx.fillStyle = "#9FD6FF";
+        ctx.globalAlpha = 0.16 * pulse;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5.2, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = "#E6F6FF";
+        ctx.globalAlpha = 0.9 * pulse;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.7, 0, TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    function spawnSplash() {
+      const n = 4;
+      for (let i = 0; i < n; i++) {
+        const a = -Math.PI / 2 + (Math.random() - 0.5) * 1.7;
+        const speed = 0.05 + Math.random() * 0.07;
+        splashes.push({
+          x: TAIL_TIP.x + (Math.random() - 0.5) * 12,
+          y: TAIL_TIP.y + (Math.random() - 0.5) * 8,
+          vx: Math.cos(a) * speed,
+          vy: Math.sin(a) * speed,
+          age: 0,
+          life: 420 + Math.random() * 260,
+          r: 1.2 + Math.random() * 1.8
+        });
+      }
+      if (splashes.length > 24) splashes = splashes.slice(splashes.length - 24);
+    }
+    function drawSplashes(dt) {
+      if (!splashes.length) return;
+      ctx.save();
+      for (let i = splashes.length - 1; i >= 0; i--) {
+        const p = splashes[i];
+        p.age += dt;
+        if (p.age >= p.life) {
+          splashes.splice(i, 1);
+          continue;
+        }
+        p.vy += 5e-4 * dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        const k = 1 - p.age / p.life;
+        ctx.globalAlpha = 0.55 * k;
+        ctx.fillStyle = "#BFE6FF";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * (0.6 + 0.6 * k), 0, TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
     function loop(t) {
       const dt = Math.min(50, t - last);
       last = t;
       ctx.clearRect(0, 0, cw, ch);
+      if (t >= nextWagAt) {
+        wagStart = t;
+        nextWagAt = t + wagGap();
+        spawnSplash();
+      }
+      const wagP = wagStart >= 0 && t >= wagStart && t <= wagStart + WAG_MS ? (t - wagStart) / WAG_MS : -1;
+      ctx.save();
+      if (wagP >= 0) {
+        const env = Math.sin(Math.PI * wagP);
+        const angle = Math.sin(wagP * Math.PI * 6) * 0.012 * env;
+        const bob = Math.sin(wagP * Math.PI * 4) * 1.6 * env;
+        ctx.translate(cw / 2, ch);
+        ctx.rotate(angle);
+        ctx.translate(0, bob);
+        ctx.translate(-cw / 2, -ch);
+      }
+      drawHalo(t);
       if (img.complete && img.naturalWidth > 0) {
         ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch);
       }
+      drawFinDots(t);
       blinkT += dt;
       if (!blinkClosed && blinkT > blinkGap) {
         blinkClosed = true;
@@ -553,6 +737,8 @@
         drawEye(EYE_R, true);
       }
       if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0);
+      drawSplashes(dt);
+      ctx.restore();
       drawHearts(dt / 1e3);
       raf = requestAnimationFrame(loop);
     }
@@ -568,7 +754,13 @@
     function pushHeart() {
       state.hearts.push({ age: 0, dx: Math.random() - 0.5 });
     }
-    return { start, stop, talkFor, pushHeart };
+    function setLook(next) {
+      applyLook(next);
+    }
+    function getLook() {
+      return look;
+    }
+    return { start, stop, talkFor, pushHeart, setLook, getLook };
   }
 
   // src/client/ape.ts
@@ -2574,7 +2766,13 @@
       if (r.bowls % 8 === 0) {
         host.say(host.persona.line("riceAccount"), 5e3);
         try {
-          getJson("/pet?action=feed");
+          getJson("/pet?action=feed").then(() => {
+            try {
+              host.syncGrowth();
+            } catch (e) {
+            }
+          }).catch(() => {
+          });
         } catch (e) {
         }
         return;
@@ -2582,7 +2780,13 @@
       host.say(r.text + (r.stageUp ? "\uFF08" + r.stage + "\uFF09" : ""), r.stageUp ? 6e3 : 3500);
       host.heart();
       try {
-        getJson("/pet?action=feed");
+        getJson("/pet?action=feed").then(() => {
+          try {
+            host.syncGrowth();
+          } catch (e) {
+          }
+        }).catch(() => {
+        });
       } catch (e) {
       }
     });
@@ -2633,6 +2837,10 @@
         if (g && g.ok) {
           const nx = g.nextExp > 0 ? "\uFF08\u7ECF\u9A8C " + g.exp + "/" + g.nextExp + "\uFF09" : "\uFF08\u6EE1\u7EA7\uFF09";
           const it = s && s.intimacy || 0;
+          try {
+            host.applyGrowth(g);
+          } catch (e) {
+          }
           host.bubble("\u6210\u957F\uFF1A" + g.stage + nx + " \xB7 \u4EB2\u5BC6\u5EA6 " + it + "/100", 5e3);
         } else host.bubble("\u6210\u957F\u67E5\u4E0D\u5230");
       }).catch(() => host.bubble("\u6210\u957F\u67E5\u4E0D\u5230"));
@@ -4150,6 +4358,8 @@
           });
         }, []);
         const [growthLabel, setGrowthLabel] = R.useState("--");
+        const [growth, setGrowth] = R.useState(DEFAULT_GROWTH);
+        const lookRef = R.useRef(lookFor(0));
         const menuStatsAtRef = R.useRef(0);
         const WAKE_WORDS = ["\u5927\u80A5\u9C7C", "\u80A5\u9CB8", "\u80A5\u9C7C", "\u5C0F\u9C7C", "\u84DD\u9C7C", "\u5C0F\u84DD\u9C7C", "\u9C7C\u9C7C", "\u80A5\u80A5"];
         const dragRef = R.useRef(createDragState());
@@ -4494,10 +4704,30 @@
           menuStatsAtRef.current = now;
           refreshBalance();
           getJson("/growth", { cache: "no-store" }).then((d) => {
-            if (d && d.ok && d.stage != null) setGrowthLabel(String(d.stage) + "\uFF08" + Number(d.exp) + (Number(d.nextExp) ? "/" + Number(d.nextExp) : "") + "\uFF09");
-            else setGrowthLabel("--");
+            applyGrowthPayload(d);
           }).catch(() => {
             setGrowthLabel("--");
+            setGrowth(DEFAULT_GROWTH);
+          });
+        }
+        function applyGrowthPayload(d) {
+          const info = parseGrowth(d);
+          if (!info) {
+            setGrowthLabel("--");
+            setGrowth(DEFAULT_GROWTH);
+            return;
+          }
+          setGrowthLabel(info.stage + "\uFF08" + info.exp + (info.nextExp ? "/" + info.nextExp : "") + "\uFF09");
+          setGrowth(info);
+        }
+        function syncGrowth() {
+          fetchGrowth((p, init) => getJson(p, init)).then((info) => {
+            if (info) {
+              setGrowthLabel(info.stage + "\uFF08" + info.exp + (info.nextExp ? "/" + info.nextExp : "") + "\uFF09");
+              setGrowth(info);
+            } else {
+              setGrowth(DEFAULT_GROWTH);
+            }
           });
         }
         function refreshBalance() {
@@ -4626,6 +4856,9 @@
           },
           refreshBalance: () => refreshBalance(),
           setGrowthLabel: (v) => setGrowthLabel(v),
+          // 菜单「成长」拿到的响应直接复用；喂食后重新拉一次（外观随之实时更新）
+          applyGrowth: (d) => applyGrowthPayload(d),
+          syncGrowth: () => syncGrowth(),
           setLang: (l) => setLang(l),
           voice: () => bridge.get(),
           voicePlaying: () => ttsPlaying,
@@ -4776,6 +5009,7 @@
               }
             };
             w.busyNow = () => ({ busy: busyLock.isBusy(), age: busyLock.age(), tts: ttsPlaying });
+            w.look = () => lookRef.current;
           } catch (e) {
           }
         }, []);
@@ -4848,9 +5082,26 @@
           speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE2 : "+0%" });
         }
         R.useEffect(() => {
+          const next = lookForGrowth(growth);
+          lookRef.current = next;
+          try {
+            if (animRef.current) animRef.current.setLook(next);
+          } catch (e) {
+          }
+        }, [growth]);
+        R.useEffect(() => {
+          let alive = true;
+          fetchGrowth((p, init) => getJson(p, init)).then((info) => {
+            if (alive && info) setGrowth(info);
+          });
+          return () => {
+            alive = false;
+          };
+        }, []);
+        R.useEffect(() => {
           const canvas = canvasRef.current;
           if (!canvas) return;
-          animRef.current = createAnimator({ canvas, imgSrc: "/api/chubby-whale/asset", cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current });
+          animRef.current = createAnimator({ canvas, imgSrc: "/api/chubby-whale/asset", cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current });
           animRef.current.start();
           return () => animRef.current?.stop();
         }, []);

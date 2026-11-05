@@ -81,3 +81,26 @@ export function readDataSource(pluginDir: string, runtimeConfig?: any): DataSour
   if (fromEnv) return fromEnv
   return 'local'
 }
+
+/**
+ * L2 可变人格学习开关：默认开启。
+ * 优先级：cordis config.personalityLearning → 本插件 config.json 的 personalityLearning → true。
+ * 只认明确的布尔值或 true/false/on/off/1/0/yes/no（大小写、空白不敏感）；
+ * 认不出的值按“未配置”处理（继续看下一层），绝不因为配置笔误把学习弄成意外状态。
+ */
+export function readPersonalityLearning(pluginDir: string, runtimeConfig?: any): boolean {
+  const parse = (raw: any): boolean | null => {
+    if (raw === undefined || raw === null || raw === '') return null
+    if (typeof raw === 'boolean') return raw
+    const s = String(raw).trim().toLowerCase()
+    if (s === 'false' || s === 'off' || s === '0' || s === 'no' || s === 'disabled') return false
+    if (s === 'true' || s === 'on' || s === '1' || s === 'yes' || s === 'enabled') return true
+    return null
+  }
+  const fromRuntime = parse(runtimeConfig && runtimeConfig.personalityLearning)
+  if (fromRuntime !== null) return fromRuntime
+  const cfg = readConfigJson(pluginDir)
+  const fromFile = parse(cfg && cfg.personalityLearning)
+  if (fromFile !== null) return fromFile
+  return true
+}

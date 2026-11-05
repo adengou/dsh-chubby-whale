@@ -24,6 +24,8 @@ export interface HandlerSet {
   briefing: any
   tts: any
   asr: any
+  /** L2 可变人格：{ handlePersonality, handleRevert } */
+  personality: any
 }
 
 export function createRouteTable(h: HandlerSet): HttpRoute[] {
@@ -52,5 +54,8 @@ export function createRouteTable(h: HandlerSet): HttpRoute[] {
     { path: '/api/chubby-whale/briefing', handler: h.briefing.handleBriefing },
     { path: '/api/chubby-whale/tts', handler: h.tts },
     { path: '/api/chubby-whale/asr', handler: h.asr },
+    // L2 可变人格：读当前 + 历史 / 回滚上一条变更
+    { path: '/api/chubby-whale/personality', handler: h.personality.handlePersonality },
+    { path: '/api/chubby-whale/personality/revert', handler: h.personality.handleRevert },
   ]
 }

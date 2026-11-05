@@ -1,4 +1,4 @@
-﻿/**
+/**
  * host/routes/asr.ts —— 语音识别路由（硅基流动 Qwen3-ASR）
  * POST JSON { audio: base64, format: 'webm'|'wav'|'mp3' } → { text }
  * Key 由入口注入（getKey），路由不再自己读 config.json / 环境变量。

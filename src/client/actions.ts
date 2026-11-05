@@ -59,6 +59,10 @@ export type ActionHost = {
   setBalance: (text: string, label: string) => void
   refreshBalance: () => void
   setGrowthLabel: (v: string) => void
+  /** 应用一次已拿到的 /growth 响应（菜单「成长」用，避免重复请求） */
+  applyGrowth: (payload: any) => void
+  /** 重新拉一次 /growth 并刷新外观（喂食后调用；失败静默） */
+  syncGrowth: () => void
   setLang: (l: string) => void
 
   // —— 语音 ——

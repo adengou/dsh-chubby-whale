@@ -1,0 +1,88 @@
+/**
+ * host/routes/personality.ts —— L2 可变人格的读写接口
+ *
+ *   GET  /api/chubby-whale/personality          读当前可变人格 + 历史（含学习开关/计数器）
+ *   POST /api/chubby-whale/personality/revert   回滚上一条变更（把最后一条历史的 old 恢复）
+ *
+ * 只依赖注入的 PersonalityRepo 与状态读取器，不直接摸文件；
+ * 路由注册在 host/routes.ts 的路由表里，入口只接线。
+ *
+ * 响应形态：顶层平铺当前值（catchphrases/preferences/notes/version/updatedAt），
+ * 同一份再放进 personality 子对象，前端取哪种都行；history 单独给。
+ */
+import { sendJson, sendError } from '../respond.js'
+import { PERSONALITY_LIMITS } from '../personality.js'
+import type { PersonalityRepo } from '../personality.js'
+
+export interface PersonalityHandlerDeps {
+  repo: PersonalityRepo
+  /** 学习总开关（config.json 的 personalityLearning），用于告诉前端现在能不能学 */
+  learningEnabled?: () => boolean
+  /** 学习器状态（次数/上次尝试/是否在跑），只读 */
+  learnerStatus?: () => any
+}
+
+export function createPersonalityHandlers(opts: PersonalityHandlerDeps) {
+  function snapshot(): any {
+    const p = opts.repo.load()
+    const enabled = opts.learningEnabled ? opts.learningEnabled() !== false : true
+    const learning = opts.learnerStatus ? opts.learnerStatus() : { enabled }
+    const current = {
+      catchphrases: p.catchphrases,
+      preferences: p.preferences,
+      notes: p.notes,
+      version: p.version,
+      updatedAt: p.updatedAt,
+    }
+    return {
+      ok: true,
+      enabled,
+      ...current,
+      personality: current,
+      history: p.history,
+      limits: PERSONALITY_LIMITS,
+      learning,
+    }
+  }
+
+  /** 读当前可变人格 + 历史；非 GET 回 405（本插件惯例：业务失败也用 JSON 说明） */
+  function handlePersonality(req: any, res: any): void {
+    try {
+      const method = req && req.method ? String(req.method).toUpperCase() : 'GET'
+      if (method !== 'GET' && method !== 'HEAD') {
+        sendJson(res, { ok: false, error: 'METHOD_NOT_ALLOWED' }, 405)
+        return
+      }
+      sendJson(res, snapshot())
+    } catch (err: any) {
+      sendError(res, err)
+    }
+  }
+
+  /** 回滚上一条变更；没有历史时回 ok:false + NO_HISTORY，并带上当前快照方便前端刷新 */
+  async function handleRevert(req: any, res: any): Promise<void> {
+    try {
+      const method = req && req.method ? String(req.method).toUpperCase() : ''
+      if (method !== 'POST') {
+        sendJson(res, { ok: false, error: 'METHOD_NOT_ALLOWED' }, 405)
+        return
+      }
+      // 回滚不需要请求体；客户端若发了 body，顺手排空，避免占着 keep-alive 连接
+      try { if (req && typeof req.resume === 'function' && !req.readableEnded) req.resume() } catch { }
+      const result = opts.repo.revert()
+      if (!result) {
+        sendJson(res, { ...snapshot(), ok: false, error: 'NO_HISTORY' })
+        return
+      }
+      if (!result.saved) {
+        sendJson(res, { ...snapshot(), ok: false, error: 'SAVE_FAILED' })
+        return
+      }
+      sendJson(res, { ...snapshot(), ok: true, reverted: result.entry })
+    } catch (err: any) {
+      sendError(res, err)
+    }
+  }
+
+  return { handlePersonality, handleRevert }
+}

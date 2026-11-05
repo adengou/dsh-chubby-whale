@@ -99,6 +99,8 @@ export interface ChatRouteDeps {
   loadMemorySummary?: () => string
   saveMemorySummary?: (s: string) => void
   cacheEnabled?: () => boolean
+  /** 模型真实成功回复后回调（L2 可变人格计数用）；不 await、不阻塞回复 */
+  onReply?: () => void
 }
 
 /** 流式 /chat-stream 的依赖（不写亲密度/成长，只记 token 与记忆） */
@@ -111,6 +113,8 @@ export interface ChatStreamRouteDeps {
   cache?: CachePort
   loadMemorySummary?: () => string
   cacheEnabled?: () => boolean
+  /** 模型真实成功回复后回调（L2 可变人格计数用）；不 await、不阻塞流 */
+  onReply?: () => void
 }
 
 /** /tts 的依赖：合成引擎可替换，缓存走缓存端口 */

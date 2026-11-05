@@ -12,10 +12,13 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { mkdirSync, existsSync, copyFileSync, cpSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { readApiKey, readSiliconFlowKey, readDataSource } from './host/config.js'
+import { readApiKey, readSiliconFlowKey, readDataSource, readPersonalityLearning } from './host/config.js'
 import { createStore, growthStage } from './host/store.js'
 import { createCache } from './host/cache.js'
 import { createPrefs, createCacheToggleHandler } from './host/prefs.js'
+import { createPersonalityRepo } from './host/personality.js'
+import { createPersonalityLearner } from './host/personality-learn.js'
+import { createPersonalityHandlers } from './host/routes/personality.js'
 import { createChatHandler } from './host/routes/chat.js'
 import { createChatStreamHandler } from './host/routes/chat-stream.js'
 import { createStoryHandlers } from './host/routes/story.js'
@@ -115,11 +118,26 @@ export function apply(ctx: any, config?: any): void {
   const asrCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'asr'), memBytes: 3 * 1024 * 1024 })     // 识别结果很小
   const getKey = (): string => readApiKey(PLUGIN_DIR)
 
-  /** 组装系统提示词：基础人设 + 当前成长阶段语气（读不到成长数据就按初识） */
+  // L2 可变人格：核心设定仍锁在 SYSTEM_PROMPT 里（模型无从改写），
+  // 这里只维护一小段可回滚的附加人格；学习默认开，config.json 的 personalityLearning:false 可关。
+  const personality = createPersonalityRepo(RUNTIME_DIR)
+  const personalityLearningEnabled = readPersonalityLearning(PLUGIN_DIR, config)
+  const personalityLearner = createPersonalityLearner({
+    repo: personality,
+    getKey,
+    loadHistory: store.loadHistory,
+    enabled: () => personalityLearningEnabled,
+  })
+  if (!personalityLearningEnabled) console.log('[chubby-whale] personalityLearning=false（可变人格学习已关闭）')
+
+  /** 组装系统提示词：基础人设 + 当前成长阶段语气 + 可变人格附加段（≤120 字，没有就不加） */
   const systemPromptFor = (): string => {
     let stage = '初识'
     try { stage = growthStage(Number(store.loadGrowth().exp) || 0).name } catch { }
-    return SYSTEM_PROMPT + (STAGE_TONE[stage] || '')
+    let remembered = ''
+    // 读盘失败/没有内容时返回空串：可变层出问题不能让聊天拼出半截提示词
+    try { remembered = personality.segment() } catch { remembered = '' }
+    return SYSTEM_PROMPT + (STAGE_TONE[stage] || '') + remembered
   }
 
   /**
@@ -149,6 +167,7 @@ export function apply(ctx: any, config?: any): void {
     loadMemorySummary: store.loadMemorySummary,
     saveMemorySummary: store.saveMemorySummary,
     cacheEnabled: prefs.chatCacheEnabled,
+    onReply: () => { personalityLearner.noteSuccess() },
   })
   const chatStream = createChatStreamHandler({
     getKey,
@@ -159,6 +178,7 @@ export function apply(ctx: any, config?: any): void {
     cache: chatCache,
     loadMemorySummary: store.loadMemorySummary,
     cacheEnabled: prefs.chatCacheEnabled,
+    onReply: () => { personalityLearner.noteSuccess() },
   })
   const story = createStoryHandlers({
     player: createStoryPlayer({
@@ -194,10 +214,15 @@ export function apply(ctx: any, config?: any): void {
   })
   const tts = createTtsHandler({ cache: ttsCache })
   const asr = createAsrHandler({ getKey: () => readSiliconFlowKey(PLUGIN_DIR), cache: asrCache })
+  const personalityRoutes = createPersonalityHandlers({
+    repo: personality,
+    learningEnabled: () => personalityLearningEnabled,
+    learnerStatus: () => personalityLearner.status(),
+  })
 
   // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
   const routeTable = createRouteTable({
-    misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, briefing, tts, asr,
+    misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, briefing, tts, asr, personality: personalityRoutes,
   })
 
   // 所有路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，

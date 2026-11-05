@@ -6,6 +6,7 @@ import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chat
 import { buildMenu, tr } from './client/menu.js'
 import { handleFileDrop } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
+import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth, type GrowthInfo } from './client/look.js'
 import { createVoiceBridge } from './client/voice-bridge.js'
 import { createActionTable, type ActionHost } from './client/actions.js'
 import { registerCultureActions } from './client/actions/culture.js'
@@ -124,6 +125,9 @@ import { createReminderPoller } from './client/reminders.js'
         }).catch(() => { })
       }, [])
       const [growthLabel, setGrowthLabel] = R.useState('--')
+      // 成长外观（L5）：exp 决定体型/光点/光晕/甩尾节奏；拉不到 /growth 时保持初识档
+      const [growth, setGrowth] = R.useState<GrowthInfo>(DEFAULT_GROWTH)
+      const lookRef = R.useRef(lookFor(0))
       // 菜单数值的最近一次拉取时刻（10 秒节流；ref 跨渲染保留，普通变量每次渲染都会被重置）
       const menuStatsAtRef = R.useRef(0)
       const WAKE_WORDS = ['大肥鱼', '肥鲸', '肥鱼', '小鱼', '蓝鱼', '小蓝鱼', '鱼鱼', '肥肥']
@@ -392,11 +396,36 @@ import { createReminderPoller } from './client/reminders.js'
         menuStatsAtRef.current = now
         refreshBalance()
         getJson('/growth', { cache: 'no-store' })
-          .then((d: any) => {
-            if (d && d.ok && d.stage != null) setGrowthLabel(String(d.stage) + '（' + Number(d.exp) + (Number(d.nextExp) ? '/' + Number(d.nextExp) : '') + '）')
-            else setGrowthLabel('--')
-          })
-          .catch(() => { setGrowthLabel('--') })
+          .then((d: any) => { applyGrowthPayload(d) })
+          .catch(() => { setGrowthLabel('--'); setGrowth(DEFAULT_GROWTH) })
+      }
+
+      /**
+       * 把 /growth 响应同时写进菜单标签与外观：
+       *   · 正常数据 → 标签「阶段（exp/nextExp）」+ 按档位更新体型/光点/光晕/甩尾；
+       *   · 坏数据/失败 → 标签「--」，外观回落初识（不弹错误）。
+       */
+      function applyGrowthPayload(d: any): void {
+        const info = parseGrowth(d)
+        if (!info) {
+          setGrowthLabel('--')
+          setGrowth(DEFAULT_GROWTH)
+          return
+        }
+        setGrowthLabel(info.stage + '（' + info.exp + (info.nextExp ? '/' + info.nextExp : '') + '）')
+        setGrowth(info)
+      }
+
+      /** 重新拉一次 /growth 并刷新外观（喂食后调用）；失败静默回落初识 */
+      function syncGrowth(): void {
+        fetchGrowth((p, init) => getJson(p, init)).then((info) => {
+          if (info) {
+            setGrowthLabel(info.stage + '（' + info.exp + (info.nextExp ? '/' + info.nextExp : '') + '）')
+            setGrowth(info)
+          } else {
+            setGrowth(DEFAULT_GROWTH)
+          }
+        })
       }
 
       /** 拉实时余额，并把菜单标题与「余额：…」一起更新；失败/未配置 Key 显示 --，不弹错误 */
@@ -496,6 +525,9 @@ import { createReminderPoller } from './client/reminders.js'
         setBalance: (text, label) => { setBalanceText(text); setBalanceLabel(label) },
         refreshBalance: () => refreshBalance(),
         setGrowthLabel: (v) => setGrowthLabel(v),
+        // 菜单「成长」拿到的响应直接复用；喂食后重新拉一次（外观随之实时更新）
+        applyGrowth: (d) => applyGrowthPayload(d),
+        syncGrowth: () => syncGrowth(),
         setLang: (l) => setLang(l),
         voice: () => bridge.get(),
         voicePlaying: () => ttsPlaying,
@@ -603,6 +635,8 @@ import { createReminderPoller } from './client/reminders.js'
           w.say = (t: string) => { try { sendText(String(t || ""), { voice: true }) } catch (e) { } }
           w.sayStop = () => { try { stopTts() } catch (e) { } }
           w.busyNow = () => ({ busy: busyLock.isBusy(), age: busyLock.age(), tts: ttsPlaying })
+          // 外观诊断：控制台 __chubbyWhale.look() 可看当前档位/体型/光点数/光晕
+          w.look = () => lookRef.current
         } catch (e) { }
       }, [])
       // 提醒轮询（每 20 秒检查一次，与 C# 一致）——到点的全部排队，逐条播报
@@ -658,11 +692,26 @@ import { createReminderPoller } from './client/reminders.js'
         speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE : '+0%' })
       }
 
+      // ===== 成长 → 外观（L5）：档位变化时热更新 canvas 外观，不重建动画器 =====
+      R.useEffect(() => {
+        const next = lookForGrowth(growth)
+        lookRef.current = next
+        try { if (animRef.current) animRef.current.setLook(next) } catch (e) { }
+      }, [growth])
+      // 挂载时拉一次 /growth；失败静默（外观保持初识档，不报错）
+      R.useEffect(() => {
+        let alive = true
+        fetchGrowth((p, init) => getJson(p, init)).then((info) => {
+          if (alive && info) setGrowth(info)
+        })
+        return () => { alive = false }
+      }, [])
+
       // Canvas 动画
       R.useEffect(() => {
         const canvas = canvasRef.current
         if (!canvas) return
-        animRef.current = createAnimator({ canvas, imgSrc: '/api/chubby-whale/asset', cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current })
+        animRef.current = createAnimator({ canvas, imgSrc: '/api/chubby-whale/asset', cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current })
         animRef.current.start()
         return () => animRef.current?.stop()
       }, [])

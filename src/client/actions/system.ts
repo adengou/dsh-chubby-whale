@@ -18,12 +18,12 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     // 每 8 碗说一次「饭碗账本」；平时说投喂台词
     if (r.bowls % 8 === 0) {
       host.say(host.persona.line('riceAccount'), 5000)
-      try { getJson('/pet?action=feed') } catch (e) { }
+      try { getJson('/pet?action=feed').then(() => { try { host.syncGrowth() } catch (e) { } }).catch(() => { }) } catch (e) { }
       return
     }
     host.say(r.text + (r.stageUp ? '（' + r.stage + '）' : ''), r.stageUp ? 6000 : 3500)
     host.heart()
-    try { getJson('/pet?action=feed') } catch (e) { }
+    try { getJson('/pet?action=feed').then(() => { try { host.syncGrowth() } catch (e) { } }).catch(() => { }) } catch (e) { }
   })
 
   // —— 位置与大小 ——
@@ -63,6 +63,8 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
       if (g && g.ok) {
         const nx = g.nextExp > 0 ? ('（经验 ' + g.exp + '/' + g.nextExp + '）') : '（满级）'
         const it = (s && s.intimacy) || 0
+        // 菜单里刚拉到的数据同时用于外观刷新（体型/光点/光晕实时变，不用刷新页面）
+        try { host.applyGrowth(g) } catch (e) { }
         host.bubble('成长：' + g.stage + nx + ' · 亲密度 ' + it + '/100', 5000)
       } else host.bubble('成长查不到')
     }).catch(() => host.bubble('成长查不到'))
