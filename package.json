@@ -70,7 +70,8 @@
     "bench:ape": "node scripts/ape-bench.mjs",
     "smoke:host": "node scripts/smoke-host.mjs",
     "bench:tts": "node tools/tts-bench.mjs",
-    "bench:voice": "node tools/voice-bench.mjs"
+    "bench:voice": "node tools/voice-bench.mjs",
+    "check:installed": "node tools/check-installed.mjs"
   },
   "repository": {
     "type": "git",
