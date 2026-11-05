@@ -30,6 +30,12 @@ export function createStoryHandlers(opts: {
   const STORY_DIR = join(opts.dataDir, 'story')
   const PROGRESS = join(opts.runtimeDir || opts.dataDir, 'story_progress.json')
   const bookCache = new Map<string, { chunks: any[]; mtimeMs: number }>()
+  /**
+   * 进行中的读盘请求：book → { mtimeMs, promise }。
+   * 并发来两个请求时如果各起一个 Worker，就是两个线程同时读 30MB JSON，
+   * 内存峰值和 CPU 都翻倍；这里按「书 + mtime」去重，两个请求共用同一次解析。
+   */
+  const inflight = new Map<string, { mtimeMs: number; promise: Promise<any[]> }>()
   /** 文件最后修改时间（读不到返回 0）；缓存据此失效，改数据不必重启 */
   function fileMtime(p: string): number {
     try { return statSync(p).mtimeMs } catch { return 0 }
@@ -121,6 +127,7 @@ const BOOK_CACHE_MAX = 2
   /**
    * 读一本书。坏文件/超时都不抛：记 STORY-LOAD-FAIL 后返回空数组，
    * 让 pickNext 继续试下一本（一本坏不能拖垮整个说书功能）。
+   * 同一本书（且文件没被改过）已有请求在跑时复用那个 Promise，不再另起 Worker。
    */
   function loadBook(book: string): Promise<any[]> {
     const file = join(STORY_DIR, book + '.json')
@@ -132,23 +139,42 @@ const BOOK_CACHE_MAX = 2
       bookCache.set(book, cached)
       return Promise.resolve(cached.chunks)
     }
+    const running = inflight.get(book)
+    // 文件没被改过才复用；mtime 变了说明数据刚更新，得重新读，不能拿旧书糊弄
+    if (running && running.mtimeMs === mt) return running.promise
+    const task = readBook(book, file, mt)
+    inflight.set(book, { mtimeMs: mt, promise: task })
+    const release = (): void => {
+      const cur = inflight.get(book)
+      if (cur && cur.promise === task) inflight.delete(book)   // 只摘自己这条，别误删后来者
+    }
+    task.then(release, release)
+    return task
+  }
+
+  /** 起 Worker 解析一本书（30s 超时；失败/崩溃都 resolve 空数组，绝不 reject） */
+  function readBook(book: string, file: string, mt: number): Promise<any[]> {
     return new Promise((resolve) => {
       let done = false
+      let worker: any = null
+      let timer: any = null
+      const stopWorker = (): void => { try { if (worker) worker.terminate() } catch { } }
       const fail = (err: any): void => {
         if (done) return
         done = true
+        // 超时/崩溃/解析失败都要把另外两样收干净，别留一个 30s 定时器或活着的线程
+        if (timer) { try { clearTimeout(timer) } catch { } ; timer = null }
+        stopWorker()
         console.error('STORY-LOAD-FAIL book=' + book + ' err=' + String(err?.message || err))
         resolve([])
       }
       try {
         const w = new Worker(opts.workerPath)
-        const timer = setTimeout(() => {
-          try { w.terminate() } catch { }
-          fail('timeout 30s')
-        }, 30000)
+        worker = w
+        timer = setTimeout(() => { fail('timeout 30s') }, 30000)
         w.once('message', (msg: any) => {
           clearTimeout(timer)
-          try { w.terminate() } catch { }
+          timer = null
           if (done) return
           if (msg && msg.ok) {
             done = true
@@ -156,10 +182,17 @@ const BOOK_CACHE_MAX = 2
             bookCache.set(book, { chunks: list, mtimeMs: mt })
             // LRU：超上限就丢最早的那本（Map 保持插入顺序）
             while (bookCache.size > BOOK_CACHE_MAX) { const oldest = bookCache.keys().next().value as string | undefined; if (oldest === undefined) break; bookCache.delete(oldest) }
+            stopWorker()
             resolve(list)
           } else fail(msg?.error || 'parse failed')
         })
-        w.once('error', (err: any) => { clearTimeout(timer); fail(err) })
+        w.once('error', (err: any) => fail(err))
+        // Worker 崩了（线程里未捕获异常、被 OOM 杀掉）不会发 message 也不会发 error，只有 exit；
+        // 不接这一条，请求会一直悬到 30 秒超时才回空。done 在成功/失败时已置位，
+        // 所以 terminate() 引发的 exit(code=1) 不会被误报成崩溃。
+        w.once('exit', (code: number) => {
+          if (!done && code !== 0) fail('worker exit ' + code)
+        })
         w.postMessage({ book, file })
       } catch (err) { fail(err) }
     })

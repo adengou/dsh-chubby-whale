@@ -4,8 +4,8 @@
  * 去重：data/poem-seen.json（["标题|作者|首句", ...]），一轮念完自动清空重来。
  * 文件缺失/损坏只记 POEM-LOAD-FAIL，按空诗册处理；空时返回 {ok:true,item:null,reason:'no-data'}。
  */
-import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, writeFileSync, mkdirSync, statSync, renameSync, unlinkSync } from 'node:fs'
+import { join, dirname } from 'node:path'
 
 export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }) {
   const POEMS_FILE = join(opts.dataDir, 'poems.json')
@@ -70,16 +70,34 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
       const arr = JSON.parse(readFileSync(SEEN_FILE, 'utf8'))
       if (Array.isArray(arr)) {
         for (const k of arr) if (typeof k === 'string' && k.trim()) s.add(k.trim())
+      } else {
+        console.error('POEM-SEEN-LOAD-FAIL file=' + SEEN_FILE + ' err=bad structure')
       }
-    } catch { }
+    } catch (err: any) {
+      // 首次运行没有文件是正常态；读坏/解析失败要留痕，否则进度悄悄清零没人知道
+      if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
+        console.error('POEM-SEEN-LOAD-FAIL file=' + SEEN_FILE + ' err=' + String(err?.message || err))
+      }
+    }
     seen = s
     return seen
   }
   function saveSeen(): void {
     try {
-      mkdirSync(opts.dataDir, { recursive: true })
-      writeFileSync(SEEN_FILE, JSON.stringify(Array.from(seen || [])), 'utf8')
-    } catch { }
+      // 目录按 SEEN_FILE 的真实位置建：runtimeDir 与 dataDir 不一定同一个，按 dataDir 建会 ENOENT
+      mkdirSync(dirname(SEEN_FILE), { recursive: true })
+      // 原子写：唯一临时名 + rename。直写会先截断旧文件，中途被杀就留下半个 JSON
+      const tmp = SEEN_FILE + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp'
+      writeFileSync(tmp, JSON.stringify(Array.from(seen || [])), 'utf8')
+      try {
+        renameSync(tmp, SEEN_FILE)
+      } catch (err) {
+        try { unlinkSync(tmp) } catch { }   // 改名失败别留垃圾临时文件
+        throw err
+      }
+    } catch (err: any) {
+      console.error('POEM-SEEN-SAVE-FAIL file=' + SEEN_FILE + ' err=' + String(err?.message || err))
+    }
   }
 
   async function handlePoem(req: any, res: any): Promise<void> {

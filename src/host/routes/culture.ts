@@ -8,8 +8,8 @@
  * 数据文件缺失/损坏只记 CULTURE-LOAD-FAIL，按空池处理，绝不整类报错。
  */
 import { readFile } from 'node:fs/promises'
-import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync, writeFileSync, mkdirSync, statSync, renameSync, unlinkSync } from 'node:fs'
+import { join, dirname } from 'node:path'
 
 export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: string }) {
   const CULTURE_DIR = join(opts.dataDir, 'culture')
@@ -96,15 +96,25 @@ export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: stri
             if (p) out[p.prefix + ':' + p.name] = true
           }
         }
+      } else {
+        console.error('CULTURE-SEEN-LOAD-FAIL file=' + SEEN_FILE + ' err=bad structure')
       }
-    } catch { }
+    } catch (err: any) {
+      // 首次运行没有文件是正常态（ENOENT/ENOTDIR）；解析失败、读坏、没权限必须留痕，
+      // 否则「进度莫名其妙全忘了」永远查不到原因
+      if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
+        console.error('CULTURE-SEEN-LOAD-FAIL file=' + SEEN_FILE + ' err=' + String(err?.message || err))
+      }
+    }
     seen = out
     if (legacy) saveSeen()
     return seen
   }
   function saveSeen(): void {
     try {
-      mkdirSync(opts.dataDir, { recursive: true })
+      // 目录要按 SEEN_FILE 的真实位置建：runtimeDir 与 dataDir 不一定同一个，
+      // 原来照 opts.dataDir 建，写 runtimeDir 下的文件时必然 ENOENT（且被 catch 吞掉）
+      mkdirSync(dirname(SEEN_FILE), { recursive: true })
       const sn = seen || {}
       const data: { allusions: string[]; tales: string[]; idioms: string[]; minsu: string[] } = {
         allusions: [], tales: [], idioms: [], minsu: [],
@@ -120,8 +130,19 @@ export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: stri
         else if (p.prefix === 'idiom') add('idioms', p.name)
         else if (p.prefix === 'minsu') { add('minsu', p.name); add('tales', p.name) }
       }
-      writeFileSync(SEEN_FILE, JSON.stringify(data), 'utf8')
-    } catch { }
+      // 原子写：唯一临时名 + rename。直接写目标文件会先把它截断，
+      // 这中间进程被杀/断电就只剩半个 JSON，下次启动整份进度读不出来。
+      const tmp = SEEN_FILE + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp'
+      writeFileSync(tmp, JSON.stringify(data), 'utf8')
+      try {
+        renameSync(tmp, SEEN_FILE)
+      } catch (err) {
+        try { unlinkSync(tmp) } catch { }   // 改名失败别留垃圾临时文件
+        throw err
+      }
+    } catch (err: any) {
+      console.error('CULTURE-SEEN-SAVE-FAIL file=' + SEEN_FILE + ' err=' + String(err?.message || err))
+    }
   }
 
   /**

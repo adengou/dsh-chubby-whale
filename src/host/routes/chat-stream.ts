@@ -12,6 +12,12 @@
  * 缓存与记忆行为与普通 /chat 一致：
  *   · 命中缓存：直接发一条 delta + done(cached:true)
  *   · 未命中：边转发边累积，结束时写缓存、写记忆、记 token
+ *
+ * 超时语义（2026-11-05 起）：
+ *   · 30s 是**空闲超时**——每收到一段上游数据就重置，模型还在吐字就不算超时；
+ *     （此前它被当成「整条请求的总时长」，慢模型讲到一半会被硬切）
+ *   · 120s 是总时长硬上限，兜底防「上游一直有数据但永远不结束」；
+ *   · 每 12s 写一行 `: ping` 注释帧保活，客户端解析器会跳过以 : 开头的行。
  */
 
 import { readBody, isBodyTooLarge, sendTooLarge } from '../http.js'
@@ -20,7 +26,9 @@ import { shortHash } from '../cache.js'
 import { parseSseBuffer } from '../../shared/sse.js'
 
 const CHAT_URL = 'https://api.deepseek.com/chat/completions'
-const CHAT_TIMEOUT = 30 * 1000
+const CHAT_IDLE_TIMEOUT = 30 * 1000      // 空闲超时：连续这么久没有上游数据才中止
+const CHAT_MAX_DURATION = 120 * 1000     // 总时长硬上限：不论有没有数据，到点就断
+const SSE_PING_MS = 12 * 1000            // SSE 心跳间隔
 const CHAT_CACHE_TTL = 7 * 24 * 3600 * 1000
 const CHAT_MAX_BODY = 6 * 1024 * 1024
 
@@ -45,6 +53,37 @@ export function createChatStreamHandler(opts: {
     const send = (obj: any): void => {
       try { res.write('data: ' + JSON.stringify(obj) + '\n\n') } catch { }
     }
+
+    // 超时与保活状态放在函数级：任何退出路径（缓存命中/无 Key/连接失败/正常结束/抛错）
+    // 都要能在最后的 finally 里清干净，否则定时器会一直挂在事件循环上。
+    let pingTimer: any = null
+    let idleTimer: any = null
+    let totalTimer: any = null
+    let ctl: any = null
+    let abortReason = ''
+    const stopPing = (): void => {
+      if (pingTimer) { try { clearInterval(pingTimer) } catch { } ; pingTimer = null }
+    }
+    const clearTimers = (): void => {
+      if (idleTimer) { try { clearTimeout(idleTimer) } catch { } ; idleTimer = null }
+      if (totalTimer) { try { clearTimeout(totalTimer) } catch { } ; totalTimer = null }
+    }
+    /** 空闲/总时长谁先到都走同一个 AbortController；只记第一次的原因，便于日志定位 */
+    const abortUpstream = (why: string): void => {
+      if (abortReason) return
+      abortReason = why
+      try { if (ctl) ctl.abort() } catch { }
+    }
+    /** 收到上游数据就重置空闲计时：优先 timer.refresh()，老运行时退回「清旧建新」 */
+    const touchIdle = (): void => {
+      if (!ctl || (ctl.signal && ctl.signal.aborted)) return
+      if (idleTimer && typeof idleTimer.refresh === 'function') {
+        try { idleTimer.refresh(); return } catch { }
+      }
+      if (idleTimer) { try { clearTimeout(idleTimer) } catch { } }
+      idleTimer = setTimeout(() => abortUpstream('idle timeout ' + CHAT_IDLE_TIMEOUT + 'ms'), CHAT_IDLE_TIMEOUT)
+    }
+
     try {
       let raw: Buffer
       try {
@@ -76,6 +115,18 @@ export function createChatStreamHandler(opts: {
       try { (res as any).flushHeaders && (res as any).flushHeaders() } catch { }
       let clientGone = false
       try { if (typeof (res as any).on === 'function') (res as any).on('close', () => { clientGone = true }) } catch { }
+
+      // SSE 心跳：浏览器/反向代理会掐掉长时间没有数据的连接（豆包/nginx 一类默认 60s 左右），
+      // 每 12s 写一行注释帧（以 : 开头，客户端解析器直接跳过）既保活又不污染事件流。
+      // 正常结束/出错统一由 finally 里的 stopPing 清掉，不会残留定时器。
+      pingTimer = setInterval(() => {
+        try {
+          if (res.writableEnded) return
+          res.write(': ping\n\n')
+        } catch { }
+      }, SSE_PING_MS)
+      // 心跳不该阻止进程退出（unref 只是在事件循环里「不计入活跃句柄」）
+      try { if (pingTimer && typeof pingTimer.unref === 'function') pingTimer.unref() } catch { }
 
       // 先读上下文：缓存 key 带上下文指纹；prompt 只带最近几条（省 token）
       const memSummary = (() => { try { return String(opts.loadMemorySummary ? opts.loadMemorySummary() : '') } catch { return '' } })()
@@ -114,8 +165,12 @@ export function createChatStreamHandler(opts: {
       }
       messages.push({ role: 'user', content: message })
 
-      const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
-      const timer = ctl ? setTimeout(() => { try { ctl.abort() } catch { } }, CHAT_TIMEOUT) : null
+      // 超时从「准备发上游请求」这一刻才开始：读请求体、查缓存慢，不该算进模型响应时间
+      ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
+      if (ctl) {
+        totalTimer = setTimeout(() => abortUpstream('total timeout ' + CHAT_MAX_DURATION + 'ms'), CHAT_MAX_DURATION)
+        touchIdle()
+      }
       let upstream: any = null
       try {
         upstream = await fetch(CHAT_URL, {
@@ -133,17 +188,18 @@ export function createChatStreamHandler(opts: {
           signal: ctl ? ctl.signal : undefined,
         })
       } catch (err: any) {
-        if (timer) clearTimeout(timer)
-        send({ error: 'connect: ' + String(err?.message || err) })
+        // 空闲/总时长中止时抛的是 AbortError，消息没用，用我们记下的原因
+        send({ error: 'connect: ' + (abortReason || String(err?.message || err)) })
         res.end()
         return
       }
       if (!upstream.ok || !upstream.body) {
-        if (timer) clearTimeout(timer)
         send({ error: 'HTTP ' + upstream.status })
         res.end()
         return
       }
+      // 响应头已到：接下来按「两段数据之间的间隔」算空闲
+      touchIdle()
 
       let aborted = false
       const reader = upstream.body.getReader()
@@ -156,6 +212,7 @@ export function createChatStreamHandler(opts: {
         for (;;) {
           const { value, done } = await reader.read()
           if (done) break
+          touchIdle()   // 每收到一段就重置空闲计时：又慢又长的回复不会再被 30s 硬切
           buf += dec.decode(value, { stream: true })
           const parsed = parseSseBuffer(buf)
           buf = parsed.rest
@@ -171,9 +228,10 @@ export function createChatStreamHandler(opts: {
         }
       } catch (err: any) {
         aborted = true
-        send({ error: 'stream: ' + String(err?.message || err) })
+        send({ error: 'stream: ' + (abortReason || String(err?.message || err)) })
       } finally {
-        if (timer) clearTimeout(timer)
+        // 流已结束（正常或异常），超时定时器再留着只会误伤后续收尾
+        clearTimers()
       }
 
       // 流中断或客户端已断开：这段回复是半截的，绝不能写进缓存和记忆（否则被永久命中）
@@ -195,6 +253,10 @@ export function createChatStreamHandler(opts: {
         send({ error: String(err?.message || err) })
         res.end()
       } catch { }
+    } finally {
+      // 所有退出路径统一收口：心跳 interval 与两个超时定时器一个都不许残留
+      clearTimers()
+      stopPing()
     }
   }
 }

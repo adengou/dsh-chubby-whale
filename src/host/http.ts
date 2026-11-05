@@ -48,24 +48,48 @@ export async function fetchJson(url: string, init: any = {}, ms = 30000): Promis
 /** 回 413（请求体超限）：JSON 兜底文案由客户端自己出 */
 export function sendTooLarge(res: any): void {
   try {
+    // 连接可能已被 abortRequest 断掉：写不出去是预期结果，别让 EPIPE/ECONNRESET 冒成未捕获异常
+    if (res && typeof res.on === 'function') res.on('error', () => { })
     res.writeHead(413, { 'content-type': 'application/json; charset=utf-8', connection: 'close' })
     res.end(JSON.stringify({ ok: false, error: 'too large' }))
   } catch { }
 }
 
 /**
+ * 请求体超限时把连接断掉。
+ * 为什么必须断：只从 for-await 里 throw 出去只是「不再消费」，客户端还在发的 body 会继续占着
+ * socket，HTTP 服务也走不到 keep-alive 复用，等于每个超大请求漏一条连接。
+ * destroy 优先（客户端立刻收到 RST，剩余数据丢弃）；没有 destroy 就 resume 把剩下的读空丢掉。
+ */
+function abortRequest(req: any): void {
+  // destroy/半截读取都可能触发 error（EPIPE/ECONNRESET），先挂空监听，避免冒成未捕获异常
+  try { if (req && typeof req.on === 'function') req.on('error', () => { }) } catch { }
+  try {
+    if (req && typeof req.destroy === 'function') { req.destroy(); return }
+  } catch { }
+  try { if (req && typeof req.resume === 'function') req.resume() } catch { }
+}
+
+/**
  * 读请求体，超过 maxBytes 立刻中止并抛 BODY_TOO_LARGE。
  * 先看 content-length（有就直接拒，连读都不读），读的过程中累计超限也当场抛，不把整份大包收进内存。
+ * 抛错前先 abortRequest 断连，否则超限后客户端仍在传的 body 会一直占着连接。
  */
 export async function readBody(req: any, maxBytes: number): Promise<Buffer> {
   const declared = Number(req && req.headers && req.headers['content-length'])
-  if (Number.isFinite(declared) && declared > maxBytes) throw bodyTooLarge()
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    abortRequest(req)
+    throw bodyTooLarge()
+  }
   const chunks: Buffer[] = []
   let total = 0
   for await (const chunk of req) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as any)
     total += buf.length
-    if (total > maxBytes) throw bodyTooLarge()   // 抛出去让 for-await 自己销毁流，立即中止
+    if (total > maxBytes) {
+      abortRequest(req)   // 先把连接断掉，再抛给路由回 413
+      throw bodyTooLarge()
+    }
     chunks.push(buf)
   }
   return Buffer.concat(chunks)

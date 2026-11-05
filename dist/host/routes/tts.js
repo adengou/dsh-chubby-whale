@@ -9,19 +9,32 @@ import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { hashKey } from '../cache.js';
+import { readBody, isBodyTooLarge, sendTooLarge } from '../http.js';
 import { buildEdgeTtsArgs, normalizeRate } from '../../shared/tts.js';
 /** 单次合成的安全上限：客户端已按 80 字分段，这里只防整本大 JSON 被一次送进来 */
 const MAX_TEXT = 6000;
+/** 请求体上限：80 字一段的 JSON 只有几百字节，64KB 足够；超了多半是误发了整本数据 */
+const TTS_MAX_BODY = 64 * 1024;
 export function createTtsHandler(opts) {
     const DEFAULT_VOICE = opts.voice || 'zh-CN-XiaoyiNeural';
     const cache = opts.cache;
     return async function handleTts(req, res) {
         let tmpFile = '';
         try {
-            const chunks = [];
-            for await (const chunk of req)
-                chunks.push(chunk);
-            const text = Buffer.concat(chunks).toString('utf8');
+            // 走统一 readBody 带上限：原来直接 for-await 读 req，客户端塞多大就收多大，能把内存吃掉
+            let raw;
+            try {
+                raw = await readBody(req, TTS_MAX_BODY);
+            }
+            catch (err) {
+                if (isBodyTooLarge(err)) {
+                    console.error('[tts] BODY-TOO-LARGE > ' + TTS_MAX_BODY + ' bytes');
+                    sendTooLarge(res);
+                    return;
+                }
+                throw err;
+            }
+            const text = raw.toString('utf8');
             let body = {};
             try {
                 body = text ? JSON.parse(text) : {};

@@ -1,6 +1,11 @@
 /**
  * host/routes/reminders.ts —— 提醒路由（可复用模块）
  */
+import { readBody, isBodyTooLarge, sendTooLarge } from '../http.js'
+
+/** 请求体上限：提醒只有 text/at/repeat 三个短字段，32KB 足够，超了直接 413 不读进内存 */
+const REMINDER_MAX_BODY = 32 * 1024
+
 export function createReminderHandlers(opts: {
   loadReminders: () => any[]
   addReminder: (text: string, at: string, repeat?: number) => any
@@ -23,9 +28,19 @@ export function createReminderHandlers(opts: {
         return
       }
       if (req.method === 'POST') {
-        const chunks: Buffer[] = []
-        for await (const chunk of req) chunks.push(chunk as Buffer)
-        const text = Buffer.concat(chunks).toString('utf8')
+        // 走统一 readBody 带上限：原来直接 for-await 读 req，无上限
+        let raw: Buffer
+        try {
+          raw = await readBody(req, REMINDER_MAX_BODY)
+        } catch (err: any) {
+          if (isBodyTooLarge(err)) {
+            console.error('[reminders] BODY-TOO-LARGE > ' + REMINDER_MAX_BODY + ' bytes')
+            sendTooLarge(res)
+            return
+          }
+          throw err
+        }
+        const text = raw.toString('utf8')
         let body: any = {}
         try { body = text ? JSON.parse(text) : {} } catch { body = {} }
         const msg = typeof body?.text === 'string' ? body.text.slice(0, 200) : ''
