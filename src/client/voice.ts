@@ -55,9 +55,21 @@ export type Voice = {
   stop: () => void
   speaking: () => boolean
   recognizing: () => boolean
-  speak: (text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }) => void
+  /** strict：只走宿主 /tts，失败就安静（试听用，不回落浏览器 speechSynthesis） */
+  speak: (text: string, opts?: { rate?: string; pitch?: string; narration?: boolean; strict?: boolean; onDone?: () => void }) => void
   stopSpeaking: () => void
+  /** 立即换音色：下一个 /tts 请求就带新 voice，无需重建实例 */
   setVoiceName: (name: string) => void
+  /** 当前音色（自检用） */
+  voiceName: () => string
+  /** 端点检测模式切换（菜单「端点检测」用） */
+  setEndpointMode: (mode: 'ape' | 'classic') => void
+  /** 当前实际生效的端点检测模式（不是写死的 classic） */
+  endpointInfo: () => { mode: 'ape' | 'classic' }
+  /** 上一段录音的诊断信息 */
+  lastSegment: () => any
+  /** 上一段朗读的诊断信息 */
+  lastTtsInfo: () => any
   mute: (on: boolean) => void
   stats: VoiceStats
   status: () => VoiceStatus
@@ -83,9 +95,41 @@ const TTS_ZOMBIE_MS = 2500       // 这么久没在播就复位
 /** 识别服务常把静音/气口编成的词，一律当噪声 */
 const NOISE_TEXTS = ['嗯', '呃', '啊', '哦', '嗯嗯', '谢谢观看', '谢谢大家', '字幕', '请不吝点赞', '订阅', '转发', '打赏', '再见', '本鱼在听', '嗯本鱼在听']
 
+/**
+ * 可用的音色 —— 与菜单「换个声音 ▸」的列表一一对应，也是 /tts 请求前的白名单。
+ * 'auto' 不在 edge-tts 的语音表里，但宿主 routes/tts.ts 认它：按文本语言自动选晓伊/Ana。
+ * 列表外的一律回退默认晓伊：绝不把坏值（旧配置、手改 localStorage）送给 edge-tts。
+ */
+export const TTS_VOICES: string[] = [
+  'zh-CN-XiaoyiNeural',
+  'zh-CN-XiaoxiaoNeural',
+  'zh-CN-XiaochenNeural',
+  'zh-CN-YunxiNeural',
+  'zh-CN-YunyangNeural',
+  'en-US-AnaNeural',
+  'en-US-JennyNeural',
+  'en-GB-SoniaNeural',
+  'auto',
+]
+
+/** 默认音色：晓伊（与菜单默认与 C# 版一致） */
+export const DEFAULT_VOICE = 'zh-CN-XiaoyiNeural'
+
+/** 音色名规范化：白名单外（含空值/坏值）一律回退 */
+export function normalizeVoiceName(name: unknown, fallback: string = DEFAULT_VOICE): string {
+  const n = String(name == null ? '' : name).trim()
+  return TTS_VOICES.indexOf(n) >= 0 ? n : fallback
+}
+
+/** 读菜单里选过的音色（localStorage）；读不到或非法 → 默认晓伊 */
+export function readStoredVoiceName(): string {
+  try { return normalizeVoiceName(localStorage.getItem('chubby-tts-voice')) } catch (e) { return DEFAULT_VOICE }
+}
+
 export function createVoice(opts: VoiceOptions): Voice {
   const apiBase = opts.apiBase || '/api/chubby-whale'
-  let voiceName = opts.voiceName || 'zh-CN-XiaoyiNeural'
+  // 音色：显式传入优先，其次菜单里存的（chubby-tts-voice），最后默认晓伊
+  let voiceName = normalizeVoiceName(opts.voiceName || readStoredVoiceName())
   // 端点检测模式：ape（自适应，默认）/ classic（经典绝对阈值，可一键切回）
   // 默认 classic（经典绝对阈值）：实测 APE 在真实麦克风下会提前切句，前半句丢失。
   // 想试自适应可在菜单里切换，随时能切回来。
@@ -133,7 +177,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   const recentHeard: Array<{ text: string; at: number }> = []
 
   // ---- 朗读 ----
-type Job = { seq: number; text: string; rate: string; pitch?: string; narration: boolean; attempts: number; onDone?: () => void }
+type Job = { seq: number; text: string; rate: string; pitch?: string; narration: boolean; attempts: number; strict: boolean; onDone?: () => void }
   const ttsQ: Job[] = []
   let ttsBusy = false
   let ttsAudio: HTMLAudioElement | null = null
@@ -467,7 +511,8 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
           if (w.ttsLost.length > 10) w.ttsLost.shift()
         } catch (e) { }
         // 系统语音兜底：只有真的有可用语音时才用（没语音就当场静音，等于丢内容）
-        const canBrowser = (() => { try { const s: any = (window as any).speechSynthesis; return !!(s && s.getVoices && s.getVoices().length > 0) } catch (e) { return false } })()
+        // 试听（strict）不兜底：否则换了音色听起来还是系统音，等于没接线
+        const canBrowser = !job.strict && (() => { try { const s: any = (window as any).speechSynthesis; return !!(s && s.getVoices && s.getVoices().length > 0) } catch (e) { return false } })()
         if (canBrowser) speakViaBrowser(job.text).then(() => finishJob(job))
         else finishJob(job)
         return
@@ -512,7 +557,7 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
           setTimeout(() => { try { pumpTts() } catch (e) { } }, 250)
           return
         }
-        const canBrowser2 = (() => { try { const s: any = (window as any).speechSynthesis; return !!(s && s.getVoices && s.getVoices().length > 0) } catch (e) { return false } })()
+        const canBrowser2 = !job.strict && (() => { try { const s: any = (window as any).speechSynthesis; return !!(s && s.getVoices && s.getVoices().length > 0) } catch (e) { return false } })()
         if (canBrowser2) speakViaBrowser(job.text).then(() => finishJob(job))
         else finishJob(job)
       })
@@ -623,11 +668,12 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     setStatus('idle')
   }
 
-  function speak(text: string, o?: { rate?: string; pitch?: string; narration?: boolean; onDone?: () => void }): void {
+  function speak(text: string, o?: { rate?: string; pitch?: string; narration?: boolean; strict?: boolean; onDone?: () => void }): void {
     const raw = String(text || '')
     // 叙述判定照 C#：≥80 字算长文/典故/诗词 → 降速 -15%，段间 260ms 换气
     const narration = o && typeof o.narration === 'boolean' ? o.narration : raw.length >= 80
     const rate = (o && o.rate) ? o.rate : (narration ? NARRATION_RATE : '+0%')
+    const strict = !!(o && o.strict)
     const segs = splitForTts(raw, 56)
     if (!segs.length) return
     noteSpoken(raw)
@@ -638,6 +684,7 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
         rate,
         narration,
         attempts: 0,
+        strict,
         onDone: i === segs.length - 1 ? (o && o.onDone) : undefined,
       })
     }
@@ -669,12 +716,14 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     stopSpeaking,
     speaking: () => ttsBusy,
     recognizing: () => status === 'recognizing',
-    setEndpointMode: (m: 'ape' | 'classic') => { epMode = m; try { localStorage.setItem('chubby-endpoint', m) } catch (e) { } },
-    // 端点检测模式（APE 已默认关闭；此处报告当前实际模式）
-    endpointInfo: () => ({ mode: 'classic' }),
+    setEndpointMode: (m: 'ape' | 'classic') => { epMode = m === 'ape' ? 'ape' : 'classic'; try { localStorage.setItem('chubby-endpoint', epMode) } catch (e) { } },
+    // 端点检测：报告当前实际生效的模式（ape / classic），不再写死 classic
+    endpointInfo: () => ({ mode: epMode }),
     lastSegment: () => lastSeg,
     lastTtsInfo: () => lastTts,
-    setVoiceName: (n: string) => { voiceName = n || voiceName },
+    // 立即换音色：下一个 /tts 请求就带新 voice（不重建实例）；白名单外的值不改
+    setVoiceName: (n: string) => { voiceName = normalizeVoiceName(n, voiceName) },
+    voiceName: () => voiceName,
     mute: (on: boolean) => { muted = on; micOn(!on) },
     stats,
     status: () => status,

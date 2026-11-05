@@ -5,7 +5,7 @@
  *   · 每 WRITE_EVERY（20）次「模型真实成功回复」后才考虑一次；
  *   · 距上次生成/尝试 ≥ WRITE_MIN_INTERVAL_MS（24 小时），即 24 小时最多一次；
  *   · 重启后计数归零，但还会读 personality.json 的 selfNarrativeAt，避免刚写过的重来一遍；
- *   · 只把最近 WRITE_MESSAGE_COUNT（16）条对话交给 deepseek-flash，外加核心人设原文作只读参考。
+ *   · 只把最近 WRITE_MESSAGE_COUNT（16）条对话交给当前配置的聊天模型，外加核心人设原文作只读参考。
  *
  * 限域（这是本模块的全部边界）：
  *   · 输入里的核心人设（index.ts 的 SYSTEM_PROMPT）**只读**，从不写回、从不进 history；
@@ -18,7 +18,8 @@
  *   · 失败/解析失败/超时静默放弃：不写盘、不阻塞回复、不影响 L2。
  */
 import { fetchJson } from './http.js';
-import { CHAT_URL } from './chat-core.js';
+import { CHAT_URL, SUMMARY_MAX_TOKENS } from './chat-core.js';
+import { DEFAULT_CHAT_MODEL } from './config.js';
 import { validateSelfNarrative } from './personality.js';
 /** 每多少次真实成功回复触发一次自写 */
 export const WRITE_EVERY = 20;
@@ -26,8 +27,10 @@ export const WRITE_EVERY = 20;
 export const WRITE_MIN_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** 一次自写带多少条最近对话（16 条 = 8 轮） */
 export const WRITE_MESSAGE_COUNT = 16;
-/** 自写用模型（与聊天一致，便宜、够用） */
-export const WRITE_MODEL = 'deepseek-flash';
+/** 自写用模型：默认与聊天一致，装配时由 index.ts 注入配置值（deps.model 优先） */
+export const WRITE_MODEL = DEFAULT_CHAT_MODEL;
+/** 自写请求的 max_tokens 预算（原 160 偏低：一句 80 字也可能被思考挤掉） */
+export const WRITE_MAX_TOKENS = SUMMARY_MAX_TOKENS;
 /** 自写请求超时：20 秒，失败就放弃，不排队重试 */
 export const WRITE_TIMEOUT = 20 * 1000;
 /** 单条历史喂给模型时截断到多少字（token 可控） */
@@ -114,7 +117,7 @@ export function createSelfNarrativeWriter(deps) {
                         { role: 'system', content: SELF_NARRATIVE_SYSTEM_PROMPT },
                         { role: 'user', content: user },
                     ],
-                    max_tokens: 160,
+                    max_tokens: WRITE_MAX_TOKENS,
                     temperature: 0.7,
                     thinking: { type: 'disabled' },
                 }),

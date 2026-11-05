@@ -4,7 +4,7 @@
  * 节奏（与需求一致）：
  *   · 每 LEARN_EVERY（20）次「模型真实成功回复」后才考虑一次；
  *   · 两次尝试之间至少隔 LEARN_MIN_INTERVAL_MS（6 小时），即 6 小时最多一次；
- *   · 只把最近 LEARN_MESSAGE_COUNT（16）条对话（8 轮）交给 deepseek-flash 提取；
+ *   · 只把最近 LEARN_MESSAGE_COUNT（16）条对话（8 轮）交给当前配置的聊天模型提取；
  *   · 失败静默：只在 console 记一行 [personality] 日志，绝不影响回复、不写坏人格；
  *   · 缓存命中的回复不计数（复读同一句学不到新东西），流式中断的半截回复也不计数。
  *
@@ -13,15 +13,18 @@
  * 不在可写字段里，模型输出再多也改不了核心提示词。
  */
 import { fetchJson } from './http.js';
-import { CHAT_URL } from './chat-core.js';
+import { CHAT_URL, SUMMARY_MAX_TOKENS } from './chat-core.js';
+import { DEFAULT_CHAT_MODEL } from './config.js';
 /** 每多少次成功回复触发一次提取 */
 export const LEARN_EVERY = 20;
 /** 两次提取尝试的最小间隔（6 小时） */
 export const LEARN_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** 一次提取带多少条最近对话（16 条 = 8 轮） */
 export const LEARN_MESSAGE_COUNT = 16;
-/** 提取用模型（与聊天一致，便宜、够用） */
-export const LEARN_MODEL = 'deepseek-flash';
+/** 提取用模型：默认与聊天一致，装配时由 index.ts 注入配置值（deps.model 优先） */
+export const LEARN_MODEL = DEFAULT_CHAT_MODEL;
+/** 提取请求的 max_tokens 预算（原 320 偏低：新模型思考也会吃预算） */
+export const LEARN_MAX_TOKENS = SUMMARY_MAX_TOKENS;
 /** 提取请求超时：20 秒，失败就放弃，不排队重试 */
 const LEARN_TIMEOUT = 20 * 1000;
 /** 单条历史喂给提取模型时截断到多少字（16 条 × 300 字以内，token 可控） */
@@ -132,7 +135,7 @@ export function createPersonalityLearner(deps) {
                         { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
                         { role: 'user', content: '最近对话：\n' + convo },
                     ],
-                    max_tokens: 320,
+                    max_tokens: LEARN_MAX_TOKENS,
                     temperature: 0.2,
                     thinking: { type: 'disabled' },
                 }),

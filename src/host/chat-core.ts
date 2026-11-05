@@ -15,6 +15,14 @@ export const CHAT_URL = 'https://api.deepseek.com/chat/completions'
 export const HISTORY_IN_PROMPT = 8
 /** 聊天回复缓存 7 天 */
 export const CHAT_CACHE_TTL = 7 * 24 * 3600 * 1000
+/**
+ * 聊天 / 流式的 max_tokens 预算（2026-11 调整：260 → 800）。
+ * 新模型若忽略 thinking:{type:'disabled'}、把预算花在 reasoning_content 上，260 会出现「只思考不回答」；
+ * 预算给到 800 后即使思考占掉一部分，也仍有足够额度吐出正文。
+ */
+export const CHAT_MAX_TOKENS = 800
+/** 后台摘要类调用（长期记忆压缩 / L2 学习 / L3 自写）的 max_tokens 预算（原 160~320 偏低） */
+export const SUMMARY_MAX_TOKENS = 400
 
 /**
  * 聊天缓存的规范化：语音闲聊要"同一句话就命中"，所以
@@ -45,10 +53,13 @@ export function recentHistory(history: any[], n: number): any[] {
   return k === 0 ? [] : arr.slice(-k)
 }
 
-/** 缓存 key：语言 + 规范化文本 + 是否语音 + 上下文指纹（语音和打字分开存，避免互相串） */
-export function chatCacheKey(lang: string, message: string, isVoice: boolean, ctx = ''): string {
-  // v2：把上下文指纹（长期记忆摘要 + 上一轮用户消息）算进 key，上下文变了不复用旧答案
-  return hashKey('v2|' + lang + '|' + (isVoice ? 'voice' : 'text') + '|' + normalizeChatText(message) + '|' + ctx)
+/**
+ * 缓存 key：语言 + 规范化文本 + 是否语音 + 模型名 + 上下文指纹（语音和打字分开存，避免互相串）。
+ * 模型名进 key：换模型后旧缓存自动失效，不会把上一个模型的口吻/质量参差的回复继续拿出来用。
+ */
+export function chatCacheKey(lang: string, message: string, isVoice: boolean, ctx = '', model = ''): string {
+  // v3：在 v2（上下文指纹）基础上把模型名算进 key；升级前的 v2 key 自然失配，等于清空旧缓存
+  return hashKey('v3|' + lang + '|' + (isVoice ? 'voice' : 'text') + '|' + normalizeChatText(message) + '|' + String(model || '') + '|' + ctx)
 }
 
 /**

@@ -24,22 +24,25 @@ export const SONG_EN: Record<string, string> = {
 }
 
 // 中 -> 英 字典（菜单界面；只放固定文案，动态拼出来的标签走 tr() 的前缀模板）
+// 键必须与 buildMenu 里的文案逐字一致，否则就是永远匹配不到的死键。
 export const EN_MAP: Record<string, string> = {
-  '喂它一口': 'Feed it',
+  '投喂一碗': 'Feed a bowl',
   '弹首曲子 ▸': 'Play a song ▸',
   '停止弹奏': 'Stop music',
-  '打字说两句': 'Type a message',
+  '跟她说两句': 'Talk to her',
   '换个声音 ▸': 'Change voice ▸',
   '聊天语言 ▸': 'Chat language ▸',
   '界面语言 ▸': 'Interface language ▸',
   '看张图…': 'Look at a picture…',
   '停止说话': 'Stop talking',
-  '停下歇会儿': 'Take a break',
-  '回到右下角': 'Back to corner',
+  '让她歇会儿': 'Let her rest',
+  '回碗里待着': 'Back in the bowl',
   '长大一点': 'Grow bigger',
   '变小一点': 'Shrink',
-  '加个提醒…': 'Add reminder…',
+  '记个饭点…': 'Add a meal reminder…',
   '提醒清单…': 'Reminders…',
+  '端点检测：经典/自适应': 'Endpoint detection: classic / adaptive',
+  '耳朵自检（听力诊断）': 'Hearing self-test',
   '文化气 ▸': 'Culture ▸',
   '说书（连载）': 'Storytelling',
   '接着说': 'Continue story',
@@ -48,7 +51,18 @@ export const EN_MAP: Record<string, string> = {
   '讲个民间故事': 'Folk tale',
   '讲个典故': 'Classic allusion',
   '成语辨析': 'Idiom',
-  '出个对联': 'Couplet',
+  '出个对联 ▸': 'Couplets ▸',
+  '随机一副': 'Random pair',
+  '春联': 'Spring couplet',
+  '格言': 'Motto',
+  '谐趣': 'Witty',
+  '名胜': 'Landmarks',
+  '景观': 'Scenery',
+  '书房': 'Study',
+  '寿联': 'Birthday couplet',
+  '中药': 'Herbs',
+  '叠字': 'Repeated characters',
+  '数字': 'Numerals',
   '清除记忆…': 'Clear memory…',
   '清空聊天缓存…': 'Clear chat cache…',
   '聊天缓存：开': 'Chat cache: on',
@@ -58,10 +72,7 @@ export const EN_MAP: Record<string, string> = {
   'English': 'English',
   '自动（按语言选音色）': 'Auto (by language)',
   '自动': 'Auto',
-  '✓ 自动': '✓ Auto',
   '中文': 'Chinese',
-  '✓ 中文': '✓ Chinese',
-  '✓ English': '✓ English',
   '音色：晓伊（中·女）': 'Voice: Xiaoyi (CN F)',
   '音色：晓晓（中·女）': 'Voice: Xiaoxiao (CN F)',
   '音色：晓辰（中·女）': 'Voice: Xiaochen (CN F)',
@@ -83,6 +94,13 @@ export function tr(label: string, lang: string): string {
   if (lang !== 'en') return label
   const exact = EN_MAP[label]
   if (exact) return exact
+  // 勾选项（'✓ ' + 文案）：剥前缀翻译再拼回去。
+  // 原来靠 '✓ 自动' / '✓ 中文' 这类硬编码条目，音色菜单一带勾就又漏回中文。
+  if (label.startsWith('✓ ')) {
+    const base = label.slice(2)
+    const en = tr(base, lang)
+    return en === base ? label : '✓ ' + en
+  }
   // 动态标签（曲名/成长/版本/余额/开关）用模板拼，别在 EN_MAP 里留永远匹配不到的死键
   if (label.startsWith('弹《') && label.endsWith('》')) {
     const song = label.slice(2, label.length - 1)

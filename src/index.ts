@@ -12,7 +12,10 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { mkdirSync, existsSync, copyFileSync, cpSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { readApiKey, readSiliconFlowKey, readDataSource, readPersonalityLearning, readPersonalityWriting } from './host/config.js'
+import {
+  readApiKey, readSiliconFlowKey, readDataSource, readPersonalityLearning, readPersonalityWriting,
+  readChatModel, sanitizePluginConfig,
+} from './host/config.js'
 import { createStore, growthStage } from './host/store.js'
 import { createCache } from './host/cache.js'
 import { createPrefs, createCacheToggleHandler } from './host/prefs.js'
@@ -79,6 +82,33 @@ export const name = 'dsh-chubby-whale'
 export const inject = ['webServer']
 
 /**
+ * 配置 schema（DSH 标准插件规范要求的 Config 导出）。
+ *
+ * 判定依据：本机 @deepseek-ai/cordis 4.0.5 的 Fiber._resolveConfig 只认
+ * `runtime.Config['~standard'].validate(raw)`（standard-schema 约定），并不导出 schemastery；
+ * 插件包也没有安装 @deepseek-ai/schemastery。因此这里按 standard-schema 手写最小校验，
+ * 实际规则集中在 host/config.ts 的 sanitizePluginConfig（与 apply 开头共用同一份）：
+ *   · 合法值归一化；非法值 console.warn 后丢弃，回退到下一层配置/默认值；
+ *   · 校验函数永不抛错——配置笔误不能把整个插件挡在加载之外。
+ *
+ * 覆盖键：enabled / dataSource / personalityLearning / personalityWriting / model。
+ */
+export const Config = {
+  '~standard': {
+    version: 1 as const,
+    vendor: 'dsh-chubby-whale',
+    validate(value: any): { value: any } {
+      try {
+        return { value: sanitizePluginConfig(value) }
+      } catch {
+        // 兜底：校验器自身出错时原样放行，绝不因为 schema bug 让插件加载失败
+        return { value: value && typeof value === 'object' ? value : {} }
+      }
+    },
+  },
+}
+
+/**
  * 核心人设（只读）：名字 / 家人 / 生日 / 出生地 / 语言规则 / 安全底线全在这里。
  * L2 学习与 L3 自写都拿不到写入口——L3 只把它当输入参考，输出只进 personality.json
  * 的 selfNarrative（≤80 字、过身份词过滤），本常量一个字都不会被模型改写。
@@ -107,14 +137,22 @@ const STAGE_TONE: Record<string, string> = {
 /**
  * 插件入口。config 来自 cordis.patch.yml 的 config 段（DSH 按 apply(ctx, config) 传入）。
  * 总开关：config.enabled === false 时整个宿主端不注册任何路由。
+ * 配置先过一遍 sanitizePluginConfig（与导出的 Config 同一份规则）：
+ * 直接调用 apply 的旧路径/离线测试同样享受类型校验与非法值告警。
  */
-export function apply(ctx: any, config?: any): void {
-  if (config && config.enabled === false) {
+export function apply(ctx: any, rawConfig?: any): void {
+  const config = sanitizePluginConfig(rawConfig)
+  if (config.enabled === false) {
     console.log('[chubby-whale] disabled by config')
     return
   }
 
   migrateRuntimeData()
+
+  // 聊天模型：装配时算一次（cordis config.model → config.json.model → CHUBBY_WHALE_MODEL → 默认），
+  // 四个外呼点（聊天/流式/L2/L3）共用；运行中不再读盘，换模型改配置后重新加载插件即可。
+  const chatModel = readChatModel(PLUGIN_DIR, config)
+  console.log('[chubby-whale] chat model=' + chatModel)
 
   // 偏好（目前只有聊天缓存开关）：独立模块 + 路由工厂
   const prefs = createPrefs(RUNTIME_DIR)
@@ -135,6 +173,7 @@ export function apply(ctx: any, config?: any): void {
     getKey,
     loadHistory: store.loadHistory,
     enabled: () => personalityLearningEnabled,
+    model: chatModel,
   })
   if (!personalityLearningEnabled) console.log('[chubby-whale] personalityLearning=false（可变人格学习已关闭）')
 
@@ -147,6 +186,7 @@ export function apply(ctx: any, config?: any): void {
     loadHistory: store.loadHistory,
     corePrompt: () => SYSTEM_PROMPT,
     enabled: () => personalityWritingEnabled,
+    model: chatModel,
   })
   if (!personalityWritingEnabled) console.log('[chubby-whale] personalityWriting=false（近期心境自写已关闭，已存心境仍注入）')
 
@@ -193,6 +233,7 @@ export function apply(ctx: any, config?: any): void {
     loadMemorySummary: store.loadMemorySummary,
     saveMemorySummary: store.saveMemorySummary,
     cacheEnabled: prefs.chatCacheEnabled,
+    model: chatModel,
     onReply: onModelReply,
   })
   const chatStream = createChatStreamHandler({
@@ -204,6 +245,7 @@ export function apply(ctx: any, config?: any): void {
     cache: chatCache,
     loadMemorySummary: store.loadMemorySummary,
     cacheEnabled: prefs.chatCacheEnabled,
+    model: chatModel,
     onReply: onModelReply,
   })
   const story = createStoryHandlers({

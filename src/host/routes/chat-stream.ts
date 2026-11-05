@@ -26,8 +26,9 @@ import { sendTooLarge } from '../http.js'
 import { readJsonBody } from '../body.js'
 import { sendSseHeaders } from '../respond.js'
 import type { ChatStreamRouteDeps } from '../ports.js'
+import { DEFAULT_CHAT_MODEL } from '../config.js'
 import {
-  CHAT_URL, CHAT_CACHE_TTL, detectLang, chatCacheKey, chatContextFingerprint,
+  CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, detectLang, chatCacheKey, chatContextFingerprint,
   historyMessages, composeSystemPrompt,
 } from '../chat-core.js'
 import { parseSseBuffer } from '../../shared/sse.js'
@@ -38,6 +39,8 @@ const SSE_PING_MS = 12 * 1000            // SSE 心跳间隔
 const CHAT_MAX_BODY = 6 * 1024 * 1024
 
 export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
+  // 与普通 /chat 共用同一个装配值（index.ts 的 readChatModel），缓存 key 也带它
+  const model = opts.model || DEFAULT_CHAT_MODEL
   return async function handleChatStream(req: any, res: any): Promise<void> {
     // SSE 头：立刻发出，避免客户端等到第一个 token 才开始
     const started = Date.now()
@@ -114,7 +117,8 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       try { history = opts.loadHistory() || [] } catch { history = [] }
 
       const cacheOn = !opts.cacheEnabled || opts.cacheEnabled() !== false
-      const cacheKey = chatCacheKey(lang, message, isVoice, chatContextFingerprint(memSummary, history))
+      // 模型名进 key：换模型后旧缓存自动失效（与普通 /chat 一致）
+      const cacheKey = chatCacheKey(lang, message, isVoice, chatContextFingerprint(memSummary, history), model)
       // 与普通 /chat 一致：太短的消息不缓存
       const cacheable = message.length >= (isVoice ? 2 : 6)
 
@@ -159,9 +163,9 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key },
           body: JSON.stringify({
-            model: 'deepseek-flash',
+            model,
             messages,
-            max_tokens: 260,
+            max_tokens: CHAT_MAX_TOKENS,
             temperature: 0.8,
             thinking: { type: 'disabled' },
             stream: true,
@@ -199,11 +203,17 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
           const parsedSse = parseSseBuffer(buf)
           buf = parsedSse.rest
           for (const j of parsedSse.events) {
-            const delta = j?.choices?.[0]?.delta?.content
-            if (typeof delta === 'string' && delta) {
+            // 正文优先；choices[0].delta.content 为空时取 reasoning_content 回退。
+            // 新模型若忽略 thinking:{type:'disabled'}，会只吐 reasoning_content 而正文为空——
+            // 不补这条回退，用户看到的就是一条空回复（TTS 也念不出字）。
+            const d = j?.choices?.[0]?.delta
+            let piece = ''
+            if (typeof d?.content === 'string' && d.content) piece = d.content
+            else if (typeof d?.reasoning_content === 'string' && d.reasoning_content) piece = d.reasoning_content
+            if (piece) {
               if (!firstDeltaAt) firstDeltaAt = Date.now()
-              reply += delta
-              send({ delta })
+              reply += piece
+              send({ delta: piece })
             }
             if (j?.usage) usage = j.usage
           }

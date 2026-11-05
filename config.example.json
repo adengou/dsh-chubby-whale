@@ -3,5 +3,6 @@
   "siliconflowKey": "",
   "dataSource": "local",
   "personalityLearning": true,
-  "personalityWriting": true
+  "personalityWriting": true,
+  "model": "deepseek-flash"
 }

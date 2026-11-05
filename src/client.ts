@@ -130,7 +130,8 @@ import { createReminderPoller } from './client/reminders.js'
       const lookRef = R.useRef(lookFor(0))
       // 菜单数值的最近一次拉取时刻（10 秒节流；ref 跨渲染保留，普通变量每次渲染都会被重置）
       const menuStatsAtRef = R.useRef(0)
-      const WAKE_WORDS = ['大肥鱼', '肥鲸', '肥鱼', '小鱼', '蓝鱼', '小蓝鱼', '鱼鱼', '肥肥']
+      // 唤醒词表在 client/wake.ts（WAKE_WORDS），由 voice-bridge 的唤醒门真正使用；
+      // 原来这里定义了一份却从没被读过，属于"接线缺口"，已移除。
       const dragRef = R.useRef(createDragState())
       const scaleRef = R.useRef(1)
       const animRef = R.useRef(null as any)
@@ -174,6 +175,10 @@ import { createReminderPoller } from './client/reminders.js'
             ttsPlaying = playing
             if (playing) { try { lastSpeakingAt = Date.now() } catch (e) { } }
           },
+          // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
+          voiceChat: () => voiceChatOnRef.current,
+          // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
+          speaking: () => ttsPlaying,
           diag: (patch: any) => { try { Object.assign(((window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})), patch) } catch (e) { } },
         })
       }
@@ -530,6 +535,14 @@ import { createReminderPoller } from './client/reminders.js'
         syncGrowth: () => syncGrowth(),
         setLang: (l) => setLang(l),
         voice: () => bridge.get(),
+        // 换音色：存 localStorage + 立即改实例音色（下一个 /tts 就带新 voice）
+        setTtsVoice: (name) => {
+          try { localStorage.setItem('chubby-tts-voice', name) } catch (e) { }
+          try { bridge.setVoiceName(name) } catch (e) { }
+        },
+        // 试听：走宿主 /tts（strict），失败静默
+        previewVoice: (text) => { try { bridge.preview(text) } catch (e) { } },
+        wakeInfo: () => { try { return bridge.wakeInfo() } catch (e) { return null } },
         voicePlaying: () => ttsPlaying,
         earStandby: () => earOnRef.current,
         setEarStandby: (v) => { earOnRef.current = v; setEarOn(v) },
@@ -553,7 +566,8 @@ import { createReminderPoller } from './client/reminders.js'
             bridge.start().then((v: any) => {
               try {
                 if (v.status() === 'idle') showBubble('麦克风没打开：' + String((v.stats && v.stats.lastError) || '看看权限？'), 5000)
-                else showBubble('语音待命：开（本鲸听着呢）', 2500)
+                // 唤醒了才接话：先把规则说清楚，免得主人以为坏了
+                else showBubble('语音待命：开（先喊「大肥鱼」，本鲸才答话）', 3500)
               } catch (e) { }
             }).catch((e: any) => showBubble('麦克风没打开：' + String((e && e.message) || e), 5000))
           } catch (e: any) {

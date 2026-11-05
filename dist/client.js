@@ -118,21 +118,23 @@
     "\u53CB\u8C0A\u5929\u957F\u5730\u4E45": "Auld Lang Syne"
   };
   var EN_MAP = {
-    "\u5582\u5B83\u4E00\u53E3": "Feed it",
+    "\u6295\u5582\u4E00\u7897": "Feed a bowl",
     "\u5F39\u9996\u66F2\u5B50 \u25B8": "Play a song \u25B8",
     "\u505C\u6B62\u5F39\u594F": "Stop music",
-    "\u6253\u5B57\u8BF4\u4E24\u53E5": "Type a message",
+    "\u8DDF\u5979\u8BF4\u4E24\u53E5": "Talk to her",
     "\u6362\u4E2A\u58F0\u97F3 \u25B8": "Change voice \u25B8",
     "\u804A\u5929\u8BED\u8A00 \u25B8": "Chat language \u25B8",
     "\u754C\u9762\u8BED\u8A00 \u25B8": "Interface language \u25B8",
     "\u770B\u5F20\u56FE\u2026": "Look at a picture\u2026",
     "\u505C\u6B62\u8BF4\u8BDD": "Stop talking",
-    "\u505C\u4E0B\u6B47\u4F1A\u513F": "Take a break",
-    "\u56DE\u5230\u53F3\u4E0B\u89D2": "Back to corner",
+    "\u8BA9\u5979\u6B47\u4F1A\u513F": "Let her rest",
+    "\u56DE\u7897\u91CC\u5F85\u7740": "Back in the bowl",
     "\u957F\u5927\u4E00\u70B9": "Grow bigger",
     "\u53D8\u5C0F\u4E00\u70B9": "Shrink",
-    "\u52A0\u4E2A\u63D0\u9192\u2026": "Add reminder\u2026",
+    "\u8BB0\u4E2A\u996D\u70B9\u2026": "Add a meal reminder\u2026",
     "\u63D0\u9192\u6E05\u5355\u2026": "Reminders\u2026",
+    "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94": "Endpoint detection: classic / adaptive",
+    "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09": "Hearing self-test",
     "\u6587\u5316\u6C14 \u25B8": "Culture \u25B8",
     "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09": "Storytelling",
     "\u63A5\u7740\u8BF4": "Continue story",
@@ -141,7 +143,18 @@
     "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B": "Folk tale",
     "\u8BB2\u4E2A\u5178\u6545": "Classic allusion",
     "\u6210\u8BED\u8FA8\u6790": "Idiom",
-    "\u51FA\u4E2A\u5BF9\u8054": "Couplet",
+    "\u51FA\u4E2A\u5BF9\u8054 \u25B8": "Couplets \u25B8",
+    "\u968F\u673A\u4E00\u526F": "Random pair",
+    "\u6625\u8054": "Spring couplet",
+    "\u683C\u8A00": "Motto",
+    "\u8C10\u8DA3": "Witty",
+    "\u540D\u80DC": "Landmarks",
+    "\u666F\u89C2": "Scenery",
+    "\u4E66\u623F": "Study",
+    "\u5BFF\u8054": "Birthday couplet",
+    "\u4E2D\u836F": "Herbs",
+    "\u53E0\u5B57": "Repeated characters",
+    "\u6570\u5B57": "Numerals",
     "\u6E05\u9664\u8BB0\u5FC6\u2026": "Clear memory\u2026",
     "\u6E05\u7A7A\u804A\u5929\u7F13\u5B58\u2026": "Clear chat cache\u2026",
     "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00": "Chat cache: on",
@@ -151,10 +164,7 @@
     "English": "English",
     "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09": "Auto (by language)",
     "\u81EA\u52A8": "Auto",
-    "\u2713 \u81EA\u52A8": "\u2713 Auto",
     "\u4E2D\u6587": "Chinese",
-    "\u2713 \u4E2D\u6587": "\u2713 Chinese",
-    "\u2713 English": "\u2713 English",
     "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaoyi (CN F)",
     "\u97F3\u8272\uFF1A\u6653\u6653\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaoxiao (CN F)",
     "\u97F3\u8272\uFF1A\u6653\u8FB0\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaochen (CN F)",
@@ -173,6 +183,11 @@
     if (lang !== "en") return label;
     const exact = EN_MAP[label];
     if (exact) return exact;
+    if (label.startsWith("\u2713 ")) {
+      const base = label.slice(2);
+      const en = tr(base, lang);
+      return en === base ? label : "\u2713 " + en;
+    }
     if (label.startsWith("\u5F39\u300A") && label.endsWith("\u300B")) {
       const song = label.slice(2, label.length - 1);
       return SONG_EN[song] ? 'Play "' + SONG_EN[song] + '"' : "Play a song";
@@ -972,9 +987,32 @@
   var TTS_WATCH_MS = 1e3;
   var TTS_ZOMBIE_MS = 2500;
   var NOISE_TEXTS = ["\u55EF", "\u5443", "\u554A", "\u54E6", "\u55EF\u55EF", "\u8C22\u8C22\u89C2\u770B", "\u8C22\u8C22\u5927\u5BB6", "\u5B57\u5E55", "\u8BF7\u4E0D\u541D\u70B9\u8D5E", "\u8BA2\u9605", "\u8F6C\u53D1", "\u6253\u8D4F", "\u518D\u89C1", "\u672C\u9C7C\u5728\u542C", "\u55EF\u672C\u9C7C\u5728\u542C"];
+  var TTS_VOICES = [
+    "zh-CN-XiaoyiNeural",
+    "zh-CN-XiaoxiaoNeural",
+    "zh-CN-XiaochenNeural",
+    "zh-CN-YunxiNeural",
+    "zh-CN-YunyangNeural",
+    "en-US-AnaNeural",
+    "en-US-JennyNeural",
+    "en-GB-SoniaNeural",
+    "auto"
+  ];
+  var DEFAULT_VOICE2 = "zh-CN-XiaoyiNeural";
+  function normalizeVoiceName(name, fallback = DEFAULT_VOICE2) {
+    const n = String(name == null ? "" : name).trim();
+    return TTS_VOICES.indexOf(n) >= 0 ? n : fallback;
+  }
+  function readStoredVoiceName() {
+    try {
+      return normalizeVoiceName(localStorage.getItem("chubby-tts-voice"));
+    } catch (e) {
+      return DEFAULT_VOICE2;
+    }
+  }
   function createVoice(opts) {
     const apiBase = opts.apiBase || "/api/chubby-whale";
-    let voiceName = opts.voiceName || "zh-CN-XiaoyiNeural";
+    let voiceName = normalizeVoiceName(opts.voiceName || readStoredVoiceName());
     let epMode = (() => {
       try {
         return localStorage.getItem("chubby-endpoint") === "ape" ? "ape" : "classic";
@@ -1420,7 +1458,7 @@
             if (w.ttsLost.length > 10) w.ttsLost.shift();
           } catch (e) {
           }
-          const canBrowser = (() => {
+          const canBrowser = !job.strict && (() => {
             try {
               const s = window.speechSynthesis;
               return !!(s && s.getVoices && s.getVoices().length > 0);
@@ -1512,7 +1550,7 @@
             }, 250);
             return;
           }
-          const canBrowser2 = (() => {
+          const canBrowser2 = !job.strict && (() => {
             try {
               const s = window.speechSynthesis;
               return !!(s && s.getVoices && s.getVoices().length > 0);
@@ -1675,6 +1713,7 @@
       const raw = String(text || "");
       const narration = o && typeof o.narration === "boolean" ? o.narration : raw.length >= 80;
       const rate = o && o.rate ? o.rate : narration ? NARRATION_RATE : "+0%";
+      const strict = !!(o && o.strict);
       const segs = splitForTts(raw, 56);
       if (!segs.length) return;
       noteSpoken(raw);
@@ -1685,6 +1724,7 @@
           rate,
           narration,
           attempts: 0,
+          strict,
           onDone: i === segs.length - 1 ? o && o.onDone : void 0
         });
       }
@@ -1728,25 +1768,87 @@
       speaking: () => ttsBusy,
       recognizing: () => status === "recognizing",
       setEndpointMode: (m) => {
-        epMode = m;
+        epMode = m === "ape" ? "ape" : "classic";
         try {
-          localStorage.setItem("chubby-endpoint", m);
+          localStorage.setItem("chubby-endpoint", epMode);
         } catch (e) {
         }
       },
-      // 端点检测模式（APE 已默认关闭；此处报告当前实际模式）
-      endpointInfo: () => ({ mode: "classic" }),
+      // 端点检测：报告当前实际生效的模式（ape / classic），不再写死 classic
+      endpointInfo: () => ({ mode: epMode }),
       lastSegment: () => lastSeg,
       lastTtsInfo: () => lastTts,
+      // 立即换音色：下一个 /tts 请求就带新 voice（不重建实例）；白名单外的值不改
       setVoiceName: (n) => {
-        voiceName = n || voiceName;
+        voiceName = normalizeVoiceName(n, voiceName);
       },
+      voiceName: () => voiceName,
       mute: (on) => {
         muted = on;
         micOn(!on);
       },
       stats,
       status: () => status
+    };
+  }
+
+  // src/client/wake.ts
+  var WAKE_WORDS = ["\u5927\u80A5\u9C7C", "\u5C0F\u84DD\u9C7C", "\u80A5\u9CB8", "\u80A5\u9C7C", "\u5C0F\u9C7C", "\u84DD\u9C7C", "\u9C7C\u9C7C", "\u80A5\u80A5"];
+  var WAKE_WINDOW_MS = 3e4;
+  function normalizeWakeText(text) {
+    return String(text == null ? "" : text).replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, "").toLowerCase();
+  }
+  function escapeRe(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function stripWakeWords(input, words = WAKE_WORDS) {
+    const raw = String(input == null ? "" : input);
+    const norm = normalizeWakeText(raw);
+    if (!norm) return { hit: false, text: "", word: "" };
+    const sorted = (words || []).filter(Boolean).map((w) => String(w)).sort((a, b) => b.length - a.length);
+    const hits = sorted.filter((w) => norm.indexOf(normalizeWakeText(w)) >= 0);
+    if (!hits.length) return { hit: false, text: raw.trim(), word: "" };
+    let out = raw;
+    for (const w of hits) {
+      const pattern = w.split("").map(escapeRe).join("\\s*");
+      out = out.replace(new RegExp(pattern, "gi"), " ");
+    }
+    out = out.replace(/^[\s。，、！？；：,.!?;:…~～·]+/, "").replace(/[\s。，、！？；：,.!?;:…~～·]+$/, "");
+    if (normalizeWakeText(out) === norm) {
+      out = norm;
+      for (const w of hits) out = out.split(normalizeWakeText(w)).join("");
+    }
+    if (!/[\u4e00-\u9fa5a-z0-9]/i.test(out)) out = "";
+    return { hit: true, text: out, word: hits[0] };
+  }
+  function createWakeGate(opts = {}) {
+    const words = (opts.words && opts.words.length ? opts.words : WAKE_WORDS).slice();
+    const windowMs = Math.max(1e3, Number(opts.windowMs) || WAKE_WINDOW_MS);
+    const clock = typeof opts.now === "function" ? opts.now : () => Date.now();
+    let lastHitAt = 0;
+    function awake(now = clock()) {
+      return lastHitAt > 0 && now - lastHitAt <= windowMs;
+    }
+    function remainingMs(now = clock()) {
+      return awake(now) ? Math.max(0, windowMs - (now - lastHitAt)) : 0;
+    }
+    return {
+      windowMs,
+      words,
+      awake,
+      remainingMs,
+      reset() {
+        lastHitAt = 0;
+      },
+      check(text, now = clock()) {
+        const r = stripWakeWords(text, words);
+        if (r.hit) {
+          lastHitAt = now;
+          return { hit: true, pass: true, text: r.text, word: r.word, remainingMs: windowMs };
+        }
+        const pass = awake(now);
+        return { hit: false, pass, text: String(text == null ? "" : text).trim(), word: "", remainingMs: remainingMs(now) };
+      }
     };
   }
 
@@ -1762,8 +1864,34 @@
   }
   function createVoiceBridge(host) {
     let voice = null;
+    let pendingVoice = readStoredVoiceName();
+    const gate = createWakeGate();
+    const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 };
+    function wakeInfo() {
+      const now = Date.now();
+      const remainingMs = gate.remainingMs(now);
+      return {
+        awake: remainingMs > 0,
+        remainingMs,
+        windowMs: gate.windowMs,
+        words: gate.words,
+        hits: wakeStats.hits,
+        passed: wakeStats.passed,
+        dropped: wakeStats.dropped,
+        lastHitAt: wakeStats.lastHitAt || null
+      };
+    }
+    function pushWake() {
+      try {
+        host.diag({ wake: wakeInfo() });
+      } catch (e) {
+      }
+    }
     function build() {
-      const v = createVoice({
+      const make = host.makeVoice || ((o) => createVoice(o));
+      const v = make({
+        // 建实例时就带上菜单里选的音色（原来没接，TTS 永远是默认晓伊）
+        voiceName: pendingVoice,
         onHeard: (text) => {
           try {
             host.onVoiceHeard();
@@ -1786,13 +1914,68 @@
           } catch (e) {
           }
           try {
-            host.bubble("\uFF08\u542C\u5230\uFF09" + text + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
+            if (/^(停|停下|停一下|别说了|别讲了|别念了|别吵|闭嘴|安静|打住|够了)$/.test(normalizeWakeText(text))) {
+              const speaking = host.speaking ? !!host.speaking() : true;
+              if (speaking) {
+                try {
+                  host.stopSpeaking();
+                } catch (e) {
+                }
+                try {
+                  host.bubble("\u597D\uFF0C\u4E0D\u8BF4\u4E86", 2e3);
+                } catch (e) {
+                }
+                bump("wakeBreak");
+                return;
+              }
+            }
           } catch (e) {
           }
           try {
-            host.sendText(text, { voice: true });
+            if (host.voiceChat && !host.voiceChat()) {
+              wakeStats.dropped++;
+              pushWake();
+              return;
+            }
           } catch (e) {
           }
+          const r = gate.check(text);
+          if (r.hit) {
+            wakeStats.hits++;
+            wakeStats.lastHitAt = Date.now();
+          }
+          if (!r.pass) {
+            wakeStats.dropped++;
+            const now = Date.now();
+            if (now - wakeStats.dropNotifiedAt > 2e4) {
+              wakeStats.dropNotifiedAt = now;
+              try {
+                host.bubble("\u5148\u558A\u4E00\u58F0\u300C" + (gate.words[0] || "\u5927\u80A5\u9C7C") + "\u300D\uFF0C\u672C\u9CB8\u624D\u7B54\u8BDD\uFF5E", 3500);
+              } catch (e) {
+              }
+            }
+            bump("wakeDrop");
+            pushWake();
+            return;
+          }
+          if (!r.text) {
+            try {
+              host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
+            } catch (e) {
+            }
+            pushWake();
+            return;
+          }
+          wakeStats.passed++;
+          try {
+            host.bubble("\uFF08\u542C\u5230\uFF09" + r.text + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
+          } catch (e) {
+          }
+          try {
+            host.sendText(r.text, { voice: true });
+          } catch (e) {
+          }
+          pushWake();
         },
         onStatus: (st) => {
           try {
@@ -1818,7 +2001,7 @@
       });
       voice = v;
       try {
-        host.diag({ voice: v });
+        host.diag({ voice: v, wake: wakeInfo() });
       } catch (e) {
       }
       try {
@@ -1840,7 +2023,10 @@
       ensure,
       start() {
         const v = ensure();
-        return Promise.resolve(v.start()).then(() => v);
+        return Promise.resolve(v.start()).then(() => {
+          pushWake();
+          return v;
+        });
       },
       stop() {
         if (voice) {
@@ -1858,6 +2044,10 @@
           }
         }
         voice = null;
+        try {
+          gate.reset();
+        } catch (e) {
+        }
       },
       speak(text, opts) {
         if (voice) {
@@ -1882,7 +2072,37 @@
           } catch (e) {
           }
         }
-      }
+      },
+      setVoiceName(name) {
+        pendingVoice = normalizeVoiceName(name, pendingVoice);
+        if (voice) {
+          try {
+            voice.setVoiceName(pendingVoice);
+          } catch (e) {
+          }
+        }
+      },
+      voiceName() {
+        try {
+          return voice ? voice.voiceName() : pendingVoice;
+        } catch (e) {
+          return pendingVoice;
+        }
+      },
+      preview(text) {
+        const t = String(text || "").trim();
+        if (!t) return;
+        const v = ensure();
+        try {
+          v.setVoiceName(pendingVoice);
+        } catch (e) {
+        }
+        try {
+          v.speak(t, { strict: true });
+        } catch (e) {
+        }
+      },
+      wakeInfo
     };
   }
 
@@ -3005,7 +3225,8 @@
     });
     table.define("endpoint", (host) => {
       try {
-        const cur = (() => {
+        const v = host.voice();
+        const cur = v && v.endpointInfo ? v.endpointInfo().mode : (() => {
           try {
             return localStorage.getItem("chubby-endpoint") === "ape" ? "ape" : "classic";
           } catch (e) {
@@ -3014,9 +3235,9 @@
         })();
         const next = cur === "ape" ? "classic" : "ape";
         localStorage.setItem("chubby-endpoint", next);
-        const v = host.voice();
         if (v && v.setEndpointMode) v.setEndpointMode(next);
-        host.bubble(next === "ape" ? "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u81EA\u9002\u5E94\uFF08\u8BD5\u7528\uFF09" : "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178\uFF08\u7A33\u5B9A\uFF09", 4e3);
+        const real = v && v.endpointInfo ? v.endpointInfo().mode : next;
+        host.bubble(real === "ape" ? "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u81EA\u9002\u5E94\uFF08\u8BD5\u7528\uFF09" : "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178\uFF08\u7A33\u5B9A\uFF09", 4e3);
       } catch (e) {
         host.bubble("\u5207\u6362\u5931\u8D25", 3e3);
       }
@@ -3045,7 +3266,16 @@
           } catch (e) {
             return "";
           }
-        })() + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
+        })() + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + "\n\u97F3\u8272\uFF1A" + (v.voiceName ? v.voiceName() : "?") + (function() {
+          try {
+            const w = host.wakeInfo ? host.wakeInfo() : null;
+            if (!w) return "";
+            const head = w.awake ? "\u9192\u7740\uFF08\u8FD8\u5269 " + Math.round((Number(w.remainingMs) || 0) / 1e3) + " \u79D2\uFF09" : "\u5F85\u5524\u9192\uFF08\u5148\u558A\u300C" + (w.words && w.words[0] || "\u5927\u80A5\u9C7C") + "\u300D\uFF09";
+            return "\n\u5524\u9192\u8BCD\uFF1A" + head + "\uFF5C\u5524\u9192 " + w.hits + " \u6B21\uFF5C\u653E\u884C " + w.passed + "\uFF5C\u6321\u4E0B " + w.dropped;
+          } catch (e) {
+            return "";
+          }
+        })() + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
         host.bubble(line, 15e3);
         try {
           navigator.clipboard.writeText(JSON.stringify(st));
@@ -3056,16 +3286,12 @@
       }
     });
     table.definePrefix("voice:", (host, v) => {
-      try {
-        localStorage.setItem("chubby-tts-voice", v);
-      } catch (e) {
-      }
-      const shown = v === "auto" ? "\u81EA\u52A8" : v.split("-")[2] || v;
+      const name = normalizeVoiceName(v);
+      host.setTtsVoice(name);
+      const shown = name === "auto" ? "\u81EA\u52A8" : name.split("-")[2] || name;
       host.bubble("\u97F3\u8272\u6362\u597D\u5566\uFF1A" + shown);
       try {
-        const u = new window.SpeechSynthesisUtterance("\u4E3B\u4EBA\uFF0C\u8FD9\u4E2A\u58F0\u97F3\u597D\u542C\u5417\uFF1F");
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(u);
+        host.previewVoice("\u4E3B\u4EBA\uFF0C\u8FD9\u4E2A\u58F0\u97F3\u597D\u542C\u5417\uFF1F");
       } catch (e) {
       }
     });
@@ -3862,6 +4088,14 @@
   }
 
   // src/client/chat.ts
+  function resolveChatLang() {
+    try {
+      const v = localStorage.getItem("chubby-chatlang");
+      return v === "zh" || v === "en" ? v : "auto";
+    } catch (e) {
+      return "auto";
+    }
+  }
   function diag() {
     try {
       const w = typeof window !== "undefined" ? window : null;
@@ -3940,7 +4174,7 @@
         return true;
       };
       try {
-        const res = await postRaw("/chat-stream", { message: text, lang: "auto", voice: !!(opts && opts.voice) }, { signal: ctl ? ctl.signal : void 0 });
+        const res = await postRaw("/chat-stream", { message: text, lang: resolveChatLang(), voice: !!(opts && opts.voice) }, { signal: ctl ? ctl.signal : void 0 });
         if (!isCurrent()) return dropStale();
         if (!res.ok || !res.body) {
           clearTimeout(firstTimer);
@@ -4082,13 +4316,7 @@
       let data = null;
       try {
         const tChat = performance.now();
-        data = await postJson("/chat", { message: text, voice: true, lang: (() => {
-          try {
-            return localStorage.getItem("chubby-chatlang") || "auto";
-          } catch (e) {
-            return "auto";
-          }
-        })() }, {
+        data = await postJson("/chat", { message: text, voice: true, lang: resolveChatLang() }, {
           // 30 秒上限：请求卡住时别让状态永远停在「在想…」
           signal: timeoutSignal(3e4)
         });
@@ -4361,7 +4589,6 @@
         const [growth, setGrowth] = R.useState(DEFAULT_GROWTH);
         const lookRef = R.useRef(lookFor(0));
         const menuStatsAtRef = R.useRef(0);
-        const WAKE_WORDS = ["\u5927\u80A5\u9C7C", "\u80A5\u9CB8", "\u80A5\u9C7C", "\u5C0F\u9C7C", "\u84DD\u9C7C", "\u5C0F\u84DD\u9C7C", "\u9C7C\u9C7C", "\u80A5\u80A5"];
         const dragRef = R.useRef(createDragState());
         const scaleRef = R.useRef(1);
         const animRef = R.useRef(null);
@@ -4414,6 +4641,10 @@
                 }
               }
             },
+            // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
+            voiceChat: () => voiceChatOnRef.current,
+            // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
+            speaking: () => ttsPlaying,
             diag: (patch) => {
               try {
                 Object.assign(window.__chubbyWhale || (window.__chubbyWhale = {}), patch);
@@ -4861,6 +5092,31 @@
           syncGrowth: () => syncGrowth(),
           setLang: (l) => setLang(l),
           voice: () => bridge.get(),
+          // 换音色：存 localStorage + 立即改实例音色（下一个 /tts 就带新 voice）
+          setTtsVoice: (name) => {
+            try {
+              localStorage.setItem("chubby-tts-voice", name);
+            } catch (e) {
+            }
+            try {
+              bridge.setVoiceName(name);
+            } catch (e) {
+            }
+          },
+          // 试听：走宿主 /tts（strict），失败静默
+          previewVoice: (text) => {
+            try {
+              bridge.preview(text);
+            } catch (e) {
+            }
+          },
+          wakeInfo: () => {
+            try {
+              return bridge.wakeInfo();
+            } catch (e) {
+              return null;
+            }
+          },
           voicePlaying: () => ttsPlaying,
           earStandby: () => earOnRef.current,
           setEarStandby: (v) => {
@@ -4902,7 +5158,7 @@
               bridge.start().then((v) => {
                 try {
                   if (v.status() === "idle") showBubble("\u9EA6\u514B\u98CE\u6CA1\u6253\u5F00\uFF1A" + String(v.stats && v.stats.lastError || "\u770B\u770B\u6743\u9650\uFF1F"), 5e3);
-                  else showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5F00\uFF08\u672C\u9CB8\u542C\u7740\u5462\uFF09", 2500);
+                  else showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5F00\uFF08\u5148\u558A\u300C\u5927\u80A5\u9C7C\u300D\uFF0C\u672C\u9CB8\u624D\u7B54\u8BDD\uFF09", 3500);
                 } catch (e) {
                 }
               }).catch((e) => showBubble("\u9EA6\u514B\u98CE\u6CA1\u6253\u5F00\uFF1A" + String(e && e.message || e), 5e3));

@@ -9,6 +9,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { writeJsonAtomic } from './atomic.js'
 import { sendJson } from './respond.js'
+import { isBodyTooLarge, readBody, sendTooLarge } from './http.js'
+
+/** /cache-toggle 请求体上限：只需一个 {"enabled":true}，16KB 足够，超限回 413 */
+const CACHE_TOGGLE_MAX_BODY = 16 * 1024
 
 interface PrefsData {
   /** 聊天缓存总开关；缺省 true（与旧实现 loadPrefs().chatCache !== false 一致） */
@@ -45,17 +49,30 @@ export function createPrefs(runtimeDir: string): PrefsRepo {
 
 /**
  * /cache-toggle：POST {enabled:boolean} 切换聊天缓存开关；GET 读当前状态。
- * 保持旧实现的读体方式（不设上限的字符串收集 + 失败静默），避免改变既有客户端行为。
+ * 2026-11 起请求体走 host/http.ts 的 readBody 并设 16KB 上限：原先手动 'data' 累加没有上限，
+ * 一个超大 body 就能把整段字符串攒进内存。超限按项目既有约定回 413。
  */
-export function createCacheToggleHandler(prefs: PrefsRepo): (req: any, res: any) => void {
-  return (req: any, res: any): void => {
-    let body = ''
-    req.on('data', (c: any) => { body += String(c) })
-    req.on('end', () => {
-      try {
-        if (body) { const j = JSON.parse(body); if (typeof j.enabled === 'boolean') prefs.setChatCache(j.enabled) }
-      } catch { }
-      sendJson(res, { ok: true, enabled: prefs.chatCacheEnabled() })
-    })
+export function createCacheToggleHandler(prefs: PrefsRepo): (req: any, res: any) => Promise<void> {
+  return async (req: any, res: any): Promise<void> => {
+    let text = ''
+    try {
+      text = (await readBody(req, CACHE_TOGGLE_MAX_BODY)).toString('utf8')
+    } catch (err: any) {
+      if (isBodyTooLarge(err)) {
+        console.error('[prefs] CACHE-TOGGLE-BODY-TOO-LARGE > ' + CACHE_TOGGLE_MAX_BODY + ' bytes')
+        sendTooLarge(res)
+        return
+      }
+      // 连接中断等读流错误：不再尝试写响应（对端大概率已断开），留一行日志
+      console.error('[prefs] CACHE-TOGGLE-BODY ' + String((err && err.message) || err))
+      return
+    }
+    try {
+      if (text) {
+        const j = JSON.parse(text)
+        if (typeof j.enabled === 'boolean') prefs.setChatCache(j.enabled)
+      }
+    } catch { }
+    sendJson(res, { ok: true, enabled: prefs.chatCacheEnabled() })
   }
 }

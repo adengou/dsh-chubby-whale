@@ -52,6 +52,18 @@ export type ChatController = {
   abortStream: () => boolean
 }
 
+/**
+ * 菜单里选的聊天语言：'auto' | 'zh' | 'en'。
+ * 普通 /chat 与流式 /chat-stream 共用这一个来源（流式原来写死 'auto'，
+ * 菜单选英文时只有普通路径生效，等于半截）。
+ */
+export function resolveChatLang(): string {
+  try {
+    const v = localStorage.getItem('chubby-chatlang')
+    return v === 'zh' || v === 'en' ? v : 'auto'
+  } catch (e) { return 'auto' }
+}
+
 /** 诊断对象：与旧实现一样直接写 window.__chubbyWhale */
 function diag(): any {
   try {
@@ -116,7 +128,7 @@ export function createChatSender(host: ChatHost): ChatController {
     }
 
     try {
-      const res = await postRaw('/chat-stream', { message: text, lang: 'auto', voice: !!(opts && opts.voice) }, { signal: ctl ? ctl.signal : undefined })
+      const res = await postRaw('/chat-stream', { message: text, lang: resolveChatLang(), voice: !!(opts && opts.voice) }, { signal: ctl ? ctl.signal : undefined })
       if (!isCurrent()) return dropStale()
       if (!res.ok || !res.body) { clearTimeout(firstTimer); clearActive(ctl); return false }
       const reader = res.body.getReader()
@@ -236,7 +248,7 @@ export function createChatSender(host: ChatHost): ChatController {
     let data: any = null
     try {
       const tChat = performance.now()
-      data = await postJson('/chat', { message: text, voice: true, lang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })() }, {
+      data = await postJson('/chat', { message: text, voice: true, lang: resolveChatLang() }, {
         // 30 秒上限：请求卡住时别让状态永远停在「在想…」
         signal: timeoutSignal(30000),
       })

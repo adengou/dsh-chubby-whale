@@ -6,6 +6,7 @@
  */
 
 import type { ActionHost, ActionTable } from '../actions.js'
+import { normalizeVoiceName } from '../voice.js'
 
 export function registerVoiceActions(table: ActionTable<ActionHost>): void {
   // —— 语音待命：开=建/启语音模块；关=停录音（实例留着复用）——
@@ -31,12 +32,17 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
   // —— 端点检测模式切换：经典（默认）/ 自适应（APE）——
   table.define('endpoint', (host) => {
     try {
-      const cur = (() => { try { return localStorage.getItem('chubby-endpoint') === 'ape' ? 'ape' : 'classic' } catch (e) { return 'classic' } })()
+      const v: any = host.voice()
+      // 当前模式以语音实例为准（endpointInfo 现在报真实模式）；没实例才退回 localStorage
+      const cur = (v && v.endpointInfo)
+        ? v.endpointInfo().mode
+        : (() => { try { return localStorage.getItem('chubby-endpoint') === 'ape' ? 'ape' : 'classic' } catch (e) { return 'classic' } })()
       const next = cur === 'ape' ? 'classic' : 'ape'
       localStorage.setItem('chubby-endpoint', next)
-      const v: any = host.voice()
       if (v && v.setEndpointMode) v.setEndpointMode(next)
-      host.bubble(next === 'ape' ? '端点检测：自适应（试用）' : '端点检测：经典（稳定）', 4000)
+      // 提示按切换后的真实模式来说，避免"点了没变"的错觉
+      const real = (v && v.endpointInfo) ? v.endpointInfo().mode : next
+      host.bubble(real === 'ape' ? '端点检测：自适应（试用）' : '端点检测：经典（稳定）', 4000)
     } catch (e) { host.bubble('切换失败', 3000) }
   })
 
@@ -54,22 +60,32 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
         + (function () { try { const t = v.lastTtsInfo ? v.lastTtsInfo() : null; if (!t) return ''; return '\n朗读：最后一段 ' + (t.failed ? '失败' : '已开播') + '｜文本开头「' + t.text + '」' } catch (e) { return '' } })()
         + (function () { try { const s = v.lastSegment ? v.lastSegment() : null; if (!s) return ''; return '\n上一段：' + s.mode + '｜窗口 ' + s.winMs + 'ms｜说话 ' + s.peMs + 'ms｜静音 ' + s.quMs + 'ms' + (s.floor !== null ? '｜底噪 ' + s.floor + 'dB' : '') + (s.target ? '｜目标 ' + s.target + 'ms' : '') + '\n识别结果：' + s.text } catch (e) { return '' } })()
         + '\n朗读：请求 ' + st.ttsRequests + '｜开播 ' + st.ttsPlayed + '｜失败 ' + st.ttsFail + '｜僵尸复位 ' + st.ttsZombie
+        + '\n音色：' + (v.voiceName ? v.voiceName() : '?')
+        + (function () {
+          try {
+            const w = host.wakeInfo ? host.wakeInfo() : null
+            if (!w) return ''
+            const head = w.awake
+              ? ('醒着（还剩 ' + Math.round((Number(w.remainingMs) || 0) / 1000) + ' 秒）')
+              : ('待唤醒（先喊「' + ((w.words && w.words[0]) || '大肥鱼') + '」）')
+            return '\n唤醒词：' + head + '｜唤醒 ' + w.hits + ' 次｜放行 ' + w.passed + '｜挡下 ' + w.dropped
+          } catch (e) { return '' }
+        })()
         + (st.lastError ? '\n最近错误：' + st.lastError : '')
       host.bubble(line, 15000)
       try { navigator.clipboard.writeText(JSON.stringify(st)) } catch (e) { }
     } catch (e: any) { host.bubble('自检失败：' + String(e && e.message), 5000) }
   })
 
-  // —— 换个声音 ——
+  // —— 换个声音：存下来 + 立即改语音实例音色 + 用宿主 /tts 试听 ——
   table.definePrefix('voice:', (host, v) => {
-    try { localStorage.setItem('chubby-tts-voice', v) } catch (e) { }
+    // 白名单外（旧值/手改 localStorage）回退默认，绝不把坏音色送进 edge-tts
+    const name = normalizeVoiceName(v)
+    host.setTtsVoice(name)
     // 「自动」没有第三段音色名，别把 undefined 冒给主人看
-    const shown = v === 'auto' ? '自动' : (v.split('-')[2] || v)
+    const shown = name === 'auto' ? '自动' : (name.split('-')[2] || name)
     host.bubble('音色换好啦：' + shown)
-    try {
-      const u = new (window as any).SpeechSynthesisUtterance('主人，这个声音好听吗？')
-      ;(window as any).speechSynthesis.cancel()
-      ;(window as any).speechSynthesis.speak(u)
-    } catch (e) { }
+    // 试听走宿主 /tts（strict）：不再用浏览器 speechSynthesis，失败静默
+    try { host.previewVoice('主人，这个声音好听吗？') } catch (e) { }
   })
 }

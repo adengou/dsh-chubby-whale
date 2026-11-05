@@ -99,6 +99,8 @@ export interface ChatRouteDeps {
   loadMemorySummary?: () => string
   saveMemorySummary?: (s: string) => void
   cacheEnabled?: () => boolean
+  /** 聊天模型名：index.ts 装配时由 readChatModel 算一次注入；缺省回落到配置模块的默认值 */
+  model?: string
   /** 模型真实成功回复后回调（L2 可变人格计数用）；不 await、不阻塞回复 */
   onReply?: () => void
 }
@@ -113,6 +115,8 @@ export interface ChatStreamRouteDeps {
   cache?: CachePort
   loadMemorySummary?: () => string
   cacheEnabled?: () => boolean
+  /** 聊天模型名：与普通 /chat 共用同一个装配值（缓存 key 也带它） */
+  model?: string
   /** 模型真实成功回复后回调（L2 可变人格计数用）；不 await、不阻塞流 */
   onReply?: () => void
 }

@@ -3,14 +3,18 @@
  * 外呼统一走 host/http.ts：主聊天 30 秒、记忆摘要 20 秒（后台跑，不吊住回复）；请求体上限 6MB
  * 纯函数（语言判定/缓存 key/prompt 组装）在 host/chat-core.ts，流式路由共用同一份；
  * 本文件只做 HTTP 编排与「缓存 → 模型 → 记忆/成长」的调用顺序。
+ *
+ * 模型名不写死：由 index.ts 用 readChatModel 按配置算好，经 deps.model 注入；
+ * max_tokens 预算见 chat-core.ts 的 CHAT_MAX_TOKENS / SUMMARY_MAX_TOKENS。
  */
 import { fetchJson, isTimeoutError, sendTooLarge } from '../http.js'
 import { readJsonBody } from '../body.js'
 import { sendJson, sendError } from '../respond.js'
 import type { ChatRouteDeps } from '../ports.js'
+import { DEFAULT_CHAT_MODEL } from '../config.js'
 import {
-  CHAT_URL, CHAT_CACHE_TTL, detectLang, chatCacheKey, chatContextFingerprint,
-  historyMessages, composeSystemPrompt,
+  CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, SUMMARY_MAX_TOKENS,
+  detectLang, chatCacheKey, chatContextFingerprint, historyMessages, composeSystemPrompt,
 } from '../chat-core.js'
 
 // 兼容旧导入方（scripts/selftest.mjs、chat-stream 历史版本）：纯函数仍从本模块可导出
@@ -21,10 +25,10 @@ const SUMMARY_TIMEOUT = 20 * 1000              // 长期记忆摘要：20 秒
 const CHAT_MAX_BODY = 6 * 1024 * 1024          // 6MB（图片 base64 约 4MB * 1.34）
 const NET_FALLBACK = '主人，本鲸一时想不起来话（网络或接口有点问题）……'
 
-/** 后台压缩长期记忆（不 await，失败只记日志） */
-async function summarizeMemory(key: string, convo: string, oldSummary: string, save: (s: string) => void): Promise<void> {
+/** 后台压缩长期记忆（不 await，失败只记日志）；模型与主聊天同一个装配值 */
+async function summarizeMemory(key: string, convo: string, oldSummary: string, save: (s: string) => void, model: string): Promise<void> {
   const sys = '你在帮一条桌面宠物鱼整理长期记忆。把对话压缩成不超过80字的中文要点，只保留关于主人的事实（称呼、喜好、约定）和主人交代要记住的事。不要评论，不要加引号，只输出要点本身。'
-  const body = JSON.stringify({ model: 'deepseek-flash', messages: [{ role: 'system', content: sys }, { role: 'user', content: '旧记忆：' + oldSummary + '\n最近对话：\n' + convo }], max_tokens: 220, temperature: 0.3, thinking: { type: 'disabled' } })
+  const body = JSON.stringify({ model, messages: [{ role: 'system', content: sys }, { role: 'user', content: '旧记忆：' + oldSummary + '\n最近对话：\n' + convo }], max_tokens: SUMMARY_MAX_TOKENS, temperature: 0.3, thinking: { type: 'disabled' } })
   try {
     const r = await fetchJson(CHAT_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key }, body }, SUMMARY_TIMEOUT)
     if (!r.ok) { console.error('[chat] SUMMARY-HTTP ' + r.status + ' ' + String(r.text || '').slice(0, 200)); return }
@@ -39,6 +43,8 @@ async function summarizeMemory(key: string, convo: string, oldSummary: string, s
 export function createChatHandler(opts: ChatRouteDeps) {
   let summaryCount = 0
   let summarizing = false
+  // 装配值优先；直接构造 handler（离线测试/旧调用方）时回落到配置模块的默认模型
+  const model = opts.model || DEFAULT_CHAT_MODEL
   return async function handleChat(req: any, res: any): Promise<void> {
     try {
       const parsed = await readJsonBody(req, CHAT_MAX_BODY)
@@ -66,8 +72,8 @@ export function createChatHandler(opts: ChatRouteDeps) {
       const history = opts.loadHistory()
       let memSummary = ''
       try { memSummary = opts.loadMemorySummary ? String(opts.loadMemorySummary() || '') : '' } catch { }
-      // 缓存 key 带上下文指纹（长期记忆摘要 + 上一轮用户消息），上下文变了不复用旧答案
-      const cacheKey = chatCacheKey(effLang, message, isVoice, chatContextFingerprint(memSummary, history))
+      // 缓存 key 带上下文指纹（长期记忆摘要 + 上一轮用户消息）与模型名，上下文/模型变了都不复用旧答案
+      const cacheKey = chatCacheKey(effLang, message, isVoice, chatContextFingerprint(memSummary, history), model)
       // 缓存查找排在 Key 检查之前：没配 Key 时本地缓存照样能用
       const cacheOn = !opts.cacheEnabled || opts.cacheEnabled() !== false
       if (cacheOn && opts.cache && !imageB64 && cacheable) {
@@ -117,9 +123,9 @@ export function createChatHandler(opts: ChatRouteDeps) {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
           body: JSON.stringify({
-            model: 'deepseek-flash',
+            model,
             messages,
-            max_tokens: 260,
+            max_tokens: CHAT_MAX_TOKENS,
             temperature: 0.8,
             thinking: { type: 'disabled' },
           }),
@@ -186,7 +192,7 @@ export function createChatHandler(opts: ChatRouteDeps) {
       try { if (opts.onReply) opts.onReply() } catch { }
       if (wantSummary && saveSummary) {
         summarizing = true
-        void summarizeMemory(key, convo, memSummary || '（无）', saveSummary)
+        void summarizeMemory(key, convo, memSummary || '（无）', saveSummary, model)
           .catch(() => { })
           .finally(() => { summarizing = false })
       }

@@ -67,6 +67,12 @@ export type ActionHost = {
 
   // —— 语音 ——
   voice: () => Voice | null
+  /** 保存并立即生效的 TTS 音色（白名单在 client/voice.ts） */
+  setTtsVoice: (name: string) => void
+  /** 音色试听：走宿主 /tts，失败静默（不回落浏览器语音） */
+  previewVoice: (text: string) => void
+  /** 唤醒门状态（唤醒词/30 秒窗/放行挡下计数），自检用 */
+  wakeInfo: () => any
   voicePlaying: () => boolean
   earStandby: () => boolean
   setEarStandby: (v: boolean) => void
