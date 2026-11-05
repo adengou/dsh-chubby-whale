@@ -5654,6 +5654,11 @@
       let asrBusyAt = 0;
       const storyNarratingRef = { current: false };
       const persona = createPersona();
+      try {
+        const w = window.__chubbyWhale || (window.__chubbyWhale = {});
+        w.persona = persona;
+      } catch (e) {
+      }
       let lastPoemSpeech = "";
       const narration = createNarrationLock();
       let lastSpeakingAt = 0;

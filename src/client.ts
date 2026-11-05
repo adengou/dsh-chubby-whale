@@ -89,6 +89,12 @@ import { createRecover } from './client/recover.js'
     
     const storyNarratingRef = { current: false }
     const persona = createPersona()
+  // 诊断对象上尽早挂出人设：原来只在 useEffect 里挂，效果是"组件没跑完副作用就查不到"，
+  // 冒烟测试/排障都会误以为人设没初始化。这里创建完立刻挂，effect 里那份保留（幂等）。
+  try {
+    const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
+    w.persona = persona
+  } catch (e) { }
     let lastPoemSpeech = ''
     // 叙述锁带时间上限：念诗/说书期间不理麦克风，但绝不能"忘了解锁"把耳朵永久关掉
     // （状态机与自愈在 client/narration.ts）

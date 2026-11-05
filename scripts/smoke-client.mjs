@@ -197,6 +197,20 @@ if (captured && typeof captured.factory === 'function') {
     ok('诊断对象已挂载', !!diag && typeof diag === 'object')
     ok('诊断版本与 package 一致', !!diag && diag.version === PKG.version, diag ? 'diag=' + diag.version + ' pkg=' + PKG.version : '')
     ok('错误记录器是数组', Array.isArray(windowStub.__chubbyErrors))
+    // 人设运行时（client.ts 把它挂在诊断对象上）：经 bundle 真跑一遍，覆盖台词抽取与情绪触发
+    const persona = diag && diag.persona
+    ok('人设运行时可用', !!persona && typeof persona.line === 'function' && typeof persona.reactTo === 'function')
+    if (persona) {
+      const praise = persona.reactTo('你好可爱呀')
+      ok('夸一句 → praise', !!praise && praise.event === 'praise' && String(praise.text).length > 0, praise ? praise.event : 'null')
+      const scold = persona.reactTo('闭嘴')
+      ok('凶一句 → scold', !!scold && scold.event === 'scold', scold ? scold.event : 'null')
+      ok('普通寒暄不触发情绪', persona.reactTo('今天风挺大') === null)
+      const before = persona.state.bowls
+      const fed = persona.feed()
+      ok('投喂：碗数 +1 且有台词', fed.bowls === before + 1 && String(fed.text).length > 0, 'bowls ' + before + '→' + fed.bowls)
+      ok('深夜问候走 late 组', String(persona.greeting(new Date('2026-11-06T23:30:00').getTime())).length > 0)
+    }
   }
 } else {
   ok('factory 可用', false, '模块描述符里没有 factory')

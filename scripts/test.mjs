@@ -2121,6 +2121,31 @@ try {
   ok('能加载 look.ts', false, String(e.message))
 }
 
+
+// ---------- ㊶ 动作表：精确/前缀/最长匹配/未知动作 ----------
+console.log('\n[41] 动作表 client/actions.ts')
+try {
+  const { createActionTable } = await import('../src/client/actions.ts')
+  const tbl = createActionTable()
+  const calls = []
+  tbl.define('feed', (ctx, name) => { calls.push('feed:' + (ctx && ctx.id) + ':' + name) })
+  tbl.definePrefix('music:', (ctx, arg) => { calls.push('music:' + arg) })
+  tbl.definePrefix('music:play:', (ctx, arg) => { calls.push('musicplay:' + arg) })
+  tbl.define('', () => { calls.push('empty') })
+  tbl.define('bad', null)
+
+  ok('精确动作命中', await tbl.run('feed', { id: 7 }) === true && calls[0] === 'feed:7:feed', calls[0])
+  ok('前缀动作收到剩余参数', await tbl.run('music:小星星', {}) === true && calls[1] === 'music:小星星', calls[1])
+  ok('最长前缀优先', await tbl.run('music:play:小星星', {}) === true && calls[2] === 'musicplay:小星星', calls[2])
+  ok('未知动作返回 false', await tbl.run('nope', {}) === false)
+  ok('空动作返回 false', await tbl.run('', {}) === false)
+  ok('非法注册被忽略', tbl.has('bad') === false && tbl.has('') === false)
+  ok('has 认前缀', tbl.has('music:任意') === true && tbl.has('feed') === true && tbl.has('feedx') === false)
+  ok('动作/前缀列表可用于自检', tbl.actions().indexOf('feed') >= 0 && tbl.prefixes().indexOf('music:') >= 0)
+} catch (e) {
+  ok('能加载动作表', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
