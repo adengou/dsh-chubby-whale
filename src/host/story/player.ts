@@ -133,7 +133,7 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
       isFirst,
       isLast,
       text: intro + spoken + tail,
-      rate: '-15%',
+      rate: '-30%',  // 故事语速：主人反馈 -15% 太快，-30% 听感更稳（念诗是 -25%）
     }
   }
 

@@ -4331,6 +4331,7 @@
       refs.busy.current = true;
       host.narrate(estimateSpeakMs(text));
       host.speak(text, {
+        // 故事语速以宿主给的为准（当前 -30%）；缺失时回退到叙述语速设置（念诗 -25%）
         rate: normalizeRate(d && d.rate, host.narrationRate),
         onDone: () => {
           refs.busy.current = false;
