@@ -257,7 +257,19 @@
         { type: "item", label: "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B", action: "culture-tale" },
         { type: "item", label: "\u8BB2\u4E2A\u5178\u6545", action: "culture-allusion" },
         { type: "item", label: "\u6210\u8BED\u8FA8\u6790", action: "culture-idiom" },
-        { type: "item", label: "\u51FA\u4E2A\u5BF9\u8054", action: "culture-couplet" }
+        { type: "sub", label: "\u51FA\u4E2A\u5BF9\u8054 \u25B8", items: [
+          { type: "item", label: "\u968F\u673A\u4E00\u526F", action: "culture-couplet" },
+          { type: "item", label: "\u6625\u8054", action: "culture-couplet:\u6625\u8054" },
+          { type: "item", label: "\u683C\u8A00", action: "culture-couplet:\u683C\u8A00" },
+          { type: "item", label: "\u8C10\u8DA3", action: "culture-couplet:\u8C10\u8DA3" },
+          { type: "item", label: "\u540D\u80DC", action: "culture-couplet:\u540D\u80DC" },
+          { type: "item", label: "\u666F\u89C2", action: "culture-couplet:\u666F\u89C2" },
+          { type: "item", label: "\u4E66\u623F", action: "culture-couplet:\u4E66\u623F" },
+          { type: "item", label: "\u5BFF\u8054", action: "culture-couplet:\u5BFF\u8054" },
+          { type: "item", label: "\u4E2D\u836F", action: "culture-couplet:\u4E2D\u836F" },
+          { type: "item", label: "\u53E0\u5B57", action: "culture-couplet:\u53E0\u5B57" },
+          { type: "item", label: "\u6570\u5B57", action: "culture-couplet:\u6570\u5B57" }
+        ] }
       ] },
       { type: "sep" },
       // ── 记忆、缓存与退出 ──
@@ -2261,11 +2273,49 @@
       "lower": "\u67F3\u6697\u82B1\u660E\u53C8\u4E00\u6751",
       "source": "\u5B8B\xB7\u9646\u6E38\u300A\u6E38\u5C71\u897F\u6751\u300B\u8BD7\u53E5\uFF08\u6210\u8054\u6B23\u8D4F\uFF09",
       "cat": "\u666F\u89C2"
+    },
+    {
+      "upper": "\u4E00\u697C\u4F55\u5947\uFF1F\u675C\u5C11\u9675\u4E94\u8A00\u7EDD\u5531\uFF0C\u8303\u5E0C\u6587\u4E24\u5B57\u5173\u60C5\uFF0C\u6ED5\u5B50\u4EAC\u767E\u5E9F\u4FF1\u5174\uFF0C\u5415\u7EAF\u9633\u4E09\u8FC7\u5FC5\u9189\u3002\u8BD7\u8036\uFF1F\u5112\u8036\uFF1F\u540F\u8036\uFF1F\u4ED9\u8036\uFF1F\u524D\u4E0D\u89C1\u53E4\u4EBA\uFF0C\u4F7F\u6211\u6006\u7136\u6D95\u4E0B",
+      "lower": "\u8BF8\u541B\u8BD5\u770B\uFF1A\u6D1E\u5EAD\u6E56\u5357\u6781\u6F47\u6E58\uFF0C\u626C\u5B50\u6C5F\u5317\u901A\u5DEB\u5CE1\uFF0C\u5DF4\u9675\u5C71\u897F\u6765\u723D\u6C14\uFF0C\u5CB3\u5DDE\u57CE\u4E1C\u9053\u5CA9\u7586\u3002\u6F74\u8005\uFF01\u6D41\u8005\uFF01\u5CD9\u8005\uFF01\u9547\u8005\uFF01\u6B64\u4E2D\u6709\u771F\u610F\uFF0C\u95EE\u8C01\u9886\u4F1A\u5F97\u6765",
+      "source": "\u5CB3\u9633\u697C\u957F\u8054\uFF08\u6E05\xB7\u7AA6\u57BF\uFF0C\u4E00\u8BF4\u9648\u5927\u7EB2\uFF09",
+      "cat": "\u540D\u80DC"
+    },
+    {
+      "upper": "\u5174\u5E9F\u603B\u5173\u60C5\uFF0C\u770B\u843D\u971E\u5B64\u9E5C\u3001\u79CB\u6C34\u957F\u5929\uFF0C\u5E78\u6B64\u5730\u6E56\u5C71\u65E0\u6059",
+      "lower": "\u53E4\u4ECA\u624D\u4E00\u77AC\uFF0C\u95EE\u6C5F\u4E0A\u624D\u4EBA\u3001\u9601\u4E2D\u5E1D\u5B50\uFF0C\u6BD4\u5F53\u5E74\u98CE\u666F\u5982\u4F55",
+      "source": "\u6E05\xB7\u5218\u5764\u4E00\u9898\u5357\u660C\u6ED5\u738B\u9601",
+      "cat": "\u540D\u80DC"
+    },
+    {
+      "upper": "\u4E00\u697C\u8403\u4E09\u695A\u7CBE\u795E\uFF0C\u4E91\u9E64\u4FF1\u7A7A\u6A2A\u7B1B\u5728",
+      "lower": "\u4E8C\u6C34\u6C47\u767E\u5DDD\u652F\u6D3E\uFF0C\u53E4\u4ECA\u65E0\u5C3D\u5927\u6C5F\u6D41",
+      "source": "\u9EC4\u9E64\u697C\u8054\uFF08\u4F20\u7EDF\uFF09",
+      "cat": "\u540D\u80DC"
+    },
+    {
+      "upper": "\u767D\u5934\u7FC1\u7275\u725B\u8015\u719F\u5730",
+      "lower": "\u7EA2\u5A18\u5B50\u4F5B\u624B\u63D2\u91D1\u82B1",
+      "source": "\u4F20\u7EDF\u4E2D\u836F\u540D\u8054\uFF08\u767D\u5934\u7FC1/\u7275\u725B/\u719F\u5730/\u7EA2\u5A18\u5B50/\u4F5B\u624B/\u91D1\u82B1\u7686\u836F\u540D\uFF09",
+      "cat": "\u4E2D\u836F"
+    },
+    {
+      "upper": "\u6C34\u6C34\u5C71\u5C71\uFF0C\u5904\u5904\u660E\u660E\u79C0\u79C0",
+      "lower": "\u6674\u6674\u96E8\u96E8\uFF0C\u65F6\u65F6\u597D\u597D\u5947\u5947",
+      "source": "\u897F\u6E56\u53E0\u5B57\u8054\uFF08\u4F20\u7EDF\uFF09",
+      "cat": "\u53E0\u5B57"
+    },
+    {
+      "upper": "\u4E00\u53BB\u4E8C\u4E09\u91CC\uFF0C\u70DF\u6751\u56DB\u4E94\u5BB6",
+      "lower": "\u4EAD\u53F0\u516D\u4E03\u5EA7\uFF0C\u516B\u4E5D\u5341\u679D\u82B1",
+      "source": "\u5B8B\xB7\u90B5\u96CD\u300A\u5C71\u6751\u548F\u6000\u300B\u8BD7\u53E5\uFF08\u6570\u5B57\u8054\uFF09",
+      "cat": "\u6570\u5B57"
     }
   ];
-  function pickCouplet(excludeUpper) {
-    const pool = COUPLETS.length > 1 && excludeUpper ? COUPLETS.filter((c) => c.upper !== excludeUpper) : COUPLETS;
-    const src = pool.length > 0 ? pool : COUPLETS;
+  function pickCouplet(excludeUpper, cat) {
+    const byCat = cat ? COUPLETS.filter((c) => c.cat === cat) : COUPLETS;
+    const base = byCat.length > 0 ? byCat : COUPLETS;
+    const pool = base.length > 1 && excludeUpper ? base.filter((c) => c.upper !== excludeUpper) : base;
+    const src = pool.length > 0 ? pool : base;
     return src[Math.floor(Math.random() * src.length)];
   }
 
@@ -2379,6 +2429,17 @@
       const c = pickCouplet(lastCouplet);
       lastCouplet = c.upper;
       host.bubble("\u4E0A\u8054\uFF1A" + c.upper + "\uFF08\u5148\u5BF9\u4E00\u5BF9\uFF0C\u672C\u9CB8 6 \u79D2\u540E\u63ED\u6653\u4E0B\u8054\uFF09", 5600);
+      setTimeout(() => {
+        try {
+          host.bubble("\u4E0B\u8054\uFF1A" + c.lower + "\n\u2014\u2014" + c.source, 7e3);
+        } catch (e) {
+        }
+      }, 6e3);
+    });
+    table.definePrefix("culture-couplet:", (host, cat) => {
+      const c = pickCouplet(lastCouplet, cat);
+      lastCouplet = c.upper;
+      host.bubble("\u3010" + c.cat + "\u3011\u4E0A\u8054\uFF1A" + c.upper + "\uFF08\u5148\u5BF9\u4E00\u5BF9\uFF0C\u672C\u9CB8 6 \u79D2\u540E\u63ED\u6653\u4E0B\u8054\uFF09", 5600);
       setTimeout(() => {
         try {
           host.bubble("\u4E0B\u8054\uFF1A" + c.lower + "\n\u2014\u2014" + c.source, 7e3);

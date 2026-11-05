@@ -104,6 +104,13 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
     setTimeout(() => { try { host.bubble('下联：' + c.lower + '\n——' + c.source, 7000) } catch (e) { } }, 6000)
   })
 
+  // —— 出个对联（按分类）：culture-couplet:<分类> ——
+  table.definePrefix('culture-couplet:', (host, cat) => {
+    const c = pickCouplet(lastCouplet, cat)
+    lastCouplet = c.upper
+    host.bubble('【' + c.cat + '】上联：' + c.upper + '（先对一对，本鲸 6 秒后揭晓下联）', 5600)
+    setTimeout(() => { try { host.bubble('下联：' + c.lower + '\n——' + c.source, 7000) } catch (e) { } }, 6000)
+  })
   // —— 弹首曲子：先停朗读，再弹；弹完顺带说一句（带自检记录）——
   table.definePrefix('music:', (host, name) => {
     host.stopSpeak()
