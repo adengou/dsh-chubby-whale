@@ -2785,6 +2785,59 @@ try {
   ok('能加载说书播放器', false, String(e.message))
 }
 
+
+// ---------- 53 提醒时间解析 shared/time.ts ----------
+console.log('\n[53] 提醒时间解析 src/shared/time.ts')
+try {
+  const time = await import('../src/shared/time.ts')
+  const now = new Date(2026, 10, 6, 10, 0, 0)   // 2026-11-06 10:00 本地
+  const at = (raw) => { const r = time.parseDue(raw, now); return r ? r.at : null }
+  const ymdhm = (d) => d ? [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes()].join('-') : 'null'
+
+  ok('钟点已过 → 顺延明天', ymdhm(at('9点吃药')) === '2026-11-7-9-0', ymdhm(at('9点吃药')))
+  ok('钟点未到 → 今天', ymdhm(at('11点吃药')) === '2026-11-6-11-0')
+  ok('明天 9 点', ymdhm(at('明天9点开会')) === '2026-11-7-9-0')
+  ok('后天 9:30', ymdhm(at('后天9:30')) === '2026-11-8-9-30')
+  ok('9 点半 = 09:30', ymdhm(at('9点半')) === '2026-11-7-9-30')
+
+  ok('晚上 8 点 → 20:00', ymdhm(at('晚上8点')) === '2026-11-6-20-0')
+  ok('晚上 12 点 → 次日 00:00', ymdhm(at('晚上12点')) === '2026-11-7-0-0')
+  ok('下午 12 点 → 12:00', ymdhm(at('下午12点')) === '2026-11-6-12-0')
+  ok('中午 1 点 → 13:00', ymdhm(at('中午1点')) === '2026-11-6-13-0')
+  ok('中午 12 点 → 12:00', ymdhm(at('中午12点')) === '2026-11-6-12-0')
+  ok('上午 9 点 → 09:00（明天）', ymdhm(at('上午9点')) === '2026-11-7-9-0')
+
+  ok('半小时后', ymdhm(at('半小时后喝水')) === '2026-11-6-10-30')
+  ok('20 分钟后', ymdhm(at('20分钟后')) === '2026-11-6-10-20')
+  ok('0 分钟后按 1 分钟算', ymdhm(at('0分钟后')) === '2026-11-6-10-1')
+  ok('999 分钟照算（10:00 + 999min = 次日 02:39）', ymdhm(at('999分钟后')) === '2026-11-7-2-39', ymdhm(at('999分钟后')))
+  ok('分钟上限 24 小时（2000 → 1440）', ymdhm(at('2000分钟后')) === '2026-11-7-10-0')
+  ok('2 小时后', ymdhm(at('2小时后')) === '2026-11-6-12-0')
+  ok('999 小时夹到 7 天', ymdhm(at('999小时后')) === '2026-11-13-10-0')
+  ok('一小时后', ymdhm(at('一小时后')) === '2026-11-6-11-0')
+
+  const explicit = time.parseDue('2026-11-04 09:00 交材料', now)
+  ok('明确日期时间照抄（过去的也认）', ymdhm(explicit && explicit.at) === '2026-11-4-9-0' && explicit.cleaned === '交材料')
+
+  const daily = time.parseDue('每天9点吃药', now)
+  ok('每天 → 重复 86400 秒', !!daily && daily.repeat === 86400)
+  ok('每天 9 点：今天已过 → 明天', ymdhm(daily && daily.at) === '2026-11-7-9-0')
+  ok('每天也从正文里去掉', !!daily && daily.cleaned === '吃药', daily && daily.cleaned)
+
+  ok('去时间词后正文保留', time.parseDue('明天下午3点开会', now).cleaned === '开会')
+  ok('没时间词 → null', time.parseDue('随便说句话', now) === null)
+  ok('空串 → null', time.parseDue('', now) === null)
+  ok('25 点不认（不瞎算）', time.parseDue('25点', now) === null)
+
+  // cleanReminderText
+  ok('去提醒前缀', time.cleanReminderText('提醒我一下，吃药') === '吃药')
+  ok('去「记得要」与句号', time.cleanReminderText('记得要买菜。') === '买菜')
+  ok('多重前缀循环去掉', time.cleanReminderText('提醒我提醒我吃药') === '吃药', time.cleanReminderText('提醒我提醒我吃药'))
+  ok('空串安全', time.cleanReminderText('') === '' && time.cleanReminderText(undefined) === '')
+} catch (e) {
+  ok('能加载时间解析', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
