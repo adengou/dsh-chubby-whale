@@ -2101,7 +2101,7 @@
       timeBuf = null;
       setStatus("idle");
     }
-    function stripStageDirections(s) {
+    function stripStageDirections2(s) {
       let t = String(s || "");
       t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, " ");
       t = t.replace(/[\*＊]/g, " ");
@@ -2109,7 +2109,7 @@
       return t.replace(/\s{2,}/g, " ").trim();
     }
     function speak(text, o) {
-      const raw = stripStageDirections(String(text || ""));
+      const raw = stripStageDirections2(String(text || ""));
       if (!raw) return;
       const narration = o && typeof o.narration === "boolean" ? o.narration : raw.length >= 80;
       const rate = o && o.rate ? o.rate : narration ? narrationRate() : "+0%";

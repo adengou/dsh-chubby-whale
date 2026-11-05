@@ -17,7 +17,7 @@ import { Ape } from './ape.js'
 import { deepFreeze } from '../shared/immutable.js'
 import { narrationRate } from './rates.js'
 import { isRepeat } from './sim.js'
-import { echoKey, isShortEchoFragment } from './text.js'
+import { echoKey, isShortEchoFragment, stripStageDirections } from './text.js'
 import { isNoiseText } from '../shared/noise.js'
 import { isPlaybackZombie } from './playback.js'
 

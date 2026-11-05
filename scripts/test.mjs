@@ -641,6 +641,22 @@ try {
   ok('能加载动作表', false, String(e.message))
 }
 
+
+// ---------- ⑳ 动作描写剥离：星号绝不进语音通道 ----------
+console.log('\n[20] 动作描写剥离 text.ts')
+try {
+  const txt = await import('../src/client/text.ts')
+  ok('半角星号动作被剥掉', txt.stripStageDirections('*甩甩尾巴* 主人好呀。') === '主人好呀。')
+  ok('全角星号动作被剥掉', txt.stripStageDirections('＊鼓腮＊本鲸在呢。') === '本鲸在呢。')
+  ok('多段动作都剥掉', txt.stripStageDirections('*游近*主人，*歪头*吃饭吗？') === '主人，吃饭吗？')
+  ok('只有动作 → 空串（不念）', txt.stripStageDirections('*默默游走*') === '')
+  ok('标点后多余空格被收掉', txt.stripStageDirections('主人， 白饭。') === '主人，白饭。')
+  ok('普通句子原样返回', txt.stripStageDirections('今天天气不错') === '今天天气不错')
+  ok('未闭合星号也清掉（不念出星号）', txt.stripStageDirections('主人*还没说完') === '主人 还没说完'.replace(/  /g, ' '))
+} catch (e) {
+  ok('能加载 text.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

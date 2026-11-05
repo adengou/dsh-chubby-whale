@@ -86,6 +86,21 @@ export function isShortEchoFragment(plain: string, hadRecentSpeech: boolean): bo
   return SHORT_ECHO_ALLOW.indexOf(p) < 0
 }
 
+/**
+ * 剥掉人设里的动作描写：Markdown 风格的 `*甩甩尾巴*` / 全角 `＊…＊`。
+ *
+ * 为什么必须在朗读前剥：TTS 会把星号念成"星号"，麦克风再听回去就变成假对话
+ * （memory.json 里真出现过 7 条这种回声）。剥完顺便收拾标点后的空格。
+ */
+export function stripStageDirections(raw: any): string {
+  let t = String(raw == null ? '' : raw)
+  t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, ' ')
+  t = t.replace(/[\*＊]/g, ' ')
+  // 剥完动作后别留"主人， 白饭"这种标点后空格
+  t = t.replace(/([，。！？；：、])\s+/g, '$1')
+  return t.replace(/\s{2,}/g, ' ').trim()
+}
+
 export function createDeduper(opts: { windowMs: number; onDuplicate?: () => void }): Deduper {
   const windowMs = Math.max(0, Number(opts && opts.windowMs) || 0)
   let lastNorm = ''
