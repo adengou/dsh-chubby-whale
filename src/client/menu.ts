@@ -65,22 +65,10 @@ export const EN_MAP: Record<string, string> = {
   '数字': 'Numerals',
   '清除记忆…': 'Clear memory…',
   '清空聊天缓存…': 'Clear chat cache…',
-  '聊天缓存：开': 'Chat cache: on',
-  '聊天缓存：关': 'Chat cache: off',
   '让它游走（退出）': 'Let it go (exit)',
   '鱼粮账本': 'Token ledger',
   'English': 'English',
-  '自动（按语言选音色）': 'Auto (by language)',
-  '自动': 'Auto',
   '中文': 'Chinese',
-  '音色：晓伊（中·女）': 'Voice: Xiaoyi (CN F)',
-  '音色：晓晓（中·女）': 'Voice: Xiaoxiao (CN F)',
-  '音色：晓辰（中·女）': 'Voice: Xiaochen (CN F)',
-  '音色：云希（中·男）': 'Voice: Yunxi (CN M)',
-  '音色：云扬（中·男）': 'Voice: Yunyang (CN M)',
-  '音色：Ana（英·女）': 'Voice: Ana (EN F)',
-  '音色：Jenny（英·女）': 'Voice: Jenny (EN F)',
-  '音色：Sonia（英·女·英式）': 'Voice: Sonia (EN-GB F)',
 }
 
 // 开关类菜单项：前缀 -> [开, 关]（标签是运行时拼的，精确字典永远匹配不到）
