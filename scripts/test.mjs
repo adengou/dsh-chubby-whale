@@ -2100,6 +2100,27 @@ try {
   ok('能加载说书控制器', false, String(e.message))
 }
 
+
+// ---------- ㊵ 外观档位：经验值 → 体型/光点 ----------
+console.log('\n[40] 外观档位 client/look.ts')
+try {
+  const look = await import('../src/client/look.ts')
+  ok('负数按 0 档', look.tierOf(-5) === 0 && look.lookFor(-5).tier === 0)
+  ok('0 是初识', look.tierOf(0) === 0 && look.lookFor(0).label === '初识')
+  ok('199 仍是初识', look.tierOf(199) === 0)
+  ok('200 进入熟悉', look.tierOf(200) === 1 && look.lookFor(200).label === '熟络')
+  ok('799 仍是熟悉', look.tierOf(799) === 1)
+  ok('800 进入最高档', look.tierOf(800) === 2 && look.lookFor(800).label === '黏人')
+  ok('超大经验不越界', look.tierOf(999999) === 2)
+  ok('NaN 回落初识', look.tierOf(Number.NaN) === 0)
+  ok('外观表被冻结（外部改不动）', Object.isFrozen(look.lookFor(0)) && Object.isFrozen(look.lookFor(800)))
+  ok('空成长数据回落初识', look.lookForGrowth(null).tier === 0 && look.lookForGrowth({}).tier === 0)
+  ok('成长数据 → 对应档位', look.lookForGrowth({ exp: 250 }).tier === 1)
+  ok('默认成长值被冻结', Object.isFrozen(look.DEFAULT_GROWTH))
+} catch (e) {
+  ok('能加载 look.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
