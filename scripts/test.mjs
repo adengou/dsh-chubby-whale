@@ -2691,6 +2691,100 @@ try {
   ok('能加载 intent.ts（书名/成语用例）', false, String(e.message))
 }
 
+
+// ---------- 51 chat-core：历史裁剪 / 语言判定 / 上下文指纹 / 提示拼装 ----------
+console.log('\n[51] chat-core 纯函数 src/host/chat-core.ts')
+try {
+  const cc = await import('../src/host/chat-core.ts')
+
+  // 语言判定
+  ok('含中文 → zh', cc.detectLang('你好呀') === 'zh' && cc.detectLang('hello 你好') === 'zh')
+  ok('纯拉丁 → en', cc.detectLang('hello there') === 'en')
+  ok('符号/数字 → auto', cc.detectLang('1234 !!!') === 'auto' && cc.detectLang('') === 'auto')
+
+  // 历史裁剪
+  const hist = Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: 'm' + i }))
+  ok('只取最近 8 条', cc.recentHistory(hist, 8).length === 8 && cc.recentHistory(hist, 8)[7].content === 'm11')
+  ok('n=0 / 负数 → 空', cc.recentHistory(hist, 0).length === 0 && cc.recentHistory(hist, -3).length === 0)
+  ok('非数组输入 → 空', cc.recentHistory(null, 8).length === 0)
+
+  const msg = cc.historyMessages([
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: '早上好' },
+    { role: 'assistant', content: '早呀' },
+    { role: 'assistant', content: 42 },
+    { role: 'user', content: null },
+    { role: 'user', content: '吃了吗' },
+  ])
+  ok('历史转消息：只留 user/assistant 且内容是字符串', msg.length === 3 && msg[0].content === '早上好' && msg[2].content === '吃了吗')
+  ok('历史转消息不带多余字段', Object.keys(msg[0]).join(',') === 'role,content', Object.keys(msg[0]).join(','))
+
+  // 缓存键与上下文指纹
+  const k1 = cc.chatCacheKey('zh', '你好呀！', false, 'ctx1', 'deepseek-flash')
+  const k2 = cc.chatCacheKey('zh', '你好呀', false, 'ctx1', 'deepseek-flash')
+  const k3 = cc.chatCacheKey('zh', '你好呀', true, 'ctx1', 'deepseek-flash')
+  const k4 = cc.chatCacheKey('zh', '你好呀', false, 'ctx1', 'deepseek-v4-pro')
+  ok('标点/全半角差异归一（同键）', k1 === k2)
+  ok('语音与打字分开存', k1 !== k3)
+  ok('换模型自动换键', k1 !== k4)
+  ok('指纹只认记忆摘要（历史变化不换键）', cc.chatContextFingerprint('主人喜欢白饭', hist) === cc.chatContextFingerprint('主人喜欢白饭', []))
+  ok('记忆变了才换指纹', cc.chatContextFingerprint('主人喜欢白饭') !== cc.chatContextFingerprint('主人喜欢面条'))
+  ok('空记忆指纹是稳定值', cc.chatContextFingerprint('') === cc.chatContextFingerprint(''))
+
+  // system 提示拼装
+  ok('提示拼装：人设 + 有效片段', cc.composeSystemPrompt('BASE', ['|A', '', null, false, undefined, '|B']) === 'BASE|A|B')
+  ok('提示拼装：base 可以是函数', cc.composeSystemPrompt(() => 'FN', ['|x']) === 'FN|x')
+  ok('提示拼装：base 为空也不出 undefined', cc.composeSystemPrompt(undefined, ['x']).indexOf('undefined') < 0)
+} catch (e) {
+  ok('能加载 chat-core', false, String(e.message))
+}
+
+
+// ---------- 52 说书播放器：换书不串进度 ----------
+console.log('\n[52] 说书播放器换书 player.ts')
+try {
+  const { mkdtempSync, rmSync, writeFileSync: wf } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-player-test-'))
+  const progressFile = join(dir, 'story_progress.json')
+  const mkChunks = (book) => [0, 1].map((i) => ({ book, title: book + '第' + (i + 1) + '回', piece: i + 1, total: 2, text: '正文' + i, index: i }))
+  const repo = { listBooks: async () => ['甲', '乙'], loadBook: async (b) => mkChunks(b) }
+  const { createStoryPlayer } = await import('../src/host/story/player.ts')
+  const player = createStoryPlayer({ repo, progressFile })
+  const pick = async (fn) => { try { return await fn() } catch (e) { return { ok: false, error: String(e.message) } } }
+
+  const a1 = await pick(() => player.start('甲', 'c1'))
+  ok('开讲：甲第 1 段 + 开场白', a1.ok === true && a1.chunk.piece === 1 && a1.chunk.isFirst === true && a1.chunk.text.indexOf('话说') === 0, a1.ok ? a1.chunk.book + '/' + a1.chunk.piece : a1.error)
+  ok('开讲：连播队列还有 1 段', a1.remain === 1)
+
+  const a2 = await player.next('c1')
+  ok('继续：甲第 2 段（不再插开场白）', a2.ok === true && a2.chunk.piece === 2 && a2.chunk.isFirst === false && a2.chunk.isLast === true)
+
+  const b1 = await player.next('c1')
+  ok('讲完甲自动换乙：第 1 段 + 重新开场', b1.ok === true && b1.chunk.book === '乙' && b1.chunk.piece === 1 && b1.chunk.isFirst === true, b1.ok ? b1.chunk.book + '/' + b1.chunk.piece : b1.error)
+
+  // 重置甲：只清甲，乙的进度保留
+  const rs = await player.reset('甲', 'c1')
+  ok('重置甲成功', rs.ok === true && rs.book === '甲')
+  const a1b = await player.start('甲', 'c1')
+  ok('重置后甲从第 1 段重讲', a1b.ok === true && a1b.chunk.piece === 1 && a1b.chunk.isFirst === true)
+  await player.next('c1')
+  const b2 = await player.next('c1')
+  ok('乙的进度没被甲的重置连带清掉', b2.ok === true && b2.chunk.book === '乙' && b2.chunk.piece === 2, b2.ok ? b2.chunk.book + '/' + b2.chunk.piece : b2.error)
+
+  // reloadProgress：外部写盘后按新内容生效（备份导入场景）
+  wf(progressFile, JSON.stringify({ '乙|0': true }), 'utf8')
+  player.reloadProgress()
+  const a1c = await player.start('甲', 'c2')
+  ok('reload 后按文件内容继续（甲第 1 段）', a1c.ok === true && a1c.chunk.book === '甲' && a1c.chunk.piece === 1)
+  ok('空进度文件不炸', (() => { wf(progressFile, '{}', 'utf8'); player.reloadProgress(); return true })())
+
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载说书播放器', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
