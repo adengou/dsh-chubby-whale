@@ -284,6 +284,24 @@ export function apply(ctx, rawConfig) {
         loadFishfood: store.loadFishfood,
         loadPet: () => store.tickPet(), // 读取时结算饥饿/离线时长（照 C#）
         feedPet: store.feedPet,
+        // 亲密度单一真源：state.json（pet_state.intimacy 只当历史遗留字段）
+        loadIntimacy: () => { try {
+            return Number(store.loadState().intimacy) || 0;
+        }
+        catch (e) {
+            return 0;
+        } },
+        bumpIntimacy: (n) => {
+            try {
+                const st = store.loadState() || {};
+                st.intimacy = Math.min(100, (Number(st.intimacy) || 0) + (Number(n) || 0));
+                store.saveState(st);
+                return Number(st.intimacy) || 0;
+            }
+            catch (e) {
+                return 0;
+            }
+        },
         clearMemory: store.clearMemory,
         chatCacheCount: () => chatCache.count(),
         clearChatCache: () => chatCache.clear(),

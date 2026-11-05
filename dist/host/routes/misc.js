@@ -67,10 +67,33 @@ export function createMiscHandlers(opts) {
         try {
             const url = new URL(req.url, 'http://x');
             if (url.searchParams.get('action') === 'feed' && opts.feedPet) {
-                sendJson(res, { ok: true, pet: opts.feedPet() });
+                const pet = opts.feedPet();
+                // 亲密度以 state.json 为准：喂食只负责"加"，不再让 pet_state.intimacy 自成一套
+                let intimacy = Number(pet && pet.intimacy) || 0;
+                if (opts.bumpIntimacy) {
+                    try {
+                        intimacy = Number(opts.bumpIntimacy(2)) || intimacy;
+                    }
+                    catch (e) { }
+                }
+                else if (opts.loadIntimacy) {
+                    try {
+                        intimacy = Number(opts.loadIntimacy()) || intimacy;
+                    }
+                    catch (e) { }
+                }
+                sendJson(res, { ok: true, pet: { ...(pet || {}), intimacy } });
                 return;
             }
-            sendJson(res, { ok: true, pet: opts.loadPet ? opts.loadPet() : { feeds: 0, hunger: 0, mood: 'normal' } });
+            const pet = opts.loadPet ? opts.loadPet() : { feeds: 0, hunger: 0, mood: 'normal' };
+            let intimacy = Number(pet && pet.intimacy) || 0;
+            if (opts.loadIntimacy) {
+                try {
+                    intimacy = Number(opts.loadIntimacy()) || intimacy;
+                }
+                catch (e) { }
+            }
+            sendJson(res, { ok: true, pet: { ...(pet || {}), intimacy } });
         }
         catch (err) {
             sendError(res, err);

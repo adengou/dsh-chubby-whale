@@ -18,6 +18,10 @@ export function createMiscHandlers(opts: {
   loadFishfood: () => any
   loadPet?: () => any
   feedPet?: () => any
+  /** 亲密度读取（单一真源 state.json）；缺省时退回 pet_state.intimacy */
+  loadIntimacy?: () => number
+  /** 喂食时给亲密度加分（写 state.json），返回加完后的值 */
+  bumpIntimacy?: (n: number) => number
   clearMemory?: () => void
   /** 清空聊天缓存（清除记忆时一并清） */
   clearChatCache?: () => Promise<number>
@@ -85,10 +89,18 @@ export function createMiscHandlers(opts: {
     try {
       const url = new URL(req.url, 'http://x')
       if (url.searchParams.get('action') === 'feed' && opts.feedPet) {
-        sendJson(res, { ok: true, pet: opts.feedPet() })
+        const pet = opts.feedPet()
+        // 亲密度以 state.json 为准：喂食只负责"加"，不再让 pet_state.intimacy 自成一套
+        let intimacy = Number(pet && pet.intimacy) || 0
+        if (opts.bumpIntimacy) { try { intimacy = Number(opts.bumpIntimacy(2)) || intimacy } catch (e) { } }
+        else if (opts.loadIntimacy) { try { intimacy = Number(opts.loadIntimacy()) || intimacy } catch (e) { } }
+        sendJson(res, { ok: true, pet: { ...(pet || {}), intimacy } })
         return
       }
-      sendJson(res, { ok: true, pet: opts.loadPet ? opts.loadPet() : { feeds: 0, hunger: 0, mood: 'normal' } })
+      const pet = opts.loadPet ? opts.loadPet() : { feeds: 0, hunger: 0, mood: 'normal' }
+      let intimacy = Number(pet && pet.intimacy) || 0
+      if (opts.loadIntimacy) { try { intimacy = Number(opts.loadIntimacy()) || intimacy } catch (e) { } }
+      sendJson(res, { ok: true, pet: { ...(pet || {}), intimacy } })
     } catch (err: any) {
       sendError(res, err)
     }
