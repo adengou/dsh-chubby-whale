@@ -1340,6 +1340,77 @@ try {
   ok('能加载流式聊天路由', false, String(e.message))
 }
 
+
+// ---------- ㉘ 文化与音乐路由：去重轮转 / 曲目白名单 ----------
+console.log('\n[28] 文化与音乐 host/routes/culture.ts')
+try {
+  const { mkdtempSync, writeFileSync: wf, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-culture-test-'))
+  const dataPort = {
+    readCulture: async (kind) => {
+      if (kind === 'chengyu') return [{ name: '一鼓作气', src: '左传', text: '第一次击鼓振作士气' }, { name: '亡羊补牢', src: '战国策', text: '羊跑了再修圈' }]
+      if (kind === 'idiom') return [{ name: '七月流火', cat: '易误用', mean: '天气转凉', wrong: '天气炎热' }]
+      if (kind === 'minsu') return [{ book: '聊斋', title: '画皮', text: '一个关于皮囊的故事' }]
+      return []
+    },
+    readPoemsChunk: async () => ({ index: 0, total: 1, items: [] }),
+    readDuilian: async () => ({ upper: [], lower: [] }),
+    readDaily: async () => [],
+  }
+  wf(join(dir, 'melodies.json'), JSON.stringify({ songs: [{ name: '小星星', bpm: 120, notes: [1, 2, 3], lyrics: '一闪一闪' }] }))
+  const { createCultureHandlers } = await import('../src/host/routes/culture.ts')
+  const handlers = createCultureHandlers({ dataDir: dir, runtimeDir: dir, dataPort })
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.json = () => { try { return JSON.parse(Buffer.concat(out.chunks).toString('utf8')) } catch (e) { return null } }
+    return out
+  }
+  const call = async (url) => { const res = mkRes(); await handlers.handleCulture({ url }, res); return res.json() }
+
+  const c1 = await call('/api/chubby-whale/culture?type=chengyu')
+  ok('成语：返回 ok + item', c1.ok === true && c1.item && c1.item.kind === 'chengyu' && !!c1.item.title)
+  const c2 = await call('/api/chubby-whale/culture?type=chengyu')
+  ok('成语：连续两次不重复', c2.item.title !== c1.item.title, c1.item.title + ' / ' + c2.item.title)
+  const c3 = await call('/api/chubby-whale/culture?type=chengyu')
+  ok('成语：一轮讲完自动重来', c3.item && [c1.item.title, c2.item.title].indexOf(c3.item.title) >= 0, c3.item.title)
+
+  const i1 = await call('/api/chubby-whale/culture?type=idiom')
+  ok('成语辨析：带易误解提示', i1.item && i1.item.kind === 'idiom' && i1.item.text.indexOf('易误解为') >= 0, String(i1.item && i1.item.text).slice(0, 30))
+
+  const m1 = await call('/api/chubby-whale/culture?type=minsu')
+  ok('民间故事：标题是「书名·标题」', m1.item && m1.item.title === '聊斋·画皮', String(m1.item && m1.item.title))
+
+  const u1 = await call('/api/chubby-whale/culture?type=nonsense')
+  ok('未知类型：给兜底说明而不是报错', u1.ok === true && u1.item.kind === 'unknown')
+
+  // 空数据源 → item null + reason，而不是 500
+  const empty = createCultureHandlers({ dataDir: dir, runtimeDir: dir, dataPort: { ...dataPort, readCulture: async () => [] } })
+  const er = mkRes(); await empty.handleCulture({ url: '/api/chubby-whale/culture?type=chengyu' }, er)
+  ok('空数据源：ok + item=null + no-data', er.json().ok === true && er.json().item === null && er.json().reason === 'no-data')
+
+  // 曲目：列表只给 name/bpm；按名字取完整曲谱；不存在的名字给 ok:false
+  const mr = mkRes(); await handlers.handleMelodies({ url: '/api/chubby-whale/melodies' }, mr)
+  ok('曲目列表只露 name/bpm', mr.json().ok === true && mr.json().songs.length === 1 && mr.json().songs[0].name === '小星星' && !('notes' in mr.json().songs[0]))
+  const md = mkRes(); await handlers.handleMelody({ url: '/api/chubby-whale/melody?name=' + encodeURIComponent('小星星') }, md)
+  ok('按名字取曲谱（notes 齐全）', md.json().ok === true && md.json().song.notes.length === 3 && md.json().song.bpm === 120)
+  const miss = mkRes(); await handlers.handleMelody({ url: '/api/chubby-whale/melody?name=' + encodeURIComponent('不存在的歌') }, miss)
+  ok('未知曲名 → ok:false', miss.json().ok === false && miss.json().error === 'song not found')
+
+  // 曲库文件缺失 → ok:false + songs:[]（不抛）
+  const missing = createCultureHandlers({ dataDir: join(dir, 'nope'), runtimeDir: dir, dataPort })
+  const mf = mkRes(); await missing.handleMelodies({ url: '/api/chubby-whale/melodies' }, mf)
+  ok('曲库缺失 → songs:[] 兜底', mf.json().ok === false && Array.isArray(mf.json().songs) && mf.json().songs.length === 0)
+
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载文化路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
