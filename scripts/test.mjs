@@ -1742,6 +1742,80 @@ try {
   ok('能加载本地数据源', false, String(e.message))
 }
 
+
+// ---------- ㉞ 图片消息：多模态请求体 + 不缓存 ----------
+console.log('\n[34] 聊天路由的图片分支 host/routes/chat.ts')
+try {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-img-test-'))
+  const { createCache } = await import('../src/host/cache.ts')
+  const { createChatHandler } = await import('../src/host/routes/chat.ts')
+  const cache = createCache({ dir, memBytes: 1024 * 1024 })
+
+  const bodies = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    bodies.push(JSON.parse(String(init && init.body)))
+    const payload = { choices: [{ message: { content: '这是只胖鱼' } }], usage: { total_tokens: 9 } }
+    return { ok: true, status: 200, text: async () => JSON.stringify(payload) }
+  }
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.json = () => { try { return JSON.parse(Buffer.concat(out.chunks).toString('utf8')) } catch (e) { return null } }
+    return out
+  }
+  const mkReq = (body) => {
+    const buf = Buffer.from(JSON.stringify(body))
+    return { method: 'POST', headers: {}, destroy() { }, on() { }, resume() { }, async *[Symbol.asyncIterator]() { yield buf } }
+  }
+  const deps = {
+    getKey: () => 'k',
+    loadHistory: () => [],
+    appendTurns: () => { },
+    loadState: () => ({ intimacy: 0 }),
+    saveState: () => { },
+    systemPrompt: 'SYS',
+    addExp: () => ({ upgraded: false }),
+    addTokens: () => { },
+    cache,
+    loadMemorySummary: () => '',
+    model: 'deepseek-flash',
+  }
+  const handle = createChatHandler(deps)
+
+  // ① 带图片：最后一条 user 消息是 [text, image_url] 数组
+  const res = mkRes()
+  await handle(mkReq({ message: '这是什么', image: 'QUJD', imageMime: 'image/png' }), res)
+  const sent = bodies[0]
+  const lastMsg = sent.messages[sent.messages.length - 1]
+  ok('图片请求已发给模型', !!sent && Array.isArray(lastMsg.content))
+  ok('含文字段', Array.isArray(lastMsg.content) && lastMsg.content[0].type === 'text' && lastMsg.content[0].text === '这是什么')
+  ok('含图片 data URL', Array.isArray(lastMsg.content) && lastMsg.content[1].type === 'image_url' && lastMsg.content[1].image_url.url === 'data:image/png;base64,QUJD')
+  ok('图片回复正常返回', res.json().ok === true && res.json().reply === '这是只胖鱼')
+
+  // ② 图片消息不进缓存：同一条再来仍要请求
+  bodies.length = 0
+  const res2 = mkRes()
+  await handle(mkReq({ message: '这是什么', image: 'QUJD', imageMime: 'image/png' }), res2)
+  ok('图片消息不缓存（第二次仍请求）', bodies.length === 1, 'fetch=' + bodies.length)
+
+  // ③ 不传 mime 时按 jpeg
+  const res3 = mkRes()
+  await handle(mkReq({ message: '再看看', image: 'QUJD' }), res3)
+  const last3 = bodies[bodies.length - 1].messages[bodies[bodies.length - 1].messages.length - 1]
+  ok('默认图片类型 image/jpeg', last3.content[1].image_url.url.indexOf('data:image/jpeg;base64,') === 0)
+
+  globalThis.fetch = realFetch
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载聊天路由（图片分支）', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
