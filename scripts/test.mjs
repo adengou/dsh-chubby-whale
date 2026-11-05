@@ -3211,6 +3211,74 @@ try {
   ok('能加载无双 KEY 兜底用例', false, String(e.message))
 }
 
+
+// ---------- 60 语音不再要求先喊唤醒词（"随时可以说"） ----------
+console.log('\n[60] 随时可以说（唤醒词不再是门槛）')
+try {
+  const { createVoiceBridge } = await import('../src/client/voice-bridge.ts')
+  const fakeVoice = {
+    start: async () => { }, stop() { }, speak() { }, stopSpeaking() { },
+    speaking: () => false, recognizing: () => false,
+    setVoiceName() { }, voiceName: () => '', setEndpointMode() {}, endpointInfo: () => ({ mode: 'classic' }),
+    lastSegment: () => null, lastTtsInfo: () => null, mute() {}, stats: {}, status: () => 'idle',
+  }
+  let captured = null
+  const sent = []
+  const said = []
+  const bubbles = []
+  let narrationActive = false
+  let stopped = 0
+  let voiceChatOn = true
+  const mkBridge = () => createVoiceBridge({
+    narration: { active: () => narrationActive, clear() { }, expire: () => false },
+    narrating: () => false,
+    stopSpeaking: () => { stopped++ },
+    bubble: (t) => bubbles.push(t),
+    say: (t) => said.push(t),
+    sendText: (t, o) => sent.push({ t, o }),
+    onVoiceHeard: () => { },
+    onSpeaking: () => { },
+    diag: () => { },
+    voiceChat: () => voiceChatOn,
+    makeVoice: (opts) => { captured = opts; return fakeVoice },
+  })
+  const b = mkBridge()
+  b.ensure()
+
+  // ① 不喊唤醒词也直接答话
+  captured.onHeard('主人今天吃什么')
+  ok('不喊唤醒词也会答话', sent.length === 1 && sent[0].t === '主人今天吃什么' && sent[0].o && sent[0].o.voice === true)
+  ok('不再弹出"先喊一声"的提示', bubbles.every((x) => x.indexOf('先喊') < 0), bubbles.join(' | '))
+
+  // ② 只喊名字：应一声，不劳烦模型
+  const before = sent.length
+  captured.onHeard('大肥鱼')
+  ok('只喊名字时本地应一声', sent.length === before && said.indexOf('本鲸在呢～') >= 0, said.join(' | '))
+
+  // ③ 句首喊名字 + 正文：剥掉名字再答
+  captured.onHeard('大肥鱼你好呀')
+  ok('句首唤醒词被剥掉', sent.length === before + 1 && sent[sent.length - 1].t === '你好呀', sent[sent.length - 1].t)
+
+  // ④ 念诗/说书时喊"停"仍然立刻停
+  narrationActive = true
+  captured.onHeard('停')
+  ok('叙述中喊停立刻停', stopped === 1 && sent.length === before + 1)
+  narrationActive = false
+
+  // ⑤ 语音聊天关着：只听不接话
+  voiceChatOn = false
+  const n = sent.length
+  captured.onHeard('随便说一句')
+  ok('语音聊天关着时不接话', sent.length === n)
+  voiceChatOn = true
+
+  // ⑥ 诊断里能看出过了几段
+  const info = b.wakeInfo()
+  ok('诊断：通过的段数在涨', info.passed >= 3 && info.hits >= 2, JSON.stringify({ passed: info.passed, hits: info.hits }))
+} catch (e) {
+  ok('能加载语音桥（随时说）', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

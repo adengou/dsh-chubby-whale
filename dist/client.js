@@ -2463,21 +2463,9 @@
             wakeStats.hits++;
             wakeStats.lastHitAt = Date.now();
           }
-          if (!r.pass) {
-            wakeStats.dropped++;
-            const now = Date.now();
-            if (now - wakeStats.dropNotifiedAt > 2e4) {
-              wakeStats.dropNotifiedAt = now;
-              try {
-                host.bubble("\u5148\u558A\u4E00\u58F0\u300C" + (gate.words[0] || "\u5927\u80A5\u9C7C") + "\u300D\uFF0C\u672C\u9CB8\u624D\u7B54\u8BDD\uFF5E", 3500);
-              } catch (e) {
-              }
-            }
-            bump("wakeDrop");
-            pushWake();
-            return;
-          }
-          if (!r.text) {
+          const said = r.hit ? r.text : String(text || "").trim();
+          wakeStats.passed++;
+          if (!said) {
             try {
               if (host.say) host.say("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
               else host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
@@ -2490,13 +2478,12 @@
             pushWake();
             return;
           }
-          wakeStats.passed++;
           try {
-            host.bubble("\uFF08\u542C\u5230\uFF09" + r.text + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
+            host.bubble("\uFF08\u542C\u5230\uFF09" + said + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
           } catch (e) {
           }
           try {
-            host.sendText(r.text, { voice: true });
+            host.sendText(said, { voice: true });
           } catch (e) {
           }
           pushWake();

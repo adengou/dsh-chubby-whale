@@ -150,25 +150,16 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
           }
         } catch (e) { }
 
-        // 唤醒门：只有最近 30 秒内被叫过，识别结果才交给聊天
+        // 唤醒词不再当门槛：主人 2026-11-06 定的是"随时可以说"。
+        // 唤醒词只剩两个用途：① 只喊名字时应一声；② 唤醒词出现在句首时从正文里剥掉。
         const r = gate.check(text)
         if (r.hit) { wakeStats.hits++; wakeStats.lastHitAt = Date.now() }
-        if (!r.pass) {
-          wakeStats.dropped++
-          // 提示限流：20 秒最多一次，别每段窗口都刷一句
-          const now = Date.now()
-          if (now - wakeStats.dropNotifiedAt > 20000) {
-            wakeStats.dropNotifiedAt = now
-            try { host.bubble('先喊一声「' + (gate.words[0] || '大肥鱼') + '」，本鲸才答话～', 3500) } catch (e) { }
-          }
-          bump('wakeDrop')
-          pushWake()
-          return
-        }
+        const said = r.hit ? r.text : String(text || '').trim()
+        wakeStats.passed++
         // 只喊了名字（剥掉唤醒词后没剩内容）：应一声，不劳烦模型。
         // 之前只弹气泡不出声，主人喊了名字会觉得"鱼没反应"；
         // 改成 say（会朗读；同一句 25 秒去重，重复喊不会连珠炮）。
-        if (!r.text) {
+        if (!said) {
           try {
             if (host.say) host.say('本鲸在呢～', 2200)
             else host.bubble('本鲸在呢～', 2200)
@@ -178,9 +169,8 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
           pushWake()
           return
         }
-        wakeStats.passed++
-        try { host.bubble('（听到）' + r.text + '｜本鱼在想…', 3000) } catch (e) { }
-        try { host.sendText(r.text, { voice: true }) } catch (e) { }
+        try { host.bubble('（听到）' + said + '｜本鱼在想…', 3000) } catch (e) { }
+        try { host.sendText(said, { voice: true }) } catch (e) { }
         pushWake()
       },
       onStatus: (st: any) => { try { host.onSpeaking(st === 'speaking') } catch (e) { } },
