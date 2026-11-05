@@ -1,14 +1,14 @@
-/**
+﻿/**
  * host/routes/asr.ts —— 语音识别路由（硅基流动 Qwen3-ASR）
  * POST JSON { audio: base64, format: 'webm'|'wav'|'mp3' } → { text }
- * Key 来源：插件 config.json 的 siliconflowKey > 环境变量 SILICONFLOW_API_KEY
+ * Key 由入口注入（getKey），路由不再自己读 config.json / 环境变量。
  * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB；外呼超时 60 秒
  */
-import { readFileSync } from 'node:fs'
 import { hashBytes } from '../cache.js'
-import { readSiliconFlowKey } from '../config.js'
-import { fetchJson, isBodyTooLarge, isTimeoutError, readBody, sendTooLarge } from '../http.js'
-import { join } from 'node:path'
+import { fetchJson, isTimeoutError, sendTooLarge } from '../http.js'
+import { readJsonBody } from '../body.js'
+import { sendJson, sendError } from '../respond.js'
+import type { AsrRouteDeps } from '../ports.js'
 
 const ASR_MODEL = 'Qwen/Qwen3-ASR-1.7B'
 const ENDPOINT = 'https://api.siliconflow.cn/v1/audio/transcriptions'
@@ -21,38 +21,27 @@ const ASR_MAX_AUDIO = 8 * 1024 * 1024
 /** 外呼超时：60 秒 */
 const ASR_TIMEOUT = 60 * 1000
 
-export { readSiliconFlowKey }
-
-export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
+export function createAsrHandler(opts: AsrRouteDeps) {
   return async function handleAsr(req: any, res: any): Promise<void> {
     try {
-      let raw: Buffer
-      try {
-        raw = await readBody(req, ASR_MAX_BODY)
-      } catch (err: any) {
-        if (isBodyTooLarge(err)) {
-          console.error('[asr] BODY-TOO-LARGE > ' + ASR_MAX_BODY + ' bytes')
-          sendTooLarge(res)
-          return
-        }
-        throw err
+      const parsed = await readJsonBody(req, ASR_MAX_BODY)
+      if (!parsed.ok) {
+        console.error('[asr] BODY-TOO-LARGE > ' + ASR_MAX_BODY + ' bytes')
+        sendTooLarge(res)
+        return
       }
-      const text = raw.toString('utf8')
-      let body: any = {}
-      try { body = text ? JSON.parse(text) : {} } catch { body = {} }
+      const body = parsed.body
       const audioB64 = typeof body?.audio === 'string' ? body.audio : ''
       // format 会被拼进 multipart 头，必须白名单，否则可 CRLF 注入伪造表单段
       const rawFormat = typeof body?.format === 'string' ? body.format : 'webm'
       const format = /^(webm|wav|mp3)$/.test(rawFormat) ? rawFormat : 'webm'
       if (!audioB64) {
-        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: 'empty audio' }))
+        sendJson(res, { ok: false, error: 'empty audio' }, 400)
         return
       }
       // base64 合法性：非法字符解码成空 buffer，会让所有坏音频共用同一个缓存 key
       if (!/^[A-Za-z0-9+/=\r\n]+$/.test(audioB64)) {
-        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: 'bad base64', text: '' }))
+        sendJson(res, { ok: false, error: 'bad base64', text: '' }, 400)
         return
       }
       // 先判 base64 长度（content-length 缺失时的兜底），再解码
@@ -64,14 +53,12 @@ export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
       const buf = Buffer.from(audioB64, 'base64')
       // 解码后再判音频上限（8MB）
       if (buf.length > ASR_MAX_AUDIO) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: 'audio too large', text: '' }))
+        sendJson(res, { ok: false, error: 'audio too large', text: '' })
         return
       }
-      const key = readSiliconFlowKey(opts.pluginDir)
+      const key = opts.getKey()
       if (!key) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: 'NO_KEY', text: '' }))
+        sendJson(res, { ok: false, error: 'NO_KEY', text: '' })
         return
       }
       // 用完整音频字节做 key（只取前 4000 字符容易撞 key）
@@ -80,8 +67,7 @@ export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
       if (opts.cache) {
         const hit = await opts.cache.getJson(ck, 'json', ASR_CACHE_MAX_AGE)
         if (hit && typeof hit.text === 'string') {
-          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({ ok: true, text: hit.text, cached: true }))
+          sendJson(res, { ok: true, text: hit.text, cached: true })
           return
         }
       }
@@ -111,25 +97,19 @@ export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
         // 超时/网络错误：用户看到的仍是 ok:false + 空文本，日志里留标签
         if (isTimeoutError(err)) console.error('[asr] ASR-TIMEOUT ' + ASR_TIMEOUT + 'ms 无响应，已中止')
         else console.error('[asr] ASR-NETWORK ' + String(err?.message || err))
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: isTimeoutError(err) ? 'timeout' : String(err?.message || err), text: '' }))
+        sendJson(res, { ok: false, error: isTimeoutError(err) ? 'timeout' : String(err?.message || err), text: '' })
         return
       }
       if (!r.ok) {
         console.error('[asr] ASR-HTTP ' + r.status)
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: 'HTTP ' + r.status + ' ' + String(r.text || '').slice(0, 200), text: '' }))
+        sendJson(res, { ok: false, error: 'HTTP ' + r.status + ' ' + String(r.text || '').slice(0, 200), text: '' })
         return
       }
-      const text2 = String(r.data?.text || '').trim()
-      if (opts.cache && text2) { try { await opts.cache.setJson(ck, { text: text2 }) } catch { } }
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, text: text2 }))
+      const recognized = String(r.data?.text || '').trim()
+      if (opts.cache && recognized) { try { await opts.cache.setJson(ck, { text: recognized }) } catch { } }
+      sendJson(res, { ok: true, text: recognized })
     } catch (err: any) {
-      try {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: String(err?.message || err), text: '' }))
-      } catch { }
+      try { sendError(res, err, { text: '' }) } catch { }
     }
   }
 }

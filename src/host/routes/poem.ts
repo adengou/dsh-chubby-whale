@@ -1,11 +1,14 @@
 /**
  * host/routes/poem.ts —— 念诗路由
  * 数据：data/poems.json（739 首，结构 {poems:[{type,dynasty,title,author,lines,sources}]}）
- * 去重：data/poem-seen.json（["标题|作者|首句", ...]），一轮念完自动清空重来。
+ * 去重：poem-seen.json（["标题|作者|首句", ...]），一轮念完自动清空重来。
  * 文件缺失/损坏只记 POEM-LOAD-FAIL，按空诗册处理；空时返回 {ok:true,item:null,reason:'no-data'}。
+ * 原子写/JSON 响应分别走 host/atomic.ts、host/respond.ts。
  */
-import { readFileSync, writeFileSync, mkdirSync, statSync, renameSync, unlinkSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { writeJsonAtomic } from '../atomic.js'
+import { sendJson, sendError } from '../respond.js'
 
 export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }) {
   const POEMS_FILE = join(opts.dataDir, 'poems.json')
@@ -84,17 +87,8 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
   }
   function saveSeen(): void {
     try {
-      // 目录按 SEEN_FILE 的真实位置建：runtimeDir 与 dataDir 不一定同一个，按 dataDir 建会 ENOENT
-      mkdirSync(dirname(SEEN_FILE), { recursive: true })
-      // 原子写：唯一临时名 + rename。直写会先截断旧文件，中途被杀就留下半个 JSON
-      const tmp = SEEN_FILE + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp'
-      writeFileSync(tmp, JSON.stringify(Array.from(seen || [])), 'utf8')
-      try {
-        renameSync(tmp, SEEN_FILE)
-      } catch (err) {
-        try { unlinkSync(tmp) } catch { }   // 改名失败别留垃圾临时文件
-        throw err
-      }
+      // 原子写：唯一临时名 + rename（失败清临时文件），见 host/atomic.ts
+      writeJsonAtomic(SEEN_FILE, Array.from(seen || []))
     } catch (err: any) {
       console.error('POEM-SEEN-SAVE-FAIL file=' + SEEN_FILE + ' err=' + String(err?.message || err))
     }
@@ -104,8 +98,7 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
     try {
       const list = loadPoems()
       if (list.length === 0) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: true, item: null, reason: 'no-data' }))
+        sendJson(res, { ok: true, item: null, reason: 'no-data' })
         return
       }
       // 指定标题：按「完整标题 = 」优先，其次「包含」，命中就直接背这一首（不参与随机池）
@@ -122,12 +115,11 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
           const sn0 = loadSeen()
           sn0.add(keyOf(hit))
           saveSeen()
-          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(JSON.stringify({
+          sendJson(res, {
             ok: true,
             matched: true,
             item: { title: hit.title, author: hit.author, dynasty: hit.dynasty, text: hit.lines.join('\n') },
-          }))
+          })
           return
         }
         // 没匹配到就回落随机（并告诉客户端 matched:false）
@@ -143,8 +135,7 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
       const p = pool[Math.floor(Math.random() * pool.length)]
       sn.add(keyOf(p))
       saveSeen()
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({
+      sendJson(res, {
         ok: true,
         item: {
           title: p.title,
@@ -152,10 +143,9 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
           dynasty: p.dynasty,
           text: p.lines.join('\n'),
         },
-      }))
+      })
     } catch (err: any) {
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }))
+      sendError(res, err)
     }
   }
 

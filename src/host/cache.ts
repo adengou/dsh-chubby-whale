@@ -1,4 +1,4 @@
-/**
+﻿/**
  * host/cache.ts —— 通用缓存（内存 + 文件，可复用）
  * 用于：TTS 音频、聊天回复、ASR 识别结果（按内容 hash 缓存，省 token/时间）
  * 内存：条目数 + 总字节双上限，LRU 淘汰（音频 Buffer 很占内存，必须限总量）
@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir, readdir, unlink, stat, rename } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { CachePort } from './ports.js'
 
 export function hashKey(text: string): string {
   return createHash('sha1').update(text).digest('hex')
@@ -31,7 +32,7 @@ function sizeOf(value: any): number {
   try { return Buffer.byteLength(JSON.stringify(value) || '') } catch { return 64 }
 }
 
-export function createCache(opts: { dir: string; memLimit?: number; memBytes?: number; maxFiles?: number }) {
+export function createCache(opts: { dir: string; memLimit?: number; memBytes?: number; maxFiles?: number }): CachePort {
   const mem = new Map<string, { v: any; size: number; at: number; ttl: number }>()
   const MEM_ITEMS = opts.memLimit || 500
   const MEM_BYTES = opts.memBytes || 32 * 1024 * 1024   // 内存里最多放 32MB

@@ -18,21 +18,18 @@
  *     （此前它被当成「整条请求的总时长」，慢模型讲到一半会被硬切）
  *   · 120s 是总时长硬上限，兜底防「上游一直有数据但永远不结束」；
  *   · 每 12s 写一行 `: ping` 注释帧保活，客户端解析器会跳过以 : 开头的行。
+ *
+ * 纯函数与其它路由共用 host/chat-core.ts，不再从 routes/chat.ts 横向 import。
  */
-import { readBody, isBodyTooLarge, sendTooLarge } from '../http.js';
-import { chatCacheKey, recentHistory, HISTORY_IN_PROMPT, detectLang } from './chat.js';
-import { shortHash } from '../cache.js';
+import { sendTooLarge } from '../http.js';
+import { readJsonBody } from '../body.js';
+import { sendSseHeaders } from '../respond.js';
+import { CHAT_URL, CHAT_CACHE_TTL, detectLang, chatCacheKey, chatContextFingerprint, historyMessages, composeSystemPrompt, } from '../chat-core.js';
 import { parseSseBuffer } from '../../shared/sse.js';
-const CHAT_URL = 'https://api.deepseek.com/chat/completions';
 const CHAT_IDLE_TIMEOUT = 30 * 1000; // 空闲超时：连续这么久没有上游数据才中止
 const CHAT_MAX_DURATION = 120 * 1000; // 总时长硬上限：不论有没有数据，到点就断
 const SSE_PING_MS = 12 * 1000; // SSE 心跳间隔
-const CHAT_CACHE_TTL = 7 * 24 * 3600 * 1000;
 const CHAT_MAX_BODY = 6 * 1024 * 1024;
-function normalizeLang(raw) {
-    const s = String(raw || '').toLowerCase();
-    return s.startsWith('en') ? 'en' : 'zh';
-}
 export function createChatStreamHandler(opts) {
     return async function handleChatStream(req, res) {
         // SSE 头：立刻发出，避免客户端等到第一个 token 才开始
@@ -109,24 +106,12 @@ export function createChatStreamHandler(opts) {
             idleTimer = setTimeout(() => abortUpstream('idle timeout ' + CHAT_IDLE_TIMEOUT + 'ms'), CHAT_IDLE_TIMEOUT);
         };
         try {
-            let raw;
-            try {
-                raw = await readBody(req, CHAT_MAX_BODY);
+            const parsed = await readJsonBody(req, CHAT_MAX_BODY);
+            if (!parsed.ok) {
+                sendTooLarge(res);
+                return;
             }
-            catch (err) {
-                if (isBodyTooLarge(err)) {
-                    sendTooLarge(res);
-                    return;
-                }
-                throw err;
-            }
-            let body = {};
-            try {
-                body = JSON.parse(raw.toString('utf8') || '{}');
-            }
-            catch {
-                body = {};
-            }
+            const body = parsed.body;
             const message = String(body?.message || '').trim();
             const rawLang = (typeof body?.lang === 'string' && /^(zh|en|auto)$/.test(body.lang)) ? body.lang : 'auto';
             const lang = rawLang === 'auto' ? detectLang(message) : rawLang;
@@ -137,12 +122,7 @@ export function createChatStreamHandler(opts) {
                 res.end();
                 return;
             }
-            res.writeHead(200, {
-                'content-type': 'text/event-stream; charset=utf-8',
-                'cache-control': 'no-store',
-                connection: 'keep-alive',
-                'x-accel-buffering': 'no',
-            });
+            sendSseHeaders(res);
             // 立刻把 SSE 头刷出去，客户端不必等首帧；同时记录客户端断开
             try {
                 res.flushHeaders && res.flushHeaders();
@@ -185,15 +165,8 @@ export function createChatStreamHandler(opts) {
             catch {
                 history = [];
             }
-            const prevUser = recentHistory(history, HISTORY_IN_PROMPT).filter((m) => m && m.role === 'user').slice(-1)[0];
-            const ctxFp = (() => { try {
-                return shortHash(memSummary) + '|' + shortHash(String((prevUser && prevUser.content) || ''));
-            }
-            catch (e) {
-                return '';
-            } })();
             const cacheOn = !opts.cacheEnabled || opts.cacheEnabled() !== false;
-            const cacheKey = chatCacheKey(lang, message, isVoice, ctxFp);
+            const cacheKey = chatCacheKey(lang, message, isVoice, chatContextFingerprint(memSummary, history));
             // 与普通 /chat 一致：太短的消息不缓存
             const cacheable = message.length >= (isVoice ? 2 : 6);
             if (opts.cache && cacheOn && cacheable) {
@@ -214,11 +187,14 @@ export function createChatStreamHandler(opts) {
                 res.end();
                 return;
             }
-            const messages = [{ role: 'system', content: opts.systemPrompt + (lang === 'en' ? '\n【Language】Answer in English.' : '\n【语言规则】主人用中文提问，请用中文回答。') + (memSummary ? ('\n（关于主人的长期记忆：' + memSummary + '）') : '') }];
-            for (const m of recentHistory(history, HISTORY_IN_PROMPT)) {
-                if (m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
-                    messages.push({ role: m.role, content: m.content });
-            }
+            const messages = [{
+                    role: 'system',
+                    content: composeSystemPrompt(opts.systemPrompt, [
+                        lang === 'en' ? '\n【Language】Answer in English.' : '\n【语言规则】主人用中文提问，请用中文回答。',
+                        memSummary ? ('\n（关于主人的长期记忆：' + memSummary + '）') : '',
+                    ]),
+                }];
+            messages.push(...historyMessages(history));
             messages.push({ role: 'user', content: message });
             // 超时从「准备发上游请求」这一刻才开始：读请求体、查缓存慢，不该算进模型响应时间
             ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -270,9 +246,9 @@ export function createChatStreamHandler(opts) {
                         break;
                     touchIdle(); // 每收到一段就重置空闲计时：又慢又长的回复不会再被 30s 硬切
                     buf += dec.decode(value, { stream: true });
-                    const parsed = parseSseBuffer(buf);
-                    buf = parsed.rest;
-                    for (const j of parsed.events) {
+                    const parsedSse = parseSseBuffer(buf);
+                    buf = parsedSse.rest;
+                    for (const j of parsedSse.events) {
                         const delta = j?.choices?.[0]?.delta?.content;
                         if (typeof delta === 'string' && delta) {
                             if (!firstDeltaAt)

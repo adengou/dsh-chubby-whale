@@ -4,6 +4,7 @@
  * 注意：当前前端未使用，保留备查（C# 版已砍掉每日简报，菜单不再调用）
  */
 import { growthStage } from '../store.js'
+import { sendJson } from '../respond.js'
 
 export function createBriefingHandlers(opts: {
   loadGrowth: () => any
@@ -36,8 +37,7 @@ export function createBriefingHandlers(opts: {
       const pending = rs.filter((r: any) => !r.done).length
       parts.push('待办提醒：' + pending + ' 条')
     } catch { }
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ ok: true, text: parts.join('\n') }))
+    sendJson(res, { ok: true, text: parts.join('\n') })
   }
 
   return { handleBriefing }

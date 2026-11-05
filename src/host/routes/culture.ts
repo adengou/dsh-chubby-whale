@@ -6,10 +6,13 @@
  *   读到旧格式 {"chengyu:名称": true} 时自动迁移成新结构。
  * 一轮讲完只清空同一类别的记录，别的类别进度保留。
  * 数据文件缺失/损坏只记 CULTURE-LOAD-FAIL，按空池处理，绝不整类报错。
+ * 原子写/坏文件隔离走 host/atomic.ts，JSON 响应走 host/respond.ts。
  */
 import { readFile } from 'node:fs/promises'
-import { readFileSync, writeFileSync, mkdirSync, statSync, renameSync, unlinkSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { writeJsonAtomic } from '../atomic.js'
+import { sendJson, sendError } from '../respond.js'
 
 export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: string }) {
   const CULTURE_DIR = join(opts.dataDir, 'culture')
@@ -112,9 +115,6 @@ export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: stri
   }
   function saveSeen(): void {
     try {
-      // 目录要按 SEEN_FILE 的真实位置建：runtimeDir 与 dataDir 不一定同一个，
-      // 原来照 opts.dataDir 建，写 runtimeDir 下的文件时必然 ENOENT（且被 catch 吞掉）
-      mkdirSync(dirname(SEEN_FILE), { recursive: true })
       const sn = seen || {}
       const data: { allusions: string[]; tales: string[]; idioms: string[]; minsu: string[] } = {
         allusions: [], tales: [], idioms: [], minsu: [],
@@ -130,16 +130,8 @@ export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: stri
         else if (p.prefix === 'idiom') add('idioms', p.name)
         else if (p.prefix === 'minsu') { add('minsu', p.name); add('tales', p.name) }
       }
-      // 原子写：唯一临时名 + rename。直接写目标文件会先把它截断，
-      // 这中间进程被杀/断电就只剩半个 JSON，下次启动整份进度读不出来。
-      const tmp = SEEN_FILE + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp'
-      writeFileSync(tmp, JSON.stringify(data), 'utf8')
-      try {
-        renameSync(tmp, SEEN_FILE)
-      } catch (err) {
-        try { unlinkSync(tmp) } catch { }   // 改名失败别留垃圾临时文件
-        throw err
-      }
+      // 原子写：唯一临时名 + rename（失败清临时文件），见 host/atomic.ts
+      writeJsonAtomic(SEEN_FILE, data)
     } catch (err: any) {
       console.error('CULTURE-SEEN-SAVE-FAIL file=' + SEEN_FILE + ' err=' + String(err?.message || err))
     }
@@ -187,13 +179,11 @@ export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: stri
       } else {
         item = { kind: 'unknown', title: '嗯？', text: '这个类型的文化小鲸还没学会。' }
       }
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       // 池子为空：ok 但 item 为空，前端按 d.item 判空显示「没读到」
-      if (!item) res.end(JSON.stringify({ ok: true, item: null, reason: 'no-data' }))
-      else res.end(JSON.stringify({ ok: true, item }))
+      if (!item) sendJson(res, { ok: true, item: null, reason: 'no-data' })
+      else sendJson(res, { ok: true, item })
     } catch (err: any) {
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }))
+      sendError(res, err)
     }
   }
 
@@ -202,11 +192,9 @@ export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: stri
       const txt = await readFile(join(opts.dataDir, 'melodies.json'), 'utf8')
       const data = JSON.parse(txt)
       const songs = (data?.songs || []).map((s: any) => ({ name: s.name, bpm: s.bpm }))
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, songs }))
+      sendJson(res, { ok: true, songs })
     } catch (err: any) {
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: false, error: String(err?.message || err), songs: [] }))
+      sendError(res, err, { songs: [] })
     }
   }
 
@@ -218,15 +206,12 @@ export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: stri
       const data = JSON.parse(txt)
       const song = (data?.songs || []).find((s: any) => s.name === name)
       if (!song) {
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ ok: false, error: 'song not found' }))
+        sendJson(res, { ok: false, error: 'song not found' })
         return
       }
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: true, song: { name: song.name, bpm: song.bpm || 100, notes: song.notes || [], lyrics: song.lyrics || '' } }))
+      sendJson(res, { ok: true, song: { name: song.name, bpm: song.bpm || 100, notes: song.notes || [], lyrics: song.lyrics || '' } })
     } catch (err: any) {
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }))
+      sendError(res, err)
     }
   }
 

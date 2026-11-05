@@ -1,18 +1,26 @@
 /**
  * dsh-chubby-whale —— Host 端入口（模块化组装）
  * 编译输出 dist/index.js（插件加载入口）。
- * 模块：host/config.ts（Key）、host/store.ts（持久化）、host/routes/*（路由）。
+ *
+ * 本文件只做四件事：
+ *   ① 路径与运行目录（DATA_DIR / RUNTIME_DIR）② 依赖装配（store/cache/prefs/key）
+ *   ③ 构造各能力 handler ④ 按路由表交给 ctx.effect 托管
+ * 业务在 host/ 下按职责拆分：routes/*（HTTP）、repos/*（持久化）、story/*（说书）、
+ * chat-core.ts（聊天纯函数）、prefs.ts（偏好）、atomic/body/respond/http（小工具）。
  */
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { mkdirSync, existsSync, copyFileSync, cpSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, existsSync, copyFileSync, cpSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { readApiKey } from './host/config.js';
+import { readApiKey, readSiliconFlowKey } from './host/config.js';
 import { createStore } from './host/store.js';
 import { createCache } from './host/cache.js';
+import { createPrefs, createCacheToggleHandler } from './host/prefs.js';
 import { createChatHandler } from './host/routes/chat.js';
 import { createChatStreamHandler } from './host/routes/chat-stream.js';
 import { createStoryHandlers } from './host/routes/story.js';
+import { createStoryRepo } from './host/story/repo.js';
+import { createStoryPlayer } from './host/story/player.js';
 import { createMiscHandlers } from './host/routes/misc.js';
 import { createReminderHandlers } from './host/routes/reminders.js';
 import { createCultureHandlers } from './host/routes/culture.js';
@@ -20,6 +28,7 @@ import { createPoemHandler } from './host/routes/poem.js';
 import { createBriefingHandlers } from './host/routes/briefing.js';
 import { createTtsHandler } from './host/routes/tts.js';
 import { createAsrHandler } from './host/routes/asr.js';
+import { createRouteTable } from './host/routes.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = join(__dirname, '..');
 /** 内容数据（17 本古籍 / 诗词 / 文化 / 曲库）——随插件包发布，只读 */
@@ -83,36 +92,9 @@ export function apply(ctx, config) {
         return;
     }
     migrateRuntimeData();
-    // 插件自己的偏好（目前只有聊天缓存开关），存运行目录，不进仓库
-    const PREFS_FILE = join(RUNTIME_DIR, 'prefs.json');
-    function loadPrefs() {
-        try {
-            return JSON.parse(readFileSync(PREFS_FILE, 'utf8'));
-        }
-        catch {
-            return {};
-        }
-    }
-    function savePrefs(p) {
-        try {
-            mkdirSync(RUNTIME_DIR, { recursive: true });
-            writeFileSync(PREFS_FILE, JSON.stringify(p), 'utf8');
-        }
-        catch { }
-    }
-    const chatCacheOn = () => {
-        try {
-            return loadPrefs().chatCache !== false;
-        }
-        catch {
-            return true;
-        }
-    };
-    const setChatCache = (on) => {
-        const p = loadPrefs();
-        p.chatCache = on;
-        savePrefs(p);
-    };
+    // 偏好（目前只有聊天缓存开关）：独立模块 + 路由工厂
+    const prefs = createPrefs(RUNTIME_DIR);
+    const cacheToggle = createCacheToggleHandler(prefs);
     const store = createStore(RUNTIME_DIR);
     const ttsCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'tts'), memBytes: 12 * 1024 * 1024 }); // 音频内存上限 12MB（磁盘不限）
     const chatCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'chat'), memBytes: 3 * 1024 * 1024 }); // 聊天回复很小
@@ -121,7 +103,7 @@ export function apply(ctx, config) {
     const chat = createChatHandler({
         getKey,
         loadHistory: store.loadHistory,
-        saveHistory: store.saveHistory,
+        appendTurns: store.appendTurns,
         loadState: store.loadState,
         saveState: store.saveState,
         systemPrompt: SYSTEM_PROMPT,
@@ -130,7 +112,7 @@ export function apply(ctx, config) {
         cache: chatCache,
         loadMemorySummary: store.loadMemorySummary,
         saveMemorySummary: store.saveMemorySummary,
-        cacheEnabled: chatCacheOn,
+        cacheEnabled: prefs.chatCacheEnabled,
     });
     const chatStream = createChatStreamHandler({
         getKey,
@@ -140,12 +122,13 @@ export function apply(ctx, config) {
         addTokens: store.addTokens,
         cache: chatCache,
         loadMemorySummary: store.loadMemorySummary,
-        cacheEnabled: chatCacheOn,
+        cacheEnabled: prefs.chatCacheEnabled,
     });
     const story = createStoryHandlers({
-        dataDir: DATA_DIR,
-        runtimeDir: RUNTIME_DIR,
-        workerPath: join(__dirname, 'story-worker.js'),
+        player: createStoryPlayer({
+            repo: createStoryRepo({ dataDir: DATA_DIR, workerPath: join(__dirname, 'story-worker.js') }),
+            progressFile: join(RUNTIME_DIR, 'story_progress.json'),
+        }),
     });
     const misc = createMiscHandlers({
         assetPath: join(PLUGIN_DIR, 'assets', 'whale.png'),
@@ -173,57 +156,21 @@ export function apply(ctx, config) {
         loadReminders: store.loadReminders,
     });
     const tts = createTtsHandler({ cache: ttsCache });
-    const asr = createAsrHandler({ pluginDir: PLUGIN_DIR, cache: asrCache });
-    // 21 条路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，
+    const asr = createAsrHandler({ getKey: () => readSiliconFlowKey(PLUGIN_DIR), cache: asrCache });
+    // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
+    const routeTable = createRouteTable({
+        misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, briefing, tts, asr,
+    });
+    // 所有路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，
     // 第二次 apply 才不会撞 dsh-host-webserver 的 duplicate 检查，旧 store/cache 闭包也不会留在路由表里。
     const registerRoutes = () => {
         const disposers = [];
-        const reg = (path, handler) => {
-            const dispose = ctx.webServer.register({ kind: 'exact', path, handler });
-            if (typeof dispose === 'function')
-                disposers.push(dispose);
-        };
         try {
-            reg('/api/chubby-whale/asset', misc.handleAsset);
-            reg('/api/chubby-whale/chat', chat);
-            reg('/api/chubby-whale/chat-stream', chatStream);
-            reg('/api/chubby-whale/status', misc.handleStatus);
-            reg('/api/chubby-whale/state', misc.handleState);
-            reg('/api/chubby-whale/balance', misc.handleBalance);
-            reg('/api/chubby-whale/growth', misc.handleGrowth);
-            reg('/api/chubby-whale/fishfood', misc.handleFishfood);
-            reg('/api/chubby-whale/pet', misc.handlePet);
-            reg('/api/chubby-whale/clear-memory', misc.handleClearMemory);
-            reg('/api/chubby-whale/cache', misc.handleCache);
-            reg('/api/chubby-whale/cache-toggle', (req, res) => {
-                // POST {enabled:boolean} 切换聊天缓存开关；GET 读当前状态
-                let body = '';
-                req.on('data', (c) => { body += String(c); });
-                req.on('end', () => {
-                    try {
-                        if (body) {
-                            const j = JSON.parse(body);
-                            if (typeof j.enabled === 'boolean')
-                                setChatCache(j.enabled);
-                        }
-                    }
-                    catch { }
-                    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-                    res.end(JSON.stringify({ ok: true, enabled: chatCacheOn() }));
-                });
-            });
-            reg('/api/chubby-whale/story/books', story.handleBooks);
-            reg('/api/chubby-whale/story/start', story.handleStoryStart);
-            reg('/api/chubby-whale/story/next', story.handleStoryNext);
-            reg('/api/chubby-whale/story/reset', story.handleStoryReset);
-            reg('/api/chubby-whale/reminders', reminders.handleReminders);
-            reg('/api/chubby-whale/culture', culture.handleCulture);
-            reg('/api/chubby-whale/melodies', culture.handleMelodies);
-            reg('/api/chubby-whale/melody', culture.handleMelody);
-            reg('/api/chubby-whale/poem', poem.handlePoem);
-            reg('/api/chubby-whale/briefing', briefing.handleBriefing);
-            reg('/api/chubby-whale/tts', tts);
-            reg('/api/chubby-whale/asr', asr);
+            for (const route of routeTable) {
+                const dispose = ctx.webServer.register({ kind: 'exact', path: route.path, handler: route.handler });
+                if (typeof dispose === 'function')
+                    disposers.push(dispose);
+            }
             return () => {
                 for (const dispose of disposers) {
                     try {
