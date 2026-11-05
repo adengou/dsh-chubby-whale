@@ -35,6 +35,10 @@ export function recitePoem(host: ReciteHost, poem: any): void {
   }, 600)
 }
 
+import { pickCouplet } from '../duilian.js'
+
+let lastCouplet = ''
+
 export function registerCultureActions(table: ActionTable<ActionHost>): void {
   // —— 念首诗 ——
   table.define('poem', (host) => {
