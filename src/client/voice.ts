@@ -429,7 +429,9 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     ttsCurJob = job
     const myToken = ++speakToken
     setStatus('speaking')
-    micOn(false)
+    // 不在合成开始时就闭麦：合成要 3~4 秒，提前闭麦会让主人这几秒说的话全丢；
+    // 真正闭麦放到「开播前」（见下面 a.play() 之前），重试等待期间也保持开麦
+    // （自身回声由 acceptText 的 spokenRecent 比对 + 说完后的静音窗兜住）。
     stats.ttsRequests++
 
     const cur = ttsPrefetch.get(job.seq) || synth(job)
@@ -490,10 +492,14 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       }
       a.onended = finish
       a.onerror = finish
+      // 开播前才闭麦：合成期间麦克风保持开（主人插话能听到），播放结束 finishJob 里 700ms 后恢复
+      micOn(false)
       a.play().catch(() => {
         // 令牌校验：过期段只收回自己的 objectURL，绝不能清掉新段的 ttsAudio，
         // 也不能把旧 job unshift 回去（那会变成"新段播一半被旧段顶掉重播"）
         if (myToken !== speakToken) { try { URL.revokeObjectURL(url) } catch (e) { } ; return }
+        // 播放没起来：先恢复麦克风再重试，别让麦一直关着（重试等待期间要能听见主人）
+        if (!muted) micOn(true)
         stats.ttsFail++
         try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
         try { a.onended = null; a.onerror = null; URL.revokeObjectURL(url) } catch (e) { }

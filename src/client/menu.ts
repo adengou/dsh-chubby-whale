@@ -210,6 +210,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     { type: 'sep' },
     // ── 账本与版本（版本永远在最底下）──
     { type: 'item', label: '鱼粮账本', action: 'fishfood' },
+    { type: 'item', label: '余额：' + balanceText, action: 'balance' },
     { type: 'item', label: '成长：' + growthText, action: 'growth' },
     { type: 'item', label: '版本：v' + version, action: 'version' },
   ]

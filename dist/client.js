@@ -280,6 +280,7 @@
       { type: "sep" },
       // ── 账本与版本（版本永远在最底下）──
       { type: "item", label: "\u9C7C\u7CAE\u8D26\u672C", action: "fishfood" },
+      { type: "item", label: "\u4F59\u989D\uFF1A" + balanceText, action: "balance" },
       { type: "item", label: "\u6210\u957F\uFF1A" + growthText, action: "growth" },
       { type: "item", label: "\u7248\u672C\uFF1Av" + version, action: "version" }
     ];
@@ -1189,7 +1190,6 @@
       ttsCurJob = job;
       const myToken = ++speakToken;
       setStatus("speaking");
-      micOn(false);
       stats.ttsRequests++;
       const cur = ttsPrefetch.get(job.seq) || synth(job);
       ttsSynthAt = Date.now();
@@ -1286,6 +1286,7 @@
         };
         a.onended = finish;
         a.onerror = finish;
+        micOn(false);
         a.play().catch(() => {
           if (myToken !== speakToken) {
             try {
@@ -1295,6 +1296,7 @@
             ;
             return;
           }
+          if (!muted) micOn(true);
           stats.ttsFail++;
           try {
             lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
@@ -3663,11 +3665,37 @@
     }
   }
   function createChatSender(host) {
-    async function tryStream(text, opts) {
+    let activeStream = null;
+    function clearActive(ctl) {
+      if (activeStream && activeStream.ctl === ctl) activeStream = null;
+    }
+    function abortStream() {
+      const s = activeStream;
+      if (!s) return false;
+      activeStream = null;
+      try {
+        host.epoch.next();
+      } catch (e) {
+      }
+      try {
+        s.ctl && s.ctl.abort();
+      } catch (e) {
+      }
+      try {
+        host.busy.end();
+        host.setBusy(false);
+      } catch (e) {
+      }
+      const d = diag();
+      if (d) d.streamAborted = (d.streamAborted || 0) + 1;
+      return true;
+    }
+    async function tryStream(text, opts, myEpoch) {
       try {
         if (localStorage.getItem("chubby-stream") === "off") return false;
       } catch (e) {
       }
+      const isCurrent = () => host.epoch.isCurrent(myEpoch);
       let spokeAny = false;
       let full = "";
       let ctl = null;
@@ -3676,6 +3704,7 @@
       } catch (e) {
         ctl = null;
       }
+      activeStream = { ctl };
       const firstTimer = setTimeout(() => {
         try {
           if (!spokeAny && ctl) ctl.abort();
@@ -3693,10 +3722,22 @@
         }
         if (segs.length) spokeAny = true;
       };
+      const dropStale = () => {
+        clearActive(ctl);
+        try {
+          if (ctl) ctl.abort();
+        } catch (e) {
+        }
+        const d = diag();
+        if (d) d.streamStale = (d.streamStale || 0) + 1;
+        return true;
+      };
       try {
         const res = await postRaw("/chat-stream", { message: text, lang: "auto", voice: !!(opts && opts.voice) }, { signal: ctl ? ctl.signal : void 0 });
+        if (!isCurrent()) return dropStale();
         if (!res.ok || !res.body) {
           clearTimeout(firstTimer);
+          clearActive(ctl);
           return false;
         }
         const reader = res.body.getReader();
@@ -3706,11 +3747,13 @@
         host.setBusy(true);
         for (; ; ) {
           const { value, done } = await reader.read();
+          if (!isCurrent()) return dropStale();
           if (done) break;
           buf += dec.decode(value, { stream: true });
           const parsed = parseSseBuffer(buf);
           buf = parsed.rest;
           for (const obj of parsed.events) {
+            if (!isCurrent()) return dropStale();
             if (obj.error) {
               throw new Error(String(obj.error));
             }
@@ -3725,6 +3768,7 @@
               }
             }
             if (obj.done) {
+              if (!isCurrent()) return dropStale();
               const reply = String(obj.reply || full || "").trim();
               full = reply || full;
               if (reply) {
@@ -3741,6 +3785,7 @@
                 }
               }
               clearTimeout(firstTimer);
+              clearActive(ctl);
               host.busy.end();
               host.setBusy(false);
               return true;
@@ -3748,6 +3793,8 @@
           }
         }
         clearTimeout(firstTimer);
+        if (!isCurrent()) return dropStale();
+        clearActive(ctl);
         speakSegs(sb.flush());
         host.busy.end();
         host.setBusy(false);
@@ -3759,6 +3806,8 @@
         return true;
       } catch (e) {
         clearTimeout(firstTimer);
+        if (!isCurrent()) return dropStale();
+        clearActive(ctl);
         host.busy.end();
         host.setBusy(false);
         if (spokeAny) {
@@ -3773,6 +3822,7 @@
     async function send(rawText, opts) {
       const text = String(rawText || "").trim();
       if (!text) return;
+      abortStream();
       const d0 = diag();
       if (d0) d0.ttsSkip = "empty-text";
       if (d0) d0.lastChat = { stage: "entry", busy: host.busy.isBusy(), tts: !!host.ttsPlaying(), at: Date.now() };
@@ -3796,14 +3846,14 @@
         host.setInput("");
         return;
       }
+      const myEpoch = host.epoch.next();
       try {
-        if (await tryStream(text, opts)) {
+        if (await tryStream(text, opts, myEpoch)) {
           host.setInput("");
           return;
         }
       } catch (e) {
       }
-      const myEpoch = host.epoch.next();
       try {
         const hit = host.persona.reactTo(text);
         if (hit) {
@@ -3866,7 +3916,7 @@
         host.scrollBody();
       }
     }
-    return { send };
+    return { send, abortStream };
   }
 
   // src/client/reminders.ts
@@ -4101,6 +4151,7 @@
           });
         }, []);
         const [growthLabel, setGrowthLabel] = R.useState("--");
+        const menuStatsAtRef = R.useRef(0);
         const WAKE_WORDS = ["\u5927\u80A5\u9C7C", "\u80A5\u9CB8", "\u80A5\u9C7C", "\u5C0F\u9C7C", "\u84DD\u9C7C", "\u5C0F\u84DD\u9C7C", "\u9C7C\u9C7C", "\u80A5\u80A5"];
         const dragRef = R.useRef(createDragState());
         const scaleRef = R.useRef(1);
@@ -4356,12 +4407,6 @@
           requestAnimationFrame(step);
         }
         R.useEffect(() => {
-          const t0 = setTimeout(() => {
-            try {
-              refreshBalance();
-            } catch (e) {
-            }
-          }, 2e3);
           const tGreet = setTimeout(() => {
             try {
               if (greetedOnce) return;
@@ -4422,7 +4467,6 @@
             }
           }, 3e3);
           return () => {
-            clearTimeout(t0);
             try {
               clearTimeout(tGreet);
             } catch (e) {
@@ -4443,10 +4487,18 @@
           e.preventDefault();
           setMenu({ x: e.clientX, y: e.clientY });
           setSubOpen("");
+          refreshMenuStats();
+        }
+        function refreshMenuStats(force) {
+          const now = Date.now();
+          if (!force && now - menuStatsAtRef.current < 1e4) return;
+          menuStatsAtRef.current = now;
           refreshBalance();
-          getJson("/growth").then((d) => {
-            if (d && d.ok) setGrowthLabel(d.stage + "\uFF08" + d.exp + "\uFF09");
+          getJson("/growth", { cache: "no-store" }).then((d) => {
+            if (d && d.ok && d.stage != null) setGrowthLabel(String(d.stage) + "\uFF08" + Number(d.exp) + "\uFF09");
+            else setGrowthLabel("--");
           }).catch(() => {
+            setGrowthLabel("--");
           });
         }
         function refreshBalance() {
@@ -4455,16 +4507,13 @@
               const v = String(d.balance);
               setBalanceText("\u4F59\u989D \xA5" + v);
               setBalanceLabel("\xA5" + v);
-            } else if (d && (d.error === "NO_KEY" || d.error === "no key")) {
-              setBalanceText("\u4F59\u989D\uFF08\u672A\u914D\u7F6E\u5BC6\u94A5\uFF09");
-              setBalanceLabel("\u672A\u914D\u7F6E\u5BC6\u94A5");
             } else {
-              setBalanceText("\u4F59\u989D\uFF08\u67E5\u8BE2\u5931\u8D25\uFF09");
-              setBalanceLabel("\u67E5\u8BE2\u5931\u8D25");
+              setBalanceText("--");
+              setBalanceLabel("--");
             }
           }).catch(() => {
-            setBalanceText("\u4F59\u989D\uFF08\u67E5\u8BE2\u5931\u8D25\uFF09");
-            setBalanceLabel("\u67E5\u8BE2\u5931\u8D25");
+            setBalanceText("--");
+            setBalanceLabel("--");
           });
         }
         R.useEffect(() => {
@@ -4756,6 +4805,10 @@
           bridge.speak(text, o);
         }
         function stopTts() {
+          try {
+            chat.abortStream();
+          } catch (e) {
+          }
           clearNarrating();
           bridge.stopSpeak();
           try {
@@ -4873,7 +4926,7 @@
                 title: lang === "en" ? "Click to refresh balance" : "\u70B9\u4E00\u4E0B\u5237\u65B0\u4F59\u989D",
                 onClick: () => {
                   try {
-                    refreshBalance();
+                    refreshMenuStats(true);
                   } catch (e) {
                   }
                 }

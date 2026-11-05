@@ -124,6 +124,8 @@ import { createReminderPoller } from './client/reminders.js'
         }).catch(() => { })
       }, [])
       const [growthLabel, setGrowthLabel] = R.useState('--')
+      // 菜单数值的最近一次拉取时刻（10 秒节流；ref 跨渲染保留，普通变量每次渲染都会被重置）
+      const menuStatsAtRef = R.useRef(0)
       const WAKE_WORDS = ['大肥鱼', '肥鲸', '肥鱼', '小鱼', '蓝鱼', '小蓝鱼', '鱼鱼', '肥肥']
       const dragRef = R.useRef(createDragState())
       const scaleRef = R.useRef(1)
@@ -334,9 +336,8 @@ import { createReminderPoller } from './client/reminders.js'
         requestAnimationFrame(step)
       }
 
-      // 启动后拉一次余额，菜单还没打开时标题也能显示真实金额
+      // 余额/成长只在「菜单打开」时拉（见 refreshMenuStats），开机不预请求
       R.useEffect(() => {
-        const t0 = setTimeout(() => { try { refreshBalance() } catch (e) { } }, 2000)
         // 饭团：进门先打个招呼（按当前时段挑台词），3 秒后出现，不抢首屏
         const tGreet = setTimeout(() => { try { if (greetedOnce) return; greetedOnce = true; const g = persona.greeting(); if (g) sayLine(g, 5000) } catch (e) { } }, 3000)
             // 打了招呼再看是不是饿了：饿着就补一句（对应人设的 hungry 场景）
@@ -362,7 +363,6 @@ import { createReminderPoller } from './client/reminders.js'
         const clearStatus = () => { try { clearInterval(tStatus) } catch (e) { } }
         const tF = setTimeout(() => { try { prefetchFiller() } catch (e) { } }, 3000)
         return () => {
-          clearTimeout(t0)
           try { clearTimeout(tGreet) } catch (e) { }
           try { clearTimeout(tF) } catch (e) { }
           clearStatus()
@@ -372,16 +372,34 @@ import { createReminderPoller } from './client/reminders.js'
       // 右键菜单
       function onContextMenu(e: any): void {
         e.preventDefault()
+        // 先出菜单（余额/成长用旧值或占位），数值异步回来再更新，绝不阻塞菜单显示
         setMenu({ x: e.clientX, y: e.clientY })
         setSubOpen('')
-        // 每次开菜单都拉一次实时余额：菜单上的「余额：…」要显示当前金额，不能停在 --
-        refreshBalance()
-        getJson('/growth').then((d: any) => {
-          if (d && d.ok) setGrowthLabel(d.stage + '（' + d.exp + '）')
-        }).catch(() => { })
+        // 只在「菜单打开」这个时机拉一次；10 秒节流，连点右键不会狂打接口
+        refreshMenuStats()
       }
 
-      /** 拉实时余额，并把菜单标题与「余额：…」一起更新；没配 Key 时明确说出来 */
+      // 菜单数值的最近一次拉取时刻记在 menuStatsAtRef（见组件顶部 hooks 区）
+
+      /**
+       * 菜单打开时的余额/成长刷新：
+       *   · 节流 10 秒（force=true 用于标题栏点击这种显式刷新）
+       *   · 失败/未配置 Key 一律落到「--」占位，不弹错误
+       */
+      function refreshMenuStats(force?: boolean): void {
+        const now = Date.now()
+        if (!force && now - menuStatsAtRef.current < 10000) return
+        menuStatsAtRef.current = now
+        refreshBalance()
+        getJson('/growth', { cache: 'no-store' })
+          .then((d: any) => {
+            if (d && d.ok && d.stage != null) setGrowthLabel(String(d.stage) + '（' + Number(d.exp) + '）')
+            else setGrowthLabel('--')
+          })
+          .catch(() => { setGrowthLabel('--') })
+      }
+
+      /** 拉实时余额，并把菜单标题与「余额：…」一起更新；失败/未配置 Key 显示 --，不弹错误 */
       function refreshBalance(): void {
         getJson('/balance', { cache: 'no-store' })
           .then((d: any) => {
@@ -389,17 +407,14 @@ import { createReminderPoller } from './client/reminders.js'
               const v = String(d.balance)
               setBalanceText('余额 ¥' + v)
               setBalanceLabel('¥' + v)
-            } else if (d && (d.error === 'NO_KEY' || d.error === 'no key')) {
-              setBalanceText('余额（未配置密钥）')
-              setBalanceLabel('未配置密钥')
             } else {
-              setBalanceText('余额（查询失败）')
-              setBalanceLabel('查询失败')
+              setBalanceText('--')
+              setBalanceLabel('--')
             }
           })
           .catch(() => {
-            setBalanceText('余额（查询失败）')
-            setBalanceLabel('查询失败')
+            setBalanceText('--')
+            setBalanceLabel('--')
           })
       }
 
@@ -609,6 +624,8 @@ import { createReminderPoller } from './client/reminders.js'
         bridge.speak(text, o)
       }
       function stopTts(): void {
+        // 停止说话时如果流式还在跑：abort 旧流，别让它继续吐 delta/念后面的句子
+        try { chat.abortStream() } catch (e) { }
         clearNarrating()   // 停止朗读 = 解除叙述锁
         bridge.stopSpeak()
         // 说书锁也一起放：stopSpeaking 作废了当前段，它原本的 onDone 不会再来，
@@ -703,7 +720,7 @@ import { createReminderPoller } from './client/reminders.js'
             h('span', {
               style: { color: '#FFD166', cursor: 'pointer' },
               title: lang === 'en' ? 'Click to refresh balance' : '点一下刷新余额',
-              onClick: () => { try { refreshBalance() } catch (e) { } },
+              onClick: () => { try { refreshMenuStats(true) } catch (e) { } },
             }, balanceText || '--'),
           ),
           renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel })),
