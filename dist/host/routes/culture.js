@@ -5,60 +5,27 @@
  *   元素为「名称」或「书名|标题」；民间故事同时写 tales（C# 读它）和 minsu。
  *   读到旧格式 {"chengyu:名称": true} 时自动迁移成新结构。
  * 一轮讲完只清空同一类别的记录，别的类别进度保留。
- * 数据文件缺失/损坏只记 CULTURE-LOAD-FAIL，按空池处理，绝不整类报错。
+ * 数据经 DataPort 取（本地/云端由 index.ts 注入）；数据源读不到只记 CULTURE-LOAD-FAIL，按空池处理，绝不整类报错。
  * 原子写/坏文件隔离走 host/atomic.ts，JSON 响应走 host/respond.ts。
  */
 import { readFile } from 'node:fs/promises';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeJsonAtomic } from '../atomic.js';
 import { sendJson, sendError } from '../respond.js';
 export function createCultureHandlers(opts) {
-    const CULTURE_DIR = join(opts.dataDir, 'culture');
     const SEEN_FILE = join(opts.runtimeDir || opts.dataDir, 'culture-seen.json');
-    const cache = new Map();
-    /** 文件最后修改时间（读不到返回 0）；缓存据此失效，改数据不必重启 */
-    function fileMtime(p) {
-        try {
-            return statSync(p).mtimeMs;
-        }
-        catch {
-            return 0;
-        }
-    }
     let seen = null;
-    /** 读一份文化数据；缺失/损坏/结构不对都返回空数组，并按 key 去重（保留第一条） */
-    async function loadJson(key, file, keyOf) {
-        const full = join(CULTURE_DIR, file);
-        const mt = fileMtime(full);
-        const cached = cache.get(key);
-        if (cached && mt > 0 && cached.mtimeMs === mt)
-            return cached.out;
-        const out = [];
+    /** 文化数据经数据源端口取（本地/云端由 index.ts 注入）；实现已兜底，这里只防注入实现意外抛错 */
+    async function loadCulture(kind) {
         try {
-            const txt = await readFile(full, 'utf8');
-            const arr = JSON.parse(txt);
-            if (Array.isArray(arr)) {
-                const keys = new Set();
-                for (const it of arr) {
-                    if (!it || typeof it !== 'object')
-                        continue;
-                    const k = String(keyOf(it) || '').trim();
-                    if (!k || keys.has(k))
-                        continue;
-                    keys.add(k);
-                    out.push(it);
-                }
-            }
-            else {
-                console.error('CULTURE-LOAD-FAIL file=' + file + ' err=not an array');
-            }
+            const arr = await opts.dataPort.readCulture(kind);
+            return Array.isArray(arr) ? arr : [];
         }
         catch (err) {
-            console.error('CULTURE-LOAD-FAIL file=' + file + ' err=' + String(err?.message || err));
+            console.error('CULTURE-LOAD-FAIL kind=' + kind + ' err=' + String(err?.message || err));
+            return [];
         }
-        cache.set(key, { out, mtimeMs: mt });
-        return out;
     }
     // 新格式字段 ← 内部前缀；民间故事写 tales + minsu 两份，让 C# 也能读
     function splitKey(k) {
@@ -191,19 +158,19 @@ export function createCultureHandlers(opts) {
             const type = url.searchParams.get('type') || 'chengyu';
             let item = null;
             if (type === 'chengyu') {
-                const arr = await loadJson('chengyu', 'chengyu.json', (i) => String(i.name || '').trim());
+                const arr = await loadCulture('chengyu');
                 const x = pickUnseen(arr, 'chengyu', (i) => String(i.name || ''));
                 if (x)
                     item = { kind: 'chengyu', title: x.name, src: x.src, text: x.text };
             }
             else if (type === 'idiom') {
-                const arr = await loadJson('idiom', 'idioms.json', (i) => String(i.name || '').trim());
+                const arr = await loadCulture('idiom');
                 const x = pickUnseen(arr, 'idiom', (i) => String(i.name || ''));
                 if (x)
                     item = { kind: 'idiom', title: x.name, cat: x.cat, text: (x.mean || '') + (x.wrong ? '；易误解为：' + String(x.wrong).replace('易误解为：', '') : '') };
             }
             else if (type === 'minsu') {
-                const arr = await loadJson('minsu', 'minsu.json', (i) => (String(i.book || '') + '|' + String(i.title || '')).trim());
+                const arr = await loadCulture('minsu');
                 const x = pickUnseen(arr, 'minsu', (i) => String(i.book || '') + '|' + String(i.title || ''));
                 if (x)
                     item = { kind: 'minsu', title: (x.book || '') + '·' + (x.title || ''), text: x.text };

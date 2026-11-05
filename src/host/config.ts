@@ -11,6 +11,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { DataSourceKind } from './ports.js'
 
 function readConfigJson(pluginDir: string): any {
   try { return JSON.parse(readFileSync(join(pluginDir, 'config.json'), 'utf8')) } catch { return null }
@@ -48,4 +49,35 @@ export function keyStatus(pluginDir: string): { deepseek: boolean; siliconflow: 
     deepseek: Boolean(readApiKey(pluginDir)),
     siliconflow: Boolean(readSiliconFlowKey(pluginDir)),
   }
+}
+
+const warnedSources = new Set<string>()
+
+/** 接受 'local' | 'cloud'（大小写/空白不敏感）；未配置返回 null，非法值告警后按 local */
+function parseDataSource(raw: any, from: string): DataSourceKind | null {
+  if (raw == null || String(raw).trim() === '') return null
+  const s = String(raw).trim().toLowerCase()
+  if (s === 'local' || s === 'cloud') return s
+  const msg = '[chubby-whale] 无效的数据源配置（' + from + '=' + String(raw) + '），按 local 处理'
+  if (!warnedSources.has(msg)) {
+    warnedSources.add(msg)
+    console.warn(msg)
+  }
+  return 'local'
+}
+
+/**
+ * 数据源：默认 local（读插件包内 data/）。
+ * 优先级：cordis config.dataSource → 本插件 config.json 的 dataSource → 环境变量 CHUBBY_WHALE_DATA_SOURCE → local。
+ * 只认 'local' / 'cloud'，其它值告警并回退 local（绝不因为配置笔误把内容功能弄挂）。
+ */
+export function readDataSource(pluginDir: string, runtimeConfig?: any): DataSourceKind {
+  const fromRuntime = parseDataSource(runtimeConfig && runtimeConfig.dataSource, 'cordis config')
+  if (fromRuntime) return fromRuntime
+  const cfg = readConfigJson(pluginDir)
+  const fromFile = parseDataSource(cfg && cfg.dataSource, 'config.json')
+  if (fromFile) return fromFile
+  const fromEnv = parseDataSource(process.env.CHUBBY_WHALE_DATA_SOURCE, 'CHUBBY_WHALE_DATA_SOURCE')
+  if (fromEnv) return fromEnv
+  return 'local'
 }

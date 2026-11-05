@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { mkdirSync, existsSync, copyFileSync, cpSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { readApiKey, readSiliconFlowKey } from './host/config.js'
+import { readApiKey, readSiliconFlowKey, readDataSource } from './host/config.js'
 import { createStore } from './host/store.js'
 import { createCache } from './host/cache.js'
 import { createPrefs, createCacheToggleHandler } from './host/prefs.js'
@@ -21,6 +21,9 @@ import { createChatStreamHandler } from './host/routes/chat-stream.js'
 import { createStoryHandlers } from './host/routes/story.js'
 import { createStoryRepo } from './host/story/repo.js'
 import { createStoryPlayer } from './host/story/player.js'
+import { createLocalDataPort } from './host/data/local.js'
+import { createCloudDataPort, CLOUD_DATA_BASE } from './host/data/cloud.js'
+import { createStorySource } from './host/data/story-source.js'
 import { createMiscHandlers } from './host/routes/misc.js'
 import { createReminderHandlers } from './host/routes/reminders.js'
 import { createCultureHandlers } from './host/routes/culture.js'
@@ -103,6 +106,20 @@ export function apply(ctx: any, config?: any): void {
   const asrCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'asr'), memBytes: 3 * 1024 * 1024 })     // 识别结果很小
   const getKey = (): string => readApiKey(PLUGIN_DIR)
 
+  /**
+   * 内容数据源：默认本地 data/；config.json / cordis config / 环境变量要求云端时才走云端。
+   * 云端实现持有本地实现作为失败回退，构造时不发任何网络请求（首次用到才拉）。
+   */
+  const dataSource = readDataSource(PLUGIN_DIR, config)
+  const localData = createLocalDataPort({
+    dataDir: DATA_DIR,
+    story: createStoryRepo({ dataDir: DATA_DIR, workerPath: join(__dirname, 'story-worker.js') }),
+  })
+  const dataPort = dataSource === 'cloud' ? createCloudDataPort({ local: localData }) : localData
+  if (dataSource === 'cloud') {
+    console.log('[chubby-whale] dataSource=cloud base=' + CLOUD_DATA_BASE + '（网络失败自动回退本地）')
+  }
+
   const chat = createChatHandler({
     getKey,
     loadHistory: store.loadHistory,
@@ -129,7 +146,8 @@ export function apply(ctx: any, config?: any): void {
   })
   const story = createStoryHandlers({
     player: createStoryPlayer({
-      repo: createStoryRepo({ dataDir: DATA_DIR, workerPath: join(__dirname, 'story-worker.js') }),
+      // 说书播放器只认 listBooks/loadBook；数据源（本地/云端）由 DataPort 投影进来
+      repo: createStorySource(dataPort),
       progressFile: join(RUNTIME_DIR, 'story_progress.json'),
     }),
   })
@@ -152,8 +170,8 @@ export function apply(ctx: any, config?: any): void {
     dueReminders: store.dueReminders,
     removeReminder: store.removeReminder,
   })
-  const culture = createCultureHandlers({ dataDir: DATA_DIR, runtimeDir: RUNTIME_DIR })
-  const poem = createPoemHandler({ dataDir: DATA_DIR, runtimeDir: RUNTIME_DIR })
+  const culture = createCultureHandlers({ dataDir: DATA_DIR, runtimeDir: RUNTIME_DIR, dataPort })
+  const poem = createPoemHandler({ runtimeDir: RUNTIME_DIR, dataDir: DATA_DIR, dataPort })
   const briefing = createBriefingHandlers({
     loadGrowth: store.loadGrowth,
     loadReminders: store.loadReminders,

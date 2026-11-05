@@ -1,4 +1,5 @@
 {
   "deepseekKey": "",
-  "siliconflowKey": ""
+  "siliconflowKey": "",
+  "dataSource": "local"
 }

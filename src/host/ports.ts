@@ -6,6 +6,71 @@
  * 每个接口只覆盖一个路由用到的字段，不追求把整个 store 塞进来。
  */
 import type { TtsEngine } from './tts-engine.js'
+import type { StoryChunk } from './story/repo.js'
+
+/** 数据源类型：本地 data/（默认）或云端 adengou.cn/culture/v1/ */
+export type DataSourceKind = 'local' | 'cloud'
+
+/** 文化数据类型（对应路由 ?type=chengyu|idiom|minsu） */
+export type CultureKind = 'chengyu' | 'idiom' | 'minsu'
+
+/** 说书目录中的一本书（本地只有 book；云端 index 额外带 file/bytes/chapters） */
+export interface StoryBookMeta {
+  book: string
+  file?: string
+  author?: string
+  bytes?: number
+  chapters?: any[]
+}
+
+/** 诗词分片：本地只有 1 片（total=1），云端 poems-00..14 共 15 片 */
+export interface PoemChunk {
+  index: number
+  total: number
+  items: any[]
+}
+
+export interface DuilianItem {
+  upper: string
+  lower: string
+  source?: string
+  cat?: string
+}
+
+/** 对联数据：本地 {items} 与云端 {cats} 统一成同一结构（cats 也保留，供直接按分类取） */
+export interface DuilianData {
+  total: number
+  items: DuilianItem[]
+  cats: Record<string, DuilianItem[]>
+  note?: string
+}
+
+export interface DailyItem {
+  date: string
+  type: string
+  text: string
+  source?: string
+}
+
+/**
+ * 内容数据端口：说书 / 文化 / 诗词 / 对联 / 每日一句。
+ * 路由只依赖这个接口；本地实现（host/data/local.ts）与云端实现（host/data/cloud.ts）
+ * 由 index.ts 按配置注入。方法都承诺不把网络/读盘错误抛给路由。
+ */
+export interface DataPort {
+  /** 书单（说书用；顺序即播放顺序） */
+  readStoryIndex(): Promise<StoryBookMeta[]>
+  /** 读一本书的全部段落（坏文件/超时返回空数组） */
+  readStoryBook(book: string): Promise<StoryChunk[]>
+  /** 某类文化数据（已按名称去重） */
+  readCulture(kind: CultureKind): Promise<any[]>
+  /** 诗词第 index 片；本地固定只有 0 片 */
+  readPoemsChunk(index: number): Promise<PoemChunk>
+  /** 对联库 */
+  readDuilian(): Promise<DuilianData>
+  /** 每日一句 */
+  readDaily(): Promise<DailyItem[]>
+}
 
 /** 缓存端口（host/cache.ts 实现；get/set 的 ext 与 maxAgeMs 语义见 cache.ts） */
 export interface CachePort {

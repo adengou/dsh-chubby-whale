@@ -9,6 +9,7 @@ import { readdir } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
+import { normalizeStoryChunks } from '../data/normalize.js';
 /** 内存里最多留几本书：一本 JSON 可能几 MB，无限缓存会一直涨 */
 const BOOK_CACHE_MAX = 2;
 /** 单本书解析超时：30 秒 */
@@ -40,33 +41,12 @@ export function createStoryRepo(opts) {
             return [];
         }
     }
-    /** 按需加载一本书的切片（Worker 解析，内存缓存）；index 用原数组序号（照 C#） */
-    function normalizeBook(book, raw) {
-        const out = [];
-        if (!Array.isArray(raw))
-            return out;
-        for (let i = 0; i < raw.length; i++) {
-            const c = raw[i];
-            if (!c || typeof c !== 'object')
-                continue;
-            const text = String(c.text == null ? '' : c.text);
-            if (!text.trim())
-                continue;
-            out.push({
-                book: String(c.book || book),
-                title: String(c.title || ''),
-                piece: Number(c.piece) || 1,
-                total: Number(c.total) || 1,
-                text,
-                index: i,
-            });
-        }
-        return out;
-    }
     /**
-     * 读一本书。坏文件/超时都不抛：记 STORY-LOAD-FAIL 后返回空数组，
+     * 按需读一本书（Worker 解析、内存缓存、并发去重）；index 用原数组序号（照 C#）。
+     * 坏文件/超时都不抛：记 STORY-LOAD-FAIL 后返回空数组，
      * 让上层继续试下一本（一本坏不能拖垮整个说书功能）。
      * 同一本书（且文件没被改过）已有请求在跑时复用那个 Promise，不再另起 Worker。
+     * 清洗规则与云端数据源共用，见 host/data/normalize.ts。
      */
     function loadBook(book) {
         const file = join(STORY_DIR, book + '.json');
@@ -131,7 +111,7 @@ export function createStoryRepo(opts) {
                         return;
                     if (msg && msg.ok) {
                         done = true;
-                        const list = normalizeBook(book, msg.chunks);
+                        const list = normalizeStoryChunks(book, msg.chunks);
                         bookCache.set(book, { chunks: list, mtimeMs: mt });
                         // LRU：超上限就丢最早的那本（Map 保持插入顺序）
                         while (bookCache.size > BOOK_CACHE_MAX) {

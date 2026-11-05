@@ -1,69 +1,40 @@
 /**
  * host/routes/poem.ts —— 念诗路由
- * 数据：data/poems.json（739 首，结构 {poems:[{type,dynasty,title,author,lines,sources}]}）
+ * 数据：经 DataPort 取（本地 data/poems.json 一整册；云端 poems/poems-00..14.json 分片），
+ * 由 index.ts 按配置注入；路由不直接碰文件/网络。
  * 去重：poem-seen.json（["标题|作者|首句", ...]），一轮念完自动清空重来。
- * 文件缺失/损坏只记 POEM-LOAD-FAIL，按空诗册处理；空时返回 {ok:true,item:null,reason:'no-data'}。
+ * 数据源读不到只记 POEM-LOAD-FAIL，按空诗册处理；空时返回 {ok:true,item:null,reason:'no-data'}。
  * 原子写/JSON 响应分别走 host/atomic.ts、host/respond.ts。
  */
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { writeJsonAtomic } from '../atomic.js'
 import { sendJson, sendError } from '../respond.js'
+import type { DataPort } from '../ports.js'
+import { normalizePoemItems, poemKeyOf } from '../data/normalize.js'
 
-export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }) {
-  const POEMS_FILE = join(opts.dataDir, 'poems.json')
-  const SEEN_FILE = join(opts.runtimeDir || opts.dataDir, 'poem-seen.json')
-  let poems: any[] | null = null
-  let poemsMtime = 0
-  /** 诗库文件最后修改时间；改 poems.json 后自动失效，不必重启 */
-  function fileMtime(p: string): number {
-    try { return statSync(p).mtimeMs } catch { return 0 }
-  }
+export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string; dataPort: DataPort }) {
+  const SEEN_FILE = join(opts.runtimeDir || opts.dataDir || '.', 'poem-seen.json')
   let seen: Set<string> | null = null
 
-  function keyOf(p: any): string {
-    // 同题不同作很多（蝶恋花/浣溪沙 等），键里加上首句前 12 字
-    const first = Array.isArray(p.lines) ? String(p.lines[0] || '') : String(p.text || '')
-    return String(p.title || '') + '|' + String(p.author || '') + '|' + first.slice(0, 12)
-  }
-
-  function loadPoems(): any[] {
-    const mt = fileMtime(POEMS_FILE)
-    if (poems && mt > 0 && mt === poemsMtime) return poems
-    const out: any[] = []
-    const keys = new Set<string>()
+  /**
+   * 拉全部诗：先取第 0 片拿到 total，再顺序取其余片。
+   * 云端实现每片有内存缓存；本地实现固定 total=1，只读一次 poems.json。
+   */
+  async function loadPoems(): Promise<any[]> {
     try {
-      const data = JSON.parse(readFileSync(POEMS_FILE, 'utf8'))
-      const arr = Array.isArray(data) ? data : (Array.isArray(data?.poems) ? data.poems : null)
-      if (!arr) {
-        console.error('POEM-LOAD-FAIL file=' + POEMS_FILE + ' err=bad structure')
-      } else {
-        for (const p of arr) {
-          if (!p || typeof p !== 'object') continue
-          const title = String(p.title || '').trim()
-          if (!title) continue
-          const lines = Array.isArray(p.lines) ? p.lines.map((x: any) => String(x || '').trim()).filter(Boolean) : []
-          if (lines.length === 0) continue
-          const item = {
-            type: String(p.type || ''),
-            dynasty: String(p.dynasty || ''),
-            title,
-            author: String(p.author || ''),
-            lines,
-          }
-          // 按 key 去重：同一首只留第一条
-          const k = keyOf(item)
-          if (keys.has(k)) continue
-          keys.add(k)
-          out.push(item)
-        }
+      const first = await opts.dataPort.readPoemsChunk(0)
+      const out: any[] = Array.isArray(first && first.items) ? first.items.slice() : []
+      const total = Math.max(1, Number(first && first.total) || 1)
+      for (let i = 1; i < total; i++) {
+        const chunk = await opts.dataPort.readPoemsChunk(i)
+        if (chunk && Array.isArray(chunk.items)) out.push(...chunk.items)
       }
+      return normalizePoemItems(out)
     } catch (err: any) {
-      console.error('POEM-LOAD-FAIL file=' + POEMS_FILE + ' err=' + String(err?.message || err))
+      console.error('POEM-LOAD-FAIL err=' + String(err?.message || err))
+      return []
     }
-    poems = out
-    poemsMtime = mt
-    return poems
   }
 
   function loadSeen(): Set<string> {
@@ -96,7 +67,7 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
 
   async function handlePoem(req: any, res: any): Promise<void> {
     try {
-      const list = loadPoems()
+      const list = await loadPoems()
       if (list.length === 0) {
         sendJson(res, { ok: true, item: null, reason: 'no-data' })
         return
@@ -113,7 +84,7 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
         const hit = fuzzy.length ? fuzzy[Math.floor(Math.random() * fuzzy.length)] : null
         if (hit) {
           const sn0 = loadSeen()
-          sn0.add(keyOf(hit))
+          sn0.add(poemKeyOf(hit))
           saveSeen()
           sendJson(res, {
             ok: true,
@@ -125,7 +96,7 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
         // 没匹配到就回落随机（并告诉客户端 matched:false）
       }
       const sn = loadSeen()
-      let pool = list.filter((p: any) => !sn.has(keyOf(p)))
+      let pool = list.filter((p: any) => !sn.has(poemKeyOf(p)))
       if (pool.length === 0) {
         // 一轮念完：清空记忆重来
         sn.clear()
@@ -133,7 +104,7 @@ export function createPoemHandler(opts: { dataDir: string; runtimeDir?: string }
         pool = list.slice()
       }
       const p = pool[Math.floor(Math.random() * pool.length)]
-      sn.add(keyOf(p))
+      sn.add(poemKeyOf(p))
       saveSeen()
       sendJson(res, {
         ok: true,
