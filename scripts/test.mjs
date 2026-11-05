@@ -1841,6 +1841,32 @@ try {
   ok('能加载聊天路由（图片分支）', false, String(e.message))
 }
 
+
+// ---------- ㉟ 忙碌锁与请求纪元（打断/作废的核心） ----------
+console.log('\n[35] 忙碌锁 client/busy.ts')
+try {
+  const busy = await import('../src/client/busy.ts')
+  const lock = busy.createBusyLock({ staleMs: 5000 })
+  ok('初始不忙', lock.isBusy() === false)
+  lock.begin(1000)
+  ok('begin 后变忙', lock.isBusy() === true)
+  ok('age 按传入时间算', lock.age(3000) === 2000, String(lock.age(3000)))
+  ok('未超时不会自动解锁', lock.watchdog(4000) === false && lock.isBusy() === true)
+  ok('超时后 watchdog 复位并返回 true', lock.watchdog(7000) === true && lock.isBusy() === false)
+  lock.begin(1000)
+  lock.end()
+  ok('end 立刻解锁', lock.isBusy() === false)
+
+  const ep = busy.createEpoch()
+  const a = ep.next()
+  ok('新纪元有效', ep.isCurrent(a) === true)
+  const b = ep.next()
+  ok('推新纪元后旧纪元失效', ep.isCurrent(a) === false && ep.isCurrent(b) === true)
+  ok('旧纪元反复检查都失效', ep.isCurrent(a) === false)
+} catch (e) {
+  ok('能加载 busy.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
