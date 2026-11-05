@@ -8,21 +8,32 @@
  * 数据文件缺失/损坏只记 CULTURE-LOAD-FAIL，按空池处理，绝不整类报错。
  */
 import { readFile } from 'node:fs/promises';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 export function createCultureHandlers(opts) {
     const CULTURE_DIR = join(opts.dataDir, 'culture');
     const SEEN_FILE = join(opts.runtimeDir || opts.dataDir, 'culture-seen.json');
     const cache = new Map();
+    /** 文件最后修改时间（读不到返回 0）；缓存据此失效，改数据不必重启 */
+    function fileMtime(p) {
+        try {
+            return statSync(p).mtimeMs;
+        }
+        catch {
+            return 0;
+        }
+    }
     let seen = null;
     /** 读一份文化数据；缺失/损坏/结构不对都返回空数组，并按 key 去重（保留第一条） */
     async function loadJson(key, file, keyOf) {
+        const full = join(CULTURE_DIR, file);
+        const mt = fileMtime(full);
         const cached = cache.get(key);
-        if (cached)
-            return cached;
+        if (cached && mt > 0 && cached.mtimeMs === mt)
+            return cached.out;
         const out = [];
         try {
-            const txt = await readFile(join(CULTURE_DIR, file), 'utf8');
+            const txt = await readFile(full, 'utf8');
             const arr = JSON.parse(txt);
             if (Array.isArray(arr)) {
                 const keys = new Set();
@@ -43,7 +54,7 @@ export function createCultureHandlers(opts) {
         catch (err) {
             console.error('CULTURE-LOAD-FAIL file=' + file + ' err=' + String(err?.message || err));
         }
-        cache.set(key, out);
+        cache.set(key, { out, mtimeMs: mt });
         return out;
     }
     // 新格式字段 ← 内部前缀；民间故事写 tales + minsu 两份，让 C# 也能读

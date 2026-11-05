@@ -10,6 +10,7 @@ const CHAT_TIMEOUT = 30 * 1000                 // 主聊天：30 秒
 const SUMMARY_TIMEOUT = 20 * 1000              // 长期记忆摘要：20 秒
 const CHAT_CACHE_TTL = 7 * 24 * 3600 * 1000    // 聊天回复缓存 7 天
 const CHAT_MAX_BODY = 6 * 1024 * 1024          // 6MB（图片 base64 约 4MB * 1.34）
+const HISTORY_IN_PROMPT = 8             // 只把最近 8 条历史喂给模型（4 轮）；更早的靠长期记忆摘要，省 token
 const NET_FALLBACK = '主人，本鲸一时想不起来话（网络或接口有点问题）……'
 
 /** 后台压缩长期记忆（不 await，失败只记日志） */
@@ -42,8 +43,16 @@ async function summarizeMemory(key: string, convo: string, oldSummary: string, s
   }
 
   /** 缓存键：语言 + 规范化文本 + 是否语音（语音和打字分开存，避免互相串） */
-  export function chatCacheKey(lang: string, message: string, isVoice: boolean): string {
-    return hashKey('v1|' + lang + '|' + (isVoice ? 'voice' : 'text') + '|' + normalizeChatText(message))
+/** 取最近 n 条（只做截断，不改内容）；纯函数，便于离线断言 */
+export function recentHistory(history: any[], n: number): any[] {
+  const arr = Array.isArray(history) ? history : []
+  const k = Math.max(0, Math.floor(Number(n) || 0))
+  return k === 0 ? [] : arr.slice(-k)
+}
+
+  export function chatCacheKey(lang: string, message: string, isVoice: boolean, ctx = ''): string {
+    // v2：把上下文指纹（长期记忆摘要 + 上一轮用户消息）算进 key，上下文变了不复用旧答案
+    return hashKey('v2|' + lang + '|' + (isVoice ? 'voice' : 'text') + '|' + normalizeChatText(message) + '|' + ctx)
   }
 
 export function createChatHandler(opts: {
@@ -103,7 +112,13 @@ export function createChatHandler(opts: {
       try { memSummary = opts.loadMemorySummary ? String(opts.loadMemorySummary() || '') : '' } catch { }
       // 缓存 key 必须带上上下文：prompt 里拼了完整 history 和长期记忆摘要，
       // 只按「语言|问题」算 key 会让同一句话永远命中第一条回复；这里加 history 长度 + 摘要短指纹
-      const cacheKey = chatCacheKey(effLang, message, isVoice)
+      const ctxFp = (() => {
+        try {
+          const prevUser = recentHistory(history, HISTORY_IN_PROMPT).filter((m: any) => m && m.role === 'user').slice(-1)[0]
+          return shortHash(String(memSummary || '')) + '|' + shortHash(normalizeChatText(String((prevUser && prevUser.content) || '')))
+        } catch { return '' }
+      })()
+      const cacheKey = chatCacheKey(effLang, message, isVoice, ctxFp)
       // 缓存查找排在 Key 检查之前：没配 Key 时本地缓存照样能用
       const cacheOn = !opts.cacheEnabled || opts.cacheEnabled() !== false
       if (cacheOn && opts.cache && !imageB64 && cacheable) {
@@ -137,7 +152,7 @@ export function createChatHandler(opts: {
           + '也不要因为听不清就说看不懂。'
         : ''
       const messages: any[] = [{ role: 'system', content: opts.systemPrompt + langHint + memHint + voiceHint }]
-      for (const m of history) {
+      for (const m of recentHistory(history, HISTORY_IN_PROMPT)) {
         if (m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string') {
           messages.push({ role: m.role, content: m.content })
         }

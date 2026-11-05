@@ -3,6 +3,8 @@
  * 纯逻辑：不碰 DOM 之外的东西（showBubble / speakText 由调用方注入，便于单测）
  */
 
+import { imageToB64 } from './image.js'
+
 /** 一次最多吃 4MB（C# 是 12MB，网页版请求体小一点更稳） */
 export const MAX_DROP_BYTES = 4 * 1024 * 1024
 /** 文档只取前 8000 字，别把上下文撑爆 */
@@ -90,13 +92,16 @@ export async function handleFileDrop(file: any, deps?: DropDeps): Promise<DropRe
   // 图片：视觉模型
   if (isImageFile(file)) {
     bubble('本鲸看看这张图…', 3000)
-    const b64 = await readFileAsBase64(file)
+    // 先压缩再上传：长边 ≤1280 / JPEG 0.85（失败自动回退原图）
+    const img0 = await imageToB64(file)
+    const b64 = img0 ? img0.b64 : ''
+    const mime = (img0 && img0.mime) || file.type || 'image/jpeg'
     if (!b64) {
       bubble('图片读不出来，再拖一次试试', 4000)
       return { ok: false, kind: 'error', error: 'empty image' }
     }
     try {
-      const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: file.type || 'image/jpeg' })
+      const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime })
       const reply = String((reply0 && reply0.reply) || '').trim() || '这条鱼看不懂这张图……'
       bubble('（看图）' + reply, 10000)
       if (speak) speak(reply)

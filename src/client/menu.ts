@@ -55,7 +55,6 @@ export const EN_MAP: Record<string, string> = {
   '聊天缓存：关': 'Chat cache: off',
   '让它游走（退出）': 'Let it go (exit)',
   '鱼粮账本': 'Token ledger',
-  '中文': '中文',
   'English': 'English',
   '自动（按语言选音色）': 'Auto (by language)',
   '自动': 'Auto',

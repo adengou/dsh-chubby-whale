@@ -8,22 +8,28 @@
  * 数据文件缺失/损坏只记 CULTURE-LOAD-FAIL，按空池处理，绝不整类报错。
  */
 import { readFile } from 'node:fs/promises'
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: string }) {
   const CULTURE_DIR = join(opts.dataDir, 'culture')
   const SEEN_FILE = join(opts.runtimeDir || opts.dataDir, 'culture-seen.json')
-  const cache = new Map<string, any[]>()
+  const cache = new Map<string, { out: any[]; mtimeMs: number }>()
+  /** 文件最后修改时间（读不到返回 0）；缓存据此失效，改数据不必重启 */
+  function fileMtime(p: string): number {
+    try { return statSync(p).mtimeMs } catch { return 0 }
+  }
   let seen: Record<string, boolean> | null = null
 
   /** 读一份文化数据；缺失/损坏/结构不对都返回空数组，并按 key 去重（保留第一条） */
   async function loadJson(key: string, file: string, keyOf: (x: any) => string): Promise<any[]> {
+    const full = join(CULTURE_DIR, file)
+    const mt = fileMtime(full)
     const cached = cache.get(key)
-    if (cached) return cached
+    if (cached && mt > 0 && cached.mtimeMs === mt) return cached.out
     const out: any[] = []
     try {
-      const txt = await readFile(join(CULTURE_DIR, file), 'utf8')
+      const txt = await readFile(full, 'utf8')
       const arr = JSON.parse(txt)
       if (Array.isArray(arr)) {
         const keys = new Set<string>()
@@ -40,7 +46,7 @@ export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: stri
     } catch (err: any) {
       console.error('CULTURE-LOAD-FAIL file=' + file + ' err=' + String(err?.message || err))
     }
-    cache.set(key, out)
+    cache.set(key, { out, mtimeMs: mt })
     return out
   }
 

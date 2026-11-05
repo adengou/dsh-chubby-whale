@@ -9,7 +9,7 @@
  * 菜单「从头讲这本书」：POST /story/reset?book=书名，清该书的 book|index 进度。
  */
 import { readdir } from 'node:fs/promises'
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 
@@ -29,7 +29,11 @@ export function createStoryHandlers(opts: {
 }) {
   const STORY_DIR = join(opts.dataDir, 'story')
   const PROGRESS = join(opts.runtimeDir || opts.dataDir, 'story_progress.json')
-  const bookCache = new Map<string, any[]>()
+  const bookCache = new Map<string, { chunks: any[]; mtimeMs: number }>()
+  /** 文件最后修改时间（读不到返回 0）；缓存据此失效，改数据不必重启 */
+  function fileMtime(p: string): number {
+    try { return statSync(p).mtimeMs } catch { return 0 }
+  }
 /** 内存里最多留几本书：一本 JSON 可能几 MB，无限缓存会一直涨 */
 const BOOK_CACHE_MAX = 2
   const progress = loadProgress()
@@ -116,8 +120,15 @@ const BOOK_CACHE_MAX = 2
    * 让 pickNext 继续试下一本（一本坏不能拖垮整个说书功能）。
    */
   function loadBook(book: string): Promise<any[]> {
+    const file = join(STORY_DIR, book + '.json')
+    const mt = fileMtime(file)
     const cached = bookCache.get(book)
-    if (cached) return Promise.resolve(cached)
+    if (cached && mt > 0 && cached.mtimeMs === mt) {
+      // 命中：顺手 touch 一下，保持 LRU 顺序
+      bookCache.delete(book)
+      bookCache.set(book, cached)
+      return Promise.resolve(cached.chunks)
+    }
     return new Promise((resolve) => {
       let done = false
       const fail = (err: any): void => {
@@ -139,14 +150,14 @@ const BOOK_CACHE_MAX = 2
           if (msg && msg.ok) {
             done = true
             const list = normalizeBook(book, msg.chunks)
-            bookCache.set(book, list)
+            bookCache.set(book, { chunks: list, mtimeMs: mt })
             // LRU：超上限就丢最早的那本（Map 保持插入顺序）
             while (bookCache.size > BOOK_CACHE_MAX) { const oldest = bookCache.keys().next().value as string | undefined; if (oldest === undefined) break; bookCache.delete(oldest) }
             resolve(list)
           } else fail(msg?.error || 'parse failed')
         })
         w.once('error', (err: any) => { clearTimeout(timer); fail(err) })
-        w.postMessage({ book, file: join(STORY_DIR, book + '.json') })
+        w.postMessage({ book, file })
       } catch (err) { fail(err) }
     })
   }

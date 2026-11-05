@@ -147,7 +147,6 @@
     "\u804A\u5929\u7F13\u5B58\uFF1A\u5173": "Chat cache: off",
     "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09": "Let it go (exit)",
     "\u9C7C\u7CAE\u8D26\u672C": "Token ledger",
-    "\u4E2D\u6587": "\u4E2D\u6587",
     "English": "English",
     "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09": "Auto (by language)",
     "\u81EA\u52A8": "Auto",
@@ -274,6 +273,97 @@
     ];
   }
 
+  // src/client/image.ts
+  var DEFAULT_MAX_EDGE = 1280;
+  var DEFAULT_QUALITY = 0.85;
+  var KEEP_RAW_BELOW = 400 * 1024;
+  function readFileAsBase64(file) {
+    return new Promise((resolve) => {
+      try {
+        const fr = new FileReader();
+        fr.onloadend = () => {
+          const s = String(fr.result || "");
+          resolve(s.indexOf(",") >= 0 ? s.slice(s.indexOf(",") + 1) : s);
+        };
+        fr.onerror = () => resolve("");
+        fr.readAsDataURL(file);
+      } catch (e) {
+        resolve("");
+      }
+    });
+  }
+  function decodeImage(file) {
+    return new Promise((resolve) => {
+      try {
+        const w = typeof window !== "undefined" ? window : globalThis;
+        if (typeof w.createImageBitmap === "function") {
+          Promise.resolve(w.createImageBitmap(file)).then((bmp) => resolve(bmp)).catch(() => resolve(null));
+          return;
+        }
+        const URLRef = w.URL || globalThis.URL;
+        const ImageRef = w.Image;
+        if (!URLRef || typeof URLRef.createObjectURL !== "function" || typeof ImageRef !== "function") {
+          resolve(null);
+          return;
+        }
+        const url = URLRef.createObjectURL(file);
+        const img = new ImageRef();
+        const done = (v) => {
+          try {
+            URLRef.revokeObjectURL(url);
+          } catch (e) {
+          }
+          resolve(v);
+        };
+        img.onload = () => done(img);
+        img.onerror = () => done(null);
+        img.src = url;
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }
+  async function imageToB64(file, opts) {
+    const raw = await readFileAsBase64(file);
+    if (!raw) return null;
+    const rawMime = String(file && file.type || "image/jpeg");
+    const rawResult = { b64: raw, mime: rawMime, width: 0, height: 0, compressed: false };
+    try {
+      if (raw.length <= KEEP_RAW_BELOW) return rawResult;
+      const maxEdge = Math.max(256, Math.min(4096, Math.round(Number(opts && opts.maxEdge) || DEFAULT_MAX_EDGE)));
+      const quality = Math.min(0.95, Math.max(0.5, Number(opts && opts.quality) || DEFAULT_QUALITY));
+      const img = await decodeImage(file);
+      if (!img) return rawResult;
+      const iw = Math.max(1, Number(img.width || img.naturalWidth) || 1);
+      const ih = Math.max(1, Number(img.height || img.naturalHeight) || 1);
+      const scale = Math.min(1, maxEdge / Math.max(iw, ih));
+      const w = Math.max(1, Math.round(iw * scale));
+      const h = Math.max(1, Math.round(ih * scale));
+      const doc = typeof document !== "undefined" ? document : null;
+      if (!doc || typeof doc.createElement !== "function") return rawResult;
+      const canvas = doc.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const cx = canvas.getContext && canvas.getContext("2d");
+      if (!cx || typeof canvas.toDataURL !== "function") return rawResult;
+      cx.drawImage(img, 0, 0, w, h);
+      const dataUrl = String(canvas.toDataURL("image/jpeg", quality) || "");
+      const at = dataUrl.indexOf(",");
+      const b64 = at >= 0 ? dataUrl.slice(at + 1) : "";
+      if (!b64) return rawResult;
+      if (b64.length >= raw.length) return rawResult;
+      if (typeof img.close === "function") {
+        try {
+          img.close();
+        } catch (e) {
+        }
+      }
+      return { b64, mime: "image/jpeg", width: w, height: h, compressed: true };
+    } catch (e) {
+      return rawResult;
+    }
+  }
+
   // src/client/dropzone.ts
   var MAX_DROP_BYTES = 4 * 1024 * 1024;
   var MAX_TEXT_CHARS = 8e3;
@@ -291,21 +381,6 @@
   }
   function buildTextPrompt(text) {
     return "\u603B\u7ED3\u4E00\u4E0B\u8FD9\u7BC7\u6587\u6863\uFF1A\n" + String(text || "").slice(0, MAX_TEXT_CHARS);
-  }
-  function readFileAsBase64(file) {
-    return new Promise((resolve) => {
-      try {
-        const fr = new FileReader();
-        fr.onloadend = () => {
-          const s = String(fr.result || "");
-          resolve(s.indexOf(",") >= 0 ? s.slice(s.indexOf(",") + 1) : s);
-        };
-        fr.onerror = () => resolve("");
-        fr.readAsDataURL(file);
-      } catch (e) {
-        resolve("");
-      }
-    });
   }
   async function handleFileDrop(file, deps) {
     const d = deps || {};
@@ -336,13 +411,15 @@
     };
     if (isImageFile(file)) {
       bubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
-      const b64 = await readFileAsBase64(file);
+      const img0 = await imageToB64(file);
+      const b64 = img0 ? img0.b64 : "";
+      const mime = img0 && img0.mime || file.type || "image/jpeg";
       if (!b64) {
         bubble("\u56FE\u7247\u8BFB\u4E0D\u51FA\u6765\uFF0C\u518D\u62D6\u4E00\u6B21\u8BD5\u8BD5", 4e3);
         return { ok: false, kind: "error", error: "empty image" };
       }
       try {
-        const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: file.type || "image/jpeg" });
+        const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime });
         const reply = String(reply0 && reply0.reply || "").trim() || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
         bubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
         if (speak) speak(reply);
@@ -3078,17 +3155,15 @@
                     showBubble("\u56FE\u7247\u592A\u5927\uFF08\u8D85\u8FC7 4MB\uFF09", 4e3);
                     return;
                   }
-                  const b64 = await new Promise((resolve) => {
-                    const fr = new FileReader();
-                    fr.onloadend = () => {
-                      const s = String(fr.result || "");
-                      resolve(s.indexOf(",") >= 0 ? s.slice(s.indexOf(",") + 1) : s);
-                    };
-                    fr.readAsDataURL(file);
-                  });
+                  const img0 = await imageToB64(file);
+                  const b64 = img0 ? img0.b64 : "";
+                  if (!b64) {
+                    showBubble("\u56FE\u7247\u8BFB\u4E0D\u51FA\u6765", 4e3);
+                    return;
+                  }
                   showBubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
                   setChatOpen(false);
-                  const hdr = file.type || "image/jpeg";
+                  const hdr = img0 && img0.mime || file.type || "image/jpeg";
                   const tChat = performance.now();
                   const res = await fetch("/api/chubby-whale/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: VISION_PROMPT, image: b64, imageMime: hdr }) });
                   const d = await res.json();

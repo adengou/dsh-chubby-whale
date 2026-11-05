@@ -6,6 +6,7 @@ import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chat
 import { buildMenu, tr } from './client/menu.js'
 import { handleFileDrop, VISION_PROMPT } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
+import { imageToB64 } from './client/image.js'
 import { createVoice } from './client/voice.js'
 import { createPersona } from './client/persona.js'
 import { detectIntent } from './client/intent.js'
@@ -821,14 +822,13 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                 const file = input.files && input.files[0]
                 if (!file) return
                 if (file.size > 4 * 1024 * 1024) { showBubble('图片太大（超过 4MB）', 4000); return }
-                const b64 = await new Promise<string>((resolve) => {
-                  const fr = new FileReader()
-                  fr.onloadend = () => { const s = String(fr.result || ''); resolve(s.indexOf(',') >= 0 ? s.slice(s.indexOf(',') + 1) : s) }
-                  fr.readAsDataURL(file)
-                })
+                // 先压缩再上传（长边 ≤1280 / JPEG 0.85；失败回退原图）
+                const img0 = await imageToB64(file)
+                const b64 = img0 ? img0.b64 : ''
+                if (!b64) { showBubble('图片读不出来', 4000); return }
                 showBubble('本鲸看看这张图…', 3000)
                 setChatOpen(false)
-                const hdr = file.type || 'image/jpeg'
+                const hdr = (img0 && img0.mime) || file.type || 'image/jpeg'
                 const tChat = performance.now()
           const res = await fetch('/api/chubby-whale/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: VISION_PROMPT, image: b64, imageMime: hdr }) })
                 const d = await res.json()
