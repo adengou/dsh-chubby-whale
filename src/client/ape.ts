@@ -115,7 +115,6 @@ export class Ape {
   private bandMs = 0
   private steadyHist: number[] = []
   private steadyMs = 0
-  private steadyCooldownMs = 0   // 平稳噪声确认后的冷却期：这段时间不把电平算成说话
 
   constructor(params?: Partial<ApeParams>) {
     this.p = { ...APE_DEFAULTS, ...(params || {}) }
@@ -129,7 +128,7 @@ export class Ape {
     this.elapsedMs = 0
     this.runMs = 0
     this.hadSpeech = false
-    this.steadyCooldownMs = 0
+    this.noiseTail = false          // 上一段的"噪声尾"标记不能带到下一段（会提前收尾）
     this.bandMs = 0
   }
 
@@ -185,8 +184,6 @@ export class Ape {
         // 噪声尾：按安静累计（这样才能提前收尾）
         this.quietMs += p.frameMs
         this.bandMs = 0
-      } else if (this.steadyCooldownMs > 0) {
-        this.steadyCooldownMs -= p.frameMs
       } else {
         this.speechMs += p.frameMs
         this.runMs += p.frameMs

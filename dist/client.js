@@ -1000,8 +1000,6 @@
     bandMs = 0;
     steadyHist = [];
     steadyMs = 0;
-    steadyCooldownMs = 0;
-    // 平稳噪声确认后的冷却期：这段时间不把电平算成说话
     constructor(params) {
       this.p = { ...APE_DEFAULTS, ...params || {} };
     }
@@ -1013,7 +1011,7 @@
       this.elapsedMs = 0;
       this.runMs = 0;
       this.hadSpeech = false;
-      this.steadyCooldownMs = 0;
+      this.noiseTail = false;
       this.bandMs = 0;
     }
     resetNoise() {
@@ -1052,8 +1050,6 @@
         if (this.noiseTail) {
           this.quietMs += p.frameMs;
           this.bandMs = 0;
-        } else if (this.steadyCooldownMs > 0) {
-          this.steadyCooldownMs -= p.frameMs;
         } else {
           this.speechMs += p.frameMs;
           this.runMs += p.frameMs;
