@@ -46,6 +46,7 @@ export const PERSONALITY_LIMITS = {
 
 /** 一次学习最多改动几个字段（防止模型一次把人格翻新） */
 export const MAX_FIELDS_PER_LEARN = 2
+deepFreeze(PERSONALITY_LIMITS)
 
 /** L2 可学习字段白名单（L3 的 selfNarrative 不在其中：学习永远写不到心境） */
 export const LEARNABLE_FIELDS: ReadonlyArray<'catchphrases' | 'preferences' | 'notes'> = ['catchphrases', 'preferences', 'notes']
