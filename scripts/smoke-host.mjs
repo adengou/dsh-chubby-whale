@@ -64,5 +64,57 @@ try {
   ok('能加载 dist/index.js', false, String((err && err.message) || err))
 }
 
+// ---- store 功能冒烟：真建一个临时数据目录，读写一遍 ----
+try {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { createStore } = await import('../dist/host/store.js')
+  const { createCache } = await import('../dist/host/cache.js')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-host-smoke-'))
+  const store = createStore(dir)
+
+  store.saveState({ intimacy: 7 })
+  ok('store 状态读写', store.loadState().intimacy === 7)
+
+  store.saveState({ intimacy: 100 })
+  ok('store 状态覆盖', store.loadState().intimacy === 100)
+
+  store.appendTurns('主人', '本鲸在呢')
+  const h = store.loadHistory()
+  ok('store 记忆追加一轮', h.length === 2 && h[0].role === 'user' && h[1].role === 'assistant')
+
+  const g0 = store.addExp(5, 'chat')
+  ok('store 成长加经验', g0 && Number(g0.exp) > 0, 'exp=' + (g0 && g0.exp))
+
+  const f0 = store.addTokens('chat', 10)
+  ok('store 鱼粮累加', f0 && Number(f0.chatTokens) === 10 && Number(f0.totalTokens) === 10)
+  ok('store 今日 token 也累加（此前永远是 0）', f0 && Number(f0.dayTokens) === 10, 'dayTokens=' + (f0 && f0.dayTokens))
+
+  const pet = store.feedPet()
+  ok('store 喂食', pet && Number(pet.feeds) === 1 && pet.mood === 'happy')
+
+  store.saveStoryProgress({ '甲|0': true })
+  ok('store 说书进度读写', store.loadStoryProgress()['甲|0'] === true)
+
+  const r = store.addReminder('喝水', new Date(Date.now() + 60000).toISOString(), 0)
+  ok('store 提醒新增', r && r.id && store.loadReminders().length === 1)
+  if (r && r.id) { store.removeReminder(r.id); ok('store 提醒删除', store.loadReminders().length === 0) }
+
+  // 缓存：JSON 与二进制都能存取（Buffer 不被降级）
+  const cache = createCache({ dir: join(dir, 'cache'), memBytes: 1024 * 1024 })
+  await cache.setJson('k', { a: 1 })
+  const got = await cache.getJson('k', 'json')
+  ok('cache JSON 读写', got && got.a === 1)
+  const mp3 = Buffer.from('MP3')
+  await cache.setJson('b', mp3, 'mp3')
+  const back = await cache.getJson('b', 'mp3')
+  ok('cache 二进制仍是 Buffer', Buffer.isBuffer(back) && back.equals(mp3))
+  ok('cache 条目计数', (await cache.count()) >= 1)
+
+  rmSync(dir, { recursive: true, force: true })
+} catch (err) {
+  ok('store 功能冒烟', false, String((err && err.message) || err))
+}
+
 console.log('\n  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
