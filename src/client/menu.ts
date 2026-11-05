@@ -69,6 +69,19 @@ export const EN_MAP: Record<string, string> = {
   '鱼粮账本': 'Token ledger',
   'English': 'English',
   '中文': 'Chinese',
+  // 动态 label（音色勾选/聊天缓存开关/自动）需要的英文键
+  '聊天缓存：开': 'Chat cache: on',
+  '聊天缓存：关': 'Chat cache: off',
+  '自动（按语言选音色）': 'Auto (by language)',
+  '自动': 'Auto',
+  '音色：晓伊（中·女）': 'Voice: Xiaoyi (CN F)',
+  '音色：晓晓（中·女）': 'Voice: Xiaoxiao (CN F)',
+  '音色：晓辰（中·女）': 'Voice: Xiaochen (CN F)',
+  '音色：云希（中·男）': 'Voice: Yunxi (CN M)',
+  '音色：云扬（中·男）': 'Voice: Yunyang (CN M)',
+  '音色：Ana（英·女）': 'Voice: Ana (EN F)',
+  '音色：Jenny（英·女）': 'Voice: Jenny (EN F)',
+  '音色：Sonia（英·女·英式）': 'Voice: Sonia (EN-GB F)',
 }
 
 // 开关类菜单项：前缀 -> [开, 关]（标签是运行时拼的，精确字典永远匹配不到）
