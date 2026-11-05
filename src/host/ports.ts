@@ -92,7 +92,7 @@ export interface ChatRouteDeps {
   appendTurns: (userText: string, replyText: string) => any
   loadState: () => any
   saveState: (obj: any) => void
-  systemPrompt: string
+  systemPrompt: string | (() => string)
   addExp?: (n: number, source?: string) => any
   addTokens?: (kind: string, n: number) => any
   cache?: CachePort
@@ -106,7 +106,7 @@ export interface ChatStreamRouteDeps {
   getKey: KeyReader
   loadHistory: () => any[]
   appendTurns?: (userText: string, replyText: string) => any
-  systemPrompt: string
+  systemPrompt: string | (() => string)
   addTokens?: (kind: string, n: number) => any
   cache?: CachePort
   loadMemorySummary?: () => string

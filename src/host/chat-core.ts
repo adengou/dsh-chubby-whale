@@ -75,6 +75,7 @@ export function historyMessages(history: any[]): any[] {
 }
 
 /** 拼 system 提示：人设 + 语言规则 + 长期记忆 +（可选）语音输入说明 */
-export function composeSystemPrompt(base: string, parts: Array<string | false | null | undefined>): string {
-  return String(base || '') + parts.filter(Boolean).join('')
+export function composeSystemPrompt(base: string | (() => string), parts: Array<string | false | null | undefined>): string {
+  const text = typeof base === 'function' ? base() : base
+  return String(text || '') + parts.filter(Boolean).join('')
 }

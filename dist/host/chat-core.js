@@ -73,5 +73,6 @@ export function historyMessages(history) {
 }
 /** 拼 system 提示：人设 + 语言规则 + 长期记忆 +（可选）语音输入说明 */
 export function composeSystemPrompt(base, parts) {
-    return String(base || '') + parts.filter(Boolean).join('');
+    const text = typeof base === 'function' ? base() : base;
+    return String(text || '') + parts.filter(Boolean).join('');
 }
