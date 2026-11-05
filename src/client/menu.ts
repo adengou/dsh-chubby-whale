@@ -130,6 +130,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
   const growthText = (state && state.growth) ? state.growth : '--'
   return [
     // ── 吃饭与看图 ──
+    { type: 'item', label: '成长：' + growthText, action: 'growth' },
     { type: 'item', label: '投喂一碗', action: 'feed' },
     { type: 'item', label: '看张图…', action: 'vision' },
     { type: 'sep' },
@@ -210,7 +211,5 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     { type: 'sep' },
     // ── 账本与版本（版本永远在最底下）──
     { type: 'item', label: '鱼粮账本', action: 'fishfood' },
-    { type: 'item', label: '成长：' + growthText, action: 'growth' },
-    { type: 'item', label: '版本：v' + version, action: 'version' },
   ]
 }

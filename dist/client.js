@@ -201,6 +201,7 @@
     const growthText = state && state.growth ? state.growth : "--";
     return [
       // ── 吃饭与看图 ──
+      { type: "item", label: "\u6210\u957F\uFF1A" + growthText, action: "growth" },
       { type: "item", label: "\u6295\u5582\u4E00\u7897", action: "feed" },
       { type: "item", label: "\u770B\u5F20\u56FE\u2026", action: "vision" },
       { type: "sep" },
@@ -280,9 +281,7 @@
       { type: "item", label: "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09", action: "hide" },
       { type: "sep" },
       // ── 账本与版本（版本永远在最底下）──
-      { type: "item", label: "\u9C7C\u7CAE\u8D26\u672C", action: "fishfood" },
-      { type: "item", label: "\u6210\u957F\uFF1A" + growthText, action: "growth" },
-      { type: "item", label: "\u7248\u672C\uFF1Av" + version, action: "version" }
+      { type: "item", label: "\u9C7C\u7CAE\u8D26\u672C", action: "fishfood" }
     ];
   }
 
