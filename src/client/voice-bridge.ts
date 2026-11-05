@@ -161,9 +161,13 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
           pushWake()
           return
         }
-        // 只喊了名字（剥掉唤醒词后没剩内容）：应一声，不劳烦模型
+        // 只喊了名字（剥掉唤醒词后没剩内容）：应一声，不劳烦模型。
+        // 之前只弹气泡不出声，主人喊了名字会觉得"鱼没反应"；
+        // 改成 say（会朗读；同一句 25 秒去重，重复喊不会连珠炮）。
         if (!r.text) {
-          try { host.bubble('本鲸在呢～', 2200) } catch (e) { }
+          try { host.say('本鲸在呢～', 2200) } catch (e) {
+            try { host.bubble('本鲸在呢～', 2200) } catch (e2) { }
+          }
           pushWake()
           return
         }

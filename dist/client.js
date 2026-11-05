@@ -2111,8 +2111,12 @@
           }
           if (!r.text) {
             try {
-              host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
+              host.say("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
             } catch (e) {
+              try {
+                host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
+              } catch (e2) {
+              }
             }
             pushWake();
             return;
