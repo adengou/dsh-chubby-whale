@@ -17,6 +17,13 @@ const TTS_MAX_BODY = 64 * 1024;
 export function createTtsHandler(opts) {
     const cache = opts.cache;
     const engine = opts.engine || createEdgeTtsEngine();
+    // 预热常驻 worker（只导入依赖、不合成）：首句不必再等 python 启动
+    try {
+        const w = engine;
+        if (typeof w.warm === 'function')
+            void w.warm();
+    }
+    catch { }
     return async function handleTts(req, res) {
         try {
             const parsed = await readJsonBody(req, TTS_MAX_BODY);
