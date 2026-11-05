@@ -2631,6 +2631,37 @@ try {
   ok('能加载唤醒门', false, String(e.message))
 }
 
+
+// ---------- ㊾ 诗名误劫持（诗名里有大量日常词） ----------
+console.log('\n[49] 诗名误劫持 client/intent.ts')
+try {
+  const it = await import('../src/client/intent.ts')
+  // 诗库里 634 个标题，其中「梅花/风雨/落花/春思/锦瑟」都是日常词：
+  // 只凭"句子里出现诗名"就劫持，会把普通陈述抢去念诗。
+  const shouldPassToModel = ['梅花开了', '窗外梅花开了', '风雨交加', '落花人独立', '锦瑟无端五十弦', '春思故乡', '今天风很大']
+  const leaked = shouldPassToModel.filter((t) => it.detectIntent(t) !== null)
+  ok('普通陈述不被诗名劫持', leaked.length === 0, leaked.join(' / '))
+
+  const stillWorks = [
+    ['背首诗', null],
+    ['背雨霖铃', '雨霖铃'],
+    ['来首水调歌头', '水调歌头'],
+    ['念一下静夜思', '静夜思'],
+    ['锦瑟', '锦瑟'],          // 只报诗名 = 点播
+    ['念锦瑟', '锦瑟'],
+  ]
+  const bad = []
+  for (const [text, title] of stillWorks) {
+    const r = it.detectIntent(text)
+    if (!r || r.kind !== 'poem') bad.push(text + ' 没识别为念诗')
+    else if (title !== null && r.title !== title) bad.push(text + ' → ' + r.title + '（应为 ' + title + '）')
+  }
+  ok('点名诗与随机点播仍然有效', bad.length === 0, bad.join(' / '))
+  ok('带问号仍然不劫持', it.detectIntent('梅花开了吗？') === null)
+} catch (e) {
+  ok('能加载 intent.ts（诗名劫持用例）', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

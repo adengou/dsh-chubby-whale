@@ -4886,7 +4886,11 @@
     if (!t || t.length > 30) return null;
     if (isQuestion(t)) return null;
     const byTitle = matchPoemTitle(t);
-    if (byTitle) return { kind: "poem", title: byTitle };
+    if (byTitle) {
+      const bare = t.replace(/[\s。，！？、,.!?…~～]/g, "");
+      const asks = bare === byTitle || /背|念|吟|朗读|朗诵|来(一)?首|听(一)?首|讲(一)?首|放(一)?首/.test(t);
+      if (asks) return { kind: "poem", title: byTitle };
+    }
     if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) return { kind: "poem" };
     if (/典故|成语/.test(t)) return { kind: "culture", sub: /成语/.test(t) ? "chengyu" : "idiom" };
     let book = "";

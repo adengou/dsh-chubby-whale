@@ -65,9 +65,15 @@ export function detectIntent(rawText: string): Intent {
   if (!t || t.length > 30) return null
   if (isQuestion(t)) return null
 
-  // ① 点名要某首诗：直接按标题取（"背雨霖铃""来首水调歌头"）
+  // ① 点名要某首诗：按标题取（"背雨霖铃""来首水调歌头"）。
+  //    注意：诗名里有大量日常词（梅花/风雨/落花/春思/锦瑟…），只凭"句子里出现诗名"就劫持，
+  //    会把「梅花开了」「落花人独立」这类普通陈述抢去念诗。必须有"点播动词"或整句就是诗名才算。
   const byTitle = matchPoemTitle(t)
-  if (byTitle) return { kind: 'poem', title: byTitle }
+  if (byTitle) {
+    const bare = t.replace(/[\s。，！？、,.!?…~～]/g, '')
+    const asks = bare === byTitle || /背|念|吟|朗读|朗诵|来(一)?首|听(一)?首|讲(一)?首|放(一)?首/.test(t)
+    if (asks) return { kind: 'poem', title: byTitle }
+  }
 
   // ② 念诗 / 背诗
   if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) return { kind: 'poem' }
