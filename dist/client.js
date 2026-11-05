@@ -1354,6 +1354,29 @@
     return p.now - since >= zombieMs;
   }
 
+  // src/client/endpoint.ts
+  var ENDPOINT_MODES = ["ape", "classic"];
+  deepFreeze(ENDPOINT_MODES);
+  var DEFAULT_ENDPOINT_MODE = "classic";
+  function normalizeEndpointMode(v) {
+    return String(v || "").trim() === "ape" ? "ape" : DEFAULT_ENDPOINT_MODE;
+  }
+  function readEndpointMode() {
+    try {
+      return normalizeEndpointMode(localStorage.getItem("chubby-endpoint"));
+    } catch (e) {
+      return DEFAULT_ENDPOINT_MODE;
+    }
+  }
+  function writeEndpointMode(m) {
+    try {
+      localStorage.setItem("chubby-endpoint", normalizeEndpointMode(m));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // src/client/voice.ts
   var WINDOW_MS = 6e3;
   var EARLY_STOP_QUIET = 700;
@@ -1391,13 +1414,7 @@
   function createVoice(opts) {
     const apiBase = opts.apiBase || "/api/chubby-whale";
     let voiceName = normalizeVoiceName(opts.voiceName || readStoredVoiceName());
-    let epMode = (() => {
-      try {
-        return localStorage.getItem("chubby-endpoint") === "ape" ? "ape" : "classic";
-      } catch (e) {
-        return "classic";
-      }
-    })();
+    let epMode = readEndpointMode();
     const ape = new Ape();
     let lastApe = null;
     let lastSeg = null;
@@ -2216,11 +2233,8 @@
       speaking: () => ttsBusy,
       recognizing: () => status === "recognizing",
       setEndpointMode: (m) => {
-        epMode = m === "ape" ? "ape" : "classic";
-        try {
-          localStorage.setItem("chubby-endpoint", epMode);
-        } catch (e) {
-        }
+        epMode = normalizeEndpointMode(m);
+        writeEndpointMode(epMode);
       },
       // 端点检测：报告当前实际生效的模式（ape / classic），不再写死 classic
       endpointInfo: () => ({ mode: epMode }),
@@ -4072,15 +4086,9 @@
     table.define("endpoint", (host) => {
       try {
         const v = host.voice();
-        const cur = v && v.endpointInfo ? v.endpointInfo().mode : (() => {
-          try {
-            return localStorage.getItem("chubby-endpoint") === "ape" ? "ape" : "classic";
-          } catch (e) {
-            return "classic";
-          }
-        })();
+        const cur = v && v.endpointInfo ? v.endpointInfo().mode : readEndpointMode();
         const next = cur === "ape" ? "classic" : "ape";
-        localStorage.setItem("chubby-endpoint", next);
+        writeEndpointMode(next);
         if (v && v.setEndpointMode) v.setEndpointMode(next);
         const real = v && v.endpointInfo ? v.endpointInfo().mode : next;
         host.bubble(real === "ape" ? "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u81EA\u9002\u5E94\uFF08\u8BD5\u7528\uFF09" : "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178\uFF08\u7A33\u5B9A\uFF09", 4e3);

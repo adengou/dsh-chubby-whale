@@ -5,6 +5,7 @@
  * 这里只负责菜单动作到 host 的映射。
  */
 
+import { readEndpointMode, writeEndpointMode } from '../endpoint.js'
 import type { ActionHost, ActionTable } from '../actions.js'
 import { normalizeVoiceName } from '../voice.js'
 
@@ -34,11 +35,9 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
     try {
       const v: any = host.voice()
       // 当前模式以语音实例为准（endpointInfo 现在报真实模式）；没实例才退回 localStorage
-      const cur = (v && v.endpointInfo)
-        ? v.endpointInfo().mode
-        : (() => { try { return localStorage.getItem('chubby-endpoint') === 'ape' ? 'ape' : 'classic' } catch (e) { return 'classic' } })()
+      const cur = (v && v.endpointInfo) ? v.endpointInfo().mode : readEndpointMode()
       const next = cur === 'ape' ? 'classic' : 'ape'
-      localStorage.setItem('chubby-endpoint', next)
+      writeEndpointMode(next)
       if (v && v.setEndpointMode) v.setEndpointMode(next)
       // 提示按切换后的真实模式来说，避免"点了没变"的错觉
       const real = (v && v.endpointInfo) ? v.endpointInfo().mode : next

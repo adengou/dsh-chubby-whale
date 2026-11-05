@@ -1867,6 +1867,34 @@ try {
   ok('能加载 busy.ts', false, String(e.message))
 }
 
+
+// ---------- ㊱ 端点检测模式：唯一读写入口 ----------
+console.log('\n[36] 端点检测 client/endpoint.ts')
+try {
+  const mem = new Map()
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => { mem.set(k, String(v)) },
+    removeItem: (k) => { mem.delete(k) },
+  }
+  const ep = await import('../src/client/endpoint.ts')
+  ok('默认是 classic', ep.readEndpointMode() === 'classic')
+  ok('写入 ape 后读回 ape', ep.writeEndpointMode('ape') === true && ep.readEndpointMode() === 'ape')
+  ok('写入非法值归一成 classic', ep.writeEndpointMode('乱写') === true && ep.readEndpointMode() === 'classic')
+  ok('normalize：ape 保留、其它回落', ep.normalizeEndpointMode('ape') === 'ape' && ep.normalizeEndpointMode('x') === 'classic')
+  ok('模式表被冻结', Array.isArray(ep.ENDPOINT_MODES) && Object.isFrozen(ep.ENDPOINT_MODES))
+  delete globalThis.localStorage
+
+  // 代码契约：voice.ts 与 actions/voice.ts 都不许再手写 chubby-endpoint 解析
+  const { readFileSync: rf4 } = await import('node:fs')
+  const vSrc = rf4('src/client/voice.ts', 'utf8')
+  const aSrc = rf4('src/client/actions/voice.ts', 'utf8')
+  ok('voice.ts 不再自己解析 chubby-endpoint', vSrc.indexOf("getItem('chubby-endpoint')") < 0)
+  ok('actions/voice.ts 不再自己写 chubby-endpoint', aSrc.indexOf("setItem('chubby-endpoint'") < 0)
+} catch (e) {
+  ok('能加载 endpoint.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

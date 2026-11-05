@@ -20,6 +20,7 @@ import { isRepeat } from './sim.js'
 import { echoKey, isShortEchoFragment, stripStageDirections } from './text.js'
 import { isNoiseText } from '../shared/noise.js'
 import { isPlaybackZombie } from './playback.js'
+import { readEndpointMode, writeEndpointMode, normalizeEndpointMode } from './endpoint.js'
 
 export type VoiceStatus = 'idle' | 'listening' | 'recognizing' | 'thinking' | 'speaking'
 
@@ -138,7 +139,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   // 端点检测模式：ape（自适应，默认）/ classic（经典绝对阈值，可一键切回）
   // 默认 classic（经典绝对阈值）：实测 APE 在真实麦克风下会提前切句，前半句丢失。
   // 想试自适应可在菜单里切换，随时能切回来。
-  let epMode: 'ape' | 'classic' = (() => { try { return localStorage.getItem('chubby-endpoint') === 'ape' ? 'ape' : 'classic' } catch (e) { return 'classic' } })()
+  let epMode: 'ape' | 'classic' = readEndpointMode()
   const ape = new Ape()
   let lastApe: any = null
   let lastSeg: any = null
@@ -773,7 +774,7 @@ const asrAborts = new Set<AbortController>()
     stopSpeaking,
     speaking: () => ttsBusy,
     recognizing: () => status === 'recognizing',
-    setEndpointMode: (m: 'ape' | 'classic') => { epMode = m === 'ape' ? 'ape' : 'classic'; try { localStorage.setItem('chubby-endpoint', epMode) } catch (e) { } },
+    setEndpointMode: (m: 'ape' | 'classic') => { epMode = normalizeEndpointMode(m); writeEndpointMode(epMode) },
     // 端点检测：报告当前实际生效的模式（ape / classic），不再写死 classic
     endpointInfo: () => ({ mode: epMode }),
     lastSegment: () => lastSeg,
