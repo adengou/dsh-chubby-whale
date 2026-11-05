@@ -1031,6 +1031,116 @@ try {
   ok('能加载说书播放器', false, String(e.message))
 }
 
+
+// ---------- ㉕ 备份导出/导入：只认白名单、类型不对就跳过 ----------
+console.log('\n[25] 备份路由 host/routes/backup.ts（数据安全）')
+try {
+  const { createBackupHandlers, BACKUP_MAX_BYTES } = await import('../src/host/routes/backup.ts')
+  const saved = {}
+  const notes = { story: 0 }
+  const deps = {
+    version: '1.0.1',
+    loadMemory: () => ({ history: [{ role: 'user', content: '主人好' }], summary: '摘要' }),
+    saveMemory: (m) => { saved.memory = m },
+    loadPersonality: () => ({ name: '不该导出', catchphrases: ['哼'], preferences: {}, notes: [] }),
+    savePersonality: (p) => { saved.personality = p; return true },
+    loadState: () => ({ intimacy: 100 }),
+    saveState: (o) => { saved.state = o },
+    loadGrowth: () => ({ exp: 10 }),
+    saveGrowth: (o) => { saved.growth = o },
+    loadFishfood: () => ({ chatTokens: 1 }),
+    saveFishfood: (o) => { saved.fishfood = o },
+    loadPet: () => ({ feeds: 5 }),
+    savePet: (o) => { saved.pet = o },
+    loadReminders: () => [{ text: '喝水' }],
+    saveReminders: (a) => { saved.reminders = a },
+    loadStoryProgress: () => ({ '甲|0': true }),
+    saveStoryProgress: (o) => { saved.storyProgress = o },
+    onStoryProgressImported: () => { notes.story++ },
+    now: () => new Date('2026-11-06T00:00:00Z'),
+  }
+  const { handleExport, handleImport } = createBackupHandlers(deps)
+  const mkReq = (body, method = 'POST') => {
+    const buf = Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))
+    return {
+      method, url: '/api/chubby-whale/data/export', headers: {},
+      destroy() { }, on() { }, resume() { },
+      async *[Symbol.asyncIterator]() { yield buf },
+    }
+  }
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.bodyText = () => Buffer.concat(out.chunks).toString('utf8')
+    out.json = () => { try { return JSON.parse(out.bodyText()) } catch (e) { return null } }
+    return out
+  }
+
+  // ① 导出：字段齐全、不带 Key、人格只出可变层
+  let res = mkRes()
+  await handleExport(mkReq(null, 'GET'), res)
+  const exp = res.json()
+  ok('导出 ok + version + 时间戳', exp && exp.ok === true && exp.version === '1.0.1' && exp.exportedAt === '2026-11-06T00:00:00.000Z')
+  const fields = ['memory', 'personality', 'state', 'growth', 'fishfood', 'pet', 'reminders', 'storyProgress']
+  ok('导出含全部数据字段', fields.every((k) => k in exp), fields.filter((k) => !(k in exp)).join(',') || '齐全')
+  ok('导出不含任何 Key', !/apiKey|deepseekKey|siliconflowKey|authorization/i.test(JSON.stringify(exp)))
+  ok('人格导出丢掉核心设定', !('name' in exp.personality) && Array.isArray(exp.personality.catchphrases), Object.keys(exp.personality).join(','))
+  ok('导出保留记忆内容', exp.memory.history.length === 1 && exp.memory.summary === '摘要')
+
+  // ② 导出只允许 GET/HEAD
+  res = mkRes()
+  await handleExport(mkReq(null, 'POST'), res)
+  ok('导出非 GET → 405', res.code === 405 && res.json().error === 'METHOD_NOT_ALLOWED')
+
+  // ③ 导出过大 → 413
+  const bigDeps = { ...deps, loadMemory: () => ({ history: Array.from({ length: 30000 }, () => ({ role: 'user', content: 'x'.repeat(200) })), summary: '' }) }
+  res = mkRes()
+  await createBackupHandlers(bigDeps).handleExport(mkReq(null, 'GET'), res)
+  ok('导出超过上限 → 413 TOO_LARGE', res.code === 413 && res.json().error === 'TOO_LARGE', 'limit=' + BACKUP_MAX_BYTES)
+
+  // ④ 导入：白名单字段落盘、元数据不写盘、未知字段进 skipped
+  for (const k of Object.keys(saved)) delete saved[k]
+  notes.story = 0
+  res = mkRes()
+  await handleImport(mkReq({
+    ok: true, version: '1.0.1', exportedAt: '2026-11-06T00:00:00.000Z',
+    state: { intimacy: 88 }, growth: { exp: 5 }, memory: { history: [{ role: 'user', content: 'hi' }], summary: 's' },
+    storyProgress: { '甲|1': true }, 未知字段: 1,
+  }, 'POST'), res)
+  const imp = res.json()
+  ok('导入 ok + 已存字段', imp && imp.ok === true && imp.imported.indexOf('state') >= 0 && saved.state.intimacy === 88)
+  ok('元数据不写盘也不进 skipped', imp.skipped.indexOf('ok') < 0 && imp.skipped.indexOf('version') < 0 && imp.skipped.indexOf('exportedAt') < 0)
+  ok('未知字段进 skipped', imp.skipped.indexOf('未知字段') >= 0, imp.skipped.join(','))
+  ok('说书进度导入后刷新播放器内存', imp.imported.indexOf('storyProgress') >= 0 && notes.story === 1)
+
+  // ⑤ 类型不对 → 跳过且不落盘
+  delete saved.state
+  res = mkRes()
+  await handleImport(mkReq({ state: 123 }), res)
+  const bad = res.json()
+  ok('类型非法 → 跳过且不写', bad.ok === true && bad.skipped.indexOf('state') >= 0 && saved.state === undefined)
+
+  // ⑥ 写盘失败 → 进 skipped，不影响其它字段
+  delete saved.state
+  const failDeps = { ...deps, saveState: () => { throw new Error('disk full') }, saveGrowth: (o) => { saved.growth = o } }
+  res = mkRes()
+  await createBackupHandlers(failDeps).handleImport(mkReq({ state: { intimacy: 1 }, growth: { exp: 2 } }), res)
+  const failImp = res.json()
+  ok('某字段写失败 → 进 skipped，其它字段仍导入', failImp.ok === true && failImp.skipped.indexOf('state') >= 0 && failImp.imported.indexOf('growth') >= 0, JSON.stringify(failImp))
+
+  // ⑦ 非 POST → 405；坏 body → 400
+  res = mkRes()
+  await handleImport(mkReq(null, 'GET'), res)
+  ok('导入非 POST → 405', res.code === 405)
+  res = mkRes()
+  await handleImport(mkReq('[1,2,3]'), res)
+  ok('导入数组 body → 400 BAD_BODY', res.code === 400 && res.json().error === 'BAD_BODY')
+} catch (e) {
+  ok('能加载备份路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
