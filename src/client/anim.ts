@@ -9,10 +9,14 @@
  *   · 甩尾/水花：按档位调节间隔（14s / 9s / 5.5s），短促摆尾 + 尾巴尖水花。
  */
 import { lookFor, type Look } from './look.js'
+import { deepFreeze } from '../shared/immutable.js'
 
-export const EYE_L = { x: 679, y: 430, r: 68 }
-export const EYE_R = { x: 860, y: 435, r: 68 }
-export const MOUTH = { x: 779, y: 525, rw: 26, rh: 18 }
+export const EYE_L = { x: 679, y: 430, r: 68 }
+deepFreeze(EYE_L)
+export const EYE_R = { x: 860, y: 435, r: 68 }
+deepFreeze(EYE_R)
+export const MOUTH = { x: 779, y: 525, rw: 26, rh: 18 }
+deepFreeze(MOUTH)
 
 export interface AnimState {
   talkUntil: number

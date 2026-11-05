@@ -16,6 +16,7 @@
  * buildPersonalitySegment）与仓储分离：不碰文件系统，便于离线断言。
  */
 import { readFileSync } from 'node:fs';
+import { deepFreeze } from '../shared/immutable.js';
 import { join } from 'node:path';
 import { writeJsonAtomic, isMissingFileError, quarantineFile } from './atomic.js';
 export const PERSONALITY_FILE = 'personality.json';
@@ -44,6 +45,7 @@ export const PERSONALITY_LIMITS = {
 export const MAX_FIELDS_PER_LEARN = 2;
 /** L2 可学习字段白名单（L3 的 selfNarrative 不在其中：学习永远写不到心境） */
 export const LEARNABLE_FIELDS = ['catchphrases', 'preferences', 'notes'];
+deepFreeze(LEARNABLE_FIELDS);
 /** L3 单独写入的字段（与 L2 白名单分开，便于审计） */
 export const SELF_NARRATIVE_FIELD = 'selfNarrative';
 /**

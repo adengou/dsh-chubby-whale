@@ -10,6 +10,10 @@
  */
 
 import { readFileSync } from 'node:fs'
+import { register } from 'node:module'
+
+// 测试里直接加载 .ts：注册解析钩子，把找不到的 .js 回退到同名 .ts
+register(new URL('./ts-resolve.mjs', import.meta.url))
 
 let pass = 0
 let fail = 0

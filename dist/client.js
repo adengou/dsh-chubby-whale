@@ -1,4 +1,18 @@
 (() => {
+  // src/shared/immutable.ts
+  function deepFreeze(value) {
+    if (value === null || typeof value !== "object") return value;
+    const obj = value;
+    if (Object.isFrozen(obj)) return value;
+    Object.freeze(obj);
+    if (Array.isArray(obj)) {
+      for (const v of obj) deepFreeze(v);
+    } else if (Object.prototype.toString.call(obj) === "[object Object]") {
+      for (const k of Object.keys(obj)) deepFreeze(obj[k]);
+    }
+    return value;
+  }
+
   // src/client/styles.ts
   var W = 240;
   var H = 213;
@@ -23,6 +37,7 @@
     display: hidden ? "none" : "block"
   });
   var canvasStyle = { width: "100%", height: "100%", display: "block" };
+  deepFreeze(canvasStyle);
   var recoverDotStyle = {
     position: "fixed",
     right: 16,
@@ -87,6 +102,7 @@
   };
   var bodyStyle = { height: 240, overflowY: "auto", padding: "12px 14px" };
   var inputRowStyle = { display: "flex", gap: 8, padding: "10px 12px", borderTop: "1px solid rgba(93,160,240,0.25)", background: "rgba(6,16,32,0.6)" };
+  deepFreeze(inputRowStyle);
   var inputStyle = {
     flex: 1,
     border: "1px solid rgba(93,160,240,0.35)",
@@ -124,6 +140,7 @@
 
   // src/client/menu.ts
   var MELODIES = ["\u5C0F\u661F\u661F", "\u4E24\u53EA\u8001\u864E", "\u751F\u65E5\u5FEB\u4E50", "\u6B22\u4E50\u9882", "\u94C3\u513F\u54CD\u53EE\u5F53", "\u4F26\u6566\u5927\u6865", "\u65AF\u5361\u5E03\u7F57\u96C6\u5E02", "\u601D\u541B\u9EEF\u7136", "\u7EFF\u8896\u5B50", "\u81F4\u7231\u4E3D\u4E1D", "\u53CB\u8C0A\u5929\u957F\u5730\u4E45"];
+  deepFreeze(MELODIES);
   var SONG_EN = {
     "\u5C0F\u661F\u661F": "Twinkle Twinkle Little Star",
     "\u4E24\u53EA\u8001\u864E": "Two Tigers",
@@ -137,6 +154,7 @@
     "\u81F4\u7231\u4E3D\u4E1D": "Fur Elise",
     "\u53CB\u8C0A\u5929\u957F\u5730\u4E45": "Auld Lang Syne"
   };
+  deepFreeze(SONG_EN);
   var EN_MAP = {
     "\u6295\u5582\u4E00\u7897": "Feed a bowl",
     "\u9009\u672C\u4E66 \u25B8": "Choose a book \u25B8",
@@ -213,6 +231,7 @@
     "\u97F3\u8272\uFF1AJenny\uFF08\u82F1\xB7\u5973\uFF09": "Voice: Jenny (EN F)",
     "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09": "Voice: Sonia (EN-GB F)"
   };
+  deepFreeze(EN_MAP);
   var TOGGLE_EN = {
     "\u8BED\u97F3\u6717\u8BFB\uFF1A": ["Voice output: on", "Voice output: off"],
     "\u8BED\u97F3\u5F85\u547D\uFF1A": ["Voice standby: on", "Voice standby: off"],
@@ -556,7 +575,9 @@
 
   // src/client/look.ts
   var TIER_EXP = [0, 200, 800];
+  deepFreeze(TIER_EXP);
   var TIER_NAMES = ["\u521D\u8BC6", "\u719F\u7EDC", "\u9ECF\u4EBA"];
+  deepFreeze(TIER_NAMES);
   var LOOKS = [
     { tier: 0, label: "\u521D\u8BC6", scale: 1, dots: 2, halo: 0, tailEveryMs: 14e3 },
     { tier: 1, label: "\u719F\u7EDC", scale: 1.04, dots: 4, halo: 0.12, tailEveryMs: 9e3 },
@@ -579,6 +600,7 @@
     return LOOKS[tierOf(info.exp)];
   }
   var DEFAULT_GROWTH = { exp: 0, stage: "\u521D\u8BC6", nextExp: 200, tier: 0 };
+  deepFreeze(DEFAULT_GROWTH);
   function parseGrowth(d) {
     if (!d || typeof d !== "object" || !d.ok) return null;
     const raw = Number(d.exp);
@@ -602,8 +624,11 @@
 
   // src/client/anim.ts
   var EYE_L = { x: 679, y: 430, r: 68 };
+  deepFreeze(EYE_L);
   var EYE_R = { x: 860, y: 435, r: 68 };
+  deepFreeze(EYE_R);
   var MOUTH = { x: 779, y: 525, rw: 26, rh: 18 };
+  deepFreeze(MOUTH);
   var FIN_DOTS = [
     { x: 308, y: 115 },
     { x: 317, y: 113 },
@@ -874,6 +899,7 @@
     steadySpreadDb: 3,
     steadyMs: 400
   };
+  deepFreeze(APE_DEFAULTS);
   var Ape = class {
     p;
     floorDb = null;
@@ -1072,6 +1098,7 @@
     "en-GB-SoniaNeural",
     "auto"
   ];
+  deepFreeze(TTS_VOICES);
   var DEFAULT_VOICE2 = "zh-CN-XiaoyiNeural";
   function normalizeVoiceName(name, fallback = DEFAULT_VOICE2) {
     const n = String(name == null ? "" : name).trim();
@@ -1876,6 +1903,7 @@
 
   // src/client/wake.ts
   var WAKE_WORDS = ["\u5927\u80A5\u9C7C", "\u5C0F\u84DD\u9C7C", "\u80A5\u9CB8", "\u80A5\u9C7C", "\u5C0F\u9C7C", "\u84DD\u9C7C", "\u9C7C\u9C7C", "\u80A5\u80A5"];
+  deepFreeze(WAKE_WORDS);
   var WAKE_WINDOW_MS = 3e4;
   var TRAD_TO_SIMPLE = { "\u9B5A": "\u9C7C", "\u98DB": "\u98DE", "\u85CD": "\u84DD", "\u7C43": "\u7BEE", "\u862D": "\u5170", "\u9BE8": "\u9CB8" };
   function normalizeWakeText(text) {
@@ -2345,6 +2373,7 @@
     "D#6": 1244.51,
     "E6": 1318.51
   };
+  deepFreeze(NOTE_FREQ);
   function beatSeconds(bpm) {
     return 60 / Math.max(60, Number(bpm) || 100);
   }
@@ -2847,6 +2876,9 @@
       "cat": "\u6570\u5B57"
     }
   ];
+  deepFreeze(COUPLETS);
+  var COUPLET_CATS = ["\u4E66\u9662", "\u683C\u8A00", "\u8C10\u8DA3", "\u540D\u80DC", "\u4E66\u623F", "\u6625\u8054", "\u5BFF\u8054", "\u666F\u89C2", "\u4E2D\u836F", "\u53E0\u5B57", "\u6570\u5B57"];
+  deepFreeze(COUPLET_CATS);
   function pickCouplet(excludeUpper, cat) {
     const byCat = cat ? COUPLETS.filter((c) => c.cat === cat) : COUPLETS;
     const base = byCat.length > 0 ? byCat : COUPLETS;
@@ -4204,6 +4236,7 @@
   // src/client/bubble.ts
   var BUBBLE_CSS = '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 "Microsoft YaHei",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}';
   var STATUS_TEXTS = ["\u5728\u542C\u2026", "\u5728\u60F3\u2026", "\u8BC6\u522B\u4E2D\u2026", "\u5728\u8BF4\u2026"];
+  deepFreeze(STATUS_TEXTS);
   function ensureBubbleStyle(doc) {
     try {
       const d = doc || (typeof document !== "undefined" ? document : null);
@@ -4556,6 +4589,7 @@
     [/三侠五义/, "\u4E09\u4FA0\u4E94\u4E49"],
     [/镜花缘/, "\u955C\u82B1\u7F18"]
   ];
+  deepFreeze(BOOK_ALIAS);
   var POEM_TITLES = (poem_titles_default.titles || []).slice().sort((a, b) => b.length - a.length);
   function matchPoemTitle(text) {
     const t = String(text || "");

@@ -5,6 +5,7 @@
  * 写盘走 host/atomic.ts；读坏文件按 [store] 前缀留痕并备份。
  */
 import { readFileSync } from 'node:fs';
+import { deepFreeze } from '../../shared/immutable.js';
 import { join } from 'node:path';
 import { writeJsonAtomic, isMissingFileError, quarantineFile } from '../atomic.js';
 export const GROWTH_STAGES = [
@@ -14,10 +15,12 @@ export const GROWTH_STAGES = [
     { exp: 2500, name: '知心' },
     { exp: 5000, name: '家人' },
 ];
+deepFreeze(GROWTH_STAGES);
 /** 每天最多涨 12 点经验（照 C# Growth.DailyCap） */
 export const EXP_DAILY_CAP = 12;
 /** 各来源的每日上限（照 C# Growth.SourceCap；未知来源按 3） */
 export const EXP_SOURCE_CAP = { chat: 5, praise: 6, feed: 6, story: 4, company: 6 };
+deepFreeze(EXP_SOURCE_CAP);
 export const EXP_SOURCE_DEFAULT_CAP = 3;
 export function growthStage(exp) {
     let idx = 0;

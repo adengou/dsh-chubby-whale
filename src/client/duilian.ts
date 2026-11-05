@@ -1,3 +1,4 @@
+import { deepFreeze } from '../shared/immutable.js'
 /**
  * client/duilian.ts —— 经典对联库（由 data/duilian.json 生成，公版；出处确切者署来源）
  */
@@ -310,10 +311,12 @@ export const COUPLETS: Couplet[] = [
     "source": "宋·邵雍《山村咏怀》诗句（数字联）",
     "cat": "数字"
   }
-]
+]
+deepFreeze(COUPLETS)
 
 /** 全部分类（供菜单/自检使用） */
-export const COUPLET_CATS: string[] = ["书院","格言","谐趣","名胜","书房","春联","寿联","景观","中药","叠字","数字"]
+export const COUPLET_CATS: string[] = ["书院","格言","谐趣","名胜","书房","春联","寿联","景观","中药","叠字","数字"]
+deepFreeze(COUPLET_CATS)
 
 /** 随机取一副：cat 为空则全库随机；excludeUpper 避免连续重复 */
 export function pickCouplet(excludeUpper?: string, cat?: string): Couplet {

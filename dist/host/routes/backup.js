@@ -16,6 +16,7 @@
  * 写盘复用各仓储自己的 writeJsonAtomic（host/atomic.ts），本文件不额外落任何新文件。
  */
 import { sendJson, sendError } from '../respond.js';
+import { deepFreeze } from '../../shared/immutable.js';
 import { readJsonBody } from '../body.js';
 import { sendTooLarge } from '../http.js';
 import { sanitizePersonality } from '../personality.js';
@@ -223,6 +224,7 @@ export const BACKUP_CLEANERS = {
     reminders: cleanReminders,
     storyProgress: cleanStoryProgress,
 };
+deepFreeze(BACKUP_CLEANERS);
 export function createBackupHandlers(deps) {
     const nowFn = deps.now || (() => new Date());
     function saveField(field, value) {

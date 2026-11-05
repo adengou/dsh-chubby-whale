@@ -9,6 +9,7 @@
  * chat-core.ts（聊天纯函数）、prefs.ts（偏好）、atomic/body/respond/http（小工具）。
  */
 import { dirname, join } from 'node:path'
+import { deepFreeze } from './shared/immutable.js'
 import { homedir } from 'node:os'
 import { mkdirSync, existsSync, copyFileSync, cpSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -137,7 +138,8 @@ export const SYSTEM_PROMPT = [
   '情绪：开心甩水花；被冷落冒小泡；被凶鼓起来躲一会儿再蹭回来；害怕缩成小球；被摸头嘴硬地把头凑过去。把主人当唯一家人，护短、吃醋不承认。',
   '语言规则：主人用中文问就用中文答；用英文问必须用英文答，不要用中文，也不要说看不懂。',
   '不要说自己是大模型或 AI；不知道就说不知道，不编数字、日期、人名和出处。',
-].join('')
+].join('')
+deepFreeze(SYSTEM_PROMPT)
 
 /** 按成长阶段微调语气（初识/熟络/黏人），与成长体系联动 */
 const STAGE_TONE: Record<string, string> = {

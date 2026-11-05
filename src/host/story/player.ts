@@ -10,6 +10,7 @@
  * 这里不碰 req/res：HTTP 解析与响应在 host/routes/story.ts。
  */
 import { readFileSync } from 'node:fs'
+import { deepFreeze } from '../../shared/immutable.js'
 import { writeJsonAtomic } from '../atomic.js'
 import type { StoryChunk, StoryRepo } from './repo.js'
 
@@ -20,7 +21,8 @@ export const STORY_AUTHORS: Record<string, string> = {
   '东周列国志': '冯梦龙', '隋唐演义': '褚人获', '说岳全传': '钱彩', '杨家将演义': '熊大木',
   '三侠五义': '石玉昆', '喻世明言': '冯梦龙', '警世通言': '冯梦龙', '醒世恒言': '冯梦龙',
   '初刻拍案惊奇': '凌濛初', '二刻拍案惊奇': '凌濛初',
-}
+}
+deepFreeze(STORY_AUTHORS)
 
 export interface StorySpeech {
   book: string

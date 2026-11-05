@@ -10,6 +10,7 @@
  * 这里不碰 req/res：HTTP 解析与响应在 host/routes/story.ts。
  */
 import { readFileSync } from 'node:fs';
+import { deepFreeze } from '../../shared/immutable.js';
 import { writeJsonAtomic } from '../atomic.js';
 export const STORY_AUTHORS = {
     '聊斋志异': '蒲松龄', '三国演义': '罗贯中', '西游记': '吴承恩', '水浒传': '施耐庵',
@@ -19,6 +20,7 @@ export const STORY_AUTHORS = {
     '三侠五义': '石玉昆', '喻世明言': '冯梦龙', '警世通言': '冯梦龙', '醒世恒言': '冯梦龙',
     '初刻拍案惊奇': '凌濛初', '二刻拍案惊奇': '凌濛初',
 };
+deepFreeze(STORY_AUTHORS);
 export function createStoryPlayer(opts) {
     const repo = opts.repo;
     const progress = loadProgress();

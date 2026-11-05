@@ -13,6 +13,7 @@
  * 不在可写字段里，模型输出再多也改不了核心提示词。
  */
 import { fetchJson } from './http.js';
+import { deepFreeze } from '../shared/immutable.js';
 import { CHAT_URL, SUMMARY_MAX_TOKENS } from './chat-core.js';
 import { DEFAULT_CHAT_MODEL } from './config.js';
 /** 每多少次成功回复触发一次提取 */
@@ -44,6 +45,7 @@ export const EXTRACTION_SYSTEM_PROMPT = [
     '4) 鲸鱼自己的核心设定（名字、家人、生日、出生地、语言规则、安全边界）是锁定的，绝对不能写进 JSON；也不要收住址、电话、证件、账号密码等隐私。',
     '5) 没有值得记的新信息，就返回 {"catchphrases":[],"preferences":[],"notes":""}。',
 ].join('\n');
+deepFreeze(EXTRACTION_SYSTEM_PROMPT);
 /** 把最近若干条对话压成「主人：… / 肥鲸：…」文本；没有可用内容时返回空串 */
 export function buildExtractionUser(messages) {
     const arr = Array.isArray(messages) ? messages : [];

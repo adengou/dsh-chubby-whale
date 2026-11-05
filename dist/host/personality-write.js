@@ -18,6 +18,7 @@
  *   · 失败/解析失败/超时静默放弃：不写盘、不阻塞回复、不影响 L2。
  */
 import { fetchJson } from './http.js';
+import { deepFreeze } from '../shared/immutable.js';
 import { CHAT_URL, SUMMARY_MAX_TOKENS } from './chat-core.js';
 import { DEFAULT_CHAT_MODEL } from './config.js';
 import { validateSelfNarrative } from './personality.js';
@@ -48,6 +49,7 @@ export const SELF_NARRATIVE_SYSTEM_PROMPT = [
     '4) 不许提名字、家人、生日、出生地、语言规则、安全底线；不许自称 AI 或大模型。',
     '5) 核心设定只读参考，禁止复述、禁止改写、禁止补充。',
 ].join('\n');
+deepFreeze(SELF_NARRATIVE_SYSTEM_PROMPT);
 /**
  * 拼 L3 的 user 消息：核心人设原文（只读，不进 history）+ 最近 16 条对话摘要。
  * 没有任何可用对话时返回空串，调用方据此放弃本次自写（不发请求、不写盘）。

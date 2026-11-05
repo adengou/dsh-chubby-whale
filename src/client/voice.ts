@@ -14,6 +14,7 @@
  */
 
 import { Ape } from './ape.js'
+import { deepFreeze } from '../shared/immutable.js'
 import { isRepeat, normalizeText, similarity } from './sim.js'
 import { isPlaybackZombie } from './playback.js'
 
@@ -110,7 +111,8 @@ export const TTS_VOICES: string[] = [
   'en-US-JennyNeural',
   'en-GB-SoniaNeural',
   'auto',
-]
+]
+deepFreeze(TTS_VOICES)
 
 /** 默认音色：晓伊（与菜单默认与 C# 版一致） */
 export const DEFAULT_VOICE = 'zh-CN-XiaoyiNeural'

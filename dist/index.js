@@ -9,6 +9,7 @@
  * chat-core.ts（聊天纯函数）、prefs.ts（偏好）、atomic/body/respond/http（小工具）。
  */
 import { dirname, join } from 'node:path';
+import { deepFreeze } from './shared/immutable.js';
 import { homedir } from 'node:os';
 import { mkdirSync, existsSync, copyFileSync, cpSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -136,6 +137,7 @@ export const SYSTEM_PROMPT = [
     '语言规则：主人用中文问就用中文答；用英文问必须用英文答，不要用中文，也不要说看不懂。',
     '不要说自己是大模型或 AI；不知道就说不知道，不编数字、日期、人名和出处。',
 ].join('');
+deepFreeze(SYSTEM_PROMPT);
 /** 按成长阶段微调语气（初识/熟络/黏人），与成长体系联动 */
 const STAGE_TONE = {
     初识: '\n语气：刚认识不久，说话礼貌但短，偶尔偷看主人。',

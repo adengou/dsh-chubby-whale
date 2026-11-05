@@ -1,3 +1,4 @@
+import { deepFreeze } from '../shared/immutable.js'
 /**
  * client/menu.ts —— 菜单数据（1:1 复刻 C# 版 的 menu.ps1，含中英双语）
  */
@@ -6,7 +7,8 @@ export type MenuItem =
   | { type: 'sep' }
   | { type: 'sub'; label: string; items: MenuItem[] }
 
-export const MELODIES = ['小星星', '两只老虎', '生日快乐', '欢乐颂', '铃儿响叮当', '伦敦大桥', '斯卡布罗集市', '思君黯然', '绿袖子', '致爱丽丝', '友谊天长地久']
+export const MELODIES = ['小星星', '两只老虎', '生日快乐', '欢乐颂', '铃儿响叮当', '伦敦大桥', '斯卡布罗集市', '思君黯然', '绿袖子', '致爱丽丝', '友谊天长地久']
+deepFreeze(MELODIES)
 
 // 简谱曲名 -> 英文（英文界面的「弹《X》」不能把中文曲名留在菜单里）
 export const SONG_EN: Record<string, string> = {
@@ -21,7 +23,8 @@ export const SONG_EN: Record<string, string> = {
   '绿袖子': 'Greensleeves',
   '致爱丽丝': 'Fur Elise',
   '友谊天长地久': 'Auld Lang Syne',
-}
+}
+deepFreeze(SONG_EN)
 
 // 中 -> 英 字典（菜单界面；只放固定文案，动态拼出来的标签走 tr() 的前缀模板）
 // 键必须与 buildMenu 里的文案逐字一致，否则就是永远匹配不到的死键。
@@ -100,7 +103,8 @@ export const EN_MAP: Record<string, string> = {
   '音色：Ana（英·女）': 'Voice: Ana (EN F)',
   '音色：Jenny（英·女）': 'Voice: Jenny (EN F)',
   '音色：Sonia（英·女·英式）': 'Voice: Sonia (EN-GB F)',
-}
+}
+deepFreeze(EN_MAP)
 
 // 开关类菜单项：前缀 -> [开, 关]（标签是运行时拼的，精确字典永远匹配不到）
 const TOGGLE_EN: Record<string, [string, string]> = {

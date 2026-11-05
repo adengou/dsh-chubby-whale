@@ -1,3 +1,4 @@
+import { deepFreeze } from '../shared/immutable.js'
 /**
  * client/wake.ts —— 唤醒词门（纯逻辑，不碰 DOM / 网络，可在 Node 里单测）
  *
@@ -11,7 +12,8 @@
  */
 
 /** 唤醒词（ASR 对这几个词识别率较高；「大肥鱼」是主唤醒词） */
-export const WAKE_WORDS: string[] = ['大肥鱼', '小蓝鱼', '肥鲸', '肥鱼', '小鱼', '蓝鱼', '鱼鱼', '肥肥']
+export const WAKE_WORDS: string[] = ['大肥鱼', '小蓝鱼', '肥鲸', '肥鱼', '小鱼', '蓝鱼', '鱼鱼', '肥肥']
+deepFreeze(WAKE_WORDS)
 
 /** 被唤醒后多久之内说话算"接着聊"（毫秒） */
 export const WAKE_WINDOW_MS = 30000
