@@ -961,6 +961,76 @@ try {
   ok('能加载聊天路由', false, String(e.message))
 }
 
+
+// ---------- ㉔ 说书播放器：连播 / 进度持久化 / 重置 / 跳过坏书 ----------
+console.log('\n[24] 说书播放器 host/story/player.ts')
+try {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { createStoryPlayer } = await import('../src/host/story/player.ts')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-story-test-'))
+  const progressFile = join(dir, 'story_progress.json')
+
+  const mkChunks = (book, n) => Array.from({ length: n }, (_, i) => ({
+    book, title: book + ' 第' + (i + 1) + '段', piece: i + 1, total: n, text: book + '正文' + (i + 1), index: i,
+  }))
+  const books = { 甲: mkChunks('甲', 3), 乙: mkChunks('乙', 2), 坏书: [] }
+  const repo = {
+    listBooks: async () => Object.keys(books),
+    loadBook: async (b) => (books[b] ? books[b].slice() : []),
+  }
+  const player = createStoryPlayer({ repo, progressFile })
+
+  const p1 = await player.start('甲', 'c1')
+  ok('开讲：定位到甲第 1 段', p1.ok && p1.chunk.book === '甲' && p1.chunk.piece === 1, p1.ok ? p1.chunk.book + '/' + p1.chunk.piece : p1.error)
+  ok('开场白带"话说"、语速 -30%', p1.chunk.text.indexOf('话说') >= 0 && p1.chunk.rate === '-30%')
+  ok('remain = 剩余未读段', p1.remain === 2, 'remain=' + p1.remain)
+  ok('第一段标记 isFirst', p1.chunk.isFirst === true)
+
+  const p2 = await player.next('c1')
+  ok('接着说 → 第 2 段', p2.ok && p2.chunk.piece === 2 && p2.remain === 1)
+  const p3 = await player.next('c1')
+  ok('第 3 段标记 isLast', p3.ok && p3.chunk.piece === 3 && p3.chunk.isLast === true && p3.remain === 0)
+  const p4 = await player.next('c1')
+  ok('本书读完 → 换下一本（乙）', p4.ok && p4.chunk.book === '乙' && p4.chunk.piece === 1, p4.ok ? p4.chunk.book + '/' + p4.chunk.piece : p4.error)
+
+  // 进度落盘：新实例（模拟重启）应该从记忆处继续
+  const player2 = createStoryPlayer({ repo, progressFile })
+  const r1 = await player2.start('', 'c2')
+  ok('重启后进度仍在 → 从乙第 2 段继续', r1.ok && r1.chunk.book === '乙' && r1.chunk.piece === 2, r1.ok ? r1.chunk.book + '/' + r1.chunk.piece : r1.error)
+
+  // 从头讲：清掉该书进度
+  const rs = await player2.reset('甲', 'c2')
+  ok('重置成功', rs.ok && rs.book === '甲', JSON.stringify(rs))
+  const a1 = await player2.start('甲', 'c2')
+  ok('重置后甲从第 1 段重新讲', a1.ok && a1.chunk.book === '甲' && a1.chunk.piece === 1)
+
+  // 坏书：读不出内容时应跳到能读的书，而不是假装讲完
+  const player3 = createStoryPlayer({ repo, progressFile: join(dir, 'p3.json') })
+  const bad = await player3.start('坏书', 'c3')
+  ok('点坏书 → 跳到能读的书', bad.ok && bad.chunk.book !== '坏书', bad.ok ? bad.chunk.book : bad.error)
+
+  // 全部读完 → 一轮后清零重来
+  const player4 = createStoryPlayer({ repo, progressFile: join(dir, 'p4.json') })
+  void await player4.start('甲', 'c4')
+  void await player4.next('c4')
+  void await player4.next('c4')
+  void await player4.next('c4')   // 乙1
+  void await player4.next('c4')   // 乙2
+  const again = await player4.next('c4') // 全读完 → 清零后重来
+  ok('全书单都读完后自动从头再来', again.ok, again.ok ? again.chunk.book + '/' + again.chunk.piece : again.error)
+
+  // 空书单
+  const playerEmpty = createStoryPlayer({ repo: { listBooks: async () => [], loadBook: async () => [] }, progressFile: join(dir, 'p5.json') })
+  const none = await playerEmpty.start('', 'c5')
+  ok('空书单 → no books', none.ok === false && none.error === 'no books', JSON.stringify(none))
+
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载说书播放器', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
