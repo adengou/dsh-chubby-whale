@@ -1599,6 +1599,78 @@ try {
   ok('能加载云端数据源', false, String(e.message))
 }
 
+
+// ---------- ㉜ 人格路由：快照形态 / 回滚三态 ----------
+console.log('\n[32] 人格路由 host/routes/personality.ts')
+try {
+  const { createPersonalityHandlers } = await import('../src/host/routes/personality.ts')
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.json = () => { try { return JSON.parse(Buffer.concat(out.chunks).toString('utf8')) } catch (e) { return null } }
+    return out
+  }
+  const data = {
+    catchphrases: ['哼'], preferences: ['白饭'], notes: '备注', selfNarrative: '最近想吃鱼',
+    selfNarrativeAt: '2026-11-06T00:00:00Z', version: 3, updatedAt: '2026-11-06T00:00:00Z',
+    history: [{ at: '2026-11-06T00:00:00Z', field: 'notes', old: '', new: '备注' }],
+  }
+  let revertResult = { saved: true, entry: { field: 'notes', old: '', new: '备注' } }
+  const repo = {
+    load: () => JSON.parse(JSON.stringify(data)),
+    save: () => true,
+    learn: () => ({ changed: false }),
+    writeNarrative: () => ({ changed: false }),
+    revert: () => revertResult,
+    segment: () => '',
+  }
+  const handlers = createPersonalityHandlers({
+    repo,
+    learningEnabled: () => false,
+    learnerStatus: () => ({ enabled: false, tries: 2 }),
+    writingEnabled: () => true,
+    writerStatus: () => ({ enabled: true, tries: 1 }),
+  })
+  let res = mkRes()
+  await handlers.handlePersonality({ method: 'GET' }, res)
+  const snap = res.json()
+  ok('快照：顶层平铺 + personality 子对象一致', snap.ok === true && snap.catchphrases[0] === '哼' && snap.personality.catchphrases[0] === '哼')
+  ok('快照：带历史与限制', Array.isArray(snap.history) && snap.history.length === 1 && !!snap.limits)
+  ok('快照：学习关闭 / 自写开启分开报', snap.enabled === false && snap.writingEnabled === true && snap.learning.enabled === false)
+  ok('快照：版本/自述透传', snap.version === 3 && snap.selfNarrative === '最近想吃鱼')
+
+  res = mkRes()
+  await handlers.handlePersonality({ method: 'POST' }, res)
+  ok('非 GET → 405', res.code === 405 && res.json().error === 'METHOD_NOT_ALLOWED')
+
+  // 回滚成功
+  res = mkRes()
+  await handlers.handleRevert({ method: 'POST', readableEnded: true }, res)
+  ok('回滚成功 → ok + reverted', res.json().ok === true && res.json().reverted.field === 'notes')
+
+  // 没有历史
+  revertResult = null
+  res = mkRes()
+  await handlers.handleRevert({ method: 'POST', readableEnded: true }, res)
+  const noHist = res.json()
+  ok('没有历史 → ok:false NO_HISTORY 且带快照', noHist.ok === false && noHist.error === 'NO_HISTORY' && noHist.catchphrases[0] === '哼')
+
+  // 写盘失败
+  revertResult = { saved: false, entry: { field: 'notes' } }
+  res = mkRes()
+  await handlers.handleRevert({ method: 'POST', readableEnded: true }, res)
+  ok('回滚写盘失败 → SAVE_FAILED', res.json().ok === false && res.json().error === 'SAVE_FAILED')
+
+  // 回滚只接受 POST
+  res = mkRes()
+  await handlers.handleRevert({ method: 'GET' }, res)
+  ok('回滚非 POST → 405', res.code === 405)
+} catch (e) {
+  ok('能加载人格路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
