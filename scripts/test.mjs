@@ -2378,6 +2378,88 @@ try {
   ok('能加载系统动作', false, String(e.message))
 }
 
+
+// ---------- ㊺ 拖入文件：图片/文档分流与兜底 ----------
+console.log('\n[45] 拖入文件 client/dropzone.ts + image.ts')
+try {
+  const dz = await import('../src/client/dropzone.ts')
+  const img = await import('../src/client/image.ts')
+
+  ok('图片判定看 mime', dz.isImageFile({ type: 'image/png' }) === true && dz.isImageFile({ type: 'text/plain' }) === false && dz.isImageFile(null) === false)
+  ok('文本判定看扩展名', ['.txt', '.md', '.json', '.log', '.csv'].every((e) => dz.isTextFile({ name: 'a' + e })))
+  ok('其它扩展名不算文本', dz.isTextFile({ name: 'a.pdf' }) === false && dz.isTextFile({ name: 'a.TXT' }) === true, '大写扩展名也认')
+  ok('文档提示词截前 4000 字', (() => { const m = dz.buildTextPrompt('字'.repeat(5000)); return m.indexOf('总结一下这篇文档：\n') === 0 && m.length === '总结一下这篇文档：\n'.length + 4000 })())
+  ok('常量与上限一致', dz.MAX_DROP_BYTES === 4 * 1024 * 1024 && dz.MAX_TEXT_CHARS === 4000 && dz.VISION_PROMPT.length > 0)
+
+  // FileReader 桩：data URL → 去前缀
+  const ORIG_FR = globalThis.FileReader
+  globalThis.FileReader = class {
+    readAsDataURL() { this.result = 'data:image/png;base64,QUJD'; setTimeout(() => this.onloadend && this.onloadend(), 0) }
+  }
+  ok('读图片去 data: 前缀', (await img.readFileAsBase64({ type: 'image/png' })) === 'QUJD')
+  globalThis.FileReader = class { readAsDataURL() { throw new Error('nope') } }
+  ok('读失败返回空串', (await img.readFileAsBase64({})) === '')
+  globalThis.FileReader = ORIG_FR
+
+  // 小图不压；大图在没有 canvas 的环境下回退原图（绝不把看图弄挂）
+  globalThis.FileReader = class {
+    constructor() { this.result = 'data:image/png;base64,' + 'A'.repeat(1000) }
+    readAsDataURL() { setTimeout(() => this.onloadend && this.onloadend(), 0) }
+  }
+  const small = await img.imageToB64({ type: 'image/png' })
+  ok('小图原样返回（不折腾）', !!small && small.compressed === false && small.mime === 'image/png' && small.b64.length === 1000)
+  globalThis.FileReader = class {
+    constructor() { this.result = 'data:image/png;base64,' + 'B'.repeat(500 * 1024) }
+    readAsDataURL() { setTimeout(() => this.onloadend && this.onloadend(), 0) }
+  }
+  const big = await img.imageToB64({ type: 'image/png' })
+  ok('大图无 canvas 时回退原图', !!big && big.compressed === false && big.b64.length === 500 * 1024)
+  globalThis.FileReader = ORIG_FR
+
+  // handleFileDrop：各类兜底
+  const noop = () => { }
+  ok('没文件 → empty', (await dz.handleFileDrop(null, { showBubble: noop, fetchImpl: async () => ({}) })).kind === 'empty')
+  ok('超 4MB → too-large', (await dz.handleFileDrop({ size: 5 * 1024 * 1024 }, { showBubble: noop, fetchImpl: async () => ({}) })).kind === 'too-large')
+  ok('没有 fetch → error', (await dz.handleFileDrop({ size: 10, name: 'a.txt' }, { showBubble: noop, fetchImpl: null, fetch: null })).kind === 'error')
+  ok('不支持的格式 → unsupported', (await dz.handleFileDrop({ size: 10, name: 'a.pdf', type: 'application/pdf' }, { showBubble: noop, fetchImpl: async () => ({}) })).kind === 'unsupported')
+
+  // 文档路径
+  const bubbles = []
+  const spoke = []
+  const bodies = []
+  const fetchOk = async (_url, init) => {
+    bodies.push(JSON.parse(String(init.body)))
+    return { ok: true, status: 200, json: async () => ({ ok: true, reply: '这篇讲的是白饭' }) }
+  }
+  const mdFile = { size: 100, name: 'note.md', type: 'text/markdown', text: async () => '# 标题\n正文' }
+  const r1 = await dz.handleFileDrop(mdFile, { showBubble: (t) => bubbles.push(t), speakText: (t) => spoke.push(t), fetchImpl: fetchOk })
+  ok('文档：走总结并朗读', r1.ok === true && r1.kind === 'text' && r1.reply === '这篇讲的是白饭' && spoke[0] === '这篇讲的是白饭')
+  ok('文档：请求体是总结提示词', bodies[0] && String(bodies[0].message).indexOf('总结一下这篇文档：') === 0)
+  ok('文档：气泡带（文档）前缀', bubbles.some((b) => b.indexOf('（文档）') === 0), bubbles.join(' | '))
+
+  const emptyFile = { size: 10, name: 'e.txt', type: 'text/plain', text: async () => '   ' }
+  ok('文档为空 → error', (await dz.handleFileDrop(emptyFile, { showBubble: noop, fetchImpl: fetchOk })).kind === 'error')
+
+  const badFile = { size: 10, name: 'b.txt', type: 'text/plain', text: async () => { throw new Error('unreadable') } }
+  ok('文件读不出 → error', (await dz.handleFileDrop(badFile, { showBubble: noop, fetchImpl: fetchOk })).kind === 'error')
+
+  const badFetch = async () => { throw new Error('net down') }
+  const r2 = await dz.handleFileDrop(mdFile, { showBubble: noop, fetchImpl: badFetch })
+  ok('请求失败 → error（不抛）', r2.ok === false && r2.kind === 'error')
+
+  // 图片路径：FileReader 桩 + 假 fetch
+  globalThis.FileReader = class {
+    constructor() { this.result = 'data:image/png;base64,QUJD' }
+    readAsDataURL() { setTimeout(() => this.onloadend && this.onloadend(), 0) }
+  }
+  const r3 = await dz.handleFileDrop({ size: 100, name: 'p.png', type: 'image/png' }, { showBubble: (t) => bubbles.push(t), speakText: (t) => spoke.push(t), fetchImpl: fetchOk })
+  ok('图片：走视觉提问', r3.ok === true && r3.kind === 'image' && r3.message === dz.VISION_PROMPT)
+  ok('图片：请求带 image 与 mime', (() => { const b = bodies[bodies.length - 1]; return !!b && b.image === 'QUJD' && b.imageMime === 'image/png' })())
+  globalThis.FileReader = ORIG_FR
+} catch (e) {
+  ok('能加载拖入文件模块', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
