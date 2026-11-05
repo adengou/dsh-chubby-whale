@@ -2904,6 +2904,57 @@ try {
   ok('能加载人格纯函数', false, String(e.message))
 }
 
+
+// ---------- 55 记忆仓储：追加轮次/上限/摘要/老格式/坏文件 ----------
+console.log('\n[55] 记忆仓储 src/host/repos/memory.ts')
+try {
+  const { mkdtempSync, rmSync, writeFileSync: wf, readdirSync, existsSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-memory-test-'))
+  const { createMemoryRepo } = await import('../src/host/repos/memory.ts')
+  const repo = createMemoryRepo(dir)
+
+  ok('空目录：历史为空、摘要为空', repo.loadHistory().length === 0 && repo.loadMemorySummary() === '')
+
+  const n1 = repo.appendTurns('主人说一句', '肥鲸答一句')
+  ok('追加一轮 = 2 条', n1 === 2 && repo.loadHistory().length === 2)
+  ok('追加内容正确', (() => { const h = repo.loadHistory(); return h[0].role === 'user' && h[0].content === '主人说一句' && h[1].role === 'assistant' })())
+
+  for (let i = 0; i < 30; i++) repo.appendTurns('问题' + i, '回答' + i)
+  const h2 = repo.loadHistory()
+  ok('上限 40 条（20 轮）', h2.length === 40, String(h2.length))
+  ok('保留最新、丢弃最旧', h2[h2.length - 1].content === '回答29' && h2[0].content !== '主人说一句', h2[0].content)
+
+  repo.saveMemorySummary('主人喜欢白饭')
+  ok('摘要可写可读', repo.loadMemorySummary() === '主人喜欢白饭')
+  repo.appendTurns('再来一句', '好呀')
+  ok('追加轮次不冲掉摘要', repo.loadMemorySummary() === '主人喜欢白饭')
+
+  repo.clearMemory()
+  ok('清空记忆：历史与摘要都清', repo.loadHistory().length === 0 && repo.loadMemorySummary() === '')
+
+  // 老格式：整份就是数组
+  let dir2 = mkdtempSync(join(tmpdir(), 'chubby-memory-old-'))
+  wf(join(dir2, 'memory.json'), JSON.stringify([{ role: 'user', content: '老格式' }]), 'utf8')
+  const old = createMemoryRepo(dir2)
+  ok('老格式（纯数组）能读', old.loadHistory().length === 1 && old.loadHistory()[0].content === '老格式' && old.loadMemorySummary() === '')
+
+  // 坏文件：不抛、返回空、并隔离备份
+  const dir3 = mkdtempSync(join(tmpdir(), 'chubby-memory-bad-'))
+  wf(join(dir3, 'memory.json'), '{ 这不是 json', 'utf8')
+  const bad = createMemoryRepo(dir3)
+  ok('坏文件不抛、按空处理', bad.loadHistory().length === 0 && bad.loadMemorySummary() === '')
+  const files = readdirSync(dir3)
+  ok('坏文件被隔离备份', files.some((x) => x.indexOf('memory.json') >= 0 && x.indexOf('bad') >= 0), files.join(','))
+
+  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir2, { recursive: true, force: true })
+  rmSync(dir3, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载记忆仓储', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
