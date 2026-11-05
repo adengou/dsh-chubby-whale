@@ -691,20 +691,6 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     setStatus('idle')
   }
 
-  /**
-   * 去掉人设里的"动作描写"再念：`*甩甩尾巴*` / `＊歪头＊` 这类是给人看的，
-   * 念出来会被 edge-tts 读成"星号"，而且麦克风会把自己的朗读听回去，
-   * 当成主人说的话（实测记忆里出现"星号慢慢游近了一点"这种"主人发言"）。
-   */
-  function stripStageDirections(s: string): string {
-    let t = String(s || '')
-    t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, ' ')
-    t = t.replace(/[\*＊]/g, ' ')
-    // 剥完动作后别留"主人， 白饭"这种标点后空格
-    t = t.replace(/([，。！？；：、])\s+/g, '$1')
-    return t.replace(/\s{2,}/g, ' ').trim()
-  }
-
   function speak(text: string, o?: { rate?: string; pitch?: string; narration?: boolean; strict?: boolean; onDone?: () => void }): void {
     // 先剥掉动作描写（人设的 *…* 不该进语音通道）
     const raw = stripStageDirections(String(text || ''))

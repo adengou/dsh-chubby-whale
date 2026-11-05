@@ -653,6 +653,10 @@ try {
   ok('标点后多余空格被收掉', txt.stripStageDirections('主人， 白饭。') === '主人，白饭。')
   ok('普通句子原样返回', txt.stripStageDirections('今天天气不错') === '今天天气不错')
   ok('未闭合星号也清掉（不念出星号）', txt.stripStageDirections('主人*还没说完') === '主人 还没说完'.replace(/  /g, ' '))
+  // 防止"抽走了实现、工厂里又留一份副本"（出现过分身：运行时用副本、测试测正本，早晚漂移）
+  const { readFileSync: rf2 } = await import('node:fs')
+  const voiceSrc = rf2('src/client/voice.ts', 'utf8')
+  ok('voice.ts 不再自带一份 stripStageDirections 实现', voiceSrc.indexOf('function stripStageDirections') < 0)
 } catch (e) {
   ok('能加载 text.ts', false, String(e.message))
 }

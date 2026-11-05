@@ -1241,6 +1241,13 @@
     if (p.length > 2) return false;
     return SHORT_ECHO_ALLOW.indexOf(p) < 0;
   }
+  function stripStageDirections(raw) {
+    let t = String(raw == null ? "" : raw);
+    t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, " ");
+    t = t.replace(/[\*＊]/g, " ");
+    t = t.replace(/([，。！？；：、])\s+/g, "$1");
+    return t.replace(/\s{2,}/g, " ").trim();
+  }
   function createDeduper(opts) {
     const windowMs = Math.max(0, Number(opts && opts.windowMs) || 0);
     let lastNorm = "";
@@ -2101,15 +2108,8 @@
       timeBuf = null;
       setStatus("idle");
     }
-    function stripStageDirections2(s) {
-      let t = String(s || "");
-      t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, " ");
-      t = t.replace(/[\*＊]/g, " ");
-      t = t.replace(/([，。！？；：、])\s+/g, "$1");
-      return t.replace(/\s{2,}/g, " ").trim();
-    }
     function speak(text, o) {
-      const raw = stripStageDirections2(String(text || ""));
+      const raw = stripStageDirections(String(text || ""));
       if (!raw) return;
       const narration = o && typeof o.narration === "boolean" ? o.narration : raw.length >= 80;
       const rate = o && o.rate ? o.rate : narration ? narrationRate() : "+0%";
