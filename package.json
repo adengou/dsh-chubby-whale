@@ -68,7 +68,8 @@
     "typecheck": "node scripts/gen-version.mjs && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "smoke:client": "node scripts/smoke-client.mjs",
     "bench:ape": "node scripts/ape-bench.mjs",
-    "smoke:host": "node scripts/smoke-host.mjs"
+    "smoke:host": "node scripts/smoke-host.mjs",
+    "bench:tts": "node tools/tts-bench.mjs"
   },
   "repository": {
     "type": "git",
