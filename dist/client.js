@@ -5144,7 +5144,6 @@
       if (!text) return;
       abortStream();
       const d0 = diag();
-      if (d0) d0.ttsSkip = "empty-text";
       if (d0) d0.lastChat = { stage: "entry", busy: host.busy.isBusy(), tts: !!host.ttsPlaying(), at: Date.now() };
       if (host.busy.isBusy() && d0) d0.lastChat.stage = "blocked-busy";
       if (host.busy.isBusy() && host.busy.age() < 35e3) {

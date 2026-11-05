@@ -219,7 +219,9 @@ export function createChatSender(host: ChatHost): ChatController {
     // 新提问优先：正在流式时先作废旧流（旧 delta 不再写气泡/不再入消息/不再念），并解除它的占线
     abortStream()
     const d0 = diag()
-    if (d0) d0.ttsSkip = 'empty-text'
+    // 这里原来有一行 d0.ttsSkip = 'empty-text'（重构时留下的残留）：
+    // 每次发送都会把"跳过朗读的原因"改写成 empty-text，掩盖真正的原因（比如 voice-off）。
+    // 诊断字段要能信，删掉这行，真正的跳过原因由 speak 侧写。
     // 占线保护：上一条还在想就拒绝（不排队），避免两条回复抢同一个话筒
     if (d0) d0.lastChat = { stage: 'entry', busy: host.busy.isBusy(), tts: !!host.ttsPlaying(), at: Date.now() }
     if (host.busy.isBusy() && d0) d0.lastChat.stage = 'blocked-busy'
