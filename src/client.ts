@@ -46,7 +46,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     let asrBusy = false
     let asrBusyAt = 0   // 识别位占用的起始时刻（用于僵尸复位与状态显示）
     // 叙述语速（与 voice.ts 同源，localStorage 可调，默认 -25%）
-    const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-narration-rate'); return (s && /^[+-]\\d{1,2}%$/.test(s)) ? s : '-25%' } catch (e) { return '-25%' } })()
+    const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-narration-rate'); return (s && /^[+-]\d{1,2}%$/.test(s)) ? s : '-25%' } catch (e) { return '-25%' } })()
     const storyNarratingRef = { current: false }
     const persona = createPersona()
     let lastPoemSpeech = ''
@@ -591,9 +591,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         if (action === 'hide') { setHidden(true); return }
         if (action === 'version') { showBubble('肥鲸 v' + VERSION); return }
         if (action === 'type') { voiceModeRef.current = false; setChatOpen(true); return }
-        if (action === 'pause') { stopTts(); stopMelody(); showBubble('歇会儿…'); return }
+        if (action === 'pause') { stopTts(); stopMelody(); storyBusyRef.current = false; showBubble('歇会儿…'); return }
         if (action === 'music-stop') { stopMelody(); showBubble('停下啦'); return }
-        if (action === 'tts-stop') { stopTts(); showBubble('好，不说了'); return }
+        if (action === 'tts-stop') { stopTts(); storyBusyRef.current = false; showBubble('好，不说了'); return }
         if (action === 'fishfood') { fetch('/api/chubby-whale/fishfood').then((r: any) => r.json()).then((d: any) => { if (d && d.ok) { showBubble('鱼粮账本：聊天 ' + d.chatTokens + ' tokens，说书 ' + d.storyTokens + ' tokens，共 ' + d.total, 5000) } else showBubble('鱼粮查不到') }).catch(() => showBubble('鱼粮查不到')); return }
         if (action === 'growth') { Promise.all([fetch('/api/chubby-whale/growth').then((r: any) => r.json()), fetch('/api/chubby-whale/state').then((r: any) => r.json())]).then(([g, s]) => { if (g && g.ok) { const nx = g.nextExp > 0 ? ('（经验 ' + g.exp + '/' + g.nextExp + '）') : '（满级）'; const it = (s && s.intimacy) || 0; showBubble('成长：' + g.stage + nx + ' · 亲密度 ' + it + '/100', 5000) } else showBubble('成长查不到') }).catch(() => showBubble('成长查不到')); return }
         if (action === 'intimacy') {
@@ -1000,7 +1000,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           const res = await fetch('/api/chubby-whale/chat-stream', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ message: text, lang: 'zh', voice: !!(opts && opts.voice) }),
+            body: JSON.stringify({ message: text, lang: 'auto', voice: !!(opts && opts.voice) }),
             signal: ctl ? ctl.signal : undefined,
           })
           if (!res.ok || !res.body) { clearTimeout(firstTimer); return false }
@@ -1045,6 +1045,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
                   }
                 }
                 clearTimeout(firstTimer)
+                setBusy(false)
                 return true
               }
             }

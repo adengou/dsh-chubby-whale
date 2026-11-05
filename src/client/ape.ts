@@ -116,6 +116,7 @@ export class Ape {
     this.elapsedMs = 0
     this.runMs = 0
     this.hadSpeech = false
+    this.steadyCooldownMs = 0
     this.bandMs = 0
   }
 

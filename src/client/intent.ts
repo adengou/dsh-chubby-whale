@@ -54,7 +54,7 @@ export function matchPoemTitle(text: string): string {
 
 /** 真提问的标记：命中则不劫持 */
 export function isQuestion(text: string): boolean {
-  return /[?？]|为什么|怎么|如何/.test(String(text || ''))
+  return /[?？]|为什么|怎么|如何|什么|谁|哪[儿里]?|多少|几点|几号|是不是|能不能|要不要|吗\s*$|呢\s*$/.test(String(text || ''))
 }
 
 /** 识别点播意图；返回 null 表示"交给模型" */

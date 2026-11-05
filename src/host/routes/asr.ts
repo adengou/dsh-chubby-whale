@@ -75,7 +75,8 @@ export function createAsrHandler(opts: { pluginDir: string; cache?: any }) {
         return
       }
       // 用完整音频字节做 key（只取前 4000 字符容易撞 key）
-      const ck = hashBytes(buf)
+      // key 里带模型名：换 ASR 模型后不会命中旧文本
+      const ck = hashBytes(Buffer.concat([Buffer.from('v1|' + ASR_MODEL + '|'), buf]))
       if (opts.cache) {
         const hit = await opts.cache.getJson(ck, 'json', ASR_CACHE_MAX_AGE)
         if (hit && typeof hit.text === 'string') {

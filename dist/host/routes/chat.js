@@ -46,6 +46,15 @@ export function normalizeChatText(s) {
         .replace(/[，。！？、；：,.!?;:"'”’“”（）()【】\[\]<>《》~`@#$%^&*_+=|\\/-]/g, '');
 }
 /** 缓存键：语言 + 规范化文本 + 是否语音（语音和打字分开存，避免互相串） */
+/** 按内容判语言：有中文→zh；无中文但有拉丁字母→en；否则 auto。纯函数，便于离线断言 */
+export function detectLang(message) {
+    const t = String(message || '');
+    if (/[\u4e00-\u9fa5]/.test(t))
+        return 'zh';
+    if (/[A-Za-z]{2,}/.test(t))
+        return 'en';
+    return 'auto';
+}
 /** 取最近 n 条（只做截断，不改内容）；纯函数，便于离线断言 */
 export function recentHistory(history, n) {
     const arr = Array.isArray(history) ? history : [];
@@ -84,9 +93,8 @@ export function createChatHandler(opts) {
             const message = typeof body?.message === 'string' ? body.message.slice(0, 500) : '';
             const imageB64 = typeof body?.image === 'string' ? body.image : '';
             const chatLang = (typeof body?.lang === 'string' && /^(zh|en|auto)$/.test(body.lang)) ? body.lang : 'auto';
-            // auto 模式下按内容判语言：整句没有中文、且有拉丁字母 → 判定为英文
-            // （以前 auto 一律不加提示，模型看见中文人设+中文历史就用中文答，英文提问会得到「一头雾水」）
-            const detected = /[\u4e00-\u9fa5]/.test(message) ? 'zh' : (/[A-Za-z]{2,}/.test(message) ? 'en' : 'auto');
+            // auto 模式下按内容判语言（与流式路径共用 detectLang）
+            const detected = detectLang(message);
             const effLang = chatLang === 'auto' ? detected : chatLang;
             const imageMime = typeof body?.imageMime === 'string' ? body.imageMime : 'image/jpeg';
             // 短句（<6 字）不进缓存：不然「在吗」「好的」会被复读机式复用（照 C# 的修法）

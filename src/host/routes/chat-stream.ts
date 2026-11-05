@@ -15,7 +15,7 @@
  */
 
 import { readBody, isBodyTooLarge, sendTooLarge } from '../http.js'
-import { chatCacheKey, recentHistory, HISTORY_IN_PROMPT } from './chat.js'
+import { chatCacheKey, recentHistory, HISTORY_IN_PROMPT, detectLang } from './chat.js'
 import { shortHash } from '../cache.js'
 import { parseSseBuffer } from '../../shared/sse.js'
 
@@ -56,7 +56,8 @@ export function createChatStreamHandler(opts: {
       let body: any = {}
       try { body = JSON.parse(raw.toString('utf8') || '{}') } catch { body = {} }
       const message = String(body?.message || '').trim()
-      const lang = normalizeLang(body?.lang)
+      const rawLang = (typeof body?.lang === 'string' && /^(zh|en|auto)$/.test(body.lang)) ? body.lang : 'auto'
+      const lang = rawLang === 'auto' ? detectLang(message) : rawLang
       const isVoice = !!body?.voice
       if (!message) {
         res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive' })

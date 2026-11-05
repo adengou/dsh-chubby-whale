@@ -267,6 +267,12 @@ try {
   else ok('语音与打字缓存分开')
   if (k1 !== k5) bad('标点归一未生效（浪费缓存）')
   else ok('标点归一：『你好』与『你好！』同 key')
+  const d1 = chatMod.detectLang('你好')
+  const d2 = chatMod.detectLang('hello world')
+  const d3 = chatMod.detectLang('123')
+  const d4 = chatMod.detectLang('你好 hello')
+  if (d1 !== 'zh' || d2 !== 'en' || d3 !== 'auto' || d4 !== 'zh') bad('detectLang 判定不符（zh/en/auto）')
+  else ok('detectLang：中文→zh、英文→en、无字母→auto、中英混排→zh（流式与普通路径一致）')
 } catch (e) { bad('导入 chat.js 纯函数', e) }
 
 console.log('\n' + (failed === 0 ? '自检通过 ✅' : '自检失败 ❌ ' + failed + ' 项'))

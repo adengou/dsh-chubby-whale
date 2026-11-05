@@ -608,6 +608,7 @@
       this.elapsedMs = 0;
       this.runMs = 0;
       this.hadSpeech = false;
+      this.steadyCooldownMs = 0;
       this.bandMs = 0;
     }
     resetNoise() {
@@ -1004,7 +1005,7 @@
     }
     function acceptText(text) {
       const plain = text.replace(/[\s。，！？,.!?、…~～]/g, "");
-      if (plain.length < 2) return false;
+      if (plain.length < 2 && !/^[停别不]$/.test(plain)) return false;
       if (NOISE_TEXTS.indexOf(plain) >= 0) return false;
       if (/^本鱼在听/.test(plain)) return false;
       const now = Date.now();
@@ -1861,7 +1862,7 @@
     return "";
   }
   function isQuestion(text) {
-    return /[?？]|为什么|怎么|如何/.test(String(text || ""));
+    return /[?？]|为什么|怎么|如何|什么|谁|哪[儿里]?|多少|几点|几号|是不是|能不能|要不要|吗\s*$|呢\s*$/.test(String(text || ""));
   }
   function detectIntent(rawText) {
     const t = String(rawText || "").trim();
@@ -2043,7 +2044,7 @@
       const NARRATION_RATE2 = (() => {
         try {
           const s = localStorage.getItem("chubby-narration-rate");
-          return s && /^[+-]\\d{1,2}%$/.test(s) ? s : "-25%";
+          return s && /^[+-]\d{1,2}%$/.test(s) ? s : "-25%";
         } catch (e) {
           return "-25%";
         }
@@ -2826,6 +2827,7 @@
           if (action === "pause") {
             stopTts();
             stopMelody();
+            storyBusyRef.current = false;
             showBubble("\u6B47\u4F1A\u513F\u2026");
             return;
           }
@@ -2836,6 +2838,7 @@
           }
           if (action === "tts-stop") {
             stopTts();
+            storyBusyRef.current = false;
             showBubble("\u597D\uFF0C\u4E0D\u8BF4\u4E86");
             return;
           }
@@ -3389,7 +3392,7 @@
             const res = await fetch("/api/chubby-whale/chat-stream", {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ message: text, lang: "zh", voice: !!(opts && opts.voice) }),
+              body: JSON.stringify({ message: text, lang: "auto", voice: !!(opts && opts.voice) }),
               signal: ctl ? ctl.signal : void 0
             });
             if (!res.ok || !res.body) {
@@ -3445,6 +3448,7 @@
                     }
                   }
                   clearTimeout(firstTimer);
+                  setBusy(false);
                   return true;
                 }
               }

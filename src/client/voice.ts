@@ -264,7 +264,8 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
   /** 过滤：静音噪声 / 自身回声 / 短时间重复 */
   function acceptText(text: string): boolean {
     const plain = text.replace(/[\s。，！？,.!?、…~～]/g, '')
-    if (plain.length < 2) return false
+    // 单字放行白名单：主人喊「停！」也要能打断说书/朗读
+    if (plain.length < 2 && !/^[停别不]$/.test(plain)) return false
     if (NOISE_TEXTS.indexOf(plain) >= 0) return false
     if (/^本鱼在听/.test(plain)) return false
     // 自己刚说过的话（回声）
