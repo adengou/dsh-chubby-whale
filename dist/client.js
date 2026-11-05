@@ -234,6 +234,14 @@
     "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09": "Voice: Sonia (EN-GB F)"
   };
   deepFreeze(EN_MAP);
+  var STAGE_EN = {
+    "\u521D\u8BC6": "New",
+    "\u719F\u6089": "Familiar",
+    "\u4EB2\u5BC6": "Close",
+    "\u77E5\u5FC3": "Confidant",
+    "\u5BB6\u4EBA": "Family"
+  };
+  deepFreeze(STAGE_EN);
   var TOGGLE_EN = {
     "\u8BED\u97F3\u6717\u8BFB\uFF1A": ["Voice output: on", "Voice output: off"],
     "\u8BED\u97F3\u5F85\u547D\uFF1A": ["Voice standby: on", "Voice standby: off"],
@@ -253,7 +261,13 @@
       const song = label.slice(2, label.length - 1);
       return SONG_EN[song] ? 'Play "' + SONG_EN[song] + '"' : "Play a song";
     }
-    if (label.startsWith("\u6210\u957F\uFF1A")) return "Growth: " + label.slice(3);
+    if (label.startsWith("\u6210\u957F\uFF1A")) {
+      const rest = label.slice(3);
+      const m = rest.match(/^(初识|熟悉|亲密|知心|家人)([\s\S]*)$/);
+      if (!m) return "Growth: " + rest;
+      const tail = String(m[2] || "").replace(/（/g, "(").replace(/）/g, ")");
+      return "Growth: " + (STAGE_EN[m[1]] || m[1]) + tail;
+    }
     if (label.startsWith("\u7248\u672C\uFF1Av")) return "Version: v" + label.slice(4);
     if (label.startsWith("\u4F59\u989D\uFF1A")) return "Balance: " + label.slice(3);
     for (const prefix of Object.keys(TOGGLE_EN)) {

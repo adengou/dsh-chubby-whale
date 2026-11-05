@@ -2548,6 +2548,48 @@ try {
   ok('能加载备份数据模块', false, String(e.message))
 }
 
+
+// ---------- ㊼ 菜单英译覆盖：英文模式不许漏中文 ----------
+console.log('\n[47] 菜单英译覆盖 client/menu.ts')
+try {
+  const menu = await import('../src/client/menu.ts')
+  const state = {
+    voiceOn: true, earOn: true, voiceChatOn: true, chatCacheOn: true,
+    chatLang: 'auto', ttsVoice: 'zh-CN-XiaoyiNeural', balance: '¥12.5', growth: '熟悉（200）',
+    storyBooks: ['聊斋志异'], storyBooksTried: true,
+    narrationRate: -25, poemRate: -25, storyRate: -35, storyAuto: true, streamOn: false,
+  }
+  const items = menu.buildMenu('1.0.1', state)
+  const leaks = []
+  // 书名/曲名是专有名词，英文界面保留中文是对的；其余静态文案必须全部译出
+  const properNoun = (it) => /^(story-book:|music:)/.test(it.action || '')
+  const walk = (list) => {
+    for (const it of list) {
+      if (!it) continue
+      if (it.label && !properNoun(it)) {
+        const en = menu.tr(it.label, 'en')
+        if (/[\u4e00-\u9fff]/.test(en)) leaks.push(it.label + ' → ' + en)
+      }
+      if (Array.isArray(it.items)) walk(it.items)
+    }
+  }
+  walk(items)
+  ok('英文模式无漏译', leaks.length === 0, leaks.slice(0, 6).join(' / '))
+  ok('中文模式原样返回', menu.tr('投喂一碗', 'zh') === '投喂一碗' && menu.tr('投喂一碗', 'auto') === '投喂一碗')
+  ok('勾选项保留勾并译出', menu.tr('✓ 中文', 'en') === '✓ Chinese', menu.tr('✓ 中文', 'en'))
+  ok('动态标签：成长/余额/版本', menu.tr('成长：熟悉（200）', 'en').indexOf('Growth:') === 0 && menu.tr('余额：¥12.5', 'en').indexOf('Balance:') === 0 && menu.tr('版本：v1.0.1', 'en').indexOf('Version: v') === 0)
+  ok('动态标签：开关类', menu.tr('语音朗读：开', 'en') === 'Voice output: on' && menu.tr('流式回复：关', 'en') === 'Streaming replies: off')
+  ok('动态标签：四种语速', ['叙述语速：', '念诗语速：', '说书语速：', '连播：'].every((k) => menu.tr(k + '-25%', 'en').indexOf('speed:') > 0 || menu.tr(k + '-25%', 'en').indexOf('Auto-continue') === 0))
+  ok('未知标签原样返回（不编造译文）', menu.tr('某个没登记的新菜单', 'en') === '某个没登记的新菜单')
+  ok('英译表被冻结', Object.isFrozen(menu.EN_MAP))
+
+  // 每条英文译文本身不能还是中文（防止"复制粘贴忘了改"）
+  const bad = Object.keys(menu.EN_MAP).filter((k) => /[\u4e00-\u9fff]/.test(menu.EN_MAP[k]))
+  ok('译文字段无中文残留', bad.length === 0, bad.slice(0, 5).join(','))
+} catch (e) {
+  ok('能加载菜单模块', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

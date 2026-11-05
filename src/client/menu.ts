@@ -106,6 +106,12 @@ export const EN_MAP: Record<string, string> = {
 }
 deepFreeze(EN_MAP)
 
+// 成长阶段名（来自 shared/growth.ts 的数据值）→ 英文；菜单"成长：熟悉（200）"要用
+const STAGE_EN: Record<string, string> = {
+  '初识': 'New', '熟悉': 'Familiar', '亲密': 'Close', '知心': 'Confidant', '家人': 'Family',
+}
+deepFreeze(STAGE_EN)
+
 // 开关类菜单项：前缀 -> [开, 关]（标签是运行时拼的，精确字典永远匹配不到）
 const TOGGLE_EN: Record<string, [string, string]> = {
   '语音朗读：': ['Voice output: on', 'Voice output: off'],
@@ -130,7 +136,13 @@ export function tr(label: string, lang: string): string {
     const song = label.slice(2, label.length - 1)
     return SONG_EN[song] ? 'Play "' + SONG_EN[song] + '"' : 'Play a song'
   }
-  if (label.startsWith('成长：')) return 'Growth: ' + label.slice(3)
+  if (label.startsWith('成长：')) {
+    const rest = label.slice(3)
+    const m = rest.match(/^(初识|熟悉|亲密|知心|家人)([\s\S]*)$/)
+    if (!m) return 'Growth: ' + rest
+    const tail = String(m[2] || '').replace(/（/g, '(').replace(/）/g, ')')
+    return 'Growth: ' + (STAGE_EN[m[1]] || m[1]) + tail
+  }
   if (label.startsWith('版本：v')) return 'Version: v' + label.slice(4)
   if (label.startsWith('余额：')) return 'Balance: ' + label.slice(3)
   for (const prefix of Object.keys(TOGGLE_EN)) {
