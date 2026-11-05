@@ -190,6 +190,10 @@
     "\u7A0D\u5FEB -25%": "A bit faster -25%",
     "\u9002\u4E2D -30%": "Medium -30%",
     "\u504F\u6162 -35%\uFF08\u9ED8\u8BA4\uFF09": "Slower -35% (default)",
+    "\u6B63\u5E38 -10%": "Normal -10%",
+    "\u504F\u6162 -20%\uFF08\u9ED8\u8BA4\uFF09": "Slow -20% (default)",
+    "\u5F88\u6162 -25%": "Very slow -25%",
+    "\u66F4\u6162 -30%": "Even slower -30%",
     "\u7A0D\u5FEB -15%": "A bit faster -15%",
     "\u9002\u4E2D -20%": "Medium -20%",
     "\u504F\u6162 -25%\uFF08\u9ED8\u8BA4\uFF09": "Slower -25% (default)",
@@ -280,6 +284,7 @@
     if (label.startsWith("\u8FDE\u64AD\uFF1A")) return label.indexOf("\u5F00") >= 0 ? "Auto-continue: on" : "Auto-continue: off";
     if (label.startsWith("\u5FF5\u8BD7\u8BED\u901F\uFF1A")) return label.replace("\u5FF5\u8BD7\u8BED\u901F\uFF1A", "Poem speed: ");
     if (label.startsWith("\u53D9\u8FF0\u8BED\u901F\uFF1A")) return label.replace("\u53D9\u8FF0\u8BED\u901F\uFF1A", "Narration speed: ");
+    if (label.startsWith("\u804A\u5929\u8BED\u901F\uFF1A")) return label.replace("\u804A\u5929\u8BED\u901F\uFF1A", "Chat speed: ");
     return label;
   }
   var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
@@ -361,6 +366,12 @@
         { type: "item", label: "\u63A5\u7740\u8BF4", action: "culture-story-next" },
         { type: "item", label: "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66", action: "story-reset" },
         { type: "item", label: "\u5FF5\u9996\u8BD7", action: "poem" },
+        { type: "sub", label: "\u804A\u5929\u8BED\u901F\uFF1A" + (state.chatRate || "-20%") + " \u25B8", items: [
+          { type: "item", label: ((state.chatRate || "-20%") === "-10%" ? "\u2713 " : "") + "\u6B63\u5E38 -10%", action: "chat-rate:-10%" },
+          { type: "item", label: ((state.chatRate || "-20%") === "-20%" ? "\u2713 " : "") + "\u504F\u6162 -20%\uFF08\u9ED8\u8BA4\uFF09", action: "chat-rate:-20%" },
+          { type: "item", label: ((state.chatRate || "-20%") === "-25%" ? "\u2713 " : "") + "\u5F88\u6162 -25%", action: "chat-rate:-25%" },
+          { type: "item", label: ((state.chatRate || "-20%") === "-30%" ? "\u2713 " : "") + "\u66F4\u6162 -30%", action: "chat-rate:-30%" }
+        ] },
         { type: "sub", label: "\u53D9\u8FF0\u8BED\u901F\uFF1A" + (state.narrationRate || "-25%") + " \u25B8", items: [
           { type: "item", label: ((state.narrationRate || "-25%") === "-15%" ? "\u2713 " : "") + "\u7A0D\u5FEB -15%", action: "narration-rate:-15%" },
           { type: "item", label: ((state.narrationRate || "-25%") === "-20%" ? "\u2713 " : "") + "\u9002\u4E2D -20%", action: "narration-rate:-20%" },
@@ -473,7 +484,27 @@
   var NARRATION_RATES = ["-15%", "-20%", "-25%", "-30%"];
   deepFreeze(NARRATION_RATES);
   var DEFAULT_NARRATION_RATE = "-25%";
-  var CHAT_REPLY_RATE = "-10%";
+  var CHAT_RATES = ["-10%", "-20%", "-25%", "-30%"];
+  deepFreeze(CHAT_RATES);
+  var DEFAULT_CHAT_RATE = "-20%";
+  function chatRate() {
+    try {
+      const s = localStorage.getItem("chubby-chat-rate");
+      if (s && CHAT_RATES.indexOf(s) >= 0) return s;
+    } catch (e) {
+    }
+    return DEFAULT_CHAT_RATE;
+  }
+  function setChatRate(rate) {
+    const v = String(rate || "").trim();
+    if (CHAT_RATES.indexOf(v) < 0) return false;
+    try {
+      localStorage.setItem("chubby-chat-rate", v);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
   function narrationRate() {
     try {
       const s = localStorage.getItem("chubby-narration-rate");
@@ -2468,7 +2499,7 @@
           wakeStats.passed++;
           if (!said) {
             try {
-              if (host.say) host.say("\u672C\u9CB8\u5728\u5462\uFF5E", 3200, { rate: "-15%" });
+              if (host.say) host.say("\u672C\u9CB8\u5728\u5462\uFF5E", 3200);
               else host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 3200);
             } catch (e) {
               try {
@@ -3251,6 +3282,14 @@
       const v = String(suffix || "");
       if (setNarrationRate(v)) host.bubble("\u53D9\u8FF0\u8BED\u901F\uFF1A" + v, 4e3);
       else host.bubble("\u8FD9\u4E2A\u8BED\u901F\u503C\u4E0D\u8BA4", 3e3);
+    });
+    table.definePrefix("chat-rate:", (host, suffix) => {
+      const rate = String(suffix || "").trim();
+      if (!setChatRate(rate)) {
+        host.bubble("\u8FD9\u4E2A\u8BED\u901F\u503C\u4E0D\u8BA4", 3e3);
+        return;
+      }
+      host.bubble("\u804A\u5929\u8BED\u901F\uFF1A" + rate, 4e3);
     });
     table.definePrefix("poem-rate:", (host, suffix) => {
       const rate = String(suffix || "");
@@ -5075,7 +5114,7 @@
       const speakSegs = (segs) => {
         for (const seg of segs) {
           try {
-            host.speak(seg, { rate: CHAT_REPLY_RATE });
+            host.speak(seg, { rate: chatRate() });
           } catch (e) {
           }
         }
@@ -6607,7 +6646,7 @@
           try {
             if (localStorage.getItem("chubby-voice") === "off") return;
             const v = bridge.get();
-            if (v && v.speak && !v.speaking()) v.speak(text, { rate: voiceOpts && voiceOpts.rate || CHAT_REPLY_RATE, pitch: voiceOpts && voiceOpts.pitch || "" });
+            if (v && v.speak && !v.speaking()) v.speak(text, { rate: voiceOpts && voiceOpts.rate || chatRate(), pitch: voiceOpts && voiceOpts.pitch || "" });
           } catch (e) {
           }
         }
@@ -6615,7 +6654,7 @@
           const rp = String(text || "");
           if (!rp.trim()) return;
           if (!replyDeduper.allow(rp)) return;
-          speakText(rp, { rate: rp.length >= 80 ? narrationRate() : CHAT_REPLY_RATE });
+          speakText(rp, { rate: rp.length >= 80 ? narrationRate() : chatRate() });
         }
         R.useEffect(() => {
           const next = lookForGrowth(growth);
@@ -6726,7 +6765,7 @@
               } catch (e) {
                 return true;
               }
-            })(), narrationRate: narrationRate(), streamOn: (() => {
+            })(), narrationRate: narrationRate(), chatRate: chatRate(), streamOn: (() => {
               try {
                 return localStorage.getItem("chubby-stream") !== "off";
               } catch (e) {

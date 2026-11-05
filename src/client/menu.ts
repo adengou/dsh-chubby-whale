@@ -61,6 +61,10 @@ export const EN_MAP: Record<string, string> = {
   '稍快 -25%': 'A bit faster -25%',
   '适中 -30%': 'Medium -30%',
   '偏慢 -35%（默认）': 'Slower -35% (default)',
+  '正常 -10%': 'Normal -10%',
+  '偏慢 -20%（默认）': 'Slow -20% (default)',
+  '很慢 -25%': 'Very slow -25%',
+  '更慢 -30%': 'Even slower -30%',
   '稍快 -15%': 'A bit faster -15%',
   '适中 -20%': 'Medium -20%',
   '偏慢 -25%（默认）': 'Slower -25% (default)',
@@ -156,6 +160,7 @@ export function tr(label: string, lang: string): string {
   if (label.startsWith('连播：')) return label.indexOf('开') >= 0 ? 'Auto-continue: on' : 'Auto-continue: off'
   if (label.startsWith('念诗语速：')) return label.replace('念诗语速：', 'Poem speed: ')
   if (label.startsWith('叙述语速：')) return label.replace('叙述语速：', 'Narration speed: ')
+  if (label.startsWith('聊天语速：')) return label.replace('聊天语速：', 'Chat speed: ')
   return label
 }
 
@@ -187,6 +192,8 @@ export interface MenuState {
   poemRate?: string
   /** 叙述语速（缺省 -25%，典故/成语用） */
   narrationRate?: string
+  /** 聊天语速（缺省 -20%，聊天回复/喊名字应答用） */
+  chatRate?: string
   /** 流式回复开关（缺省视为开；关掉后等整段回复再开口） */
   streamOn?: boolean
 }
@@ -275,6 +282,12 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
       { type: 'item', label: '接着说', action: 'culture-story-next' },
       { type: 'item', label: '从头讲这本书', action: 'story-reset' },
       { type: 'item', label: '念首诗', action: 'poem' },
+      { type: 'sub', label: '聊天语速：' + (state.chatRate || '-20%') + ' ▸', items: [
+        { type: 'item', label: ((state.chatRate || '-20%') === '-10%' ? '✓ ' : '') + '正常 -10%', action: 'chat-rate:-10%' },
+        { type: 'item', label: ((state.chatRate || '-20%') === '-20%' ? '✓ ' : '') + '偏慢 -20%（默认）', action: 'chat-rate:-20%' },
+        { type: 'item', label: ((state.chatRate || '-20%') === '-25%' ? '✓ ' : '') + '很慢 -25%', action: 'chat-rate:-25%' },
+        { type: 'item', label: ((state.chatRate || '-20%') === '-30%' ? '✓ ' : '') + '更慢 -30%', action: 'chat-rate:-30%' },
+      ] },
       { type: 'sub', label: '叙述语速：' + (state.narrationRate || '-25%') + ' ▸', items: [
         { type: 'item', label: ((state.narrationRate || '-25%') === '-15%' ? '✓ ' : '') + '稍快 -15%', action: 'narration-rate:-15%' },
         { type: 'item', label: ((state.narrationRate || '-25%') === '-20%' ? '✓ ' : '') + '适中 -20%', action: 'narration-rate:-20%' },

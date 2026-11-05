@@ -161,7 +161,7 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
         // 改成 say（会朗读；同一句 25 秒去重，重复喊不会连珠炮）。
         if (!said) {
           try {
-            if (host.say) host.say('本鲸在呢～', 3200, { rate: '-15%' })
+            if (host.say) host.say('本鲸在呢～', 3200)
             else host.bubble('本鲸在呢～', 3200)
           } catch (e) {
             try { host.bubble('本鲸在呢～', 3200) } catch (e2) { }

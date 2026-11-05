@@ -399,7 +399,11 @@ try {
   }
   const rates = await import('../src/client/rates.ts')
   ok('默认叙述语速 -25%', rates.narrationRate() === '-25%')
-  ok('聊天短回复语速 -10%（比 +0% 慢一档）', rates.CHAT_REPLY_RATE === '-10%')
+  ok('聊天语速默认 -20%', rates.chatRate() === '-20%')
+  ok('聊天语速可写可读', rates.setChatRate('-30%') === true && rates.chatRate() === '-30%')
+  ok('非法聊天语速不写', rates.setChatRate('乱写') === false && rates.chatRate() === '-30%')
+  ok('档位表被冻结', Object.isFrozen(rates.CHAT_RATES))
+  rates.setChatRate('-20%')
   ok('非法值不写入', rates.setNarrationRate('-99%') === false && rates.narrationRate() === '-25%')
   ok('合法值写入成功', rates.setNarrationRate('-15%') === true)
   ok('写入后读到新值', rates.narrationRate() === '-15%')
@@ -421,6 +425,7 @@ try {
   walk(items)
   ok('菜单含「流式回复：关」', labels.indexOf('流式回复：关') >= 0)
   ok('菜单含「叙述语速：-15% ▸」', labels.some((x) => x.indexOf('叙述语速：-15%') === 0))
+  ok('菜单含「聊天语速：-20% ▸」', labels.some((x) => x.indexOf('聊天语速：-20%') === 0))
   ok('菜单含「念诗语速：-20% ▸」', labels.some((x) => x.indexOf('念诗语速：-20%') === 0))
   ok('菜单含「说书语速：-30% ▸」', labels.some((x) => x.indexOf('说书语速：-30%') === 0))
   ok('EN 流式回复', menu.tr('流式回复：关', 'en') === 'Streaming replies: off')
@@ -3256,7 +3261,7 @@ try {
   captured.onHeard('大肥鱼')
   const ack = said[said.length - 1]
   ok('只喊名字时本地应一声', sent.length === before && ack && ack.t === '本鲸在呢～', JSON.stringify(ack))
-  ok('应答走语音、带 -15% 慢速', !!ack && ack.opts && ack.opts.rate === '-15%' && ack.ms === 3200, JSON.stringify(ack && ack.opts))
+  ok('应答走语音、气泡停 3.2 秒（语速走聊天语速）', !!ack && ack.ms === 3200, JSON.stringify(ack))
 
   // ③ 句首喊名字 + 正文：剥掉名字再答
   captured.onHeard('大肥鱼你好呀')
@@ -3282,7 +3287,7 @@ try {
   const cSrc = rf7('src/client.ts', 'utf8')
   const chSrc = rf7('src/client/chat.ts', 'utf8')
   ok('桥接必须把 say 传给 voice-bridge（否则只弹字不出声）', /say:\s*\(text:[^\n]*=>\s*sayLine\(/.test(cSrc))
-  ok('聊天与流式回复都用统一语速', cSrc.indexOf('CHAT_REPLY_RATE') >= 0 && chSrc.indexOf('CHAT_REPLY_RATE') >= 0)
+  ok('聊天与流式回复都用可调聊天语速', cSrc.indexOf('chatRate()') >= 0 && chSrc.indexOf('chatRate()') >= 0)
 } catch (e) {
   ok('能加载语音桥（随时说）', false, String(e.message))
 }

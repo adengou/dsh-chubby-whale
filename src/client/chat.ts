@@ -13,7 +13,7 @@ import { parseSseBuffer } from '../shared/sse.js'
 import { createSentenceBuffer } from './text.js'
 import type { Deduper } from './text.js'
 import type { BusyLock, Epoch } from './busy.js'
-import { CHAT_REPLY_RATE } from './rates.js'
+import { chatRate } from './rates.js'
 import type { Persona } from './persona.js'
 
 export type ChatHost = {
@@ -118,7 +118,7 @@ export function createChatSender(host: ChatHost): ChatController {
     const sb = createSentenceBuffer(40)
 
     const speakSegs = (segs: string[]): void => {
-      for (const seg of segs) { try { host.speak(seg, { rate: CHAT_REPLY_RATE }) } catch (e) { } }
+      for (const seg of segs) { try { host.speak(seg, { rate: chatRate() }) } catch (e) { } }
       if (segs.length) spokeAny = true
     }
 

@@ -11,7 +11,7 @@ import { getJson } from '../http.js'
 import { estimateMelodySeconds } from '../melody.js'
 import { collapsePoemBody, collapseText, taleParts, estimateSpeakMs } from '../text.js'
 import { startProgress, stopProgress } from '../narration-progress.js'
-import { setNarrationRate } from '../rates.js'
+import { setNarrationRate, setChatRate } from '../rates.js'
 
 /** 念诗语速：菜单里选过就用选的（-15%/-20%/-25%/-30%），否则沿用叙述语速 -25% */
 function poemRate(fallback: string): string {
@@ -84,6 +84,12 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
     const v = String(suffix || '')
     if (setNarrationRate(v)) host.bubble('叙述语速：' + v, 4000)
     else host.bubble('这个语速值不认', 3000)
+  })
+  // 聊天语速：菜单里选一档，立即生效（聊天回复 / 喊名字应答都用它）
+  table.definePrefix('chat-rate:', (host, suffix) => {
+    const rate = String(suffix || '').trim()
+    if (!setChatRate(rate)) { host.bubble('这个语速值不认', 3000); return }
+    host.bubble('聊天语速：' + rate, 4000)
   })
   // 念诗语速：菜单里选一档，立即生效
   table.definePrefix('poem-rate:', (host, suffix) => {

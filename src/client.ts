@@ -5,7 +5,7 @@
 import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle, recoverDotStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
 import { stopProgress } from './client/narration-progress.js'
-import { narrationRate, CHAT_REPLY_RATE } from './client/rates.js'
+import { narrationRate, chatRate } from './client/rates.js'
 import { handleFileDrop } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth, type GrowthInfo } from './client/look.js'
@@ -782,7 +782,7 @@ import { createRecover } from './client/recover.js'
         try {
           if (localStorage.getItem('chubby-voice') === 'off') return
           const v: any = bridge.get()
-          if (v && v.speak && !v.speaking()) v.speak(text, { rate: (voiceOpts && voiceOpts.rate) || CHAT_REPLY_RATE, pitch: (voiceOpts && voiceOpts.pitch) || '' })
+          if (v && v.speak && !v.speaking()) v.speak(text, { rate: (voiceOpts && voiceOpts.rate) || chatRate(), pitch: (voiceOpts && voiceOpts.pitch) || '' })
         } catch (e) { }
       }
       /** 统一的回复朗读入口：长回复走叙述语速，同一句回复 30 秒内不重复念 */
@@ -791,7 +791,7 @@ import { createRecover } from './client/recover.js'
         if (!rp.trim()) return
         // 同一句回复 30 秒内不重复念（client/text.ts 的 deduper，重复时计数 dupReply）
         if (!replyDeduper.allow(rp)) return
-        speakText(rp, { rate: rp.length >= 80 ? narrationRate() : CHAT_REPLY_RATE })
+        speakText(rp, { rate: rp.length >= 80 ? narrationRate() : chatRate() })
       }
 
       // ===== 成长 → 外观（L5）：档位变化时热更新 canvas 外观，不重建动画器 =====
@@ -877,7 +877,7 @@ import { createRecover } from './client/recover.js'
               onClick: () => { try { refreshMenuStats(true) } catch (e) { } },
             }, balanceText || '--'),
           ),
-          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, storyAuto: (() => { try { return localStorage.getItem('chubby-story-auto') !== '0' } catch (e) { return true } })(), narrationRate: narrationRate(), streamOn: (() => { try { return localStorage.getItem('chubby-stream') !== 'off' } catch (e) { return true } })(), storyRate: (() => { try { const s = localStorage.getItem('chubby-story-rate') || '-35%'; return /^-\d{1,2}%$/.test(s) ? s : '-35%' } catch (e) { return '-35%' } })(), poemRate: (() => { try { const s = localStorage.getItem('chubby-poem-rate') || '-25%'; return /^-\d{1,2}%$/.test(s) ? s : '-25%' } catch (e) { return '-25%' } })(), ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel, storyBooks: storyBooks, storyBooksTried: storyBooksTried })),
+          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, storyAuto: (() => { try { return localStorage.getItem('chubby-story-auto') !== '0' } catch (e) { return true } })(), narrationRate: narrationRate(), chatRate: chatRate(), streamOn: (() => { try { return localStorage.getItem('chubby-stream') !== 'off' } catch (e) { return true } })(), storyRate: (() => { try { const s = localStorage.getItem('chubby-story-rate') || '-35%'; return /^-\d{1,2}%$/.test(s) ? s : '-35%' } catch (e) { return '-35%' } })(), poemRate: (() => { try { const s = localStorage.getItem('chubby-poem-rate') || '-25%'; return /^-\d{1,2}%$/.test(s) ? s : '-25%' } catch (e) { return '-25%' } })(), ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel, storyBooks: storyBooks, storyBooksTried: storyBooksTried })),
         ) : null,
         h('div', { style: chatPanelStyle(chatOpen) },
           h('div', { style: headStyle },
