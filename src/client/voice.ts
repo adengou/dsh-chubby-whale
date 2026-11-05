@@ -17,7 +17,7 @@ import { Ape } from './ape.js'
 import { deepFreeze } from '../shared/immutable.js'
 import { narrationRate } from './rates.js'
 import { isRepeat } from './sim.js'
-import { echoKey } from './text.js'
+import { echoKey, isShortEchoFragment } from './text.js'
 import { isNoiseText } from '../shared/noise.js'
 import { isPlaybackZombie } from './playback.js'
 
@@ -31,6 +31,7 @@ export type VoiceStats = {
   asrTexts: number         // 识别出文字的段数
   heard: number            // 通过过滤、真正交给上层的
   echoDropped: number      // 被回声/重复过滤掉
+  shortDropped: number     // 刚朗读过、只听到 1~2 字碎片（回声残留）
   ttsRequests: number      // 朗读请求数
   ttsPlayed: number        // 真正开始播放
   ttsFail: number          // 合成/播放失败
@@ -145,7 +146,7 @@ export function createVoice(opts: VoiceOptions): Voice {
 
   const stats: VoiceStats = {
     windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrTexts: 0, heard: 0,
-    echoDropped: 0, ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
+    echoDropped: 0, shortDropped: 0, ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
   }
 
   // ---- 状态机 ----
@@ -324,8 +325,10 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     if (/^本鱼在听/.test(plain)) return false
     // 自己刚说过的话（回声）
     const now = Date.now()
+    let hadRecentSpeech = false
     for (const s of spokenRecent) {
       if (now - s.at > 15000) continue
+      if (now - s.at <= 8000) hadRecentSpeech = true
       const target = s.text.replace(/[\s。，！？,.!?、…~～]/g, '')
       if (!target) continue
       // 去掉动作描写后的比对（专治"星号"回声）
@@ -339,6 +342,11 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return false
       // 短词回声：主人说 "master"，本鲸回复里也含 master，麦克风会把它听回去 → 就变成"说两遍"
       if (plain.length >= 3 && now - s.at < 6000 && target.indexOf(plain) >= 0) { try { stats.echoDropped++ } catch (e) { } ; return false }
+    }
+    // 刚朗读过又只听到 1~2 字 → 大概率是自己的回声碎片（实测「的歪」这类会被当成主人发言）
+    if (isShortEchoFragment(plain, hadRecentSpeech)) {
+      try { stats.shortDropped = (stats.shortDropped || 0) + 1 } catch (e) { }
+      return false
     }
     // 去重统一走 client/sim.ts 的相似度算法（bigram Jaccard）：
     // 窗口 8 秒、阈值 0.90 —— 只挡"刚说过的同一句被切成两段"，主人隔一会儿再说不会被吞。

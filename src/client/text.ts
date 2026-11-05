@@ -63,6 +63,29 @@ export function echoKey(s: any): string {
     .replace(/[\s。，！？,.!?、…~～]/g, '')
 }
 
+/**
+ * 朗读刚结束时的 1~2 字碎片判定。
+ *
+ * 实测：鱼念完带动作描写的话，麦克风会把自己的声音听回来，ASR 常吐出 1~2 个字
+ * （例如「的歪」）。这类碎片长度太短、和原句比不中，会被当成主人发言送进模型。
+ * 规则：只有"最近刚念过"时才拦；且命令词与常见两字回应（好的/晚安/讲吧…）一律放行。
+ */
+const SHORT_ECHO_ALLOW: string[] = [
+  '停', '别', '不', '好', '喂',
+  '停下', '停一下', '别说', '别念', '别讲', '闭嘴', '安静', '打住', '够了',
+  '好的', '好呀', '好吧', '是的', '对的', '可以', '不行', '不要', '没有', '没事',
+  '谢谢', '晚安', '早安', '再见', '等我', '稍等', '讲吧', '说吧', '唱吧', '念吧',
+  '来吧', '开始', '继续', '没错', '试试', '嗯嗯',
+]
+deepFreeze(SHORT_ECHO_ALLOW)
+
+export function isShortEchoFragment(plain: string, hadRecentSpeech: boolean): boolean {
+  const p = String(plain || '')
+  if (!hadRecentSpeech) return false
+  if (p.length > 2) return false
+  return SHORT_ECHO_ALLOW.indexOf(p) < 0
+}
+
 export function createDeduper(opts: { windowMs: number; onDuplicate?: () => void }): Deduper {
   const windowMs = Math.max(0, Number(opts && opts.windowMs) || 0)
   let lastNorm = ''
@@ -127,4 +150,5 @@ export function createSentenceBuffer(maxLen = 40): SentenceBuffer {
       return take(true)
     },
   }
-}
+}import { deepFreeze } from '../shared/immutable.js'
+

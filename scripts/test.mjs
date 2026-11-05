@@ -407,6 +407,89 @@ try {
   ok('能加载 client/version.ts', false, String(e.message))
 }
 
+
+// ---------- ⑮ 路由表：客户端要的都存在、路径不重复 ----------
+console.log('\n[15] 宿主路由表 host/routes.ts')
+try {
+  const { createRouteTable } = await import('../src/host/routes.ts')
+  const fn = () => undefined
+  const stub = {
+    misc: { handleAsset: fn, handleStatus: fn, handleState: fn, handleBalance: fn, handleGrowth: fn, handleFishfood: fn, handlePet: fn, handleClearMemory: fn, handleCache: fn },
+    chat: fn, chatStream: fn, cacheToggle: fn,
+    story: { handleBooks: fn, handleStoryStart: fn, handleStoryNext: fn, handleStoryReset: fn },
+    reminders: { handleReminders: fn },
+    culture: { handleCulture: fn, handleMelodies: fn, handleMelody: fn },
+    poem: { handlePoem: fn },
+    briefing: { handleBriefing: fn },
+    tts: fn, asr: fn,
+    personality: { handlePersonality: fn, handleRevert: fn },
+    daily: { handleDaily: fn },
+    backup: { handleExport: fn, handleImport: fn },
+    stats: { handleStats: fn },
+  }
+  const table = createRouteTable(stub)
+  const paths = table.map((r) => r.path)
+  ok('路由表非空', table.length >= 25, '共 ' + table.length + ' 条')
+  ok('路径无重复', new Set(paths).size === paths.length)
+  ok('每条路由都有函数 handler', table.every((r) => typeof r.handler === 'function'))
+  ok('全部挂在 /api/chubby-whale/', paths.every((p) => p.indexOf('/api/chubby-whale/') === 0))
+
+  // 客户端真实用到的接口：从源码里抽 getJson('...') / '/api/chubby-whale/...'
+  const fsMod = await import('node:fs')
+  const { readdirSync, readFileSync: rf, statSync } = fsMod
+  const { join } = await import('node:path')
+  const files = []
+  const walk = (d) => {
+    for (const n of readdirSync(d)) {
+      const q = join(d, n)
+      if (statSync(q).isDirectory()) walk(q)
+      else if (n.endsWith('.ts')) files.push(q)
+    }
+  }
+  walk('src/client')
+  files.push('src/client.ts')
+  const wanted = new Set()
+  for (const file of files) {
+    const src = rf(file, 'utf8')
+    for (const m of src.matchAll(/getJson\(\s*'([^']+)'/g)) wanted.add(m[1])
+    for (const m of src.matchAll(/'\/api\/chubby-whale\/([a-z0-9/-]+)'/g)) wanted.add('/' + m[1])
+  }
+  const missing = []
+  for (const w of wanted) {
+    const raw = w.split('?')[0].replace(/^\//, '')
+    const full = '/api/chubby-whale/' + raw
+    if (paths.indexOf(full) < 0) missing.push(full)
+  }
+  ok('客户端用到的接口都在路由表里', missing.length === 0, missing.length ? '缺：' + missing.join(', ') : '检查 ' + wanted.size + ' 个')
+} catch (e) {
+  ok('能加载 routes.ts', false, String(e.message))
+}
+
+
+// ---------- ⑯ 回声：动作描写 + 短碎片（历史数据里真实出现过的两条） ----------
+console.log('\n[16] 回声过滤 text.ts')
+try {
+  const txt = await import('../src/client/text.ts')
+  // 历史数据里真实出现的两条回声（memory.json：「星号」7 条中的两条）
+  const aHeard = '星号甩甩尾巴，凑近星号主人说话，要一句一句来吗？'
+  const aSpoken = '*甩甩尾巴凑近* 主人说话要一句一句来嘛。'
+  const a = txt.echoKey(aHeard)
+  const b = txt.echoKey(aSpoken)
+  ok('完整回声：归一后可判为同一句', a === b || (b.length >= 6 && a.indexOf(b.slice(0, 6)) >= 0), '[' + a + '] vs [' + b + ']')
+
+  const bHeard = '的星号鼓了鼓腮，凑过来蹭一，本金在呢。星号歪。'
+  const bSpoken = '*鼓了鼓腮，凑过来蹭一下* 本鲸在呢。'
+  const bk = txt.echoKey(bHeard)
+  ok('碎片回声：归一后只剩 1~2 字', bk.length <= 2, '[' + bk + ']')
+  ok('碎片回声：刚朗读过时被拦下', txt.isShortEchoFragment(bk, true) === true)
+  ok('普通两字回应不被拦：好的', txt.isShortEchoFragment('好的', true) === false)
+  ok('打断命令不被拦：停', txt.isShortEchoFragment('停', true) === false)
+  ok('没刚朗读过时不拦两字', txt.isShortEchoFragment('随便', false) === false)
+  ok('刚朗读过、两字非白名单 → 拦', txt.isShortEchoFragment('随便', true) === true)
+} catch (e) {
+  ok('能加载 text.ts 回声工具', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

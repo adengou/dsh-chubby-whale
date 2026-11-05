@@ -1192,6 +1192,55 @@
   function echoKey(s) {
     return String(s == null ? "" : s).replace(/星号|米字号/g, "*").replace(/\*[^*]{1,60}\*/g, "").replace(/[\s。，！？,.!?、…~～]/g, "");
   }
+  var SHORT_ECHO_ALLOW = [
+    "\u505C",
+    "\u522B",
+    "\u4E0D",
+    "\u597D",
+    "\u5582",
+    "\u505C\u4E0B",
+    "\u505C\u4E00\u4E0B",
+    "\u522B\u8BF4",
+    "\u522B\u5FF5",
+    "\u522B\u8BB2",
+    "\u95ED\u5634",
+    "\u5B89\u9759",
+    "\u6253\u4F4F",
+    "\u591F\u4E86",
+    "\u597D\u7684",
+    "\u597D\u5440",
+    "\u597D\u5427",
+    "\u662F\u7684",
+    "\u5BF9\u7684",
+    "\u53EF\u4EE5",
+    "\u4E0D\u884C",
+    "\u4E0D\u8981",
+    "\u6CA1\u6709",
+    "\u6CA1\u4E8B",
+    "\u8C22\u8C22",
+    "\u665A\u5B89",
+    "\u65E9\u5B89",
+    "\u518D\u89C1",
+    "\u7B49\u6211",
+    "\u7A0D\u7B49",
+    "\u8BB2\u5427",
+    "\u8BF4\u5427",
+    "\u5531\u5427",
+    "\u5FF5\u5427",
+    "\u6765\u5427",
+    "\u5F00\u59CB",
+    "\u7EE7\u7EED",
+    "\u6CA1\u9519",
+    "\u8BD5\u8BD5",
+    "\u55EF\u55EF"
+  ];
+  deepFreeze(SHORT_ECHO_ALLOW);
+  function isShortEchoFragment(plain, hadRecentSpeech) {
+    const p = String(plain || "");
+    if (!hadRecentSpeech) return false;
+    if (p.length > 2) return false;
+    return SHORT_ECHO_ALLOW.indexOf(p) < 0;
+  }
   function createDeduper(opts) {
     const windowMs = Math.max(0, Number(opts && opts.windowMs) || 0);
     let lastNorm = "";
@@ -1354,6 +1403,7 @@
       asrTexts: 0,
       heard: 0,
       echoDropped: 0,
+      shortDropped: 0,
       ttsRequests: 0,
       ttsPlayed: 0,
       ttsFail: 0,
@@ -1578,8 +1628,10 @@
       if (isNoiseText(plain)) return false;
       if (/^本鱼在听/.test(plain)) return false;
       const now = Date.now();
+      let hadRecentSpeech = false;
       for (const s of spokenRecent) {
         if (now - s.at > 15e3) continue;
+        if (now - s.at <= 8e3) hadRecentSpeech = true;
         const target = s.text.replace(/[\s。，！？,.!?、…~～]/g, "");
         if (!target) continue;
         const targetKey = echoKey(s.text);
@@ -1601,6 +1653,13 @@
           ;
           return false;
         }
+      }
+      if (isShortEchoFragment(plain, hadRecentSpeech)) {
+        try {
+          stats.shortDropped = (stats.shortDropped || 0) + 1;
+        } catch (e) {
+        }
+        return false;
       }
       if (isRepeat(plain, { recent: recentHeard, windowMs: 8e3, threshold: 0.9, minLen: 4, now })) {
         try {
