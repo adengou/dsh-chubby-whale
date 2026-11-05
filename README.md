@@ -27,6 +27,19 @@ dsh web
 也可用环境变量：`CHUBBY_WHALE_DEEPSEEK_KEY`、`CHUBBY_WHALE_SILICONFLOW_KEY`
 （最后才回退到通用名 `DEEPSEEK_API_KEY` / `SILICONFLOW_API_KEY`）。
 
+### 自我进化（可选，都能关）
+
+肥鲸会随成长学一点东西，两个开关默认开启，写进 `config.json` 即可关闭：
+
+| 配置键 | 默认 | 作用 |
+| --- | --- | --- |
+| `personalityLearning` | `true` | 每 20 次真实回复、且距上次 ≥6 小时，从最近对话里提取主人的**口头禅 / 偏好 / 备注**（各有条数与字数上限；名字、家人、生日、语言规则等**核心设定锁死，永不自动改**） |
+| `personalityWriting` | `true` | 每 20 次真实回复、且距上次 ≥24 小时，写一句**≤80 字的「近期心境」**；输出里若出现「我是 / 改名 / 爸爸 / 妈妈 / 生日 / AI」等身份词，**整句丢弃不写盘** |
+
+- 存储：`~/.dsh-chubby-whale/personality.json`（原子写；坏文件自动隔离为 `.bad-<时间戳>`；只保留最近 20 条变更历史）；
+- 查看：`GET /api/chubby-whale/personality`；
+- 回滚：`POST /api/chubby-whale/personality/revert`（一次撤一条，可连按；也支持回滚「近期心境」）；
+- 关掉后**已存内容仍会注入**，只是不再学习、不再写新心境。
 ### 本地开发（link 方式）
 
 ```powershell

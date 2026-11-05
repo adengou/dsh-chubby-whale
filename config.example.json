@@ -1,5 +1,7 @@
 {
   "deepseekKey": "",
   "siliconflowKey": "",
-  "dataSource": "local"
+  "dataSource": "local",
+  "personalityLearning": true,
+  "personalityWriting": true
 }
