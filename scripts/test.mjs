@@ -3044,6 +3044,64 @@ try {
   ok('能加载聊天路由（摘要用例）', false, String(e.message))
 }
 
+
+// ---------- 57 原子写/坏文件隔离 + 配置清洗 ----------
+console.log('\n[57] 原子写与配置清洗 atomic.ts / config.ts')
+try {
+  const A = await import('../src/host/atomic.ts')
+  const C = await import('../src/host/config.ts')
+  const { mkdtempSync, rmSync, readFileSync: rf, readdirSync, mkdirSync, writeFileSync: wf } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-atomic-test-'))
+  const deep = join(dir, 'a', 'b', 'c.txt')
+
+  A.writeFileAtomic(deep, '你好')
+  ok('原子写：自动建父目录并写成功', rf(deep, 'utf8') === '你好')
+  ok('原子写：不留临时文件', readdirSync(join(dir, 'a', 'b')).every((x) => x.indexOf('.tmp') < 0), readdirSync(join(dir, 'a', 'b')).join(','))
+
+  const jf = join(dir, 'x.json')
+  A.writeJsonAtomic(jf, { a: 1, b: [2] })
+  ok('原子写 JSON 可回读', JSON.stringify(JSON.parse(rf(jf, 'utf8'))) === '{"a":1,"b":[2]}')
+
+  // 写失败：目标路径是个已存在的目录 → rename 失败必须抛错且清掉临时文件
+  const asDir = join(dir, 'target-dir')
+  mkdirSync(asDir)
+  let threw = false
+  try { A.writeFileAtomic(asDir, 'x') } catch (e) { threw = true }
+  ok('写失败会抛错（不静默）', threw)
+  ok('写失败清掉临时文件', readdirSync(dir).every((x) => x.indexOf('.tmp') < 0), readdirSync(dir).join(','))
+
+  // 坏文件隔离
+  const bad = join(dir, 'bad.json')
+  wf(bad, '{ 坏', 'utf8')
+  A.quarantineFile(bad, new Error('broken'), '[test]')
+  ok('坏文件被改名备份', !readdirSync(dir).includes('bad.json') && readdirSync(dir).some((x) => x.indexOf('bad.json.bad-') === 0))
+  let q2 = false
+  try { A.quarantineFile(bad, new Error('again'), '[test]') } catch (e) { q2 = true }
+  ok('重复隔离不抛错', q2 === false)
+  A.quarantineFile(join(dir, 'not-exist.json'), new Error('x'), '[test]')
+  ok('不存在的文件隔离不抛错', true)
+
+  // —— 配置清洗 ——
+  ok('非对象配置 → 空配置', JSON.stringify(C.sanitizePluginConfig(null)) === '{}' && JSON.stringify(C.sanitizePluginConfig('nope')) === '{}' && JSON.stringify(C.sanitizePluginConfig([1])) === '{}')
+  const cfg = C.sanitizePluginConfig({ enabled: true, dataSource: ' CLOUD ', personalityLearning: 'off', personalityWriting: 'on', model: ' deepseek-v4-pro ', unknownKey: 1 })
+  ok('dataSource 归一化小写', cfg.dataSource === 'cloud')
+  ok('开关字符串也认', cfg.personalityLearning === false && cfg.personalityWriting === true)
+  ok('模型名去空白', cfg.model === 'deepseek-v4-pro')
+  ok('未知键保留但告警', cfg.unknownKey === 1)
+  const bad2 = C.sanitizePluginConfig({ enabled: 'yes', dataSource: 's3', model: '整段文本粘进来' + 'x'.repeat(200) })
+  ok('非法值被丢弃（不挡加载）', !('enabled' in bad2) && !('dataSource' in bad2) && !('model' in bad2), JSON.stringify(bad2))
+
+  // 解析器边界
+  ok('parseSwitchValue 边界', C.parseSwitchValue('OFF') === false && C.parseSwitchValue('enabled') === true && C.parseSwitchValue('eh') === null && C.parseSwitchValue(undefined) === null)
+  ok('parseChatModel 合法/非法', C.parseChatModel('deepseek-flash', 't') === 'deepseek-flash' && C.parseChatModel('含 空格', 't') === null && C.parseChatModel('', 't') === null)
+
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载原子写/配置模块', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
