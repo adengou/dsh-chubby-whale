@@ -657,6 +657,94 @@ try {
   ok('能加载 text.ts', false, String(e.message))
 }
 
+
+// ---------- ㉑ TTS 路由：入参校验 / 缓存 / Buffer / 失败码 ----------
+console.log('\n[21] TTS 路由 host/routes/tts.ts（假 req/res + 假引擎）')
+try {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-tts-test-'))
+  const { createCache } = await import('../src/host/cache.ts')
+  const { createTtsHandler } = await import('../src/host/routes/tts.ts')
+  const cache = createCache({ dir, memBytes: 2 * 1024 * 1024 })
+  const calls = []
+  let failMode = ''
+  const engine = {
+    async synthesize(o) {
+      calls.push(o)
+      if (failMode === 'unavailable') { const e = new Error('python 缺失'); e.code = 'TTS_UNAVAILABLE'; throw e }
+      return Buffer.from('MP3DATA:' + o.text)
+    },
+  }
+  const handle = createTtsHandler({ cache, engine })
+
+  const mkReq = (body, headers = {}) => {
+    const buf = Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))
+    return {
+      headers,
+      destroy() { }, on() { }, resume() { },
+      async *[Symbol.asyncIterator]() { yield buf },
+    }
+  }
+  const mkRes = () => {
+    const out = { code: 0, headers: null, chunks: [] }
+    out.writeHead = (c, h) => { out.code = c; out.headers = h || {} }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.isBuffer(b) ? b : Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.write = () => { }
+    out.bodyText = () => Buffer.concat(out.chunks).toString('utf8')
+    return out
+  }
+
+  // ① 空文本 → 400
+  let res = mkRes()
+  await handle(mkReq({ text: '   ' }), res)
+  ok('空文本 → 400', res.code === 400, 'code=' + res.code + ' body=' + res.bodyText().slice(0, 40))
+
+  // ② 正常合成 → 200 + audio/mpeg + 引擎收到归一化参数
+  calls.length = 0
+  res = mkRes()
+  await handle(mkReq({ text: '主人好呀', rate: '-35%', voice: 'zh-CN-XiaoxiaoNeural', pitch: '+5Hz' }), res)
+  ok('正常合成 → 200', res.code === 200)
+  ok('响应类型 audio/mpeg', String(res.headers && res.headers['content-type']).indexOf('audio/mpeg') === 0)
+  ok('返回的是音频字节', res.bodyText() === 'MP3DATA:主人好呀')
+  ok('语速原样传给引擎', calls[0] && calls[0].rate === '-35%', calls[0] && calls[0].rate)
+  ok('音高原样传给引擎', calls[0] && calls[0].pitch === '+5Hz', calls[0] && calls[0].pitch)
+  ok('合法音色原样传给引擎', calls[0] && calls[0].voice === 'zh-CN-XiaoxiaoNeural')
+
+  // ③ 同样文本再来一次 → 命中缓存，引擎不再被调用，且返回的仍是 Buffer 原样
+  calls.length = 0
+  res = mkRes()
+  await handle(mkReq({ text: '主人好呀', rate: '-35%', voice: 'zh-CN-XiaoxiaoNeural', pitch: '+5Hz' }), res)
+  ok('同参数第二次命中缓存（引擎只调一次）', calls.length === 0, 'engine 调用 ' + calls.length + ' 次')
+  ok('缓存读回来的音频字节一致', res.bodyText() === 'MP3DATA:主人好呀')
+
+  // ④ 换语速 → 缓存键不同，重新合成（防止慢速说书和普通聊天串味）
+  calls.length = 0
+  res = mkRes()
+  await handle(mkReq({ text: '主人好呀', rate: '-15%' }), res)
+  ok('换语速 → 换缓存键，重新合成', calls.length === 1, 'engine 调用 ' + calls.length + ' 次')
+
+  // ⑤ 引擎不可用 → 501 + TTS_UNAVAILABLE（客户端据此改用浏览器语音）
+  failMode = 'unavailable'
+  res = mkRes()
+  await handle(mkReq({ text: '这次会失败' }), res)
+  const failBody = JSON.parse(res.bodyText())
+  ok('引擎不可用 → 501', res.code === 501, 'code=' + res.code)
+  ok('失败码是 TTS_UNAVAILABLE', failBody && failBody.code === 'TTS_UNAVAILABLE')
+  failMode = ''
+
+  // ⑥ 超大请求体 → 413（按 content-length 直接拒）
+  res = mkRes()
+  await handle(mkReq({ text: 'x' }, { 'content-length': String(10 * 1024 * 1024) }), res)
+  ok('超大请求体 → 413', res.code === 413, 'code=' + res.code)
+
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载 TTS 路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
