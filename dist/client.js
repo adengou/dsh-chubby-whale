@@ -983,6 +983,12 @@
     minSpeechMs: 150,
     maxWaitAfterSpeechMs: 900,
     noiseNearDb: 14,
+    /**
+     * 稳态噪声允许高出噪声底多少 dB。
+     * 取 20：风扇/空调常压在 15~20dB；而"持续大声说话"一般高出 25dB 以上，
+     * 不会被误当噪声（试过 28，合成的一直 -45dB 语音会被判成噪声、永远不提交）。
+     */
+    steadyMaxAboveFloorDb: 20,
     maxSegmentMs: 6e3,
     steadyWindowFrames: 10,
     // 25 帧 × 60ms = 1.5s
@@ -1039,7 +1045,7 @@
         this.steadyHist.push(db);
         while (this.steadyHist.length > p.steadyWindowFrames) this.steadyHist.shift();
         const spread = this.steadyHist.length >= 8 ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist) : 99;
-        const nearFloor = db - this.floorDb <= p.noiseNearDb;
+        const nearFloor = db - this.floorDb <= p.steadyMaxAboveFloorDb;
         const steadyNow = spread < p.steadySpreadDb && nearFloor;
         if (steadyNow) {
           this.steadyMs += p.frameMs;
@@ -1085,8 +1091,18 @@
         commit = true;
         commitReason = "quiet";
       } else if (this.elapsedMs >= p.maxSegmentMs) {
-        commit = true;
-        commitReason = "overflow";
+        if (validSpeech) {
+          commit = true;
+          commitReason = "overflow";
+        } else {
+          this.elapsedMs = 0;
+          this.runMs = 0;
+          this.quietMs = 0;
+          this.speechMs = 0;
+          this.bandMs = 0;
+          this.hadSpeech = false;
+          this.lastSpeechAtMs = 0;
+        }
       }
       return {
         db,

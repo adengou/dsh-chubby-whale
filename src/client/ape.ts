@@ -46,6 +46,8 @@ export type ApeParams = {
   quietLongMs: number
   /** 一段里至少累计这么多说话时长才算有效语音 */
   minSpeechMs: number
+  /** 稳态噪声允许高出噪声底多少 dB（超过就当人声，见 APE_DEFAULTS 里的说明） */
+  steadyMaxAboveFloorDb: number
   /**
    * 说完话后最多再等多久（毫秒）。背景噪声落在"中间带"（高于安静阈值、又不到起判阈值）时，
    * 静音永远不累计——实测会让每句话都等满 6 秒窗口。用"距最后一次说话帧的时长"兜底。
@@ -80,6 +82,12 @@ export const APE_DEFAULTS: ApeParams = {
   minSpeechMs: 150,
   maxWaitAfterSpeechMs: 900,
   noiseNearDb: 14,
+  /**
+   * 稳态噪声允许高出噪声底多少 dB。
+   * 取 20：风扇/空调常压在 15~20dB；而"持续大声说话"一般高出 25dB 以上，
+   * 不会被误当噪声（试过 28，合成的一直 -45dB 语音会被判成噪声、永远不提交）。
+   */
+  steadyMaxAboveFloorDb: 20,
   maxSegmentMs: 6000,
   steadyWindowFrames: 10,   // 25 帧 × 60ms = 1.5s
   steadySpreadDb: 3,
@@ -163,7 +171,7 @@ export class Ape {
       const spread = this.steadyHist.length >= 8
         ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist)
         : 99
-      const nearFloor = (db - this.floorDb) <= p.noiseNearDb
+      const nearFloor = (db - this.floorDb) <= p.steadyMaxAboveFloorDb
       const steadyNow = spread < p.steadySpreadDb && nearFloor
 
       if (steadyNow) {
@@ -218,7 +226,19 @@ export class Ape {
     let commitReason: 'quiet' | 'overflow' | '' = ''
     if (validSpeech && this.quietMs >= quietTargetMs) { commit = true; commitReason = 'quiet' }
     else if (validSpeech && overSpeechWait) { commit = true; commitReason = 'quiet' }
-    else if (this.elapsedMs >= p.maxSegmentMs) { commit = true; commitReason = 'overflow' }
+    else if (this.elapsedMs >= p.maxSegmentMs) {
+      if (validSpeech) { commit = true; commitReason = 'overflow' }
+      else {
+        // 一直是静音：静默重置窗口，继续录；不能把一段空气送去 ASR（缓存里曾堆满 17 字节噪声）
+        this.elapsedMs = 0
+        this.runMs = 0
+        this.quietMs = 0
+        this.speechMs = 0
+        this.bandMs = 0
+        this.hadSpeech = false
+        this.lastSpeechAtMs = 0
+      }
+    }
 
     return {
       db,
