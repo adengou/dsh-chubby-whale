@@ -89,16 +89,35 @@ function checkFile(file) {
     if (up < 2) continue
     const allowed = /shared\//.test(spec) || /\.\.\/\.\.\/data\//.test(spec) || /\.\.\/\.\.\/assets\//.test(spec)
     if (!allowed) violations.push(`B2 ${rel}:${i + 1} 跨模块深路径导入（绕过公开接口）：${spec}`)
+    // 跨层禁令：client 不得引用 host 内部文件，反之亦然；shared 不得依赖上层
+    const here = rel.startsWith('src/client/') ? 'client' : rel.startsWith('src/host/') ? 'host' : rel.startsWith('src/shared/') ? 'shared' : 'root'
+    const target = spec.includes('/host/') || spec.startsWith('../host/') ? 'host' : (spec.includes('/client/') || spec.startsWith('../client/')) ? 'client' : ''
+    if (target && here !== 'root' && target !== here) violations.push(`B2 ${rel}:${i + 1} 跨层依赖（${here} → ${target}）：${spec}`)
+    if (here === 'shared' && target) violations.push(`B2 ${rel}:${i + 1} 公共层反向依赖上层：${spec}`)
   }
 
-  // B3 全局挂载
+  // B3 全局挂载（要能认 (window as any).x = / window['x'] = 这类写法）
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     if (/^\s*(\/\/|\*)/.test(line)) continue
-    if (/(window|globalThis|document)\s*\.\s*[A-Za-z_$][\w$]*\s*=(?!=)/.test(line) && !/Object\.freeze/.test(line)) {
-      // 允许写调试用的命名空间（挂在 window.__chubbyWhale 下），但必须是带此命名的
-      if (!/__chubbyWhale/.test(line)) violations.push(`B3 ${rel}:${i + 1} 往全局挂变量（易与其他插件互相污染）：${line.trim().slice(0, 80)}`)
+    // 去掉 TS 断言后再判断： (window as any) / (globalThis as any)
+    const norm = line.replace(/\(\s*(window|globalThis|document)\s+as\s+any\s*\)/g, '$1')
+    const assign = norm.match(/(?:^|[^.\w$])(window|globalThis|document)\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*['"]([^'"]+)['"]\s*\])\s*=(?!=)/)
+    if (!assign) continue
+    if (/Object\.freeze/.test(line)) continue
+    const key = assign[2] || assign[3] || ''
+    if (key === '__chubbyWhale') {
+      // 只允许往命名空间里写字段（__chubbyWhale.x = 1）；
+      // 整对象替换（__chubbyWhale = {...}）会把别处挂的字段全丢掉
+      // 允许 "已存在就用，不存在才建" 的写法（obj || (obj = {})）；
+      // 只有"无条件整对象替换"才会丢掉别处挂的字段
+      if (/__chubbyWhale\s*=(?!=)/.test(norm) && !/\|\|/.test(norm)) {
+        violations.push(`B3 ${rel}:${i + 1} 整对象覆盖全局调试命名空间（会丢掉已挂的字段）：${line.trim().slice(0, 80)}`)
+      }
+      continue
     }
+    if (key === '__chubbyErrors') continue
+    violations.push(`B3 ${rel}:${i + 1} 往全局挂变量（易与其他插件互相污染）：${line.trim().slice(0, 80)}`)
   }
 
   // B4 localStorage 键前缀

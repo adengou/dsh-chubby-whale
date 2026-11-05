@@ -271,6 +271,37 @@ try {
   ok('能加载封装/进度/唤醒模块', false, String(e.message))
 }
 
+
+// ---------- ⑨ 回归：唤醒锚定 / APE 兜底 / 回声归一化 ----------
+console.log('\n[9] 回归：唤醒锚定 / APE 兜底 / 回声归一化')
+try {
+  const wk = await import('../src/client/wake.ts')
+  const gate = wk.createWakeGate({ windowMs: 30000 })
+  ok('短词不再句中误唤醒：我想看小鱼', gate.check('我想看小鱼').hit === false)
+  ok('短词句首仍能唤醒：小鱼你好', gate.check('小鱼你好').hit === true)
+  ok('三字觉醒词句中仍认：我想看大肥鱼', gate.check('我想看大肥鱼').hit === true)
+  ok('剥唤醒词后剩正文', wk.stripWakeWords('大肥鱼讲个故事').text.includes('讲个故事'))
+
+  const ape = await import('../src/client/ape.ts')
+  // 说话 780ms 后进入"中间带"噪声（-60dB）：既不算说话也不算安静，旧逻辑要等满 6 秒
+  const F = 60
+  const seq = []
+  for (let i = 0; i < 600 / F; i++) seq.push(-67)
+  for (let i = 0; i < 780 / F; i++) seq.push(-45)
+  for (let i = 0; i < 3000 / F; i++) seq.push(-60)
+  const r = ape.simulateSegment(seq, {})
+  ok('中间带噪声时按"说完话"提前收尾', r.step.commit === true && r.step.commitReason === 'quiet', 'frames=' + r.frames + ' reason=' + r.step.commitReason)
+  ok('收尾发生在 3 秒内（不再等满 6 秒）', r.frames * F <= 3000, (r.frames * F) + 'ms')
+  ok('空序列不死机', ape.simulateSegment([], {}).frames === 0)
+
+  const txt = await import('../src/client/text.ts')
+  ok('回声归一化：星号动作被剥掉', txt.echoKey('星号甩甩尾巴星号 主人说话') === '主人说话')
+  ok('回声归一化：标准动作描写同步剥掉', txt.echoKey('*蹭一下* 本鲸在呢。') === '本鲸在呢')
+  ok('回声归一化：普通句子不受影响', txt.echoKey('今天天气不错') === '今天天气不错')
+} catch (e) {
+  ok('能加载回归模块', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

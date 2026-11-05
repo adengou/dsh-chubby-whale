@@ -84,7 +84,15 @@ export function stripWakeWords(input: unknown, words: string[] = WAKE_WORDS): { 
 
   // 长词优先：'小蓝鱼' 命中时不能被 '蓝鱼' 先剥成 '小'
   const sorted = (words || []).filter(Boolean).map((w) => String(w)).sort((a, b) => b.length - a.length)
-  const hits = sorted.filter((w) => norm.indexOf(normalizeWakeText(w)) >= 0)
+  const hits = sorted.filter((w) => {
+    const nw = normalizeWakeText(w)
+    if (!nw) return false
+    // 三字以上（大肥鱼）：句中出现即可
+    if (nw.length >= 3) return norm.indexOf(nw) >= 0
+    // 两个字（小鱼/鱼鱼/肥鱼/蓝鱼/肥肥）：只认句首，或整句极短，
+    // 否则"我想看小鱼"会被误唤醒，还会把"我想看"当成主人说的话送进模型
+    return norm.startsWith(nw) || (norm.length <= 4 && norm.indexOf(nw) >= 0)
+  })
   if (!hits.length) {
     // 字面没命中 → 试谐音容错（整句要短，避免长句里恰好含「大X鱼」被误唤醒）
     if (norm.length <= 12) {

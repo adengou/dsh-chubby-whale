@@ -410,6 +410,26 @@
   function stopProgress() {
     current = null;
   }
+  function progressIndex() {
+    if (!current) return 0;
+    const eff = current.spoken - current.introLen;
+    if (eff < 0) return 0;
+    let done = 0;
+    for (const c of current.cum) {
+      if (c <= eff) done++;
+    }
+    const total = current.cum.length;
+    return Math.min(total, done + 1);
+  }
+  function bumpProgress(segment) {
+    if (!current) return "";
+    const seg = String(segment || "");
+    const idx = progressIndex();
+    current.spoken += seg.replace(/\s+/g, "").length;
+    const total = current.cum.length;
+    const head = total > 0 && idx > 0 ? current.label + "\uFF08\u7B2C " + idx + "/" + total + " \u53E5\uFF09" : current.label;
+    return head + (seg.trim() ? "\uFF1A" + seg.trim() : "");
+  }
 
   // src/client/image.ts
   var DEFAULT_MAX_EDGE = 1280;
@@ -1009,10 +1029,15 @@
         }
       }
       const quietTargetMs = this.runMs < p.shortRunMs ? p.quietShortMs : this.runMs < p.longRunMs ? p.quietMidMs : p.quietLongMs;
+      const sinceSpeechMs = this.hadSpeech ? Math.max(0, this.elapsedMs - this.lastSpeechAtMs) : 0;
+      const overSpeechWait = this.hadSpeech && sinceSpeechMs >= p.maxWaitAfterSpeechMs;
       const validSpeech = this.speechMs >= p.minSpeechMs;
       let commit = false;
       let commitReason = "";
       if (validSpeech && this.quietMs >= quietTargetMs) {
+        commit = true;
+        commitReason = "quiet";
+      } else if (validSpeech && overSpeechWait) {
         commit = true;
         commitReason = "quiet";
       } else if (this.elapsedMs >= p.maxSegmentMs) {
@@ -1077,6 +1102,93 @@
       if (cur.length >= minLen && prev.length >= minLen && similarity(cur, prev) >= threshold) return true;
     }
     return false;
+  }
+
+  // src/client/text.ts
+  function collapseText(raw) {
+    return String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
+  }
+  function collapsePoemBody(raw) {
+    let t = String(raw == null ? "" : raw);
+    t = t.replace(/\r/g, "");
+    t = t.replace(/\n+/g, "\uFF0C");
+    t = t.replace(/[。！？；]+，/g, (m) => m.slice(0, 1));
+    t = t.replace(/，{2,}/g, "\uFF0C");
+    t = t.replace(/，([。！？；])/g, "$1");
+    return t.trim();
+  }
+  function taleParts(rawTitle) {
+    const t = String(rawTitle || "").trim();
+    const i = t.indexOf("\xB7");
+    if (i > 0 && i < t.length - 1) return { book: t.slice(0, i), title: t.slice(i + 1) };
+    return { title: t, book: "" };
+  }
+  function normalizePlain(text) {
+    return String(text == null ? "" : text).replace(/[\s。，！？,.!?、…~～]/g, "");
+  }
+  function estimateSpeakMs(text) {
+    return Math.round(String(text || "").length * 260) + 3e3;
+  }
+  function echoKey(s) {
+    return String(s == null ? "" : s).replace(/星号|米字号/g, "*").replace(/\*[^*]{1,60}\*/g, "").replace(/[\s。，！？,.!?、…~～]/g, "");
+  }
+  function createDeduper(opts) {
+    const windowMs = Math.max(0, Number(opts && opts.windowMs) || 0);
+    let lastNorm = "";
+    let lastAt = 0;
+    return {
+      allow(text) {
+        const norm = normalizePlain(text);
+        const now = Date.now();
+        if (lastNorm && lastAt && now - lastAt < windowMs && norm === lastNorm) {
+          try {
+            if (opts.onDuplicate) opts.onDuplicate();
+          } catch (e) {
+          }
+          return false;
+        }
+        lastNorm = norm;
+        lastAt = now;
+        return true;
+      },
+      reset() {
+        lastNorm = "";
+        lastAt = 0;
+      }
+    };
+  }
+  function createSentenceBuffer(maxLen = 40) {
+    const limit = Math.max(2, Number(maxLen) || 40);
+    let tail = "";
+    function take(force) {
+      const out = [];
+      for (; ; ) {
+        if (!tail) break;
+        const m = tail.match(/[\s\S]*?[。！？!?；;\n]/);
+        if (m && m[0].length >= 2) {
+          const seg = m[0].trim();
+          tail = tail.slice(m[0].length);
+          if (seg) out.push(seg);
+          continue;
+        }
+        if (force || tail.length >= limit) {
+          const seg = tail.trim();
+          tail = "";
+          if (seg) out.push(seg);
+        }
+        break;
+      }
+      return out;
+    }
+    return {
+      push(delta) {
+        tail += String(delta == null ? "" : delta);
+        return take(false);
+      },
+      flush() {
+        return take(true);
+      }
+    };
   }
 
   // src/client/playback.ts
@@ -1374,6 +1486,7 @@
     }
     function acceptText(text) {
       const plain = text.replace(/[\s。，！？,.!?、…~～]/g, "");
+      const plainKey = echoKey(text);
       if (plain.length < 2 && !/^[停别不]$/.test(plain)) return false;
       if (NOISE_TEXTS.indexOf(plain) >= 0) return false;
       if (/^本鱼在听/.test(plain)) return false;
@@ -1382,6 +1495,14 @@
         if (now - s.at > 15e3) continue;
         const target = s.text.replace(/[\s。，！？,.!?、…~～]/g, "");
         if (!target) continue;
+        const targetKey = echoKey(s.text);
+        if (plainKey && targetKey && (plainKey === targetKey || targetKey.length >= 6 && plainKey.indexOf(targetKey.slice(0, 6)) >= 0)) {
+          try {
+            stats.echoDropped++;
+          } catch (e) {
+          }
+          return false;
+        }
         if (plain === target) return false;
         if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return false;
         if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return false;
@@ -1945,7 +2066,12 @@
     const norm = normalizeWakeText(raw);
     if (!norm) return { hit: false, text: "", word: "" };
     const sorted = (words || []).filter(Boolean).map((w) => String(w)).sort((a, b) => b.length - a.length);
-    const hits = sorted.filter((w) => norm.indexOf(normalizeWakeText(w)) >= 0);
+    const hits = sorted.filter((w) => {
+      const nw = normalizeWakeText(w);
+      if (!nw) return false;
+      if (nw.length >= 3) return norm.indexOf(nw) >= 0;
+      return norm.startsWith(nw) || norm.length <= 4 && norm.indexOf(nw) >= 0;
+    });
     if (!hits.length) {
       if (norm.length <= 12) {
         for (const re of WAKE_FUZZY) {
@@ -2149,7 +2275,9 @@
           try {
             if (!host.narrating()) return;
             const t = String(seg || "").replace(/^念首诗——/, "").trim();
-            if (t) host.bubble(t, 8e3);
+            if (!t) return;
+            const withProgress = bumpProgress(t);
+            host.bubble(withProgress || t, 8e3);
           } catch (e) {
           }
         }
@@ -2205,11 +2333,9 @@
         }
       },
       speak(text, opts) {
-        if (voice) {
-          try {
-            voice.speak(text, opts);
-          } catch (e) {
-          }
+        try {
+          ensure().speak(text, opts);
+        } catch (e) {
         }
       },
       stopSpeak() {
@@ -2485,90 +2611,6 @@
       }
     }
     return { play, stop };
-  }
-
-  // src/client/text.ts
-  function collapseText(raw) {
-    return String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
-  }
-  function collapsePoemBody(raw) {
-    let t = String(raw == null ? "" : raw);
-    t = t.replace(/\r/g, "");
-    t = t.replace(/\n+/g, "\uFF0C");
-    t = t.replace(/[。！？；]+，/g, (m) => m.slice(0, 1));
-    t = t.replace(/，{2,}/g, "\uFF0C");
-    t = t.replace(/，([。！？；])/g, "$1");
-    return t.trim();
-  }
-  function taleParts(rawTitle) {
-    const t = String(rawTitle || "").trim();
-    const i = t.indexOf("\xB7");
-    if (i > 0 && i < t.length - 1) return { book: t.slice(0, i), title: t.slice(i + 1) };
-    return { title: t, book: "" };
-  }
-  function normalizePlain(text) {
-    return String(text == null ? "" : text).replace(/[\s。，！？,.!?、…~～]/g, "");
-  }
-  function estimateSpeakMs(text) {
-    return Math.round(String(text || "").length * 260) + 3e3;
-  }
-  function createDeduper(opts) {
-    const windowMs = Math.max(0, Number(opts && opts.windowMs) || 0);
-    let lastNorm = "";
-    let lastAt = 0;
-    return {
-      allow(text) {
-        const norm = normalizePlain(text);
-        const now = Date.now();
-        if (lastNorm && lastAt && now - lastAt < windowMs && norm === lastNorm) {
-          try {
-            if (opts.onDuplicate) opts.onDuplicate();
-          } catch (e) {
-          }
-          return false;
-        }
-        lastNorm = norm;
-        lastAt = now;
-        return true;
-      },
-      reset() {
-        lastNorm = "";
-        lastAt = 0;
-      }
-    };
-  }
-  function createSentenceBuffer(maxLen = 40) {
-    const limit = Math.max(2, Number(maxLen) || 40);
-    let tail = "";
-    function take(force) {
-      const out = [];
-      for (; ; ) {
-        if (!tail) break;
-        const m = tail.match(/[\s\S]*?[。！？!?；;\n]/);
-        if (m && m[0].length >= 2) {
-          const seg = m[0].trim();
-          tail = tail.slice(m[0].length);
-          if (seg) out.push(seg);
-          continue;
-        }
-        if (force || tail.length >= limit) {
-          const seg = tail.trim();
-          tail = "";
-          if (seg) out.push(seg);
-        }
-        break;
-      }
-      return out;
-    }
-    return {
-      push(delta) {
-        tail += String(delta == null ? "" : delta);
-        return take(false);
-      },
-      flush() {
-        return take(true);
-      }
-    };
   }
 
   // src/client/duilian.ts
@@ -6484,7 +6526,8 @@
         name: "dsh-chubby-whale-client",
         inject: ["slots"],
         apply(ctx) {
-          const diag2 = window.__chubbyWhale = {
+          const diag2 = window.__chubbyWhale || (window.__chubbyWhale = {});
+          Object.assign(diag2, {
             version: VERSION,
             applied: true,
             hasCtx: !!ctx,
@@ -6493,7 +6536,7 @@
             ch: { mic: channels.mic.stats, asr: channels.asr.stats, speak: channels.speak.stats },
             registered: false,
             error: null
-          };
+          });
           try {
             const slots = ctx && ctx.slots;
             if (!slots) {

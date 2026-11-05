@@ -49,6 +49,8 @@ export function createTokenRepo(dataDir) {
             f.storyTokens = (Number(f.storyTokens) || 0) + n;
         else
             f.chatTokens = (Number(f.chatTokens) || 0) + n;
+        // 今日 token 之前只清零不累加，永远是 0（面板上"今日"一直空着）
+        f.dayTokens = (Number(f.dayTokens) || 0) + n;
         f.totalTokens = (Number(f.totalTokens) || 0) + n;
         f.monthTokens = (Number(f.monthTokens) || 0) + n;
         saveFishfood(f);

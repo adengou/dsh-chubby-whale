@@ -51,6 +51,18 @@ export type Deduper = {
  * 时间窗去重器：同一段归一文本在 windowMs 内只放行一次。
  * 台词库（25 秒）与回复朗读（30 秒）共用，只是窗口不同。
  */
+/**
+ * 回声归一化键：把朗读内容与 ASR 听回来的内容对齐成可比形式。
+ * 为什么要专门处理"星号"：TTS 会把 `*动作*` 念成"星号 动作"，
+ * 麦克风听回去后再和原文比对永远不中，于是自己的动作被当成主人发言。
+ */
+export function echoKey(s: any): string {
+  return String(s == null ? '' : s)
+    .replace(/星号|米字号/g, '*')
+    .replace(/\*[^*]{1,60}\*/g, '')
+    .replace(/[\s。，！？,.!?、…~～]/g, '')
+}
+
 export function createDeduper(opts: { windowMs: number; onDuplicate?: () => void }): Deduper {
   const windowMs = Math.max(0, Number(opts && opts.windowMs) || 0)
   let lastNorm = ''

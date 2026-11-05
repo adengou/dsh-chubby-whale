@@ -875,12 +875,15 @@ import { createRecover } from './client/recover.js'
       name: 'dsh-chubby-whale-client',
       inject: ['slots'],
       apply(ctx: any) {
-        // 诊断对象：出问题时在浏览器控制台输入 __chubbyWhale 就能看到卡在哪一步
-        const diag: any = (window as any).__chubbyWhale = {
+        // 诊断对象：出问题时在浏览器控制台输入 __chubbyWhale 就能看到卡在哪一步。
+        // 注意：不能整对象覆盖 —— 其它模块（chat/voice/actions）已经把字段挂在同一命名空间上，
+        // 整替换会让它们的字段全丢（apply 跑两次时尤明显）。改成取已存在的对象再合并。
+        const diag: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
+        Object.assign(diag, {
           version: VERSION, applied: true, hasCtx: !!ctx, hasSlots: !!(ctx && ctx.slots), lat: latDiag,
           ch: { mic: channels.mic.stats, asr: channels.asr.stats, speak: channels.speak.stats },
           registered: false, error: null,
-        }
+        })
         try {
           const slots = ctx && ctx.slots
           if (!slots) {

@@ -15,7 +15,8 @@
 
 import { Ape } from './ape.js'
 import { deepFreeze } from '../shared/immutable.js'
-import { isRepeat, normalizeText, similarity } from './sim.js'
+import { isRepeat } from './sim.js'
+import { echoKey } from './text.js'
 import { isPlaybackZombie } from './playback.js'
 
 export type VoiceStatus = 'idle' | 'listening' | 'recognizing' | 'thinking' | 'speaking'
@@ -315,6 +316,7 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
   /** 过滤：静音噪声 / 自身回声 / 短时间重复 */
   function acceptText(text: string): boolean {
     const plain = text.replace(/[\s。，！？,.!?、…~～]/g, '')
+    const plainKey = echoKey(text)
     // 单字放行白名单：主人喊「停！」也要能打断说书/朗读
     if (plain.length < 2 && !/^[停别不]$/.test(plain)) return false
     if (NOISE_TEXTS.indexOf(plain) >= 0) return false
@@ -325,6 +327,12 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       if (now - s.at > 15000) continue
       const target = s.text.replace(/[\s。，！？,.!?、…~～]/g, '')
       if (!target) continue
+      // 去掉动作描写后的比对（专治"星号"回声）
+      const targetKey = echoKey(s.text)
+      if (plainKey && targetKey && (plainKey === targetKey || (targetKey.length >= 6 && plainKey.indexOf(targetKey.slice(0, 6)) >= 0))) {
+        try { stats.echoDropped++ } catch (e) { }
+        return false
+      }
       if (plain === target) return false
       if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return false
       if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return false

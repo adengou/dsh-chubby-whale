@@ -212,10 +212,15 @@ export class Ape {
       ? p.quietShortMs
       : (this.runMs < p.longRunMs ? p.quietMidMs : p.quietLongMs)
 
+    // 说完话后兜底：有些背景噪声落在中间带、或刚过阈值又不够"平稳"，
+    // quietMs 涨不起来，会一直等到 maxSegmentMs（6 秒）。按"距最后一次说话帧"收尾。
+    const sinceSpeechMs = this.hadSpeech ? Math.max(0, this.elapsedMs - this.lastSpeechAtMs) : 0
+    const overSpeechWait = this.hadSpeech && sinceSpeechMs >= p.maxWaitAfterSpeechMs
     const validSpeech = this.speechMs >= p.minSpeechMs
     let commit = false
     let commitReason: 'quiet' | 'overflow' | '' = ''
     if (validSpeech && this.quietMs >= quietTargetMs) { commit = true; commitReason = 'quiet' }
+    else if (validSpeech && overSpeechWait) { commit = true; commitReason = 'quiet' }
     else if (this.elapsedMs >= p.maxSegmentMs) { commit = true; commitReason = 'overflow' }
 
     return {
@@ -242,5 +247,7 @@ export function simulateSegment(dbSeq: number[], params?: Partial<ApeParams>): {
     last = ape.step(dbSeq[i])
     if (last.commit) return { step: last, frames: i + 1 }
   }
-  return { step: last as ApeStep, frames: dbSeq.length }
+  // 空序列时 last 为 null：调用方取 .commit 会崩，返回一个未收尾的空步骤
+  if (!last) return { step: { db: 0, floorDb: 0, onsetTh: 0, offsetTh: 0, speechMs: 0, quietMs: 0, elapsedMs: 0, hadSpeech: false, quietTargetMs: 0, commit: false, commitReason: '' }, frames: 0 }
+  return { step: last, frames: dbSeq.length }
 }

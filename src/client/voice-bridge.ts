@@ -183,7 +183,10 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
         try {
           if (!host.narrating()) return
           const t = String(seg || '').replace(/^念首诗——/, '').trim()
-          if (t) host.bubble(t, 8000)
+          if (!t) return
+          // 念诗时拼「第 x/N 句」；说书/普通叙述没有进度，bumpProgress 返回空串
+          const withProgress = bumpProgress(t)
+          host.bubble(withProgress || t, 8000)
         } catch (e) { }
       },
     })
@@ -218,7 +221,10 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
       try { gate.reset() } catch (e) { }
     },
     speak(text: string, opts?: BridgeSpeakOptions): void {
-      if (voice) { try { voice.speak(text, opts) } catch (e) { } }
+      // 原来 voice 为空（例如关过「语音待命」→刷新页面）时静默丢弃文本，
+      // 且 onDone 永不回调 —— 说书会永久卡在"正讲着呢"。这里改成 ensure()：
+      // 只创建朗读对象、不开麦克风，麦克风仍由 start() 负责。
+      try { ensure().speak(text, opts) } catch (e) { }
     },
     stopSpeak(): void {
       if (voice) { try { voice.stopSpeaking() } catch (e) { } }
