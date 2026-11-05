@@ -1,14 +1,15 @@
 /**
- * host/routes/personality.ts —— L2 可变人格的读写接口
+ * host/routes/personality.ts —— L2 可变人格 + L3 近期心境的读写接口
  *
- *   GET  /api/chubby-whale/personality          读当前可变人格 + 历史（含学习开关/计数器）
- *   POST /api/chubby-whale/personality/revert   回滚上一条变更（把最后一条历史的 old 恢复）
+ *   GET  /api/chubby-whale/personality          读当前可变人格（含 selfNarrative/selfNarrativeAt）+ 历史
+ *   POST /api/chubby-whale/personality/revert   回滚上一条变更（把最后一条历史的 old 恢复，心境同样适用）
  *
  * 只依赖注入的 PersonalityRepo 与状态读取器，不直接摸文件；
  * 路由注册在 host/routes.ts 的路由表里，入口只接线。
  *
- * 响应形态：顶层平铺当前值（catchphrases/preferences/notes/version/updatedAt），
- * 同一份再放进 personality 子对象，前端取哪种都行；history 单独给。
+ * 响应形态：顶层平铺当前值（catchphrases/preferences/notes/selfNarrative/selfNarrativeAt/
+ * version/updatedAt），同一份再放进 personality 子对象，前端取哪种都行；history 单独给。
+ * learning / writing 两块分别报告 L2 学习与 L3 自写的开关与计数器，互不混淆。
  */
 import { sendJson, sendError } from '../respond.js'
 import { PERSONALITY_LIMITS } from '../personality.js'
@@ -20,6 +21,10 @@ export interface PersonalityHandlerDeps {
   learningEnabled?: () => boolean
   /** 学习器状态（次数/上次尝试/是否在跑），只读 */
   learnerStatus?: () => any
+  /** 自写总开关（config.json 的 personalityWriting），只关生成、不关已存心境的注入 */
+  writingEnabled?: () => boolean
+  /** 自写器状态（次数/上次尝试/最近心境时间/是否在跑），只读 */
+  writerStatus?: () => any
 }
 
 export function createPersonalityHandlers(opts: PersonalityHandlerDeps) {
@@ -27,21 +32,27 @@ export function createPersonalityHandlers(opts: PersonalityHandlerDeps) {
     const p = opts.repo.load()
     const enabled = opts.learningEnabled ? opts.learningEnabled() !== false : true
     const learning = opts.learnerStatus ? opts.learnerStatus() : { enabled }
+    const writingEnabled = opts.writingEnabled ? opts.writingEnabled() !== false : true
+    const writing = opts.writerStatus ? opts.writerStatus() : { enabled: writingEnabled }
     const current = {
       catchphrases: p.catchphrases,
       preferences: p.preferences,
       notes: p.notes,
+      selfNarrative: p.selfNarrative,
+      selfNarrativeAt: p.selfNarrativeAt,
       version: p.version,
       updatedAt: p.updatedAt,
     }
     return {
       ok: true,
       enabled,
+      writingEnabled,
       ...current,
       personality: current,
       history: p.history,
       limits: PERSONALITY_LIMITS,
       learning,
+      writing,
     }
   }
 

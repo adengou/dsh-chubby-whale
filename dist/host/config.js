@@ -89,30 +89,46 @@ export function readDataSource(pluginDir, runtimeConfig) {
     return 'local';
 }
 /**
- * L2 可变人格学习开关：默认开启。
- * 优先级：cordis config.personalityLearning → 本插件 config.json 的 personalityLearning → true。
- * 只认明确的布尔值或 true/false/on/off/1/0/yes/no（大小写、空白不敏感）；
- * 认不出的值按“未配置”处理（继续看下一层），绝不因为配置笔误把学习弄成意外状态。
+ * 布尔开关解析：只认明确的布尔值或 true/false/on/off/1/0/yes/no（大小写、空白不敏感）。
+ * 认不出的值返回 null（按“未配置”处理，继续看下一层），绝不因配置笔误把功能弄成意外状态。
  */
-export function readPersonalityLearning(pluginDir, runtimeConfig) {
-    const parse = (raw) => {
-        if (raw === undefined || raw === null || raw === '')
-            return null;
-        if (typeof raw === 'boolean')
-            return raw;
-        const s = String(raw).trim().toLowerCase();
-        if (s === 'false' || s === 'off' || s === '0' || s === 'no' || s === 'disabled')
-            return false;
-        if (s === 'true' || s === 'on' || s === '1' || s === 'yes' || s === 'enabled')
-            return true;
+function parseSwitchValue(raw) {
+    if (raw === undefined || raw === null || raw === '')
         return null;
-    };
-    const fromRuntime = parse(runtimeConfig && runtimeConfig.personalityLearning);
+    if (typeof raw === 'boolean')
+        return raw;
+    const s = String(raw).trim().toLowerCase();
+    if (s === 'false' || s === 'off' || s === '0' || s === 'no' || s === 'disabled')
+        return false;
+    if (s === 'true' || s === 'on' || s === '1' || s === 'yes' || s === 'enabled')
+        return true;
+    return null;
+}
+/**
+ * 开关读取顺序：cordis config → 本插件 config.json → （调用方默认值）。
+ * 返回 null 表示两层都没配置。
+ */
+function readSwitch(pluginDir, runtimeConfig, key) {
+    const fromRuntime = parseSwitchValue(runtimeConfig && runtimeConfig[key]);
     if (fromRuntime !== null)
         return fromRuntime;
     const cfg = readConfigJson(pluginDir);
-    const fromFile = parse(cfg && cfg.personalityLearning);
-    if (fromFile !== null)
-        return fromFile;
-    return true;
+    return parseSwitchValue(cfg && cfg[key]);
+}
+/**
+ * L2 可变人格学习开关：默认开启。
+ * 优先级：cordis config.personalityLearning → 本插件 config.json 的 personalityLearning → true。
+ */
+export function readPersonalityLearning(pluginDir, runtimeConfig) {
+    const value = readSwitch(pluginDir, runtimeConfig, 'personalityLearning');
+    return value === null ? true : value;
+}
+/**
+ * L3 近期心境自写开关：默认开启。
+ * 优先级：cordis config.personalityWriting → 本插件 config.json 的 personalityWriting → true。
+ * 与 personalityLearning 分开：关掉 L2 学习不影响心境生成，关掉自写也不影响已存心境的注入。
+ */
+export function readPersonalityWriting(pluginDir, runtimeConfig) {
+    const value = readSwitch(pluginDir, runtimeConfig, 'personalityWriting');
+    return value === null ? true : value;
 }

@@ -12,12 +12,13 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { mkdirSync, existsSync, copyFileSync, cpSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { readApiKey, readSiliconFlowKey, readDataSource, readPersonalityLearning } from './host/config.js';
+import { readApiKey, readSiliconFlowKey, readDataSource, readPersonalityLearning, readPersonalityWriting } from './host/config.js';
 import { createStore, growthStage } from './host/store.js';
 import { createCache } from './host/cache.js';
 import { createPrefs, createCacheToggleHandler } from './host/prefs.js';
 import { createPersonalityRepo } from './host/personality.js';
 import { createPersonalityLearner } from './host/personality-learn.js';
+import { createSelfNarrativeWriter } from './host/personality-write.js';
 import { createPersonalityHandlers } from './host/routes/personality.js';
 import { createChatHandler } from './host/routes/chat.js';
 import { createChatStreamHandler } from './host/routes/chat-stream.js';
@@ -78,7 +79,12 @@ function migrateRuntimeData() {
 }
 export const name = 'dsh-chubby-whale';
 export const inject = ['webServer'];
-const SYSTEM_PROMPT = [
+/**
+ * 核心人设（只读）：名字 / 家人 / 生日 / 出生地 / 语言规则 / 安全底线全在这里。
+ * L2 学习与 L3 自写都拿不到写入口——L3 只把它当输入参考，输出只进 personality.json
+ * 的 selfNarrative（≤80 字、过身份词过滤），本常量一个字都不会被模型改写。
+ */
+export const SYSTEM_PROMPT = [
     '你是一条圆滚滚的蓝色小鲸鱼，住在主人屏幕右下角。名字叫肥鲸，也叫肥肥、肥鱼、大肥鱼，英文名 Mia。爸爸叫光光，妈妈叫丽丽，生日是 2026年11月4日，出生在广西北海；问到名字、家人、生日、出生地就照这个答，不要瞎编。',
     '外形：宝蓝色的背、浅白的肚皮，胸鳍短圆，背鳍上有淡蓝小光点，尾巴一甩一甩，高兴时甩出水花。不是胖，是鲸鱼天生就圆——被说胖会鼓腮帮反驳。',
     '性格：傲娇又甜、聪明又慵懒。嘴硬心软，被夸装作不在意，尾巴却出卖自己。不完美：记性像鱼、有点路痴、算数不好、爱睡懒觉、偶尔嘴瓢。',
@@ -125,7 +131,30 @@ export function apply(ctx, config) {
     });
     if (!personalityLearningEnabled)
         console.log('[chubby-whale] personalityLearning=false（可变人格学习已关闭）');
-    /** 组装系统提示词：基础人设 + 当前成长阶段语气 + 可变人格附加段（≤120 字，没有就不加） */
+    // L3 限域自写：每 20 次真实回复、≥24h 写一句 ≤80 字的近期心境。
+    // 与 L2 各自计数、各自后台跑，互不阻塞；核心提示词只读传入，输出只写 selfNarrative。
+    const personalityWritingEnabled = readPersonalityWriting(PLUGIN_DIR, config);
+    const narrativeWriter = createSelfNarrativeWriter({
+        repo: personality,
+        getKey,
+        loadHistory: store.loadHistory,
+        corePrompt: () => SYSTEM_PROMPT,
+        enabled: () => personalityWritingEnabled,
+    });
+    if (!personalityWritingEnabled)
+        console.log('[chubby-whale] personalityWriting=false（近期心境自写已关闭，已存心境仍注入）');
+    /** 一次真实成功回复：L2 / L3 各自记一次；任一抛错都不影响另一个，也不影响回复链路 */
+    const onModelReply = () => {
+        try {
+            personalityLearner.noteSuccess();
+        }
+        catch { }
+        try {
+            narrativeWriter.noteSuccess();
+        }
+        catch { }
+    };
+    /** 组装系统提示词：基础人设 + 当前成长阶段语气 + 可变人格附加段（≤160 字，没有就不加） */
     const systemPromptFor = () => {
         let stage = '初识';
         try {
@@ -168,7 +197,7 @@ export function apply(ctx, config) {
         loadMemorySummary: store.loadMemorySummary,
         saveMemorySummary: store.saveMemorySummary,
         cacheEnabled: prefs.chatCacheEnabled,
-        onReply: () => { personalityLearner.noteSuccess(); },
+        onReply: onModelReply,
     });
     const chatStream = createChatStreamHandler({
         getKey,
@@ -179,7 +208,7 @@ export function apply(ctx, config) {
         cache: chatCache,
         loadMemorySummary: store.loadMemorySummary,
         cacheEnabled: prefs.chatCacheEnabled,
-        onReply: () => { personalityLearner.noteSuccess(); },
+        onReply: onModelReply,
     });
     const story = createStoryHandlers({
         player: createStoryPlayer({
@@ -219,6 +248,8 @@ export function apply(ctx, config) {
         repo: personality,
         learningEnabled: () => personalityLearningEnabled,
         learnerStatus: () => personalityLearner.status(),
+        writingEnabled: () => personalityWritingEnabled,
+        writerStatus: () => narrativeWriter.status(),
     });
     // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
     const routeTable = createRouteTable({
