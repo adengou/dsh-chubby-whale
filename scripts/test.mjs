@@ -601,6 +601,46 @@ try {
   ok('能加载 chat-core.ts / shared/tts.ts', false, String(e.message))
 }
 
+
+// ---------- ⑲ 菜单动作：每一项都有人接 ----------
+console.log('\n[19] 菜单动作覆盖 client/actions*')
+try {
+  const { createActionTable } = await import('../src/client/actions.ts')
+  const mods = await Promise.all([
+    import('../src/client/actions/culture.ts'),
+    import('../src/client/actions/content.ts'),
+    import('../src/client/actions/system.ts'),
+    import('../src/client/actions/voice.ts'),
+  ])
+  const table = createActionTable()
+  mods[0].registerCultureActions(table)
+  mods[1].registerContentActions(table)
+  mods[2].registerSystemActions(table)
+  mods[3].registerVoiceActions(table)
+
+  const menu = await import('../src/client/menu.ts')
+  const items = menu.buildMenu('9.9.9', {
+    storyBooks: ['聊斋', '西游记'], ttsVoice: 'zh-CN-XiaoyiNeural', chatLang: 'zh',
+    storyAuto: true, streamOn: true, narrationRate: '-25%', poemRate: '-25%', storyRate: '-35%',
+  })
+  const dead = []
+  let actions = 0
+  const walk = (arr) => {
+    for (const it of arr) {
+      if (it.items) { walk(it.items); continue }
+      if (!it.action) continue
+      actions++
+      if (!table.has(it.action)) dead.push(it.action + ' ← ' + it.label)
+    }
+  }
+  walk(items)
+  ok('菜单里有足够多的动作项', actions >= 30, '共 ' + actions + ' 项')
+  ok('每个菜单动作都有处理器（无死菜单）', dead.length === 0, dead.length ? dead.join(' | ') : '全部命中')
+  ok('未知动作 run() 返回 false', (await table.run('完全不存在的动作', {})) === false)
+} catch (e) {
+  ok('能加载动作表', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
