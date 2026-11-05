@@ -60,7 +60,7 @@
     "typescript": "^7.0.2"
   },
   "scripts": {
-    "build": "node scripts/check-bom.mjs && tsc -p tsconfig.json && esbuild src/client.ts --bundle --format=iife --external:react --outfile=dist/client.js",
+    "build": "node scripts/check-bom.mjs && tsc -p tsconfig.json && tsc -p tsconfig.client.json && esbuild src/client.ts --bundle --format=iife --external:react --outfile=dist/client.js",
     "prepublishOnly": "npm run build",
     "test": "node scripts/check-imports.mjs && node scripts/check-boundaries.mjs && node scripts/check-text.mjs && node scripts/test.mjs",
     "version:check": "node tools/version-check.mjs --deep",

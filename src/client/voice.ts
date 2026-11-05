@@ -15,6 +15,7 @@
 
 import { Ape } from './ape.js'
 import { deepFreeze } from '../shared/immutable.js'
+import { narrationRate } from './rates.js'
 import { isRepeat } from './sim.js'
 import { echoKey } from './text.js'
 import { isNoiseText } from '../shared/noise.js'
@@ -91,7 +92,7 @@ const ASR_TIMEOUT_MS = 15000
 const TTS_TIMEOUT_MS = 20000
 const TTS_SEG_MAX = 90
 // 叙述（说书/故事/诗歌）语速：可配置，默认 -25%（参考版默认 -15%，实测说书偏快）
-const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-narration-rate'); return (s && /^[+-]\d{1,2}%$/.test(s)) ? s : '-25%' } catch (e) { return '-25%' } })()           // 一段朗读最多多少字
+           // 一段朗读最多多少字
 const TTS_WATCH_MS = 1000        // 朗读看门狗间隔
 const TTS_ZOMBIE_MS = 2500       // 这么久没在播就复位
 
@@ -702,7 +703,7 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     if (!raw) return
     // 叙述判定照 C#：≥80 字算长文/典故/诗词 → 降速 -15%，段间 260ms 换气
     const narration = o && typeof o.narration === 'boolean' ? o.narration : raw.length >= 80
-    const rate = (o && o.rate) ? o.rate : (narration ? NARRATION_RATE : '+0%')
+    const rate = (o && o.rate) ? o.rate : (narration ? narrationRate() : '+0%')
     const strict = !!(o && o.strict)
     const segs = splitForTts(raw, 56)
     if (!segs.length) return

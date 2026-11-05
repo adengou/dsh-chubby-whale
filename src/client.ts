@@ -5,6 +5,7 @@
 import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle, recoverDotStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
 import { stopProgress } from './client/narration-progress.js'
+import { narrationRate } from './client/rates.js'
 import { handleFileDrop } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth, type GrowthInfo } from './client/look.js'
@@ -85,7 +86,7 @@ import { createRecover } from './client/recover.js'
     let asrBusy = false
     let asrBusyAt = 0   // 识别位占用的起始时刻（用于僵尸复位与状态显示）
     // 叙述语速（与 voice.ts 同源，localStorage 可调，默认 -25%）
-    const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-narration-rate'); return (s && /^[+-]\d{1,2}%$/.test(s)) ? s : '-25%' } catch (e) { return '-25%' } })()
+    
     const storyNarratingRef = { current: false }
     const persona = createPersona()
     let lastPoemSpeech = ''
@@ -150,7 +151,7 @@ import { createRecover } from './client/recover.js'
       }, [])
       const [growthLabel, setGrowthLabel] = R.useState('--')
       // 成长外观（L5）：exp 决定体型/光点/光晕/甩尾节奏；拉不到 /growth 时保持初识档
-      const [growth, setGrowth] = R.useState<GrowthInfo>(DEFAULT_GROWTH)
+      const [growth, setGrowth] = R.useState(DEFAULT_GROWTH)
       const lookRef = R.useRef(lookFor(0))
       // 菜单数值的最近一次拉取时刻（10 秒节流；ref 跨渲染保留，普通变量每次渲染都会被重置）
       const menuStatsAtRef = R.useRef(0)
@@ -538,7 +539,7 @@ import { createRecover } from './client/recover.js'
         bubble: showBubble,
         speak: speakText,
         talkFor: (ms: number) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
-        narrationRate: NARRATION_RATE,
+        narrationRate: narrationRate,
         isVoiceOff: () => { try { return localStorage.getItem('chubby-voice') === 'off' } catch (e) { return false } },
         refs: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
       })
@@ -572,7 +573,7 @@ import { createRecover } from './client/recover.js'
         heart: () => { try { animRef.current?.pushHeart() } catch (e) { } },
         persona,
         clientId: CLIENT_ID,
-        narrationRate: NARRATION_RATE,
+        narrationRate: narrationRate,
         version: VERSION,
         story,
         storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
@@ -661,7 +662,7 @@ import { createRecover } from './client/recover.js'
       // ===== 点播本地路由：关键词识别与念诗/讲典故的本地处理在 client/chat-route.ts =====
       const localRouter = createLocalRouter({
         persona,
-        narrationRate: NARRATION_RATE,
+        narrationRate: narrationRate,
         bubble: (text, ms) => showBubble(text, ms),
         say: (text, ms, opts) => sayLine(text, ms, opts),
         speak: (text, opts) => speakText(text, opts),
@@ -697,7 +698,7 @@ import { createRecover } from './client/recover.js'
         storyBusy: storyBusyRef,
         voiceMode: voiceModeRef,
         ttsPlaying: () => ttsPlaying,
-        narrationRate: NARRATION_RATE,
+        narrationRate: narrationRate,
         route: (text) => localRouter.route(text),
         replyDeduper,
         recordChatLatency: (ms) => { try { latDiag.chatMs = ms; latDiag.updates++ } catch (e) { } },
@@ -773,7 +774,7 @@ import { createRecover } from './client/recover.js'
         if (!rp.trim()) return
         // 同一句回复 30 秒内不重复念（client/text.ts 的 deduper，重复时计数 dupReply）
         if (!replyDeduper.allow(rp)) return
-        speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE : '+0%' })
+        speakText(rp, { rate: rp.length >= 80 ? narrationRate() : '+0%' })
       }
 
       // ===== 成长 → 外观（L5）：档位变化时热更新 canvas 外观，不重建动画器 =====
@@ -859,7 +860,7 @@ import { createRecover } from './client/recover.js'
               onClick: () => { try { refreshMenuStats(true) } catch (e) { } },
             }, balanceText || '--'),
           ),
-          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, storyAuto: (() => { try { return localStorage.getItem('chubby-story-auto') !== '0' } catch (e) { return true } })(), storyRate: (() => { try { const s = localStorage.getItem('chubby-story-rate') || '-35%'; return /^-\d{1,2}%$/.test(s) ? s : '-35%' } catch (e) { return '-35%' } })(), poemRate: (() => { try { const s = localStorage.getItem('chubby-poem-rate') || '-25%'; return /^-\d{1,2}%$/.test(s) ? s : '-25%' } catch (e) { return '-25%' } })(), ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel, storyBooks: storyBooks, storyBooksTried: storyBooksTried })),
+          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, storyAuto: (() => { try { return localStorage.getItem('chubby-story-auto') !== '0' } catch (e) { return true } })(), narrationRate: narrationRate(), storyRate: (() => { try { const s = localStorage.getItem('chubby-story-rate') || '-35%'; return /^-\d{1,2}%$/.test(s) ? s : '-35%' } catch (e) { return '-35%' } })(), poemRate: (() => { try { const s = localStorage.getItem('chubby-poem-rate') || '-25%'; return /^-\d{1,2}%$/.test(s) ? s : '-25%' } catch (e) { return '-25%' } })(), ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel, storyBooks: storyBooks, storyBooksTried: storyBooksTried })),
         ) : null,
         h('div', { style: chatPanelStyle(chatOpen) },
           h('div', { style: headStyle },

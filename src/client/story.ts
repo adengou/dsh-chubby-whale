@@ -45,7 +45,7 @@ export type StoryHost = {
   bubble: (text: string, ms?: number) => void
   speak: (text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }) => void
   talkFor: (ms: number) => void
-  narrationRate: string
+  narrationRate: () => string
   /** 语音朗读关着时只出气泡 */
   isVoiceOff: () => boolean
   refs: StoryRefs
@@ -89,7 +89,7 @@ export function createStoryController(host: StoryHost): StoryController {
     host.speak(text, {
       // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
       // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
-      rate: normalizeRate(storyRate(), host.narrationRate),
+      rate: normalizeRate(storyRate(), host.narrationRate()),
       onDone: () => {
         refs.busy.current = false
         refs.narrating.current = false

@@ -19,7 +19,7 @@ import { recitePoem } from './actions/culture.js'
 
 export type LocalRouteHost = {
   persona: Persona
-  narrationRate: string
+  narrationRate: () => string
   bubble: (text: string, ms?: number) => void
   say: (text: string, ms?: number, opts?: { rate?: string; pitch?: string }) => void
   speak: (text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }) => void
@@ -76,7 +76,7 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
         if (!it) { host.bubble('这个没读到', 4000); return }
         const body = collapseText(String(it.text || ''))
         host.bubble((type === 'chengyu' ? '成语·' : '典故·') + String(it.title || ''), 15000)
-        host.speak((type === 'chengyu' ? '讲个成语——' : '讲个典故——') + String(it.title || '') + (it.src ? '，出自' + String(it.src) : '') + '。' + body, { rate: host.narrationRate })
+        host.speak((type === 'chengyu' ? '讲个成语——' : '讲个典故——') + String(it.title || '') + (it.src ? '，出自' + String(it.src) : '') + '。' + body, { rate: host.narrationRate() })
       }).catch(() => host.bubble('这个没读到', 4000))
       return true
     }

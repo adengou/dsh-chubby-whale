@@ -37,7 +37,7 @@ export type ChatHost = {
   /** 输入来自语音（气泡前缀用） */
   voiceMode: { current: boolean }
   ttsPlaying: () => boolean
-  narrationRate: string
+  narrationRate: () => string
   /** 点播本地路由（命中则不走模型） */
   route: (text: string) => boolean
   /** 回复去重（30 秒窗口） */

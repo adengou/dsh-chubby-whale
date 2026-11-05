@@ -7,7 +7,7 @@
 import { hashKey } from '../cache.js'
 import { sendTooLarge } from '../http.js'
 import { readJsonBody } from '../body.js'
-import { sendJson, sendError, sendBuffer } from '../respond.js'
+import { sendJson, sendBuffer } from '../respond.js'
 import { normalizeRate } from '../../shared/tts.js'
 import { createEdgeTtsEngine } from '../tts-engine.js'
 import type { TtsRouteDeps } from '../ports.js'

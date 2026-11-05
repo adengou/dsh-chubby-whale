@@ -26,6 +26,8 @@ export type VoiceBridgeHost = {
   /** 停止朗读（会连带清叙述锁） */
   stopSpeaking: () => void
   bubble: (text: string, ms?: number) => void
+  /** 说一句（会朗读；喊名字的应答用；缺省时退回气泡） */
+  say?: (text: string, ms?: number, opts?: any) => void
   sendText: (text: string, opts?: { voice?: boolean }) => void
   /** 有人对着麦克风说话（用于切到语音模式） */
   onVoiceHeard: () => void
@@ -165,7 +167,10 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
         // 之前只弹气泡不出声，主人喊了名字会觉得"鱼没反应"；
         // 改成 say（会朗读；同一句 25 秒去重，重复喊不会连珠炮）。
         if (!r.text) {
-          try { host.say('本鲸在呢～', 2200) } catch (e) {
+          try {
+            if (host.say) host.say('本鲸在呢～', 2200)
+            else host.bubble('本鲸在呢～', 2200)
+          } catch (e) {
             try { host.bubble('本鲸在呢～', 2200) } catch (e2) { }
           }
           pushWake()

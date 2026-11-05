@@ -318,6 +318,60 @@ try {
   ok('能加载 noise.ts', false, String(e.message))
 }
 
+
+// ---------- ⑪ 缓存：拷贝隔离 + Buffer 不被降级 ----------
+console.log('\n[11] 缓存 cache.ts（拷贝隔离 / Buffer）')
+try {
+  const { createCache } = await import('../src/host/cache.ts')
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-cache-test-'))
+  const cache = createCache({ dir, memBytes: 4 * 1024 * 1024 })
+
+  const obj = { text: '你好', n: 1 }
+  await cache.setJson('k1', obj)
+  obj.text = '被调用方改了'
+  const got = await cache.getJson('k1', 'json')
+  ok('写入时拷贝：调用方改自己那份不影响缓存', got && got.text === '你好')
+
+  got.text = '读取方改了'
+  const got2 = await cache.getJson('k1', 'json')
+  ok('读取时拷贝：改返回值不影响缓存', got2 && got2.text === '你好')
+
+  const mp3 = Buffer.from([0xff, 0xfb, 0x90, 0x64])
+  await cache.setJson('b1', mp3, 'mp3')
+  const back = await cache.getJson('b1', 'mp3')
+  ok('二进制仍是 Buffer（structuredClone 会把 Buffer 变 Uint8Array）', Buffer.isBuffer(back))
+  ok('二进制内容一致', Buffer.isBuffer(back) && back.equals(mp3))
+
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载/使用 cache.ts', false, String(e.message))
+}
+
+
+// ---------- ⑫ 朗读语速 rates.ts ----------
+console.log('\n[12] 朗读语速 client/rates.ts')
+try {
+  // Node 里没有 localStorage：先装一个内存桩，测的就是 rates 的逻辑而不是浏览器 API
+  const mem = new Map()
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => { mem.set(k, String(v)) },
+    removeItem: (k) => { mem.delete(k) },
+  }
+  const rates = await import('../src/client/rates.ts')
+  ok('默认叙述语速 -25%', rates.narrationRate() === '-25%')
+  ok('非法值不写入', rates.setNarrationRate('-99%') === false && rates.narrationRate() === '-25%')
+  ok('合法值写入成功', rates.setNarrationRate('-15%') === true)
+  ok('写入后读到新值', rates.narrationRate() === '-15%')
+  ok('档位表被冻结', Array.isArray(rates.NARRATION_RATES) && Object.isFrozen(rates.NARRATION_RATES))
+  delete globalThis.localStorage
+} catch (e) {
+  ok('能加载 rates.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

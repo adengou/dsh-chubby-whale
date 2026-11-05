@@ -11,6 +11,7 @@ import { getJson } from '../http.js'
 import { estimateMelodySeconds } from '../melody.js'
 import { collapsePoemBody, collapseText, taleParts, estimateSpeakMs } from '../text.js'
 import { startProgress, stopProgress } from '../narration-progress.js'
+import { setNarrationRate } from '../rates.js'
 
 /** 念诗语速：菜单里选过就用选的（-15%/-20%/-25%/-30%），否则沿用叙述语速 -25% */
 function poemRate(fallback: string): string {
@@ -41,7 +42,7 @@ export function recitePoem(host: ReciteHost, poem: any): void {
   setTimeout(() => {
     try {
       host.speak(speech, {
-        rate: poemRate(host.narrationRate),
+        rate: poemRate(host.narrationRate()),
         onDone: () => {
           try { stopProgress() } catch (e) { }
           host.clearNarrate()
@@ -78,6 +79,12 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
     try { localStorage.setItem('chubby-story-auto', next ? '1' : '0') } catch (e) { }
     host.bubble(next ? '连播：开——讲完这段自动接下一段' : '连播：关——讲完这段就停', 4000)
   })
+  // 叙述语速：菜单里选一档，立即生效（典故/成语/讲东西都用它）
+  table.definePrefix('narration-rate:', (host, suffix) => {
+    const v = String(suffix || '')
+    if (setNarrationRate(v)) host.bubble('叙述语速：' + v, 4000)
+    else host.bubble('这个语速值不认', 3000)
+  })
   // 念诗语速：菜单里选一档，立即生效
   table.definePrefix('poem-rate:', (host, suffix) => {
     const rate = String(suffix || '')
@@ -102,7 +109,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
       host.bubble('讲民间故事·' + tp.title + (tp.book ? '（出自《' + tp.book + '》）' : ''), 9000)
       host.talkFor(5000)
       host.speak('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body.slice(0, 6000), {
-        rate: host.narrationRate,
+        rate: host.narrationRate(),
         onDone: () => { host.bubble('故事讲完啦～', 5000); try { host.speak('讲完啦～') } catch (e) { } },
       })
     }).catch(() => host.bubble('故事没讲成'))
@@ -116,7 +123,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
       host.bubble('讲典故·' + d.item.title + '（' + (d.item.src || '') + '）', 9000)
       host.talkFor(5000)
       host.speak('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + body, {
-        rate: host.narrationRate,
+        rate: host.narrationRate(),
         onDone: () => { host.bubble('典故讲完啦～', 5000); try { host.speak('讲完啦～') } catch (e) { } },
       })
     }).catch(() => host.bubble('典故没讲成'))
@@ -129,7 +136,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
       host.bubble('成语辨析·' + d.item.title, 8000)
       const sp = String(d.item.title || '') + '：' + String(d.item.text || '')
       host.speak(sp, {
-        rate: host.narrationRate,
+        rate: host.narrationRate(),
         onDone: () => { host.bubble('这个成语讲完啦～', 5000); try { host.speak('讲完啦～') } catch (e) { } },
       })
     }).catch(() => host.bubble('没查到'))

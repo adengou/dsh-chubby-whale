@@ -262,6 +262,7 @@
     if (label.startsWith("\u8BF4\u4E66\u8BED\u901F\uFF1A")) return label.replace("\u8BF4\u4E66\u8BED\u901F\uFF1A", "Story speed: ");
     if (label.startsWith("\u8FDE\u64AD\uFF1A")) return label.indexOf("\u5F00") >= 0 ? "Auto-continue: on" : "Auto-continue: off";
     if (label.startsWith("\u5FF5\u8BD7\u8BED\u901F\uFF1A")) return label.replace("\u5FF5\u8BD7\u8BED\u901F\uFF1A", "Poem speed: ");
+    if (label.startsWith("\u53D9\u8FF0\u8BED\u901F\uFF1A")) return label.replace("\u53D9\u8FF0\u8BED\u901F\uFF1A", "Narration speed: ");
     return label;
   }
   var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
@@ -342,6 +343,12 @@
         { type: "item", label: "\u63A5\u7740\u8BF4", action: "culture-story-next" },
         { type: "item", label: "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66", action: "story-reset" },
         { type: "item", label: "\u5FF5\u9996\u8BD7", action: "poem" },
+        { type: "sub", label: "\u53D9\u8FF0\u8BED\u901F\uFF1A" + (state.narrationRate || "-25%") + " \u25B8", items: [
+          { type: "item", label: ((state.narrationRate || "-25%") === "-15%" ? "\u2713 " : "") + "\u7A0D\u5FEB -15%", action: "narration-rate:-15%" },
+          { type: "item", label: ((state.narrationRate || "-25%") === "-20%" ? "\u2713 " : "") + "\u9002\u4E2D -20%", action: "narration-rate:-20%" },
+          { type: "item", label: ((state.narrationRate || "-25%") === "-25%" ? "\u2713 " : "") + "\u504F\u6162 -25%\uFF08\u9ED8\u8BA4\uFF09", action: "narration-rate:-25%" },
+          { type: "item", label: ((state.narrationRate || "-25%") === "-30%" ? "\u2713 " : "") + "\u5F88\u6162 -30%", action: "narration-rate:-30%" }
+        ] },
         { type: "sub", label: "\u5FF5\u8BD7\u8BED\u901F\uFF1A" + (state.poemRate || "-25%") + " \u25B8", items: [
           { type: "item", label: ((state.poemRate || "-25%") === "-15%" ? "\u2713 " : "") + "\u7A0D\u5FEB -15%", action: "poem-rate:-15%" },
           { type: "item", label: ((state.poemRate || "-25%") === "-20%" ? "\u2713 " : "") + "\u9002\u4E2D -20%", action: "poem-rate:-20%" },
@@ -443,6 +450,29 @@
   var progressActive = defaultProgress.active;
   var progressIndex = defaultProgress.index;
   var bumpProgress = defaultProgress.bump;
+
+  // src/client/rates.ts
+  var NARRATION_RATES = ["-15%", "-20%", "-25%", "-30%"];
+  deepFreeze(NARRATION_RATES);
+  var DEFAULT_NARRATION_RATE = "-25%";
+  function narrationRate() {
+    try {
+      const s = localStorage.getItem("chubby-narration-rate");
+      if (s && NARRATION_RATES.indexOf(s) >= 0) return s;
+    } catch (e) {
+    }
+    return DEFAULT_NARRATION_RATE;
+  }
+  function setNarrationRate(rate) {
+    const v = String(rate || "").trim();
+    if (NARRATION_RATES.indexOf(v) < 0) return false;
+    try {
+      localStorage.setItem("chubby-narration-rate", v);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
 
   // src/client/image.ts
   var DEFAULT_MAX_EDGE = 1280;
@@ -1260,14 +1290,6 @@
   var ECHO_MUTE_MS = 700;
   var ASR_TIMEOUT_MS = 15e3;
   var TTS_TIMEOUT_MS = 2e4;
-  var NARRATION_RATE = (() => {
-    try {
-      const s = localStorage.getItem("chubby-narration-rate");
-      return s && /^[+-]\d{1,2}%$/.test(s) ? s : "-25%";
-    } catch (e) {
-      return "-25%";
-    }
-  })();
   var TTS_WATCH_MS = 1e3;
   var TTS_ZOMBIE_MS = 2500;
   var TTS_VOICES = [
@@ -2015,7 +2037,7 @@
       const raw = stripStageDirections(String(text || ""));
       if (!raw) return;
       const narration = o && typeof o.narration === "boolean" ? o.narration : raw.length >= 80;
-      const rate = o && o.rate ? o.rate : narration ? NARRATION_RATE : "+0%";
+      const rate = o && o.rate ? o.rate : narration ? narrationRate() : "+0%";
       const strict = !!(o && o.strict);
       const segs = splitForTts(raw, 56);
       if (!segs.length) return;
@@ -2288,7 +2310,8 @@
           }
           if (!r.text) {
             try {
-              host.say("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
+              if (host.say) host.say("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
+              else host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
             } catch (e) {
               try {
                 host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
@@ -3011,7 +3034,7 @@
     setTimeout(() => {
       try {
         host.speak(speech, {
-          rate: poemRate(host.narrationRate),
+          rate: poemRate(host.narrationRate()),
           onDone: () => {
             try {
               stopProgress();
@@ -3059,6 +3082,11 @@
       }
       host.bubble(next ? "\u8FDE\u64AD\uFF1A\u5F00\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u81EA\u52A8\u63A5\u4E0B\u4E00\u6BB5" : "\u8FDE\u64AD\uFF1A\u5173\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u5C31\u505C", 4e3);
     });
+    table.definePrefix("narration-rate:", (host, suffix) => {
+      const v = String(suffix || "");
+      if (setNarrationRate(v)) host.bubble("\u53D9\u8FF0\u8BED\u901F\uFF1A" + v, 4e3);
+      else host.bubble("\u8FD9\u4E2A\u8BED\u901F\u503C\u4E0D\u8BA4", 3e3);
+    });
     table.definePrefix("poem-rate:", (host, suffix) => {
       const rate = String(suffix || "");
       if (!/^-\d{1,2}%$/.test(rate)) {
@@ -3094,7 +3122,7 @@
         host.bubble("\u8BB2\u6C11\u95F4\u6545\u4E8B\xB7" + tp.title + (tp.book ? "\uFF08\u51FA\u81EA\u300A" + tp.book + "\u300B\uFF09" : ""), 9e3);
         host.talkFor(5e3);
         host.speak("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + tp.title + (tp.book ? "\uFF0C\u51FA\u81EA\u300A" + tp.book + "\u300B" : "") + "\u3002" + body.slice(0, 6e3), {
-          rate: host.narrationRate,
+          rate: host.narrationRate(),
           onDone: () => {
             host.bubble("\u6545\u4E8B\u8BB2\u5B8C\u5566\uFF5E", 5e3);
             try {
@@ -3115,7 +3143,7 @@
         host.bubble("\u8BB2\u5178\u6545\xB7" + d.item.title + "\uFF08" + (d.item.src || "") + "\uFF09", 9e3);
         host.talkFor(5e3);
         host.speak("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + body, {
-          rate: host.narrationRate,
+          rate: host.narrationRate(),
           onDone: () => {
             host.bubble("\u5178\u6545\u8BB2\u5B8C\u5566\uFF5E", 5e3);
             try {
@@ -3135,7 +3163,7 @@
         host.bubble("\u6210\u8BED\u8FA8\u6790\xB7" + d.item.title, 8e3);
         const sp = String(d.item.title || "") + "\uFF1A" + String(d.item.text || "");
         host.speak(sp, {
-          rate: host.narrationRate,
+          rate: host.narrationRate(),
           onDone: () => {
             host.bubble("\u8FD9\u4E2A\u6210\u8BED\u8BB2\u5B8C\u5566\uFF5E", 5e3);
             try {
@@ -3242,7 +3270,7 @@
     host.talkFor(5e3);
     if (!host.voiceOn()) return;
     host.narrate(estimateSpeakMs(speech));
-    host.speak(speech, { rate: host.narrationRate, onDone: () => host.clearNarrate() });
+    host.speak(speech, { rate: host.narrationRate(), onDone: () => host.clearNarrate() });
   }
   function registerContentActions(table) {
     table.define("story-books", (host) => {
@@ -4587,7 +4615,7 @@
       host.speak(text, {
         // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
         // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
-        rate: normalizeRate(storyRate(), host.narrationRate),
+        rate: normalizeRate(storyRate(), host.narrationRate()),
         onDone: () => {
           refs.busy.current = false;
           refs.narrating.current = false;
@@ -4761,7 +4789,7 @@
           }
           const body = collapseText(String(it.text || ""));
           host.bubble((type === "chengyu" ? "\u6210\u8BED\xB7" : "\u5178\u6545\xB7") + String(it.title || ""), 15e3);
-          host.speak((type === "chengyu" ? "\u8BB2\u4E2A\u6210\u8BED\u2014\u2014" : "\u8BB2\u4E2A\u5178\u6545\u2014\u2014") + String(it.title || "") + (it.src ? "\uFF0C\u51FA\u81EA" + String(it.src) : "") + "\u3002" + body, { rate: host.narrationRate });
+          host.speak((type === "chengyu" ? "\u8BB2\u4E2A\u6210\u8BED\u2014\u2014" : "\u8BB2\u4E2A\u5178\u6545\u2014\u2014") + String(it.title || "") + (it.src ? "\uFF0C\u51FA\u81EA" + String(it.src) : "") + "\u3002" + body, { rate: host.narrationRate() });
         }).catch(() => host.bubble("\u8FD9\u4E2A\u6CA1\u8BFB\u5230", 4e3));
         return true;
       }
@@ -5485,14 +5513,6 @@
       const epoch = createEpoch();
       let asrBusy = false;
       let asrBusyAt = 0;
-      const NARRATION_RATE2 = (() => {
-        try {
-          const s = localStorage.getItem("chubby-narration-rate");
-          return s && /^[+-]\d{1,2}%$/.test(s) ? s : "-25%";
-        } catch (e) {
-          return "-25%";
-        }
-      })();
       const storyNarratingRef = { current: false };
       const persona = createPersona();
       let lastPoemSpeech = "";
@@ -6052,7 +6072,7 @@
             } catch (e) {
             }
           },
-          narrationRate: NARRATION_RATE2,
+          narrationRate,
           isVoiceOff: () => {
             try {
               return localStorage.getItem("chubby-voice") === "off";
@@ -6108,7 +6128,7 @@
           },
           persona,
           clientId: CLIENT_ID,
-          narrationRate: NARRATION_RATE2,
+          narrationRate,
           version: VERSION,
           story,
           storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
@@ -6254,7 +6274,7 @@
         }
         const localRouter = createLocalRouter({
           persona,
-          narrationRate: NARRATION_RATE2,
+          narrationRate,
           bubble: (text, ms2) => showBubble(text, ms2),
           say: (text, ms2, opts) => sayLine(text, ms2, opts),
           speak: (text, opts) => speakText(text, opts),
@@ -6298,7 +6318,7 @@
           storyBusy: storyBusyRef,
           voiceMode: voiceModeRef,
           ttsPlaying: () => ttsPlaying,
-          narrationRate: NARRATION_RATE2,
+          narrationRate,
           route: (text) => localRouter.route(text),
           replyDeduper,
           recordChatLatency: (ms2) => {
@@ -6402,7 +6422,7 @@
           const rp = String(text || "");
           if (!rp.trim()) return;
           if (!replyDeduper.allow(rp)) return;
-          speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE2 : "+0%" });
+          speakText(rp, { rate: rp.length >= 80 ? narrationRate() : "+0%" });
         }
         R.useEffect(() => {
           const next = lookForGrowth(growth);
@@ -6513,7 +6533,7 @@
               } catch (e) {
                 return true;
               }
-            })(), storyRate: (() => {
+            })(), narrationRate: narrationRate(), storyRate: (() => {
               try {
                 const s = localStorage.getItem("chubby-story-rate") || "-35%";
                 return /^-\d{1,2}%$/.test(s) ? s : "-35%";

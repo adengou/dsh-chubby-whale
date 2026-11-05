@@ -65,7 +65,7 @@ function showAndSpeak(host: ActionHost, shown: string, speech: string, ms: numbe
   host.talkFor(5000)
   if (!host.voiceOn()) return
   host.narrate(estimateSpeakMs(speech))
-  host.speak(speech, { rate: host.narrationRate, onDone: () => host.clearNarrate() })
+  host.speak(speech, { rate: host.narrationRate(), onDone: () => host.clearNarrate() })
 }
 
 export function registerContentActions(table: ActionTable<ActionHost>): void {

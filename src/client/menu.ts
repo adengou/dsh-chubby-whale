@@ -142,6 +142,7 @@ export function tr(label: string, lang: string): string {
   if (label.startsWith('说书语速：')) return label.replace('说书语速：', 'Story speed: ')
   if (label.startsWith('连播：')) return label.indexOf('开') >= 0 ? 'Auto-continue: on' : 'Auto-continue: off'
   if (label.startsWith('念诗语速：')) return label.replace('念诗语速：', 'Poem speed: ')
+  if (label.startsWith('叙述语速：')) return label.replace('叙述语速：', 'Narration speed: ')
   return label
 }
 
@@ -169,6 +170,10 @@ export interface MenuState {
   storyAuto?: boolean
   /** 说书语速（缺省 -35%）：-25% / -30% / -35% / -40% */
   storyRate?: string
+  /** 念诗语速（缺省 -25%） */
+  poemRate?: string
+  /** 叙述语速（缺省 -25%，典故/成语用） */
+  narrationRate?: string
 }
 
 export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
@@ -254,6 +259,12 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
       { type: 'item', label: '接着说', action: 'culture-story-next' },
       { type: 'item', label: '从头讲这本书', action: 'story-reset' },
       { type: 'item', label: '念首诗', action: 'poem' },
+      { type: 'sub', label: '叙述语速：' + (state.narrationRate || '-25%') + ' ▸', items: [
+        { type: 'item', label: ((state.narrationRate || '-25%') === '-15%' ? '✓ ' : '') + '稍快 -15%', action: 'narration-rate:-15%' },
+        { type: 'item', label: ((state.narrationRate || '-25%') === '-20%' ? '✓ ' : '') + '适中 -20%', action: 'narration-rate:-20%' },
+        { type: 'item', label: ((state.narrationRate || '-25%') === '-25%' ? '✓ ' : '') + '偏慢 -25%（默认）', action: 'narration-rate:-25%' },
+        { type: 'item', label: ((state.narrationRate || '-25%') === '-30%' ? '✓ ' : '') + '很慢 -30%', action: 'narration-rate:-30%' },
+      ] },
       { type: 'sub', label: '念诗语速：' + (state.poemRate || '-25%') + ' ▸', items: [
         { type: 'item', label: ((state.poemRate || '-25%') === '-15%' ? '✓ ' : '') + '稍快 -15%', action: 'poem-rate:-15%' },
         { type: 'item', label: ((state.poemRate || '-25%') === '-20%' ? '✓ ' : '') + '适中 -20%', action: 'poem-rate:-20%' },
