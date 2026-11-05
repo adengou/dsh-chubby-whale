@@ -2,17 +2,30 @@
 
 DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下角。可拖拽（带惯性、位置记忆）、会眨眼、能说话、能说书念诗弹琴，也能听懂你说话。
 
+| 渠道 | 地址 |
+| --- | --- |
+| 主仓库（GitHub） | <https://github.com/adengou/dsh-chubby-whale> |
+| 镜像（Gitee） | <https://gitee.com/adengou/dsh-chubby-whale> |
+| npm | <https://www.npmjs.com/package/dsh-chubby-whale> |
+
 > 语音待命的信号处理设计与调参：见 [docs/耳朵算法.md](docs/耳朵算法.md)
 
-## 从 npm 安装（标准方式）
+## 安装（三种来源任选）
 
 ```powershell
-# 1) 装进 web profile（与其它 DSH 插件完全一致的做法）
+# ① 从 npm 装（推荐，最省事）
 dsh plugin --profile web add dsh-chubby-whale
 
-# 2) 重启 dsh web
+# ② 从 GitHub 装（跟最新代码）
+dsh plugin --profile web add "git+https://github.com/adengou/dsh-chubby-whale.git"
+
+# ③ 从 Gitee 装（国内最快）
+dsh plugin --profile web add "git+https://gitee.com/adengou/dsh-chubby-whale.git"
+
+# 装完重启 dsh web
 dsh web
 ```
+
 
 装完刷新页面即可看到肥鲸。Key 不随包分发，需要自己配：
 
