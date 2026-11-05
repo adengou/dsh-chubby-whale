@@ -1592,12 +1592,20 @@
           stats.lastError = "b64-empty";
           return;
         }
-        const res = await fetchWithTimeout(apiBase + "/asr", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ audio: b64, format: "webm" })
-        }, ASR_TIMEOUT_MS);
+        const asrCtl = typeof AbortController !== "undefined" ? new AbortController() : null;
+        if (asrCtl) asrAborts.add(asrCtl);
+        let res;
+        try {
+          res = await fetchWithTimeout(apiBase + "/asr", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ audio: b64, format: "webm" })
+          }, ASR_TIMEOUT_MS, asrCtl ? asrCtl.signal : void 0);
+        } finally {
+          if (asrCtl) asrAborts.delete(asrCtl);
+        }
         const data = await res.json();
+        if (!running) return;
         if (!data || !data.ok) {
           stats.asrFail++;
           stats.lastError = "asr: " + String(data && data.error || "failed");
@@ -1744,6 +1752,7 @@
     }
     const ttsPrefetch = /* @__PURE__ */ new Map();
     const ttsAborts = /* @__PURE__ */ new Set();
+    const asrAborts = /* @__PURE__ */ new Set();
     let ttsSeq = 0;
     function synth(job) {
       const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -2086,6 +2095,19 @@
     }
     function stop() {
       running = false;
+      try {
+        for (const c of asrAborts) {
+          try {
+            c.abort();
+          } catch (e) {
+          }
+        }
+      } catch (e) {
+      }
+      try {
+        asrAborts.clear();
+      } catch (e) {
+      }
       if (tickTimer) {
         clearTimeout(tickTimer);
         tickTimer = null;

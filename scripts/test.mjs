@@ -273,6 +273,11 @@ try {
   const { readFileSync: rf3 } = await import('node:fs')
   const vSrc = rf3('src/client/voice.ts', 'utf8')
   ok('停止说话会取消在途 TTS 请求', vSrc.indexOf('ttsAborts') >= 0 && vSrc.indexOf('for (const c of ttsAborts)') >= 0)
+  // 关语音待命时，在途的识别请求要取消，且回来先判 running（否则"关了还会回话"）
+  const iJson = vSrc.indexOf('const data = await res.json()')
+  const iGuard = vSrc.indexOf('if (!running) return', iJson)
+  ok('关语音时会取消在途 ASR 请求', vSrc.indexOf('asrAborts') >= 0 && vSrc.indexOf('for (const c of asrAborts)') >= 0)
+  ok('ASR 回来后先检查是否已停止', iJson > 0 && iGuard > iJson && iGuard < iJson + 400, 'json@' + iJson + ' guard@' + iGuard)
   np.stopProgress()
   ok('stopProgress 后不再出进度', np.bumpProgress('多情自古伤离别。') === '')
 

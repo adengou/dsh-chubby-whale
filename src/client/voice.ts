@@ -287,12 +287,21 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     try {
       const b64 = await blobToBase64(blob)
       if (!b64) { stats.asrFail++; stats.lastError = 'b64-empty'; return }
-      const res = await fetchWithTimeout(apiBase + '/asr', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ audio: b64, format: 'webm' }),
-      }, ASR_TIMEOUT_MS)
+      const asrCtl = typeof AbortController !== 'undefined' ? new AbortController() : null
+      if (asrCtl) asrAborts.add(asrCtl)
+      let res: Response
+      try {
+        res = await fetchWithTimeout(apiBase + '/asr', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ audio: b64, format: 'webm' }),
+        }, ASR_TIMEOUT_MS, asrCtl ? asrCtl.signal : undefined)
+      } finally {
+        if (asrCtl) asrAborts.delete(asrCtl)
+      }
       const data = await res.json()
+      // 请求期间可能已经关掉语音待命/卸载：这时候不能再把结果当主人说话
+      if (!running) return
       if (!data || !data.ok) { stats.asrFail++; stats.lastError = 'asr: ' + String((data && data.error) || 'failed'); return }
       try { lastSeg = { mode: epMode, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) } } catch (e) { }
       const text = String(data.text || '').trim()
@@ -423,6 +432,8 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
   const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
 /** 在途的合成请求：停止说话时一起 abort（服务器那边也会跟着断，不再白算一整段） */
 const ttsAborts = new Set<AbortController>()
+/** 在途的识别请求：关语音待命/卸载时取消（否则关了还会"听到"并回话） */
+const asrAborts = new Set<AbortController>()
   let ttsSeq = 0
 
   // 合成一段（带超时）。失败返回 null —— 对应 C# 的 wav == null
@@ -693,6 +704,9 @@ const ttsAborts = new Set<AbortController>()
 
   function stop(): void {
     running = false
+    // 在途识别请求一并取消：关掉之后不能再"听到"并回话
+    try { for (const c of asrAborts) { try { c.abort() } catch (e) { } } } catch (e) { }
+    try { asrAborts.clear() } catch (e) { }
     if (tickTimer) { clearTimeout(tickTimer); tickTimer = null }
     if (restartTimer) { clearTimeout(restartTimer); restartTimer = null }
     if (ttsWatch) { clearInterval(ttsWatch); ttsWatch = null }
