@@ -86,7 +86,8 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       const rawLang = (typeof body?.lang === 'string' && /^(zh|en|auto)$/.test(body.lang)) ? body.lang : 'auto'
       const lang = rawLang === 'auto' ? detectLang(message) : rawLang
       const isVoice = !!body?.voice
-      if (!message) {
+      // 用 trim 判空：只发空格/换行不该白调一次模型
+      if (!message.trim()) {
         res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive' })
         send({ error: 'empty message' })
         res.end()

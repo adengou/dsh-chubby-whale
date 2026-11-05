@@ -63,7 +63,8 @@ export function createChatHandler(opts) {
             const isVoice = body?.voice === true || body?.voice === 'true';
             // 语音闲聊门槛降到 2 个字（"在吗""讲个笑话"也要能命中）；打字仍要 ≥6 字
             const cacheable = message.trim().length >= (isVoice ? 2 : 6);
-            if (!message) {
+            // 用 trim 判空：只发空格/换行不该白调一次模型（图片消息走 VISION_PROMPT 自带文案）
+            if (!message.trim()) {
                 sendJson(res, { ok: false, error: 'empty message' }, 400);
                 return;
             }

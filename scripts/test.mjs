@@ -845,6 +845,122 @@ try {
   ok('能加载 ASR 路由', false, String(e.message))
 }
 
+
+// ---------- ㉓ 聊天路由：缓存 / 记忆写回 / 亲密度 / 失败兜底 ----------
+console.log('\n[23] 聊天路由 host/routes/chat.ts（假 req/res + 假 fetch）')
+try {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-chat-test-'))
+  const { createCache } = await import('../src/host/cache.ts')
+  const { createChatHandler } = await import('../src/host/routes/chat.ts')
+  const cache = createCache({ dir, memBytes: 2 * 1024 * 1024 })
+
+  let replyText = '本鲸在呢～'
+  let httpStatus = 200
+  const fetchCalls = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    fetchCalls.push({ url, body: init && init.body })
+    const payload = { choices: [{ message: { content: replyText } }], usage: { total_tokens: 12 } }
+    return { ok: httpStatus === 200, status: httpStatus, text: async () => JSON.stringify(payload) }
+  }
+
+  const state = { intimacy: 0 }
+  const appended = []
+  const tokens = []
+  const mkReq = (body) => {
+    const buf = Buffer.from(JSON.stringify(body))
+    return { headers: {}, destroy() { }, on() { }, resume() { }, async *[Symbol.asyncIterator]() { yield buf } }
+  }
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.bodyText = () => Buffer.concat(out.chunks).toString('utf8')
+    out.json = () => { try { return JSON.parse(out.bodyText()) } catch (e) { return null } }
+    return out
+  }
+  const deps = (model) => ({
+    getKey: () => 'test-key',
+    loadHistory: () => [],
+    appendTurns: (u, r) => { appended.push([u, r]) },
+    loadState: () => ({ ...state }),
+    saveState: (st) => { state.intimacy = st.intimacy },
+    systemPrompt: 'SYS',
+    addExp: () => ({ upgraded: false }),
+    addTokens: (kind, n) => { tokens.push([kind, n]) },
+    cache,
+    loadMemorySummary: () => '',
+    model,
+  })
+
+  // ① 空消息
+  let res = mkRes()
+  await createChatHandler(deps('deepseek-flash'))(mkReq({ message: '   ' }), res)
+  ok('空消息 → 400', res.code === 400 && res.json().error === 'empty message')
+
+  // ② 没 key
+  const noKey = deps('deepseek-flash')
+  noKey.getKey = () => ''
+  res = mkRes()
+  await createChatHandler(noKey)(mkReq({ message: '主人好呀' }), res)
+  ok('没有 Key → ok:false NO_KEY（且带兜底回复）', res.json() && res.json().ok === false && res.json().error === 'NO_KEY' && !!res.json().reply)
+
+  // ③ 正常回复：回包 / 记忆写回 / token / 亲密度
+  appended.length = 0
+  tokens.length = 0
+  state.intimacy = 0
+  fetchCalls.length = 0
+  res = mkRes()
+  await createChatHandler(deps('deepseek-flash'))(mkReq({ message: '主人今天有点累' }), res)
+  const ok1 = res.json()
+  ok('正常回复 → ok + reply', !!ok1 && ok1.ok === true && ok1.reply === '本鲸在呢～')
+  ok('记忆写回一轮', appended.length === 1 && appended[0][0] === '主人今天有点累' && appended[0][1] === '本鲸在呢～')
+  ok('token 记入鱼粮', tokens.length === 1 && tokens[0][0] === 'chat' && tokens[0][1] === 12)
+  ok('亲密度 +1', ok1 && ok1.intimacy === 1, String(ok1 && ok1.intimacy))
+
+  // ④ 同样问题第二次 → 命中缓存（不再请求模型），仍加亲密度、不重复写记忆
+  appended.length = 0
+  fetchCalls.length = 0
+  res = mkRes()
+  await createChatHandler(deps('deepseek-flash'))(mkReq({ message: '主人今天有点累' }), res)
+  const c1 = res.json()
+  ok('第二次命中缓存（fetch 0 次）', fetchCalls.length === 0 && c1.cached === true, 'fetch=' + fetchCalls.length)
+  ok('缓存命中不加记忆', appended.length === 0)
+  ok('缓存命中仍加亲密度', c1.intimacy === 2, String(c1.intimacy))
+
+  // ⑤ 换模型 → 缓存键不同，重新请求
+  fetchCalls.length = 0
+  res = mkRes()
+  await createChatHandler(deps('another-model'))(mkReq({ message: '主人今天有点累' }), res)
+  ok('换模型 → 重新请求（缓存不串模型）', fetchCalls.length === 1, 'fetch=' + fetchCalls.length)
+
+  // ⑥ 短消息不进缓存：同一条短句两次都要请求
+  fetchCalls.length = 0
+  const shortHandler = createChatHandler(deps('deepseek-flash'))
+  res = mkRes(); await shortHandler(mkReq({ message: '在' }), res)
+  res = mkRes(); await shortHandler(mkReq({ message: '在' }), res)
+  ok('短消息不缓存（两次都请求）', fetchCalls.length === 2, 'fetch=' + fetchCalls.length)
+
+  // ⑦ 上游 500 → ok:false + 兜底文案，不写记忆
+  appended.length = 0
+  httpStatus = 500
+  res = mkRes()
+  await createChatHandler(deps('deepseek-flash'))(mkReq({ message: '这次会失败' }), res)
+  const bad = res.json()
+  ok('上游 500 → ok:false + 兜底文案', bad && bad.ok === false && /HTTP 500/.test(String(bad.error)) && !!bad.reply)
+  ok('失败不写记忆', appended.length === 0)
+  httpStatus = 200
+
+  globalThis.fetch = realFetch
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载聊天路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
