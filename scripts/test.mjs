@@ -187,6 +187,21 @@ try {
   ok('「念一下静夜思」→ 指定诗名', !!t3 && t3.kind === 'poem' && t3.title === '静夜思', t3 ? JSON.stringify(t3) : 'null')
   ok('泛化「背首诗」仍走随机', (() => { const r = it.detectIntent('背首诗'); return !!r && r.kind === 'poem' && !r.title })())
 
+  // 书名别名表：逐个别名都要落到正式书名（改表时这条会提醒同步测试）
+  const bookCases = [
+    ['讲讲聊斋', '聊斋志异'], ['讲个西游记', '西游记'], ['讲水浒', '水浒传'], ['讲个红楼梦吧', '红楼梦'],
+    ['讲封神', '封神演义'], ['讲隋唐', '隋唐演义'], ['讲杨家将', '杨家将演义'], ['讲世说新语', '世说新语'],
+    ['讲三言二拍', '三言二拍'], ['讲儒林外史', '儒林外史'], ['讲官场', '官场现形记'], ['讲老残', '老残游记'],
+    ['讲说岳', '说岳全传'], ['讲东周', '东周列国志'], ['讲三侠五义', '三侠五义'], ['讲镜花缘', '镜花缘'],
+  ]
+  const badBooks = []
+  for (const [text, book] of bookCases) {
+    const r = it.detectIntent(text)
+    if (!r || r.kind !== 'story' || r.book !== book) badBooks.push(text + ' → ' + (r ? r.kind + '/' + (r.book || '') : 'null'))
+  }
+  ok('书名别名全覆盖（16 个别名）', badBooks.length === 0, badBooks.slice(0, 3).join(' / '))
+  ok('别名表被冻结（外部改不动）', Object.isFrozen(it.BOOK_ALIAS))
+
 } catch (e) {
   ok('能加载 intent.ts', false, String(e.message))
 }
@@ -2144,6 +2159,63 @@ try {
   ok('动作/前缀列表可用于自检', tbl.actions().indexOf('feed') >= 0 && tbl.prefixes().indexOf('music:') >= 0)
 } catch (e) {
   ok('能加载动作表', false, String(e.message))
+}
+
+
+// ---------- ㊷ 内容入口：今日一句/简报解析 + 动作链路 ----------
+console.log('\n[42] 内容入口 client/actions/content.ts')
+try {
+  const content = await import('../src/client/actions/content.ts')
+  const { createActionTable } = await import('../src/client/actions.ts')
+
+  // ① 今日一句：三种包裹都要认
+  ok('今日一句：{text,source}', (() => { const r = content.pickDaily({ ok: true, text: '天行健', source: '周易' }); return r && r.text === '天行健' && r.source === '周易' })())
+  ok('今日一句：{item:{…}}', (() => { const r = content.pickDaily({ ok: true, item: { text: '地势坤', source: '周易' } }); return r && r.text === '地势坤' })())
+  ok('今日一句：{items:[…]} 取第一条', (() => { const r = content.pickDaily({ ok: true, items: [{ text: '一' }, { text: '二' }] }); return r && r.text === '一' })())
+  ok('今日一句：ok:false / 空文本都返回 null', content.pickDaily({ ok: false, text: 'x' }) === null && content.pickDaily({ ok: true, text: '  ' }) === null)
+
+  // ② 简报：按行归类，待办单独成段
+  const card = content.parseBriefing({ ok: true, text: '2026年11月6日 星期五\n北海天气：晴\n肥鲸成长：熟悉（200）\n待办提醒：2 条' })
+  ok('简报：待办归第二段', !!card && card.first.indexOf('北海天气') >= 0 && card.second.indexOf('待办') >= 0, card ? card.first.replace(/\n/g, ' / ') : 'null')
+  ok('简报：结构化回包也能拼', (() => { const c = content.parseBriefing({ ok: true, date: '2026-11-06', weather: '晴', growth: '熟悉', todos: [1, 2, 3] }); return !!c && c.first.indexOf('北海天气：晴') >= 0 && c.second.indexOf('3 条') >= 0 })())
+  ok('简报：空数据返回 null', content.parseBriefing({ ok: true, text: '' }) === null && content.parseBriefing(null) === null)
+
+  // ③ 动作链路：daily-line / briefing-card 出气泡并朗读
+  const realFetch = globalThis.fetch
+  const hits = []
+  globalThis.fetch = async (url) => {
+    const u = String(url)
+    hits.push(u)
+    if (u.indexOf('/daily') >= 0) return { ok: true, status: 200, json: async () => ({ ok: true, item: { text: '天行健，君子以自强不息', source: '周易' } }) }
+    if (u.indexOf('/briefing') >= 0) return { ok: true, status: 200, json: async () => ({ ok: true, text: '11月6日 星期五\n待办提醒：1 条' }) }
+    return { ok: false, status: 404, json: async () => ({ ok: false }) }
+  }
+  const bubbles = []
+  const spoken = []
+  const tbl = createActionTable()
+  content.registerContentActions(tbl)
+  const host = {
+    bubble: (t, ms) => bubbles.push(t),
+    talkFor: () => { },
+    voiceOn: () => true,
+    narrate: () => { },
+    clearNarrate: () => { },
+    narrationRate: () => '-25%',
+    speak: (t, o) => spoken.push({ t, o }),
+    story: { start: () => { } },
+    storyState: { busy: { current: false } },
+  }
+  await tbl.run('daily-line', host)
+  await new Promise((r) => setTimeout(r, 50))
+  ok('今日一句：气泡带出处', bubbles.some((b) => b.indexOf('——周易') >= 0), bubbles.join(' | '))
+  ok('今日一句：用叙述语速朗读', spoken.length === 1 && spoken[0].o && spoken[0].o.rate === '-25%')
+  bubbles.length = 0; spoken.length = 0
+  await tbl.run('briefing-card', host)
+  await new Promise((r) => setTimeout(r, 50))
+  ok('简报：两段之间空一行', bubbles.some((b) => b.indexOf('\n\n') >= 0), JSON.stringify(bubbles[0] || ''))
+  globalThis.fetch = realFetch
+} catch (e) {
+  ok('能加载内容入口', false, String(e.message))
 }
 
 console.log('\n────────────────────')
