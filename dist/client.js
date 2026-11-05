@@ -302,6 +302,7 @@
       // ── 文化气 ──
       { type: "sub", label: "\u6587\u5316\u6C14 \u25B8", items: [
         { type: "item", label: "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09", action: "culture-story" },
+        { type: "item", label: "\u8FDE\u64AD\uFF1A" + (state.storyAuto === false ? "\u5173" : "\u5F00") + "\uFF08\u8BB2\u5B8C\u4E00\u6BB5\u81EA\u52A8\u63A5\u4E0B\u4E00\u6BB5\uFF09", action: "story-auto" },
         { type: "item", label: "\u63A5\u7740\u8BF4", action: "culture-story-next" },
         { type: "item", label: "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66", action: "story-reset" },
         { type: "item", label: "\u5FF5\u9996\u8BD7", action: "poem" },
@@ -2844,6 +2845,19 @@
     table.define("story-reset", (host) => {
       host.story.reset();
     });
+    table.define("story-auto", (host) => {
+      const cur = host && host.storyState && host.storyState.auto ? !!host.storyState.auto.current : true;
+      const next = !cur;
+      try {
+        if (host.storyState && host.storyState.auto) host.storyState.auto.current = next;
+      } catch (e) {
+      }
+      try {
+        localStorage.setItem("chubby-story-auto", next ? "1" : "0");
+      } catch (e) {
+      }
+      host.bubble(next ? "\u8FDE\u64AD\uFF1A\u5F00\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u81EA\u52A8\u63A5\u4E0B\u4E00\u6BB5" : "\u8FDE\u64AD\uFF1A\u5173\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u5C31\u505C", 4e3);
+    });
     table.define("culture-tale", (host) => {
       getJson("/culture?type=minsu").then((d) => {
         if (!(d && d.ok && d.item)) {
@@ -4339,14 +4353,17 @@
           refs.busy.current = false;
           refs.narrating.current = false;
           if (d && d.isLast === false) {
-            refs.auto.current = true;
-            host.bubble("\u8FD9\u4E00\u6BB5\u8BB2\u5B8C\u5566\uFF0C\u63A5\u7740\u5F80\u540E\u8BB2\u2026", 4e3);
-            setTimeout(() => {
-              try {
-                next();
-              } catch (e) {
-              }
-            }, 800);
+            if (refs.auto.current) {
+              host.bubble("\u8FD9\u4E00\u6BB5\u8BB2\u5B8C\u5566\uFF0C\u63A5\u7740\u5F80\u540E\u8BB2\u2026", 4e3);
+              setTimeout(() => {
+                try {
+                  next();
+                } catch (e) {
+                }
+              }, 800);
+            } else {
+              host.bubble("\u8FD9\u6BB5\u8BB2\u5B8C\u5566\uFF5E\u70B9\u83DC\u5355\u300C\u63A5\u7740\u8BF4\u300D\u542C\u4E0B\u4E00\u6BB5", 6e3);
+            }
           } else {
             refs.auto.current = false;
             host.bubble(host.persona.line("poemDone"), 6e3);
@@ -5340,7 +5357,14 @@
         const animRef = R.useRef(null);
         const storyBusyRef = R.useRef(false);
         const storyBookRef = R.useRef("");
-        const storyAutoRef = R.useRef(false);
+        const storyAutoRef = R.useRef((() => {
+          try {
+            const s = localStorage.getItem("chubby-story-auto");
+            return s === null ? true : s !== "0";
+          } catch (e) {
+            return true;
+          }
+        })());
         const reminderPollerRef = R.useRef(null);
         const [scale, setScale] = R.useState(1);
         const [hidden, setHidden] = R.useState(false);
@@ -6233,7 +6257,13 @@
                 }
               }, balanceText || "--")
             ),
-            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, chatCacheOn, ttsVoice: (() => {
+            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, chatCacheOn, storyAuto: (() => {
+              try {
+                return localStorage.getItem("chubby-story-auto") !== "0";
+              } catch (e) {
+                return true;
+              }
+            })(), ttsVoice: (() => {
               try {
                 return localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
               } catch (e) {

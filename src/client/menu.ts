@@ -149,6 +149,8 @@ export interface MenuState {
   storyBooks?: string[]
   /** 书单是否已经拉过：拉过但为空 → 菜单显示「书单没取到，稍后再试」 */
   storyBooksTried?: boolean
+  /** 说书连播开关（缺省视为开：讲完一段自动接下一段） */
+  storyAuto?: boolean
 }
 
 export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
@@ -224,6 +226,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     // ── 文化气 ──
     { type: 'sub', label: '文化气 ▸', items: [
       { type: 'item', label: '说书（连载）', action: 'culture-story' },
+      { type: 'item', label: '连播：' + (state.storyAuto === false ? '关' : '开') + '（讲完一段自动接下一段）', action: 'story-auto' },
       { type: 'item', label: '接着说', action: 'culture-story-next' },
       { type: 'item', label: '从头讲这本书', action: 'story-reset' },
       { type: 'item', label: '念首诗', action: 'poem' },

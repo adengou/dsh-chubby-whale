@@ -54,6 +54,14 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
   table.define('culture-story', (host) => { host.story.start('') })
   table.define('culture-story-next', (host) => { host.story.next() })
   table.define('story-reset', (host) => { host.story.reset() })
+  // 连播开关：默认开（主人要求）；关掉后一段讲完就停，状态记在 localStorage
+  table.define('story-auto', (host: any) => {
+    const cur = host && host.storyState && host.storyState.auto ? !!host.storyState.auto.current : true
+    const next = !cur
+    try { if (host.storyState && host.storyState.auto) host.storyState.auto.current = next } catch (e) { }
+    try { localStorage.setItem('chubby-story-auto', next ? '1' : '0') } catch (e) { }
+    host.bubble(next ? '连播：开——讲完这段自动接下一段' : '连播：关——讲完这段就停', 4000)
+  })
 
   // —— 民间故事：标题 + 出处 + 整篇（超 6000 字才截），叙述语速 ——
   table.define('culture-tale', (host) => {

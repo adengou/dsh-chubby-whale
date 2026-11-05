@@ -142,7 +142,11 @@ import { createRecover } from './client/recover.js'
       const storyBusyRef = R.useRef(false)
       // 最近一次说书的书名（「从头讲这本书」要按它重置进度）
       const storyBookRef = R.useRef('')
-    const storyAutoRef = R.useRef(false)   // 点播讲故事：自动连播到"这一回讲完"
+    // 点播讲故事：自动连播到"这一回讲完"。默认开（主人要求），菜单里可关；
+    // 关掉的状态记在 localStorage，刷新后保持。
+    const storyAutoRef = R.useRef((() => {
+      try { const s = localStorage.getItem('chubby-story-auto'); return s === null ? true : s !== '0' } catch (e) { return true }
+    })())
       // 到点提醒：轮询 + 播报队列在 client/reminders.ts；ref 缓存保证跨渲染只建一个实例
       const reminderPollerRef = R.useRef(null as any)
 
@@ -835,7 +839,7 @@ import { createRecover } from './client/recover.js'
               onClick: () => { try { refreshMenuStats(true) } catch (e) { } },
             }, balanceText || '--'),
           ),
-          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel, storyBooks: storyBooks, storyBooksTried: storyBooksTried })),
+          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, storyAuto: (() => { try { return localStorage.getItem('chubby-story-auto') !== '0' } catch (e) { return true } })(), ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel, storyBooks: storyBooks, storyBooksTried: storyBooksTried })),
         ) : null,
         h('div', { style: chatPanelStyle(chatOpen) },
           h('div', { style: headStyle },
