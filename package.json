@@ -69,7 +69,8 @@
     "smoke:client": "node scripts/smoke-client.mjs",
     "bench:ape": "node scripts/ape-bench.mjs",
     "smoke:host": "node scripts/smoke-host.mjs",
-    "bench:tts": "node tools/tts-bench.mjs"
+    "bench:tts": "node tools/tts-bench.mjs",
+    "bench:voice": "node tools/voice-bench.mjs"
   },
   "repository": {
     "type": "git",
