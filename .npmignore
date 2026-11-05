@@ -1,0 +1,17 @@
+# 运行数据（属于用户，不属于包）
+data/pet_state.json
+data/story_progress.json
+data/memory.json
+data/state.json
+data/fishfood.json
+data/growth.json
+data/reminders.json
+data/prefs.json
+data/*-seen.json
+data/cache/
+data/*.webm
+config.json
+# 开发产物
+src/
+node_modules/
+*.tgz

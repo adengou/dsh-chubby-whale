@@ -1,0 +1,75 @@
+{
+  "name": "dsh-chubby-whale",
+  "version": "1.0.0",
+  "description": "DSH 网页版桌面宠物「肥鲸」——蓝发鲸鱼娘，固定在 harness 页面右下角：会眨眼、能拖拽、点击可聊天，支持语音对话、念诗说书、饭点提醒。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "chubby-whale",
+    "desktop-pet",
+    "companion",
+    "tts",
+    "voice",
+    "edge-tts",
+    "asr"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "data",
+    "dist",
+    "cordis.patch.yml",
+    "assets",
+    "README.md",
+    "LICENSE",
+    "config.example.json",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=22",
+    "dsh": ">=0.1.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "scripts": {
+    "build": "node scripts/check-bom.mjs && tsc -p tsconfig.json && esbuild src/client.ts --bundle --format=iife --external:react --outfile=dist/client.js",
+    "prepublishOnly": "npm run build",
+    "test": "node scripts/check-imports.mjs && node scripts/check-text.mjs && node scripts/test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adengou/dsh-chubby-whale.git"
+  },
+  "homepage": "https://github.com/adengou/dsh-chubby-whale#readme",
+  "bugs": {
+    "url": "https://github.com/adengou/dsh-chubby-whale/issues"
+  },
+  "author": "adengou"
+}

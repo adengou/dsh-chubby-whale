@@ -1,0 +1,135 @@
+/**
+ * client/styles.ts —— 所有样式常量（可复用）
+ */
+export const W = 240
+export const H = 213
+export const CW = 480
+export const CH = 426
+export const SX = CW / 1696
+export const SY = CH / 1504
+export const VERSION = '0.1.0'
+
+export const stageStyle = (scale: number, hidden: boolean) => ({
+  position: 'fixed' as const,
+  left: 0,
+  top: 0,
+  width: W + 'px',
+  height: H + 'px',
+  filter: 'drop-shadow(0 14px 26px rgba(0,0,0,0.5))',
+  userSelect: 'none' as const,
+  zIndex: 9999,
+  cursor: 'grab',
+  touchAction: 'none' as const,
+  transform: 'scale(' + scale + ')',
+  transformOrigin: '100% 100%',
+  display: hidden ? 'none' : 'block',
+})
+
+export const canvasStyle = { width: '100%', height: '100%', display: 'block' }
+
+/**
+ * 「让它游走」后的恢复点：右下角一个极小的「○」。
+ * 不占位、不抢焦点；鱼本体 display:none 时它仍然可点（不刷新页面即可恢复）。
+ */
+export const recoverDotStyle = {
+  position: 'fixed' as const,
+  right: 16,
+  bottom: 16,
+  width: 22,
+  height: 22,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: '50%',
+  background: 'rgba(12,28,52,0.72)',
+  border: '1px solid rgba(93,160,240,0.55)',
+  color: '#9FD8FF',
+  font: '12px/22px "Microsoft YaHei", sans-serif',
+  cursor: 'pointer',
+  userSelect: 'none' as const,
+  opacity: 0.75,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
+  zIndex: 10003,
+}
+
+export const menuStyle = (menu: any) => ({
+  position: 'fixed' as const,
+  left: (menu ? Math.min(menu.x, window.innerWidth - 220) : 0) + 'px',
+  top: (menu ? Math.max(8, Math.min(menu.y, window.innerHeight - 520)) : 0) + 'px',
+  width: 210,
+  maxHeight: (typeof window !== "undefined" ? Math.max(200, Math.min(480, window.innerHeight - 32)) : 480),
+  overflowY: 'auto' as const,
+  paddingBottom: 10,
+  background: 'rgba(12,28,52,0.98)',
+  border: '1px solid #2E6BB8',
+  borderRadius: 10,
+  boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+  zIndex: 10001,
+  font: '13px/1.5 "Microsoft YaHei", sans-serif',
+  display: menu ? 'block' : 'none',
+  color: '#cfe9ff',
+})
+
+export const chatPanelStyle = (open: boolean) => ({
+  position: 'fixed' as const,
+  right: 236,
+  bottom: 146,
+  width: 340,
+  background: 'linear-gradient(180deg, rgba(18,40,74,0.98), rgba(10,24,46,0.98))',
+  border: '1px solid rgba(93,160,240,0.55)',
+  borderRadius: 18,
+  boxShadow: '0 18px 48px rgba(0,0,0,0.55)',
+  font: '14px/1.6 "Microsoft YaHei", sans-serif',
+  color: '#dbeaff',
+  overflow: 'hidden',
+  zIndex: 10000,
+  display: open ? 'block' : 'none',
+})
+
+export const headStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  padding: '10px 16px',
+  background: 'linear-gradient(90deg, rgba(46,107,184,0.9), rgba(27,74,140,0.9))',
+  fontSize: 13,
+  letterSpacing: 1,
+  borderBottom: '1px solid rgba(93,160,240,0.3)',
+}
+
+export const bodyStyle = { height: 240, overflowY: 'auto' as const, padding: '12px 14px' }
+export const inputRowStyle = { display: 'flex', gap: 8, padding: '10px 12px', borderTop: '1px solid rgba(93,160,240,0.25)', background: 'rgba(6,16,32,0.6)' }
+export const inputStyle = {
+  flex: 1,
+  border: '1px solid rgba(93,160,240,0.35)',
+  outline: 0,
+  padding: '10px 14px',
+  background: 'rgba(8,20,40,0.9)',
+  color: '#dbeaff',
+  borderRadius: 12,
+  font: '14px "Microsoft YaHei"',
+}
+export const sendStyle = {
+  border: 0,
+  background: 'linear-gradient(90deg,#2E6BB8,#4A8FD6)',
+  color: '#fff',
+  padding: '0 18px',
+  cursor: 'pointer',
+  borderRadius: 12,
+  fontWeight: 600,
+}
+export const msgStyle = (who: string) => ({
+  margin: '8px 0',
+  maxWidth: '86%',
+  padding: '9px 13px',
+  borderRadius: 14,
+  wordBreak: 'break-word' as const,
+  lineHeight: 1.6,
+  marginLeft: who === 'me' ? 'auto' : 0,
+  borderBottomRightRadius: who === 'me' ? 4 : 14,
+  borderBottomLeftRadius: who === 'me' ? 14 : 4,
+  background: who === 'me' ? 'linear-gradient(135deg,#2E6BB8,#3D7CC9)' : 'rgba(15,37,71,0.95)',
+  color: who === 'me' ? '#fff' : '#dbeaff',
+  border: who === 'me' ? 'none' : '1px solid rgba(93,160,240,0.25)',
+  boxShadow: who === 'me' ? '0 4px 12px rgba(46,107,184,0.35)' : '0 2px 8px rgba(0,0,0,0.25)',
+})

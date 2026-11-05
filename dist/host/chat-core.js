@@ -1,0 +1,95 @@
+/**
+ * host/chat-core.ts —— 聊天领域纯函数（普通 /chat 与流式 /chat-stream 共用）
+ *
+ * 这些逻辑原先在 routes/chat.ts 里，流式路由再反过来从 chat.ts 横向 import——
+ * 路由之间互相依赖，改一处容易断另一处。现在提到本文件：
+ *   · 语言判定与缓存 key 规范化
+ *   · 历史截断 / 上下文指纹 / prompt 消息组装
+ * 不涉及 HTTP、不涉及 fetch、不持有任何状态，便于离线断言（scripts/selftest.mjs 仍用 chat.ts 的再导出）。
+ */
+import { shortHash, hashKey } from './cache.js';
+/** DeepSeek 对话接口地址（聊天与摘要共用） */
+export const CHAT_URL = 'https://api.deepseek.com/chat/completions';
+/** 只把最近 8 条历史喂给模型（4 轮）；更早的靠长期记忆摘要，省 token */
+export const HISTORY_IN_PROMPT = 8;
+/** 聊天回复缓存 7 天 */
+export const CHAT_CACHE_TTL = 7 * 24 * 3600 * 1000;
+/**
+ * 聊天 / 流式的 max_tokens 预算（2026-11 调整：260 → 800）。
+ * 新模型若忽略 thinking:{type:'disabled'}、把预算花在 reasoning_content 上，260 会出现「只思考不回答」；
+ * 预算给到 800 后即使思考占掉一部分，也仍有足够额度吐出正文。
+ */
+export const CHAT_MAX_TOKENS = 800;
+/** 后台摘要类调用（长期记忆压缩 / L2 学习 / L3 自写）的 max_tokens 预算（原 160~320 偏低） */
+export const SUMMARY_MAX_TOKENS = 400;
+/**
+ * 聊天缓存的规范化：语音闲聊要"同一句话就命中"，所以
+ *   - 去掉标点/空白/大小写差异（「你好吗？」「你好吗」「你好嗎?」→ 同一个键）
+ *   - 不把历史长度/记忆摘要放进键（否则每聊一句键就变，缓存等于没有）
+ * 代价：同一句话在不同上下文会得到同一条回复——对语音闲聊这正是省 token 的关键。
+ */
+export function normalizeChatText(s) {
+    return String(s || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s\u3000]+/g, '')
+        .replace(/[，。！？、；：,.!?;:"'”’“”（）()【】\[\]<>《》~`@#$%^&*_+=|\\/-]/g, '');
+}
+/** 按内容判语言：有中文→zh；无中文但有拉丁字母→en；否则 auto。纯函数，便于离线断言 */
+export function detectLang(message) {
+    const t = String(message || '');
+    if (/[\u4e00-\u9fa5]/.test(t))
+        return 'zh';
+    if (/[A-Za-z]{2,}/.test(t))
+        return 'en';
+    return 'auto';
+}
+/** 取最近 n 条（只做截断，不改内容）；纯函数，便于离线断言 */
+export function recentHistory(history, n) {
+    const arr = Array.isArray(history) ? history : [];
+    const k = Math.max(0, Math.floor(Number(n) || 0));
+    return k === 0 ? [] : arr.slice(-k);
+}
+/**
+ * 缓存 key：语言 + 规范化文本 + 是否语音 + 模型名 + 上下文指纹（语音和打字分开存，避免互相串）。
+ * 模型名进 key：换模型后旧缓存自动失效，不会把上一个模型的口吻/质量参差的回复继续拿出来用。
+ */
+export function chatCacheKey(lang, message, isVoice, ctx = '', model = '') {
+    // v3：在 v2（上下文指纹）基础上把模型名算进 key；升级前的 v2 key 自然失配，等于清空旧缓存
+    return hashKey('v3|' + lang + '|' + (isVoice ? 'voice' : 'text') + '|' + normalizeChatText(message) + '|' + String(model || '') + '|' + ctx);
+}
+/**
+ * 上下文指纹（长期记忆摘要 + 上一轮用户消息）。
+ * 缓存 key 必须带上上下文：prompt 里拼了完整 history 和长期记忆摘要，
+ * 只按「语言|问题」算 key 会让同一句话永远命中第一条回复。
+ */
+/**
+ * 缓存上下文指纹。
+ * 注意：这里**故意不把"上一轮用户消息"算进去**——
+ * 带上它会让「同一句话第二次问」永远 miss（实测两次 cached:false，
+ * 今日聊天 token 已 31 万），而语音闲聊的价值恰恰是同一句能命中。
+ * 只保留长期记忆摘要：主人身份/喜好变了才让旧回复失效。
+ */
+export function chatContextFingerprint(memSummary, _history = []) {
+    try {
+        return shortHash(String(memSummary || ''));
+    }
+    catch {
+        return '';
+    }
+}
+/** 把历史快照转成模型消息（只收 user/assistant 且 content 为字符串，截断到最近 8 条） */
+export function historyMessages(history) {
+    const out = [];
+    for (const m of recentHistory(history, HISTORY_IN_PROMPT)) {
+        if (m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string') {
+            out.push({ role: m.role, content: m.content });
+        }
+    }
+    return out;
+}
+/** 拼 system 提示：人设 + 语言规则 + 长期记忆 +（可选）语音输入说明 */
+export function composeSystemPrompt(base, parts) {
+    const text = typeof base === 'function' ? base() : base;
+    return String(text || '') + parts.filter(Boolean).join('');
+}

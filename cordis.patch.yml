@@ -1,0 +1,7 @@
+# dsh-chubby-whale —— 独立 bundle patch（不修改其他插件）
+- insert:
+    - id: chubby-whale
+      name: dsh-chubby-whale
+      config:
+        # 插件总开关：false = 不注册任何 /api/chubby-whale/* 路由（见 README「插件开关」）
+        enabled: true
