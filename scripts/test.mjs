@@ -1926,6 +1926,83 @@ try {
   ok('能加载 narration-progress.ts', false, String(e.message))
 }
 
+
+// ---------- ㊳ 点播本地路由：指令识别与分流 ----------
+console.log('\n[38] 点播路由 client/chat-route.ts')
+try {
+  const { createLocalRouter } = await import('../src/client/chat-route.ts')
+  const realFetch = globalThis.fetch
+  const hits = []
+  globalThis.fetch = async (url) => {
+    const u = String(url)
+    hits.push(u)
+    if (u.indexOf('/poem') >= 0) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, item: { title: '雨霖铃', author: '柳永', dynasty: '宋', text: '寒蝉凄切。\n对长亭晚。' } }) }
+    }
+    if (u.indexOf('/culture') >= 0) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, item: { title: '一鼓作气', src: '左传', text: '振作士气' } }) }
+    }
+    return { ok: false, status: 404, json: async () => ({ ok: false }) }
+  }
+
+  const bubbles = []
+  const spoke = []
+  let storyStart = null
+  const host = {
+    persona: { line: () => '人设台词' },
+    narrationRate: () => '-25%',
+    bubble: (t, ms) => { bubbles.push(t) },
+    say: () => { },
+    speak: (t, o) => { spoke.push({ t, o }) },
+    narrate: () => { },
+    clearNarrate: () => { },
+    talkFor: () => { },
+    story: { start: (book) => { storyStart = book } },
+    storyState: { book: { current: '聊斋' }, auto: { current: false } },
+  }
+  const router = createLocalRouter(host)
+
+  // ① 追问：再来一首 → 取 /poem 并念
+  hits.length = 0; bubbles.length = 0; spoke.length = 0
+  ok('「再来一首」走本地', router.route('再来一首') === true)
+  ok('「再来一首」先给点播提示', bubbles[0].indexOf('再念一首') >= 0, bubbles[0])
+  await new Promise((r) => setTimeout(r, 700))
+  ok('「再来一首」会取诗并朗读', hits.some((u) => u.indexOf('/poem') >= 0) && spoke.length > 0 && spoke[0].t.indexOf('念首诗——') === 0, spoke[0] && spoke[0].t.slice(0, 12))
+
+  // ② 接着说 → 用当前书开讲
+  storyStart = null
+  ok('「接着说」走本地', router.route('接着说') === true)
+  ok('「接着说」沿用当前书', storyStart === '聊斋', String(storyStart))
+
+  // ③ 背诗（点名）→ 带 title 参数
+  hits.length = 0
+  ok('「背首诗」走本地', router.route('背首诗') === true)
+  // 点名某首诗才会带 title（"背首诗"是随机点播，不带参数是对的）
+  hits.length = 0
+  ok('点名某首诗走本地', router.route('背雨霖铃') === true)
+  ok('点名时带 title 参数', hits.some((u) => u.indexOf('title=') >= 0), hits.join(','))
+
+  // ④ 成语 → 按类型取并念
+  hits.length = 0; spoke.length = 0
+  ok('「讲个成语」走本地', router.route('讲个成语') === true)
+  await new Promise((r) => setTimeout(r, 50))
+  ok('成语请求带 type=chengyu', hits.some((u) => u.indexOf('type=chengyu') >= 0))
+  ok('成语用叙述语速朗读', spoke.length === 1 && spoke[0].o && spoke[0].o.rate === '-25%', spoke[0] && String(spoke[0].o && spoke[0].o.rate))
+
+  // ⑤ 讲故事 → 开说书并打开连播
+  storyStart = null
+  ok('「讲个故事」走本地', router.route('讲个故事') === true)
+  ok('讲故事会打开连播开关', host.storyState.auto.current === true)
+
+  // ⑥ 提问类与长句不劫持
+  ok('带问号的问题不劫持', router.route('为什么天是蓝的？') === false)
+  ok('长句不劫持', router.route('今天我想听你讲一讲那个关于白蛇传说的完整故事，最好带点评'.repeat(2)) === false)
+
+  globalThis.fetch = realFetch
+} catch (e) {
+  ok('能加载点播路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
