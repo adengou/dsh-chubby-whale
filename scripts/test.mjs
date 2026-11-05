@@ -2590,6 +2590,47 @@ try {
   ok('能加载菜单模块', false, String(e.message))
 }
 
+
+// ---------- ㊽ 唤醒门：30 秒有效窗与短词锚定 ----------
+console.log('\n[48] 唤醒门 client/wake.ts')
+try {
+  const wake = await import('../src/client/wake.ts')
+  let t = 1000000
+  const gate = wake.createWakeGate({ now: () => t })
+  ok('窗口默认 30 秒', gate.windowMs === wake.WAKE_WINDOW_MS && gate.windowMs === 30000)
+
+  const hit = gate.check('大肥鱼你好呀')
+  ok('命中唤醒词：放行并剥掉唤醒词', hit.hit === true && hit.pass === true && hit.text === '你好呀' && hit.word === '大肥鱼', JSON.stringify(hit))
+  ok('命中时剩余窗 = 整窗', hit.remainingMs === 30000)
+
+  t += 29999
+  const inside = gate.check('随便说一句')
+  ok('窗内：未命中词也放行', inside.hit === false && inside.pass === true)
+  ok('窗内：剩余时间递减', inside.remainingMs === 1, String(inside.remainingMs))
+
+  t += 1
+  ok('正好到 30 秒仍算窗内', gate.check('再说一句').pass === true)
+  t += 1
+  const after = gate.check('窗外的自言自语')
+  ok('超出窗口：不放行', after.pass === false && after.remainingMs === 0)
+
+  gate.reset()
+  ok('reset 后立即失窗', gate.awake() === false && gate.check('你好').pass === false)
+
+  // 短唤醒词只在句首（或极短句）算命中：避免"我想看小鱼"被劫持
+  const g2 = wake.createWakeGate({ now: () => t })
+  const mid = g2.check('我想看小鱼')
+  ok('短词在句中不算唤醒', mid.hit === false && mid.pass === false, JSON.stringify(mid))
+  const short = g2.check('小鱼')
+  ok('极短句「小鱼」算唤醒', short.hit === true && short.word === '小鱼', JSON.stringify(short))
+
+  // 自定义窗口有下限（防止误传成 0 导致"刚唤醒就失窗"）
+  const g3 = wake.createWakeGate({ windowMs: 10 })
+  ok('窗口下限 1 秒', g3.windowMs === 1000)
+} catch (e) {
+  ok('能加载唤醒门', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
