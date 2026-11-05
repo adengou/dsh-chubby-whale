@@ -26,7 +26,13 @@ const covered = (s) => {
   return false
 }
 const missing = labels.filter((s) => !covered(s))
-const dead = [...exact].filter((k) => !labels.includes(k) && !dyn.some((d) => k.startsWith(d)))
+// TOGGLE_EN 的键是前缀（'语音朗读：'），实际 label 是 '语音朗读：开/关'，两者都算用到了
+const dead = [...exact].filter((k) =>
+  !labels.includes(k) &&
+  !labels.includes(k + '开') &&
+  !labels.includes(k + '关') &&
+  !dyn.some((d) => k.startsWith(d))
+)
 console.log('菜单文案 ' + labels.length + ' 项 / 精确键 ' + exact.size + ' / 动态前缀 ' + dyn.length)
 console.log(missing.length ? '缺英文: ' + missing.join(' / ') : '缺英文: 0 ✅')
 console.log(dead.length ? '死键: ' + dead.join(' / ') : '死键: 0 ✅')
