@@ -490,6 +490,86 @@ try {
   ok('能加载 text.ts 回声工具', false, String(e.message))
 }
 
+
+// ---------- ⑰ 路由处理器：用假 req/res 真调一遍 ----------
+console.log('\n[17] 路由处理器 host/routes/*（假 req/res）')
+try {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const mkRes = () => {
+    const out = { code: 0, body: '', headers: null }
+    out.writeHead = (code, headers) => { out.code = code; out.headers = headers }
+    out.end = (body) => { out.body = body ? String(body) : '' }
+    out.setHeader = () => { }
+    out.write = () => { }
+    return out
+  }
+  const call = async (handler, url) => {
+    const res = mkRes()
+    await handler({ url, method: 'GET', headers: {} }, res)
+    let json = null
+    try { json = JSON.parse(res.body) } catch (e) { }
+    return { code: res.code, json, raw: res.body }
+  }
+
+  // 念诗：假诗库两首 → 连续点两次不重样
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-route-test-'))
+  const poems = [
+    { title: '静夜思', author: '李白', dynasty: '唐', lines: ['床前明月光', '疑是地上霜'] },
+    { title: '望岳', author: '杜甫', dynasty: '唐', lines: ['岱宗夫如何'] },
+  ]
+  const dataPort = {
+    readPoemsChunk: async (i) => ({ index: i, total: 1, items: i === 0 ? poems : [] }),
+    readCulture: async () => [],
+    readDuilian: async () => ({ upper: [], lower: [] }),
+    readDaily: async () => [],
+  }
+  const { createPoemHandler } = await import('../src/host/routes/poem.ts')
+  const poem = createPoemHandler({ runtimeDir: dir, dataPort })
+  const p1 = await call(poem.handlePoem, '/api/chubby-whale/poem')
+  ok('念诗：返回 ok + item', !!p1.json && p1.json.ok === true && !!p1.json.item, p1.json && p1.json.item ? p1.json.item.title : '')
+  const p2 = await call(poem.handlePoem, '/api/chubby-whale/poem')
+  const t1 = p1.json && p1.json.item && p1.json.item.title
+  const t2 = p2.json && p2.json.item && p2.json.item.title
+  ok('念诗：连续两次不重复', !!t1 && !!t2 && t1 !== t2, t1 + ' / ' + t2)
+  const p3 = await call(poem.handlePoem, '/api/chubby-whale/poem')
+  const t3 = p3.json && p3.json.item && p3.json.item.title
+  ok('念诗：一轮念完自动重来', t3 === t1 || t3 === t2, String(t3))
+
+  // 每日一句：没有 daily.json → 从诗库按日期取，不编造
+  const { createDailyHandler } = await import('../src/host/routes/daily.ts')
+  const daily = createDailyHandler({ dataPort, runtimeDir: dir })
+  const d1 = await call(daily.handleDaily, '/api/chubby-whale/daily')
+  ok('每日一句：ok 且有文本', !!d1.json && d1.json.ok === true && typeof d1.json.text === 'string' && d1.json.text.length > 0)
+  ok('每日一句：文本来自诗库', !!d1.json && poems.some((x) => (x.lines.join('')).indexOf(String(d1.json.text).slice(0, 2)) >= 0), String(d1.json && d1.json.text).slice(0, 12))
+
+  // 状态/宠物：亲密度必须取 state.json（loadIntimacy），不能被 pet_state 的旧值盖掉
+  const { createMiscHandlers } = await import('../src/host/routes/misc.ts')
+  const misc = createMiscHandlers({
+    assetPath: join(dir, 'missing.png'),
+    getKey: () => '',
+    loadState: () => ({ intimacy: 100 }),
+    loadGrowth: () => ({ exp: 10 }),
+    loadFishfood: () => ({ chatTokens: 1, storyTokens: 0 }),
+    loadPet: () => ({ feeds: 5, hunger: 0, mood: 'happy', intimacy: 8 }),
+    feedPet: () => ({ feeds: 6, hunger: 0, mood: 'happy', intimacy: 8 }),
+    loadIntimacy: () => 100,
+    bumpIntimacy: () => 100,
+  })
+  const st = await call(misc.handleState, '/api/chubby-whale/state')
+  ok('/state 返回 intimacy=100', !!st.json && st.json.intimacy === 100, JSON.stringify(st.json))
+  const pet1 = await call(misc.handlePet, '/api/chubby-whale/pet')
+  ok('/pet 的 intimacy 取 state（不是 pet_state 的 8）', !!pet1.json && pet1.json.pet && pet1.json.pet.intimacy === 100, String(pet1.json && pet1.json.pet && pet1.json.pet.intimacy))
+  const pet2 = await call(misc.handlePet, '/api/chubby-whale/pet?action=feed')
+  ok('喂食也返回 state 的亲密度', !!pet2.json && pet2.json.pet && pet2.json.pet.intimacy === 100, String(pet2.json && pet2.json.pet && pet2.json.pet.intimacy))
+  ok('喂食不改动其它字段', !!pet2.json && pet2.json.pet.feeds === 6 && pet2.json.pet.mood === 'happy')
+
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载路由处理器', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

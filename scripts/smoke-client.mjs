@@ -175,16 +175,21 @@ if (captured && typeof captured.factory === 'function') {
     ok('描述符有 name', typeof mod.name === 'string' && mod.name.length > 0, 'name=' + mod.name)
     ok('描述符 inject 含 slots', Array.isArray(mod.inject) && mod.inject.indexOf('slots') >= 0)
     ok('apply 是函数', typeof mod.apply === 'function')
-    // apply：最小 slots 桩（inject 直接回调、register 只记录）
+    // apply：最小 slots 桩（inject 直接回调、register 记录 desc 与渲染函数）
     let registered = null
+    let rendered = null
     const slots = {
       inject(_name, cb) { try { cb() } catch (e) { } },
-      register(desc) { registered = desc },
+      register(desc, render) { registered = desc; rendered = render },
     }
     try {
       mod.apply({ slots })
       ok('apply() 不抛异常', true)
       ok('注册了 shell.overlay', !!registered && registered.name === 'shell.overlay', registered ? 'name=' + registered.name : '没有 register')
+      // 真渲染一次：能抓到"组件里引用了不存在的函数/字段"这类错误
+      let renderErr = ''
+      try { if (typeof rendered === 'function') rendered() } catch (e) { renderErr = String((e && e.message) || e) }
+      ok('render() 不抛异常', !renderErr, renderErr)
     } catch (err) {
       ok('apply() 不抛异常', false, String(err && err.message || err))
     }
