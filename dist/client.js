@@ -167,6 +167,10 @@
     "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09": "Hearing self-test",
     "\u6587\u5316\u6C14 \u25B8": "Culture \u25B8",
     "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09": "Storytelling",
+    "\u7A0D\u5FEB -25%": "A bit faster -25%",
+    "\u9002\u4E2D -30%": "Medium -30%",
+    "\u504F\u6162 -35%\uFF08\u9ED8\u8BA4\uFF09": "Slower -35% (default)",
+    "\u5F88\u6162 -40%": "Very slow -40%",
     "\u63A5\u7740\u8BF4": "Continue story",
     "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66": "Restart this book",
     "\u5FF5\u9996\u8BD7": "Recite a poem",
@@ -232,6 +236,8 @@
         return label.slice(prefix.length) === "\u5F00" ? pair[0] : pair[1];
       }
     }
+    if (label.startsWith("\u8BF4\u4E66\u8BED\u901F\uFF1A")) return label.replace("\u8BF4\u4E66\u8BED\u901F\uFF1A", "Story speed: ");
+    if (label.startsWith("\u8FDE\u64AD\uFF1A")) return label.indexOf("\u5F00") >= 0 ? "Auto-continue: on" : "Auto-continue: off";
     return label;
   }
   var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";

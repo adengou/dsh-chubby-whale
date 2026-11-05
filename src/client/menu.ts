@@ -55,6 +55,10 @@ export const EN_MAP: Record<string, string> = {
   '耳朵自检（听力诊断）': 'Hearing self-test',
   '文化气 ▸': 'Culture ▸',
   '说书（连载）': 'Storytelling',
+  '稍快 -25%': 'A bit faster -25%',
+  '适中 -30%': 'Medium -30%',
+  '偏慢 -35%（默认）': 'Slower -35% (default)',
+  '很慢 -40%': 'Very slow -40%',
   '接着说': 'Continue story',
   '从头讲这本书': 'Restart this book',
   '念首诗': 'Recite a poem',
@@ -126,6 +130,9 @@ export function tr(label: string, lang: string): string {
       return label.slice(prefix.length) === '开' ? pair[0] : pair[1]
     }
   }
+  // 说书语速（运行时拼百分比）与连播（带说明括注）：动态标签，按前缀翻
+  if (label.startsWith('说书语速：')) return label.replace('说书语速：', 'Story speed: ')
+  if (label.startsWith('连播：')) return label.indexOf('开') >= 0 ? 'Auto-continue: on' : 'Auto-continue: off'
   return label
 }
 
