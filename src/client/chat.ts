@@ -108,7 +108,10 @@ export function createChatSender(host: ChatHost): ChatController {
     try { ctl = typeof AbortController !== 'undefined' ? new AbortController() : null } catch (e) { ctl = null }
     // 一开始就登记：还在等响应头时被新提问/停止说话打断，也能 abort 掉连接
     activeStream = { ctl }
-    const firstTimer = setTimeout(() => { try { if (!spokeAny && ctl) ctl.abort() } catch (e) { } }, 4000)
+    // 4 秒兜底只针对"连响应头都没收到"：实测响应头 78ms、首字 ~486ms，
+    // 只要连接正常就别重跑一次模型（会让等待翻倍）
+    let gotHeaders = false
+    const firstTimer = setTimeout(() => { try { if (!spokeAny && !gotHeaders && ctl) ctl.abort() } catch (e) { } }, 4000)
     let bubbleAt = 0
     // 句末标点处先念；没标点就攒到 40 字（避免等太长）
     const sb = createSentenceBuffer(40)

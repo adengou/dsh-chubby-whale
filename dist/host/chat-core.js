@@ -63,10 +63,16 @@ export function chatCacheKey(lang, message, isVoice, ctx = '', model = '') {
  * 缓存 key 必须带上上下文：prompt 里拼了完整 history 和长期记忆摘要，
  * 只按「语言|问题」算 key 会让同一句话永远命中第一条回复。
  */
-export function chatContextFingerprint(memSummary, history) {
+/**
+ * 缓存上下文指纹。
+ * 注意：这里**故意不把"上一轮用户消息"算进去**——
+ * 带上它会让「同一句话第二次问」永远 miss（实测两次 cached:false，
+ * 今日聊天 token 已 31 万），而语音闲聊的价值恰恰是同一句能命中。
+ * 只保留长期记忆摘要：主人身份/喜好变了才让旧回复失效。
+ */
+export function chatContextFingerprint(memSummary, _history = []) {
     try {
-        const prevUser = recentHistory(history, HISTORY_IN_PROMPT).filter((m) => m && m.role === 'user').slice(-1)[0];
-        return shortHash(String(memSummary || '')) + '|' + shortHash(normalizeChatText(String((prevUser && prevUser.content) || '')));
+        return shortHash(String(memSummary || ''));
     }
     catch {
         return '';

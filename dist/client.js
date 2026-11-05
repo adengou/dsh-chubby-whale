@@ -4575,9 +4575,10 @@
         ctl = null;
       }
       activeStream = { ctl };
+      let gotHeaders = false;
       const firstTimer = setTimeout(() => {
         try {
-          if (!spokeAny && ctl) ctl.abort();
+          if (!spokeAny && !gotHeaders && ctl) ctl.abort();
         } catch (e) {
         }
       }, 4e3);
