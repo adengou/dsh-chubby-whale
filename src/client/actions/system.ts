@@ -10,6 +10,7 @@ import { getJson, postJson, delJson } from '../http.js'
 import { VISION_PROMPT } from '../dropzone.js'
 import { imageToB64 } from '../image.js'
 import { parseDue, cleanReminderText } from '../../shared/time.js'
+import { exportBackup, importBackup, formatStats } from './data.js'
 
 export function registerSystemActions(table: ActionTable<ActionHost>): void {
   // —— 投喂 ——
@@ -30,7 +31,17 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
   table.define('home', (host) => { host.homePos(); host.bubble('回到角落啦') })
   table.define('bigger', (host) => { host.nudgeScale(0.1) })
   table.define('smaller', (host) => { host.nudgeScale(-0.1) })
-  table.define('hide', (host) => { host.hide() })
+  // —— 让它游走：隐藏后仍可恢复（恢复点 / Ctrl+Shift+W / 菜单项都走 host.recover）——
+  table.define('hide', (host) => {
+    host.hide()
+    host.bubble('本鲸先游走了，右下角的「○」或 Ctrl+Shift+W 能叫回来', 6000)
+  })
+  table.define('wake-recover', (host) => {
+    let wasHidden = false
+    try { wasHidden = !!host.isHidden() } catch (e) { }
+    try { host.recover() } catch (e) { }
+    host.bubble(wasHidden ? '本鲸回来啦' : '本鲸一直在呀', 3000)
+  })
   table.define('version', (host) => { host.bubble('肥鲸 v' + host.version) })
 
   // —— 聊天面板 ——
@@ -178,17 +189,31 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
       })
       .catch(() => host.bubble('提醒没加上'))
   })
+  // —— 提醒：管理面板（列序号 + 接住下一条输入；逻辑在 client/reminder-manage.ts）——
+  // 旧菜单项「提醒清单…」也指向面板，保证不依赖菜单是否新增项都能用。
+  table.define('remind-manage', (host) => {
+    try { host.openReminders() } catch (e) { host.bubble('提醒清单查不到', 4000) }
+  })
   table.define('remind-list', (host) => {
-    getJson('/reminders').then((d: any) => {
-      const arr = (d && d.reminders) || []
-      if (!arr.length) { host.bubble('还没有提醒～'); return }
-      const txt = arr.map((x: any) => {
-        const when = new Date(x.nextAt || x.at)
-        const stamp = isNaN(when.getTime()) ? String(x.at) : when.toLocaleString('zh-CN')
-        const rep = Number(x.repeat) > 0 ? '（每天）' : ''
-        return '· ' + x.text + '（' + stamp + '）' + rep
-      }).join('\n')
-      host.bubble(txt, 8000)
-    }).catch(() => host.bubble('提醒清单查不到'))
+    try { host.openReminders() } catch (e) { host.bubble('提醒清单查不到', 4000) }
+  })
+
+  // —— 数据备份：导出只在本机下载，导入只发回本机接口（逻辑在 client/actions/data.ts）——
+  table.define('data-export', (host) => {
+    exportBackup({ bubble: (text, ms) => host.bubble(text, ms) })
+  })
+  table.define('data-import', (host) => {
+    importBackup({ bubble: (text, ms) => host.bubble(text, ms) })
+  })
+
+  // —— 统计卡：/stats 一次拿齐，失败只说「还没准备好」——
+  table.define('stats', (host) => {
+    getJson('/stats', { cache: 'no-store' }).then((d: any) => {
+      if (!d || d.ok === false) {
+        host.bubble('统计还没准备好', 5000)
+        return
+      }
+      host.bubble(formatStats(d), 12000)
+    }).catch(() => host.bubble('统计还没准备好', 5000))
   })
 }

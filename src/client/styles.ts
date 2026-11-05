@@ -27,6 +27,31 @@ export const stageStyle = (scale: number, hidden: boolean) => ({
 
 export const canvasStyle = { width: '100%', height: '100%', display: 'block' }
 
+/**
+ * 「让它游走」后的恢复点：右下角一个极小的「○」。
+ * 不占位、不抢焦点；鱼本体 display:none 时它仍然可点（不刷新页面即可恢复）。
+ */
+export const recoverDotStyle = {
+  position: 'fixed' as const,
+  right: 16,
+  bottom: 16,
+  width: 22,
+  height: 22,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: '50%',
+  background: 'rgba(12,28,52,0.72)',
+  border: '1px solid rgba(93,160,240,0.55)',
+  color: '#9FD8FF',
+  font: '12px/22px "Microsoft YaHei", sans-serif',
+  cursor: 'pointer',
+  userSelect: 'none' as const,
+  opacity: 0.75,
+  boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
+  zIndex: 10003,
+}
+
 export const menuStyle = (menu: any) => ({
   position: 'fixed' as const,
   left: (menu ? Math.min(menu.x, window.innerWidth - 220) : 0) + 'px',

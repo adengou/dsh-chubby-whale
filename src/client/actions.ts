@@ -51,6 +51,12 @@ export type ActionHost = {
   homePos: () => void
   nudgeScale: (delta: number) => void
   hide: () => void
+  /** 「让它游走」是否处于隐藏状态（唤醒恢复判断用） */
+  isHidden: () => boolean
+  /** 恢复显示（隐藏时的「○」恢复点、Ctrl+Shift+W、菜单「叫鲸鱼回来」共用） */
+  recover: () => void
+  /** 打开提醒管理面板：列序号并接住下一条输入（数字=删 / d=顺延） */
+  openReminders: () => void
   setChatOpen: (v: boolean) => void
   setVoiceMode: (v: boolean) => void
   setMessages: (v: any) => void

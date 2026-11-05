@@ -27,6 +27,16 @@ export const SONG_EN: Record<string, string> = {
 // 键必须与 buildMenu 里的文案逐字一致，否则就是永远匹配不到的死键。
 export const EN_MAP: Record<string, string> = {
   '投喂一碗': 'Feed a bowl',
+  '选本书 ▸': 'Choose a book ▸',
+  '书单没取到，稍后再试': 'Book list unavailable, try again later',
+  '正在翻书单…': 'Loading book list…',
+  '今日一句': 'Daily quote',
+  '今日简报': "Today's briefing",
+  '数据导出…': 'Export data…',
+  '数据导入…': 'Import data…',
+  '使用统计': 'Usage stats',
+  '提醒管理…': 'Manage reminders…',
+  '唤醒恢复': 'Wake recovery',
   '弹首曲子 ▸': 'Play a song ▸',
   '停止弹奏': 'Stop music',
   '跟她说两句': 'Talk to her',
@@ -135,6 +145,10 @@ export interface MenuState {
   ttsVoice?: string
   balance?: string
   growth?: string
+  /** 说书书单：由 client.ts 打开菜单时拉取后传入（未拉到时为空数组） */
+  storyBooks?: string[]
+  /** 书单是否已经拉过：拉过但为空 → 菜单显示「书单没取到，稍后再试」 */
+  storyBooksTried?: boolean
 }
 
 export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
@@ -147,7 +161,20 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
   const voiceTick = (voice: string): string => (ttsVoice === voice ? '✓ ' : '')
   const balanceText = (state && state.balance) ? state.balance : '--'
   const growthText = (state && state.growth) ? state.growth : '--'
+  // 说书书单：书名原样作为菜单项，动作走 story-book:<书名>；
+  // 拉不到（或拉回来是空列表）时给一条兜底项，点它会重试拉书单（story-books）
+  const books = Array.isArray(state.storyBooks)
+    ? state.storyBooks.map((b) => String(b || '').trim()).filter(Boolean)
+    : []
+  const bookItems: MenuItem[] = books.length
+    ? books.map((b) => ({ type: 'item' as const, label: b, action: 'story-book:' + b }))
+    : [{ type: 'item', label: state.storyBooksTried ? '书单没取到，稍后再试' : '正在翻书单…', action: 'story-books' }]
   return [
+    // ── 界面语言（主人定的位置：标题栏下方第一行）──
+    { type: 'sub', label: '界面语言 ▸', items: [
+      { type: 'item', label: '中文', action: 'lang:zh' },
+      { type: 'item', label: 'English', action: 'lang:en' },
+    ] },
     // ── 吃饭与看图 ──
     { type: 'item', label: '成长：' + growthText, action: 'growth' },
     { type: 'item', label: '投喂一碗', action: 'feed' },
@@ -183,10 +210,6 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
       { type: 'item', label: (chatLang === 'zh' ? '✓ ' : '') + '中文', action: 'chat-lang:zh' },
       { type: 'item', label: (chatLang === 'en' ? '✓ ' : '') + 'English', action: 'chat-lang:en' },
     ] },
-    { type: 'sub', label: '界面语言 ▸', items: [
-      { type: 'item', label: '中文', action: 'lang:zh' },
-      { type: 'item', label: 'English', action: 'lang:en' },
-    ] },
     { type: 'sep' },
     // ── 位置与大小 ──
     { type: 'item', label: '让她歇会儿', action: 'pause' },
@@ -221,6 +244,18 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
       { type: 'item', label: '数字', action: 'culture-couplet:数字' },
     ] },
     ] },
+    { type: 'sep' },
+    // ── 每日内容（说书选本 / 每日一句 / 今日简报）──
+    { type: 'sub', label: '选本书 ▸', items: bookItems },
+    { type: 'item', label: '今日一句', action: 'daily-line' },
+    { type: 'item', label: '今日简报', action: 'briefing-card' },
+    { type: 'sep' },
+    // ── 数据与统计（处理器由其他分身实现，未接上时走兜底提示）──
+    { type: 'item', label: '数据导出…', action: 'data-export' },
+    { type: 'item', label: '数据导入…', action: 'data-import' },
+    { type: 'item', label: '使用统计', action: 'stats' },
+    { type: 'item', label: '提醒管理…', action: 'remind-manage' },
+    { type: 'item', label: '唤醒恢复', action: 'wake-recover' },
     { type: 'sep' },
     // ── 记忆、缓存与退出 ──
     { type: 'item', label: '清除记忆…', action: 'clear-memory' },

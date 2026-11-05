@@ -23,6 +23,26 @@
     display: hidden ? "none" : "block"
   });
   var canvasStyle = { width: "100%", height: "100%", display: "block" };
+  var recoverDotStyle = {
+    position: "fixed",
+    right: 16,
+    bottom: 16,
+    width: 22,
+    height: 22,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "50%",
+    background: "rgba(12,28,52,0.72)",
+    border: "1px solid rgba(93,160,240,0.55)",
+    color: "#9FD8FF",
+    font: '12px/22px "Microsoft YaHei", sans-serif',
+    cursor: "pointer",
+    userSelect: "none",
+    opacity: 0.75,
+    boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+    zIndex: 10003
+  };
   var menuStyle = (menu) => ({
     position: "fixed",
     left: (menu ? Math.min(menu.x, window.innerWidth - 220) : 0) + "px",
@@ -119,6 +139,16 @@
   };
   var EN_MAP = {
     "\u6295\u5582\u4E00\u7897": "Feed a bowl",
+    "\u9009\u672C\u4E66 \u25B8": "Choose a book \u25B8",
+    "\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5": "Book list unavailable, try again later",
+    "\u6B63\u5728\u7FFB\u4E66\u5355\u2026": "Loading book list\u2026",
+    "\u4ECA\u65E5\u4E00\u53E5": "Daily quote",
+    "\u4ECA\u65E5\u7B80\u62A5": "Today's briefing",
+    "\u6570\u636E\u5BFC\u51FA\u2026": "Export data\u2026",
+    "\u6570\u636E\u5BFC\u5165\u2026": "Import data\u2026",
+    "\u4F7F\u7528\u7EDF\u8BA1": "Usage stats",
+    "\u63D0\u9192\u7BA1\u7406\u2026": "Manage reminders\u2026",
+    "\u5524\u9192\u6062\u590D": "Wake recovery",
     "\u5F39\u9996\u66F2\u5B50 \u25B8": "Play a song \u25B8",
     "\u505C\u6B62\u5F39\u594F": "Stop music",
     "\u8DDF\u5979\u8BF4\u4E24\u53E5": "Talk to her",
@@ -215,7 +245,14 @@
     const voiceTick = (voice) => ttsVoice === voice ? "\u2713 " : "";
     const balanceText = state && state.balance ? state.balance : "--";
     const growthText = state && state.growth ? state.growth : "--";
+    const books = Array.isArray(state.storyBooks) ? state.storyBooks.map((b) => String(b || "").trim()).filter(Boolean) : [];
+    const bookItems = books.length ? books.map((b) => ({ type: "item", label: b, action: "story-book:" + b })) : [{ type: "item", label: state.storyBooksTried ? "\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5" : "\u6B63\u5728\u7FFB\u4E66\u5355\u2026", action: "story-books" }];
     return [
+      // ── 界面语言（主人定的位置：标题栏下方第一行）──
+      { type: "sub", label: "\u754C\u9762\u8BED\u8A00 \u25B8", items: [
+        { type: "item", label: "\u4E2D\u6587", action: "lang:zh" },
+        { type: "item", label: "English", action: "lang:en" }
+      ] },
       // ── 吃饭与看图 ──
       { type: "item", label: "\u6210\u957F\uFF1A" + growthText, action: "growth" },
       { type: "item", label: "\u6295\u5582\u4E00\u7897", action: "feed" },
@@ -251,10 +288,6 @@
         { type: "item", label: (chatLang === "zh" ? "\u2713 " : "") + "\u4E2D\u6587", action: "chat-lang:zh" },
         { type: "item", label: (chatLang === "en" ? "\u2713 " : "") + "English", action: "chat-lang:en" }
       ] },
-      { type: "sub", label: "\u754C\u9762\u8BED\u8A00 \u25B8", items: [
-        { type: "item", label: "\u4E2D\u6587", action: "lang:zh" },
-        { type: "item", label: "English", action: "lang:en" }
-      ] },
       { type: "sep" },
       // ── 位置与大小 ──
       { type: "item", label: "\u8BA9\u5979\u6B47\u4F1A\u513F", action: "pause" },
@@ -289,6 +322,18 @@
           { type: "item", label: "\u6570\u5B57", action: "culture-couplet:\u6570\u5B57" }
         ] }
       ] },
+      { type: "sep" },
+      // ── 每日内容（说书选本 / 每日一句 / 今日简报）──
+      { type: "sub", label: "\u9009\u672C\u4E66 \u25B8", items: bookItems },
+      { type: "item", label: "\u4ECA\u65E5\u4E00\u53E5", action: "daily-line" },
+      { type: "item", label: "\u4ECA\u65E5\u7B80\u62A5", action: "briefing-card" },
+      { type: "sep" },
+      // ── 数据与统计（处理器由其他分身实现，未接上时走兜底提示）──
+      { type: "item", label: "\u6570\u636E\u5BFC\u51FA\u2026", action: "data-export" },
+      { type: "item", label: "\u6570\u636E\u5BFC\u5165\u2026", action: "data-import" },
+      { type: "item", label: "\u4F7F\u7528\u7EDF\u8BA1", action: "stats" },
+      { type: "item", label: "\u63D0\u9192\u7BA1\u7406\u2026", action: "remind-manage" },
+      { type: "item", label: "\u5524\u9192\u6062\u590D", action: "wake-recover" },
       { type: "sep" },
       // ── 记忆、缓存与退出 ──
       { type: "item", label: "\u6E05\u9664\u8BB0\u5FC6\u2026", action: "clear-memory" },
@@ -2895,6 +2940,97 @@
     });
   }
 
+  // src/client/actions/content.ts
+  function pickDaily(d) {
+    if (!d || typeof d !== "object" || d.ok === false) return null;
+    const box = d.item || d.data || (Array.isArray(d.items) && d.items.length ? d.items[0] : null) || d;
+    const text = String(box && box.text || "").trim();
+    if (!text) return null;
+    const source = String(box && box.source || d.source || "").trim();
+    return { text, source };
+  }
+  function parseBriefing(d) {
+    if (!d || typeof d !== "object" || d.ok === false) return null;
+    const text = String(d.text || d.item && d.item.text || "");
+    const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    const first = [];
+    const second = [];
+    for (const line of lines) {
+      if (/待办|提醒/.test(line)) second.push(line);
+      else first.push(line);
+    }
+    if (!first.length && !second.length) {
+      const date = String(d.date || "").trim();
+      const weather = String(d.weather || "").trim();
+      const growth = String(d.growth || "").trim();
+      const head = [
+        date,
+        weather ? "\u5317\u6D77\u5929\u6C14\uFF1A" + weather : "",
+        growth ? "\u80A5\u9CB8\u6210\u957F\uFF1A" + growth : ""
+      ].filter(Boolean).join("\n");
+      if (head) first.push(head);
+      if (Array.isArray(d.todos)) second.push("\u5F85\u529E\u63D0\u9192\uFF1A" + d.todos.length + " \u6761");
+      else if (typeof d.todos === "string" && d.todos.trim()) second.push("\u5F85\u529E\u63D0\u9192\uFF1A" + d.todos.trim());
+    }
+    if (!first.length && !second.length) return null;
+    return { first: first.join("\n"), second: second.join("\n") };
+  }
+  function showAndSpeak(host, shown, speech, ms2) {
+    host.bubble(shown, ms2);
+    host.talkFor(5e3);
+    if (!host.voiceOn()) return;
+    host.narrate(estimateSpeakMs(speech));
+    host.speak(speech, { rate: host.narrationRate, onDone: () => host.clearNarrate() });
+  }
+  function registerContentActions(table) {
+    table.define("story-books", (host) => {
+      getJson("/story/books", { cache: "no-store" }).then((d) => {
+        const books = d && d.ok && Array.isArray(d.books) ? d.books.map((b) => String(b || "").trim()).filter(Boolean) : [];
+        if (!books.length) {
+          host.bubble("\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5", 4e3);
+          return;
+        }
+        host.bubble("\u4E66\u5355\u6709 " + books.length + " \u672C\uFF0C\u53F3\u952E\u70B9\u300C\u9009\u672C\u4E66\u300D\u6311\u4E00\u672C\uFF5E", 5e3);
+      }).catch(() => host.bubble("\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5", 4e3));
+    });
+    table.definePrefix("story-book:", (host, name) => {
+      const book = String(name || "").trim();
+      if (!book) {
+        host.bubble("\u4E66\u540D\u6CA1\u8BFB\u5230", 3e3);
+        return;
+      }
+      if (host.storyState && host.storyState.busy.current) {
+        host.bubble("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+        return;
+      }
+      host.bubble("\u5F00\u59CB\u8BB2\u300A" + book + "\u300B", 3e3);
+      host.story.start(book);
+    });
+    table.define("daily-line", (host) => {
+      getJson("/daily", { cache: "no-store" }).then((d) => {
+        const line = pickDaily(d);
+        if (!line) {
+          host.bubble("\u4ECA\u5929\u90A3\u53E5\u8FD8\u6CA1\u51C6\u5907\u597D", 3500);
+          return;
+        }
+        const shown = line.source ? line.text + "\n\u2014\u2014" + line.source : line.text;
+        showAndSpeak(host, shown, shown, 9e3);
+      }).catch(() => host.bubble("\u4ECA\u5929\u90A3\u53E5\u8FD8\u6CA1\u51C6\u5907\u597D", 3500));
+    });
+    table.define("briefing-card", (host) => {
+      getJson("/briefing", { cache: "no-store" }).then((d) => {
+        const card = parseBriefing(d);
+        if (!card) {
+          host.bubble("\u7B80\u62A5\u4ECA\u5929\u6CA1\u53D6\u5230", 3500);
+          return;
+        }
+        const shown = card.first && card.second ? card.first + "\n\n" + card.second : card.first || card.second;
+        const speech = [card.first, card.second].filter(Boolean).join("\u3002");
+        showAndSpeak(host, shown, speech, 12e3);
+      }).catch(() => host.bubble("\u7B80\u62A5\u4ECA\u5929\u6CA1\u53D6\u5230", 3500));
+    });
+  }
+
   // src/shared/time.ts
   var DAY_MS = 864e5;
   function applyPeriod(hour, word) {
@@ -2980,6 +3116,267 @@
     return null;
   }
 
+  // src/client/actions/data.ts
+  function backupFileName(now = /* @__PURE__ */ new Date()) {
+    const d = now instanceof Date && !isNaN(now.getTime()) ? now : /* @__PURE__ */ new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return "chubby-whale-backup-" + y + "-" + m + "-" + day + ".json";
+  }
+  function countOf(v) {
+    if (v == null) return 0;
+    if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+    if (typeof v === "boolean") return 0;
+    if (Array.isArray(v)) return v.length;
+    if (typeof v === "object") {
+      let n2 = 0;
+      for (const k of Object.keys(v)) n2 += countOf(v[k]);
+      return n2;
+    }
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  function formatImportResult(d) {
+    const src = d && typeof d === "object" ? d : {};
+    const imported = countOf(src.imported != null ? src.imported : src.importedCount != null ? src.importedCount : src.added);
+    const skipped = countOf(src.skipped != null ? src.skipped : src.skippedCount != null ? src.skippedCount : src.ignored);
+    return "\u5BFC\u5165\u4E86 " + imported + " \u4E2A\u5B57\u6BB5\uFF0C\u8DF3\u8FC7 " + skipped + " \u4E2A\u5B57\u6BB5";
+  }
+  function numOf(...vals) {
+    for (const v of vals) {
+      if (v == null || v === "") continue;
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+    }
+    return 0;
+  }
+  function shortText(v, max = 16) {
+    const t = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+    if (!t) return "";
+    return t.length > max ? t.slice(0, max) + "\u2026" : t;
+  }
+  function asList(v) {
+    if (v == null) return [];
+    if (Array.isArray(v)) return v;
+    if (typeof v === "object") {
+      try {
+        return Object.keys(v).map((k) => v[k]);
+      } catch (e) {
+        return [];
+      }
+    }
+    return [v];
+  }
+  function formatStats(payload) {
+    const d = payload && typeof payload === "object" ? payload : {};
+    const s = d.stats && typeof d.stats === "object" ? d.stats : d;
+    const cacheObj = s.cache && typeof s.cache === "object" ? s.cache : s.byType && typeof s.byType === "object" ? s.byType : {};
+    const tts = numOf(cacheObj.tts, s.tts, s.cacheTts);
+    const chat = numOf(cacheObj.chat, s.chat, s.cacheChat);
+    const asr = numOf(cacheObj.asr, s.asr, s.cacheAsr);
+    const ff = s.fishfood && typeof s.fishfood === "object" ? s.fishfood : s.fishFood && typeof s.fishFood === "object" ? s.fishFood : {};
+    const tokens = numOf(ff.total, ff.totalTokens, s.totalTokens, s.tokens && typeof s.tokens === "object" ? s.tokens.total : s.tokens, s.fishfoodTotal);
+    const g = s.growth && typeof s.growth === "object" ? s.growth : {};
+    const stage = shortText(g.stage || s.stage || "--", 12) || "--";
+    const intimacy = numOf(s.intimacy, s.state && s.state.intimacy);
+    const p = s.personality && typeof s.personality === "object" ? s.personality : {};
+    const pts = [];
+    const addPoint = (v) => {
+      const t = shortText(v, 16);
+      if (t && pts.indexOf(t) < 0 && pts.length < 3) pts.push(t);
+    };
+    for (const v of asList(p.points)) addPoint(v);
+    for (const v of asList(p.catchphrases)) addPoint(v);
+    for (const v of asList(p.preferences)) addPoint(v);
+    for (const v of asList(p.notes)) addPoint(v);
+    addPoint(p.selfNarrative);
+    addPoint(s.selfNarrative);
+    const points = pts.length ? pts.join("\uFF1B") : "\u6682\u65E0";
+    return "\u7EDF\u8BA1\u5361\n\u7F13\u5B58\uFF1Atts " + tts + " \u6761\uFF5Cchat " + chat + " \u6761\uFF5Casr " + asr + " \u6761\n\u9C7C\u7CAE\uFF1A" + tokens + " tokens\n\u6210\u957F\uFF1A" + stage + "\uFF5C\u4EB2\u5BC6\u5EA6 " + intimacy + "/100\n\u4EBA\u683C\u8981\u70B9\uFF1A" + points;
+  }
+  function downloadJson(data, filename, env) {
+    try {
+      const e = env || {};
+      const doc = e.document || (typeof document !== "undefined" ? document : null);
+      const URLX = e.url || (typeof URL !== "undefined" ? URL : null);
+      const B = e.BlobCtor || (typeof Blob !== "undefined" ? Blob : null);
+      if (!doc || !URLX || typeof URLX.createObjectURL !== "function" || !B) return false;
+      const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+      const blob = new B([text], { type: "application/json;charset=utf-8" });
+      const url = URLX.createObjectURL(blob);
+      const a = doc.createElement("a");
+      a.href = url;
+      a.download = filename;
+      try {
+        a.style.display = "none";
+      } catch (err) {
+      }
+      try {
+        a.setAttribute("data-chubby-download", "1");
+      } catch (err) {
+      }
+      const parent = doc.body || doc.documentElement;
+      if (parent && typeof parent.appendChild === "function") parent.appendChild(a);
+      try {
+        a.click();
+      } catch (err) {
+      }
+      try {
+        setTimeout(() => {
+          try {
+            if (parent && typeof parent.removeChild === "function") parent.removeChild(a);
+            else if (typeof a.remove === "function") a.remove();
+          } catch (err) {
+          }
+          try {
+            URLX.revokeObjectURL(url);
+          } catch (err) {
+          }
+        }, 0);
+      } catch (err) {
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  function exportBackup(host) {
+    const fetchJson = host.getJson || getJson;
+    let p;
+    try {
+      p = Promise.resolve(fetchJson("/data/export"));
+    } catch (e) {
+      host.bubble("\u5BFC\u51FA\u6CA1\u6210\u529F", 5e3);
+      return;
+    }
+    p.then((d) => {
+      if (d == null || d.ok === false) {
+        host.bubble("\u5BFC\u51FA\u6CA1\u6210\u529F", 5e3);
+        return;
+      }
+      const name = backupFileName(host.now ? host.now() : /* @__PURE__ */ new Date());
+      const ok = downloadJson(d, name, host.env);
+      host.bubble(ok ? "\u5907\u4EFD\u5DF2\u4E0B\u8F7D\uFF1A" + name : "\u8FD9\u4E2A\u6D4F\u89C8\u5668\u4E0D\u8BA9\u4E0B\u8F7D\u5907\u4EFD", 6e3);
+    }).catch(() => host.bubble("\u5BFC\u51FA\u6CA1\u6210\u529F", 5e3));
+  }
+  function readFileText(file) {
+    return new Promise((resolve, reject) => {
+      try {
+        if (!file) {
+          reject(new Error("no file"));
+          return;
+        }
+        if (typeof file.text === "function") {
+          file.text().then((t) => resolve(String(t == null ? "" : t)), reject);
+          return;
+        }
+        const FR = typeof FileReader !== "undefined" ? FileReader : null;
+        if (!FR) {
+          reject(new Error("FileReader missing"));
+          return;
+        }
+        const fr = new FR();
+        fr.onload = () => resolve(String(fr.result == null ? "" : fr.result));
+        fr.onerror = () => reject(new Error("read failed"));
+        fr.readAsText(file);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+  function parseImportText(text) {
+    const raw = String(text == null ? "" : text).trim();
+    if (!raw) return null;
+    let v = null;
+    try {
+      v = JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+    if (!v || typeof v !== "object") return null;
+    return v;
+  }
+  function pickJsonFile(cb) {
+    try {
+      const doc = typeof document !== "undefined" ? document : null;
+      if (!doc || typeof doc.createElement !== "function") {
+        cb(null);
+        return;
+      }
+      const input = doc.createElement("input");
+      input.type = "file";
+      input.accept = ".json,application/json";
+      try {
+        input.style.display = "none";
+      } catch (e) {
+      }
+      const cleanup = () => {
+        try {
+          if (typeof input.remove === "function") input.remove();
+          else if (input.parentNode && typeof input.parentNode.removeChild === "function") input.parentNode.removeChild(input);
+        } catch (e) {
+        }
+      };
+      input.onchange = () => {
+        try {
+          const f = input.files && input.files[0];
+          if (f) cb(f);
+          else cb(null);
+        } catch (e) {
+          cb(null);
+        } finally {
+          cleanup();
+        }
+      };
+      const parent = doc.body || doc.documentElement;
+      if (parent && typeof parent.appendChild === "function") parent.appendChild(input);
+      try {
+        input.click();
+      } catch (e) {
+        cb(null);
+        cleanup();
+      }
+    } catch (e) {
+      cb(null);
+    }
+  }
+  function importBackup(host) {
+    const pick = typeof host.pickFile === "function" ? host.pickFile : pickJsonFile;
+    const sendJson = host.postJson || postJson;
+    try {
+      pick((file) => {
+        if (!file) {
+          host.bubble("\u6CA1\u9009\u5907\u4EFD\u6587\u4EF6", 3e3);
+          return;
+        }
+        readFileText(file).then((text) => {
+          const body = parseImportText(text);
+          if (!body) {
+            host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+            return;
+          }
+          let p;
+          try {
+            p = Promise.resolve(sendJson("/data/import", body));
+          } catch (e) {
+            host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+            return;
+          }
+          p.then((d) => {
+            if (d && d.ok === false) {
+              host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+              return;
+            }
+            host.bubble(formatImportResult(d || {}), 7e3);
+          }).catch(() => host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3));
+        }).catch(() => host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3));
+      });
+    } catch (e) {
+      host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+    }
+  }
+
   // src/client/actions/system.ts
   function registerSystemActions(table) {
     table.define("feed", (host) => {
@@ -3023,6 +3420,19 @@
     });
     table.define("hide", (host) => {
       host.hide();
+      host.bubble("\u672C\u9CB8\u5148\u6E38\u8D70\u4E86\uFF0C\u53F3\u4E0B\u89D2\u7684\u300C\u25CB\u300D\u6216 Ctrl+Shift+W \u80FD\u53EB\u56DE\u6765", 6e3);
+    });
+    table.define("wake-recover", (host) => {
+      let wasHidden = false;
+      try {
+        wasHidden = !!host.isHidden();
+      } catch (e) {
+      }
+      try {
+        host.recover();
+      } catch (e) {
+      }
+      host.bubble(wasHidden ? "\u672C\u9CB8\u56DE\u6765\u5566" : "\u672C\u9CB8\u4E00\u76F4\u5728\u5440", 3e3);
     });
     table.define("version", (host) => {
       host.bubble("\u80A5\u9CB8 v" + host.version);
@@ -3182,21 +3592,34 @@
         } else host.bubble("\u63D0\u9192\u6CA1\u52A0\u4E0A");
       }).catch(() => host.bubble("\u63D0\u9192\u6CA1\u52A0\u4E0A"));
     });
+    table.define("remind-manage", (host) => {
+      try {
+        host.openReminders();
+      } catch (e) {
+        host.bubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230", 4e3);
+      }
+    });
     table.define("remind-list", (host) => {
-      getJson("/reminders").then((d) => {
-        const arr = d && d.reminders || [];
-        if (!arr.length) {
-          host.bubble("\u8FD8\u6CA1\u6709\u63D0\u9192\uFF5E");
+      try {
+        host.openReminders();
+      } catch (e) {
+        host.bubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230", 4e3);
+      }
+    });
+    table.define("data-export", (host) => {
+      exportBackup({ bubble: (text, ms2) => host.bubble(text, ms2) });
+    });
+    table.define("data-import", (host) => {
+      importBackup({ bubble: (text, ms2) => host.bubble(text, ms2) });
+    });
+    table.define("stats", (host) => {
+      getJson("/stats", { cache: "no-store" }).then((d) => {
+        if (!d || d.ok === false) {
+          host.bubble("\u7EDF\u8BA1\u8FD8\u6CA1\u51C6\u5907\u597D", 5e3);
           return;
         }
-        const txt = arr.map((x) => {
-          const when = new Date(x.nextAt || x.at);
-          const stamp = isNaN(when.getTime()) ? String(x.at) : when.toLocaleString("zh-CN");
-          const rep = Number(x.repeat) > 0 ? "\uFF08\u6BCF\u5929\uFF09" : "";
-          return "\xB7 " + x.text + "\uFF08" + stamp + "\uFF09" + rep;
-        }).join("\n");
-        host.bubble(txt, 8e3);
-      }).catch(() => host.bubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230"));
+        host.bubble(formatStats(d), 12e3);
+      }).catch(() => host.bubble("\u7EDF\u8BA1\u8FD8\u6CA1\u51C6\u5907\u597D", 5e3));
     });
   }
 
@@ -3909,7 +4332,8 @@
         return;
       }
       const headers = clientHeaders(host.clientId);
-      getJson("/story/start" + (hint ? "?hint=" + encodeURIComponent(hint) : ""), { headers }).then((d) => {
+      const query = hint ? "?book=" + encodeURIComponent(hint) + "&hint=" + encodeURIComponent(hint) : "";
+      getJson("/story/start" + query, { headers }).then((d) => {
         if (!d || !d.ok) {
           host.bubble("\u8BF4\u4E66\u6CA1\u5F00\u6210\uFF1A" + (d && d.error || "\u6CA1\u8BFB\u5230\u4E66"), 5e3);
           return;
@@ -4432,6 +4856,297 @@
     return { pump, start, dispose };
   }
 
+  // src/client/reminder-manage.ts
+  var MANAGE_WINDOW_MS = 6e4;
+  var POSTPONE_MS = 10 * 60 * 1e3;
+  var MANAGE_HINT = "\u56DE\u590D\u6570\u5B57\u53EF\u5220\u9664 / \u56DE d \u987A\u5EF6 10 \u5206\u949F";
+  function normalizeManageInput(text) {
+    return String(text == null ? "" : text).replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, "").toLowerCase();
+  }
+  function parseManageInput(text) {
+    const t = normalizeManageInput(text);
+    if (!t) return null;
+    if (/^\d{1,3}$/.test(t)) return { kind: "delete", index: Number(t) };
+    if (t === "d") return { kind: "postpone" };
+    return null;
+  }
+  function formatClock(at) {
+    const d = new Date(at);
+    if (isNaN(d.getTime())) return "--:--";
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return hh + ":" + mm;
+  }
+  function stampOf(item) {
+    const raw = item.nextAt || item.at;
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return String(raw == null ? "" : raw);
+    try {
+      return d.toLocaleString("zh-CN");
+    } catch (e) {
+      return formatClock(d);
+    }
+  }
+  function boardText(items, prefix) {
+    const lines = items.map((it, i) => {
+      const rep = Number(it.repeat) > 0 ? "\uFF08\u91CD\u590D\uFF09" : "";
+      return i + 1 + ". " + it.text + "\uFF08" + stampOf(it) + "\uFF09" + rep;
+    });
+    const head = prefix ? prefix + "\n" : "";
+    if (!lines.length) return head + "\u6CA1\u6709\u63D0\u9192\u4E86";
+    return head + lines.join("\n") + "\n" + MANAGE_HINT;
+  }
+  function normalizeReminderList(payload) {
+    const arr = Array.isArray(payload && payload.reminders) ? payload.reminders : Array.isArray(payload) ? payload : [];
+    const out = [];
+    for (const x of arr) {
+      if (!x || typeof x !== "object") continue;
+      if (x.done === true) continue;
+      const id = String(x.id == null ? "" : x.id);
+      if (!id) continue;
+      out.push({
+        id,
+        text: String(x.text == null ? "" : x.text),
+        at: x.at,
+        nextAt: x.nextAt,
+        repeat: x.repeat
+      });
+    }
+    return out;
+  }
+  function pickNextDue(items) {
+    if (!items || !items.length) return null;
+    let pick = items[0];
+    let pickMs = Infinity;
+    for (const it of items) {
+      const ms2 = new Date(it.nextAt || it.at).getTime();
+      if (Number.isFinite(ms2) && ms2 < pickMs) {
+        pickMs = ms2;
+        pick = it;
+      }
+    }
+    return pick;
+  }
+  function createReminderManager(host) {
+    const clock = typeof host.now === "function" ? host.now : () => Date.now();
+    const fetchJson = typeof host.getJson === "function" ? host.getJson : getJson;
+    const sendJson = typeof host.postJson === "function" ? host.postJson : postJson;
+    const removeJson = typeof host.delJson === "function" ? host.delJson : delJson;
+    let openedAt = 0;
+    let board = [];
+    let seq = 0;
+    function isOpen(now = clock()) {
+      return openedAt > 0 && board.length > 0 && now - openedAt <= MANAGE_WINDOW_MS;
+    }
+    function expire() {
+      openedAt = 0;
+      board = [];
+    }
+    function refresh() {
+      const my = ++seq;
+      return Promise.resolve(fetchJson("/reminders")).then((d) => {
+        if (my !== seq) return board;
+        board = normalizeReminderList(d);
+        return board;
+      }).catch(() => board);
+    }
+    function open() {
+      const my = ++seq;
+      const at = clock();
+      openedAt = 0;
+      return Promise.resolve(fetchJson("/reminders")).then((d) => {
+        if (my !== seq) return;
+        const arr = normalizeReminderList(d);
+        board = arr;
+        if (!arr.length) {
+          openedAt = 0;
+          host.bubble("\u8FD8\u6CA1\u6709\u63D0\u9192\uFF5E", 3e3);
+          return;
+        }
+        openedAt = at;
+        host.bubble(boardText(arr, "\u63D0\u9192\u6E05\u5355\uFF08" + arr.length + " \u6761\uFF09\uFF1A"), 12e3);
+      }).catch(() => {
+        if (my !== seq) return;
+        openedAt = 0;
+        board = [];
+        host.bubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230", 5e3);
+      });
+    }
+    function afterDelete() {
+      const my = ++seq;
+      Promise.resolve(fetchJson("/reminders")).then((d) => {
+        if (my !== seq) return;
+        const arr = normalizeReminderList(d);
+        board = arr;
+        if (!arr.length) {
+          openedAt = 0;
+          host.bubble("\u5220\u6389\u4E86", 4e3);
+          return;
+        }
+        host.bubble(boardText(arr, "\u5220\u6389\u4E86"), 12e3);
+      }).catch(() => {
+        openedAt = 0;
+        board = [];
+        host.bubble("\u5220\u6389\u4E86", 4e3);
+      });
+    }
+    function removeAt(index) {
+      const it = board[index - 1];
+      if (!it) {
+        host.bubble("\u6CA1\u6709\u7B2C " + index + " \u6761\uFF0C\u56DE\u6570\u5B57\u518D\u9009\u4E00\u6B21", 4e3);
+        return;
+      }
+      Promise.resolve(removeJson("/reminders?id=" + encodeURIComponent(it.id))).then((d) => {
+        if (!(d && d.ok)) {
+          host.bubble("\u6CA1\u5220\u6389\uFF0C\u7B49\u4F1A\u513F\u518D\u8BD5", 4e3);
+          return;
+        }
+        afterDelete();
+      }).catch(() => host.bubble("\u6CA1\u5220\u6389\uFF0C\u7B49\u4F1A\u513F\u518D\u8BD5", 4e3));
+    }
+    function postpone() {
+      const pick = pickNextDue(board);
+      if (!pick) {
+        host.bubble("\u6E05\u5355\u91CC\u6CA1\u6709\u80FD\u987A\u5EF6\u7684\u63D0\u9192", 4e3);
+        return;
+      }
+      const dueMs = new Date(pick.nextAt || pick.at).getTime();
+      const base = Number.isFinite(dueMs) ? Math.max(clock(), dueMs) : clock();
+      const at = new Date(base + POSTPONE_MS);
+      const when = formatClock(at);
+      const body = {
+        text: pick.text,
+        at: at.toISOString(),
+        repeat: Number(pick.repeat) || 0
+      };
+      Promise.resolve(sendJson("/reminders", body)).then((d) => {
+        if (!(d && d.ok)) {
+          host.bubble("\u987A\u5EF6\u6CA1\u6210\uFF0C\u539F\u63D0\u9192\u8FD8\u5728", 4e3);
+          return;
+        }
+        Promise.resolve(removeJson("/reminders?id=" + encodeURIComponent(pick.id))).then((d2) => {
+          if (!(d2 && d2.ok)) {
+            host.bubble("\u987A\u5EF6\u5230 " + when + "\uFF0C\u4F46\u65E7\u63D0\u9192\u6CA1\u5220\u6389", 6e3);
+            return;
+          }
+          const my = ++seq;
+          Promise.resolve(fetchJson("/reminders")).then((d3) => {
+            if (my !== seq) return;
+            const arr = normalizeReminderList(d3);
+            board = arr;
+            if (!arr.length) {
+              openedAt = 0;
+              host.bubble("\u987A\u5EF6\u5230 " + when, 5e3);
+              return;
+            }
+            host.bubble(boardText(arr, "\u987A\u5EF6\u5230 " + when), 12e3);
+          }).catch(() => {
+            openedAt = 0;
+            board = [];
+            host.bubble("\u987A\u5EF6\u5230 " + when, 5e3);
+          });
+        }).catch(() => host.bubble("\u987A\u5EF6\u5230 " + when + "\uFF0C\u4F46\u65E7\u63D0\u9192\u6CA1\u5220\u6389", 6e3));
+      }).catch(() => host.bubble("\u987A\u5EF6\u6CA1\u6210\uFF0C\u539F\u63D0\u9192\u8FD8\u5728", 4e3));
+    }
+    function intercept(text) {
+      if (!isOpen()) {
+        if (openedAt > 0) expire();
+        return false;
+      }
+      const cmd = parseManageInput(text);
+      if (!cmd) return false;
+      if (cmd.kind === "delete") removeAt(cmd.index);
+      else postpone();
+      return true;
+    }
+    return {
+      open,
+      intercept,
+      isOpen: () => isOpen(),
+      items: () => board.slice(),
+      windowMs: MANAGE_WINDOW_MS
+    };
+  }
+
+  // src/client/recover.ts
+  var RECOVER_HOTKEY_LABEL = "Ctrl+Shift+W";
+  function shouldShowRecoverDot(hidden) {
+    return !!hidden;
+  }
+  function isRecoverHotkey(e) {
+    if (!e) return false;
+    const ctrl = !!(e.ctrlKey || e.metaKey);
+    const shift = !!e.shiftKey;
+    if (!ctrl || !shift) return false;
+    const key = String(e.key == null ? "" : e.key).toLowerCase();
+    if (key === "w") return true;
+    const code = Number(e.keyCode != null ? e.keyCode : e.which);
+    return code === 87;
+  }
+  function createRecover(host) {
+    function trigger() {
+      try {
+        host.recover();
+      } catch (e) {
+      }
+    }
+    function dot(hidden) {
+      if (!shouldShowRecoverDot(hidden)) return null;
+      return {
+        "data-chubby-recover": "1",
+        title: "\u70B9\u4E00\u4E0B\u53EB\u672C\u9CB8\u56DE\u6765\uFF08\u6216\u6309 " + RECOVER_HOTKEY_LABEL + "\uFF09",
+        onClick: (e) => {
+          try {
+            if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+          } catch (err) {
+          }
+          try {
+            if (e && typeof e.preventDefault === "function") e.preventDefault();
+          } catch (err) {
+          }
+          trigger();
+        }
+      };
+    }
+    function bindHotkey(target) {
+      let el = target;
+      if (!el) {
+        try {
+          el = typeof window !== "undefined" ? window : null;
+        } catch (e) {
+          el = null;
+        }
+      }
+      if (!el || typeof el.addEventListener !== "function") return () => {
+      };
+      const onKeyDown = (e) => {
+        if (!isRecoverHotkey(e)) return;
+        try {
+          if (e && typeof e.preventDefault === "function") e.preventDefault();
+        } catch (err) {
+        }
+        try {
+          if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+        } catch (err) {
+        }
+        trigger();
+      };
+      try {
+        el.addEventListener("keydown", onKeyDown, true);
+      } catch (e) {
+        return () => {
+        };
+      }
+      return () => {
+        try {
+          el.removeEventListener("keydown", onKeyDown, true);
+        } catch (e) {
+        }
+      };
+    }
+    return { dot, bindHotkey, trigger };
+  }
+
   // src/client.ts
   window.__ModuleLoader__.load({
     id: "dsh-chubby-whale",
@@ -4458,6 +5173,7 @@
       const h = R.createElement;
       const actions = createActionTable();
       registerCultureActions(actions);
+      registerContentActions(actions);
       registerSystemActions(actions);
       registerVoiceActions(actions);
       const CLIENT_ID = (() => {
@@ -4601,6 +5317,8 @@
         const [hidden, setHidden] = R.useState(false);
         const [menu, setMenu] = R.useState(null);
         const [subOpen, setSubOpen] = R.useState("");
+        const [storyBooks, setStoryBooks] = R.useState([]);
+        const [storyBooksTried, setStoryBooksTried] = R.useState(false);
         const [balanceText, setBalanceText] = R.useState("");
         const [lang, setLang] = R.useState((() => {
           try {
@@ -4753,6 +5471,17 @@
         }
         function restoreIdleStatus() {
         }
+        const reminderManager = createReminderManager({ bubble: (text, ms2) => showBubble(text, ms2) });
+        const recover = createRecover({ recover: () => setHidden(false) });
+        R.useEffect(() => {
+          const unbind = recover.bindHotkey(window);
+          return () => {
+            try {
+              unbind();
+            } catch (e) {
+            }
+          };
+        }, []);
         R.useEffect(() => {
           const insideFish = (x, y) => {
             try {
@@ -4929,6 +5658,17 @@
           setMenu({ x: e.clientX, y: e.clientY });
           setSubOpen("");
           refreshMenuStats();
+          refreshStoryBooks();
+        }
+        function refreshStoryBooks() {
+          getJson("/story/books", { cache: "no-store" }).then((d) => {
+            const list = d && d.ok && Array.isArray(d.books) ? d.books.map((b) => String(b || "").trim()).filter(Boolean) : [];
+            setStoryBooks(list);
+            setStoryBooksTried(true);
+          }).catch(() => {
+            setStoryBooks([]);
+            setStoryBooksTried(true);
+          });
         }
         function refreshMenuStats(force) {
           const now = Date.now();
@@ -5077,6 +5817,20 @@
             setScale(s);
           },
           hide: () => setHidden(true),
+          // 游走可逆 + 提醒管理：都只在这里接线，处理器在 client/actions/system.ts
+          isHidden: () => hidden,
+          recover: () => {
+            try {
+              setHidden(false);
+            } catch (e) {
+            }
+          },
+          openReminders: () => {
+            try {
+              reminderManager.open();
+            } catch (e) {
+            }
+          },
           setChatOpen: (v) => setChatOpen(v),
           setVoiceMode: (v) => {
             voiceModeRef.current = v;
@@ -5181,8 +5935,13 @@
         };
         async function runAction(action) {
           setMenu(null);
-          const ok = await actions.run(action, actionHost);
-          if (!ok) showBubble("\u8FD9\u4E2A\u529F\u80FD\u5C0F\u9CB8\u8FD8\u5728\u5B66\uFF0C\u7A0D\u540E\u52A0\u4E0A\uFF5E");
+          let ok = false;
+          try {
+            ok = await actions.run(action, actionHost);
+          } catch (e) {
+            ok = false;
+          }
+          if (!ok) showBubble("\u8FD9\u4E2A\u529F\u80FD\u8FD8\u6CA1\u63A5\u4E0A");
         }
         function scrollBody() {
           setTimeout(() => {
@@ -5248,6 +6007,10 @@
           }
         });
         function sendText(rawText, opts) {
+          try {
+            if (reminderManager.intercept(String(rawText == null ? "" : rawText))) return Promise.resolve();
+          } catch (e) {
+          }
           return chat.send(rawText, opts);
         }
         R.useEffect(() => {
@@ -5362,6 +6125,7 @@
           animRef.current.start();
           return () => animRef.current?.stop();
         }, []);
+        const recoverProps = recover.dot(hidden);
         function renderItems(items) {
           const out = [];
           for (let i = 0; i < items.length; i++) {
@@ -5420,6 +6184,7 @@
             h("canvas", { ref: canvasRef, width: CW, height: CH, style: canvasStyle })
           ),
           h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef })),
+          recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "\u25CB") : null,
           menu ? h(
             "div",
             { style: menuStyle(menu), "data-menu-root": "1" },
@@ -5451,7 +6216,7 @@
               } catch (e) {
                 return "auto";
               }
-            })(), balance: balanceLabel, growth: growthLabel }))
+            })(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }))
           ) : null,
           h(
             "div",

@@ -27,5 +27,12 @@ export function createRouteTable(h) {
         // L2 可变人格：读当前 + 历史 / 回滚上一条变更
         { path: '/api/chubby-whale/personality', handler: h.personality.handlePersonality },
         { path: '/api/chubby-whale/personality/revert', handler: h.personality.handleRevert },
+        // 每日一句（daily.json 优先，缺文件时按日期从真实诗库取）
+        { path: '/api/chubby-whale/daily', handler: h.daily.handleDaily },
+        // 一键备份 / 导入（不含、也不写任何 API Key）
+        { path: '/api/chubby-whale/data/export', handler: h.backup.handleExport },
+        { path: '/api/chubby-whale/data/import', handler: h.backup.handleImport },
+        // 可视化汇总（只读现有 store/cache）
+        { path: '/api/chubby-whale/stats', handler: h.stats.handleStats },
     ];
 }

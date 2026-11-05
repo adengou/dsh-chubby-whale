@@ -47,6 +47,8 @@ export interface StoryPlayer {
   next(clientId: string): Promise<StoryPick>
   /** 从头讲这本书：清该书全部进度并把「当前书」指过去 */
   reset(bookHint: string, clientId: string): Promise<StoryReset>
+  /** 重新读盘（备份导入说书进度后调用）：不读的话内存里的旧进度会在下一次保存时盖掉导入内容 */
+  reloadProgress(): void
 }
 
 export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string }): StoryPlayer {
@@ -79,6 +81,16 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
   }
   function storyKey(book: string, index: number): string {
     return String(book || '') + '|' + String(index)
+  }
+
+  /**
+   * 重新读盘：清空内存进度后按文件内容重填（保持 progress 引用不变，闭包里的其它函数继续共用同一份）。
+   * 备份导入说书进度后必须调用；否则 player 手里还是启动时的旧进度，下一次 pickNext 保存会把它写回去。
+   */
+  function reloadProgress(): void {
+    const next = loadProgress()
+    for (const k of Object.keys(progress)) delete progress[k]
+    for (const k of Object.keys(next)) progress[k] = next[k]
   }
 
   function resolveBook(books: string[], want: string): string {
@@ -250,5 +262,5 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
     return { ok: true, book }
   }
 
-  return { books, start, next, reset }
+  return { books, start, next, reset, reloadProgress }
 }

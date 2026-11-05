@@ -10,7 +10,7 @@
  */
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
-import { mkdirSync, existsSync, copyFileSync, cpSync } from 'node:fs'
+import { mkdirSync, existsSync, copyFileSync, cpSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
   readApiKey, readSiliconFlowKey, readDataSource, readPersonalityLearning, readPersonalityWriting,
@@ -38,6 +38,9 @@ import { createPoemHandler } from './host/routes/poem.js'
 import { createBriefingHandlers } from './host/routes/briefing.js'
 import { createTtsHandler } from './host/routes/tts.js'
 import { createAsrHandler } from './host/routes/asr.js'
+import { createDailyHandler } from './host/routes/daily.js'
+import { createBackupHandlers } from './host/routes/backup.js'
+import { createStatsHandler } from './host/routes/stats.js'
 import { createRouteTable } from './host/routes.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -80,6 +83,17 @@ function migrateRuntimeData(): void {
 
 export const name = 'dsh-chubby-whale'
 export const inject = ['webServer']
+
+/** 插件版本（导出包的 version 字段）；读不到 package.json 时给 0.0.0，不编版本号 */
+function readPluginVersion(pluginDir: string): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8'))
+    const v = String((pkg && pkg.version) || '').trim()
+    return v || '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+}
 
 /**
  * 配置 schema（DSH 标准插件规范要求的 Config 导出）。
@@ -248,12 +262,15 @@ export function apply(ctx: any, rawConfig?: any): void {
     model: chatModel,
     onReply: onModelReply,
   })
-  const story = createStoryHandlers({
-    player: createStoryPlayer({
-      // 说书播放器只认 listBooks/loadBook；数据源（本地/云端）由 DataPort 投影进来
-      repo: createStorySource(dataPort),
-      progressFile: join(RUNTIME_DIR, 'story_progress.json'),
-    }),
+  const storyPlayer = createStoryPlayer({
+    // 说书播放器只认 listBooks/loadBook；数据源（本地/云端）由 DataPort 投影进来
+    repo: createStorySource(dataPort),
+    progressFile: join(RUNTIME_DIR, 'story_progress.json'),
+  })
+  const story = createStoryHandlers({ player: storyPlayer })
+  /** 三个缓存目录的条目数（菜单与可视化汇总共用同一口径） */
+  const cacheStats = async (): Promise<Record<string, number>> => ({
+    tts: await ttsCache.count(), chat: await chatCache.count(), asr: await asrCache.count(),
   })
   const misc = createMiscHandlers({
     assetPath: join(PLUGIN_DIR, 'assets', 'whale.png'),
@@ -266,7 +283,7 @@ export function apply(ctx: any, rawConfig?: any): void {
     clearMemory: store.clearMemory,
     chatCacheCount: () => chatCache.count(),
     clearChatCache: () => chatCache.clear(),
-    cacheStats: async () => ({ tts: await ttsCache.count(), chat: await chatCache.count(), asr: await asrCache.count() }),
+    cacheStats,
   })
   const reminders = createReminderHandlers({
     loadReminders: store.loadReminders,
@@ -290,9 +307,49 @@ export function apply(ctx: any, rawConfig?: any): void {
     writerStatus: () => narrativeWriter.status(),
   })
 
+  // 每日一句：daily.json 优先，缺文件时按日期从真实诗库取（数据全走 DataPort）
+  const daily = createDailyHandler({ dataPort })
+
+  // 一键备份 / 导入：只注入数据读写器，**不注入任何 Key 读取器**——
+  // 导出包里没有 Key 的通路，导入也没有写 config.json 的分支。
+  const backup = createBackupHandlers({
+    version: readPluginVersion(PLUGIN_DIR),
+    loadMemory: () => ({ history: store.loadHistory(), summary: store.loadMemorySummary() }),
+    saveMemory: (m: { history: any[]; summary: string }) => {
+      store.saveHistory(m.history)
+      store.saveMemorySummary(m.summary)
+    },
+    loadPersonality: () => personality.load(),
+    savePersonality: (p: any) => personality.save(p),
+    loadState: store.loadState,
+    saveState: store.saveState,
+    loadGrowth: store.loadGrowth,
+    saveGrowth: store.saveGrowth,
+    loadFishfood: store.loadFishfood,
+    saveFishfood: store.saveFishfood,
+    loadPet: store.loadPet,
+    savePet: store.savePet,
+    loadReminders: store.loadReminders,
+    saveReminders: store.saveReminders,
+    loadStoryProgress: store.loadStoryProgress,
+    saveStoryProgress: store.saveStoryProgress,
+    onStoryProgressImported: () => storyPlayer.reloadProgress(),
+  })
+
+  // 可视化汇总：全部读现有 store / cache / 人格，不新增持久化
+  const stats = createStatsHandler({
+    cacheStats,
+    loadState: store.loadState,
+    loadGrowth: store.loadGrowth,
+    loadFishfood: store.loadFishfood,
+    loadPersonality: () => personality.load(),
+    startedAt: Date.now(),
+  })
+
   // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
   const routeTable = createRouteTable({
     misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, briefing, tts, asr, personality: personalityRoutes,
+    daily, backup, stats,
   })
 
   // 所有路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，

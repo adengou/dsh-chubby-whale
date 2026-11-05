@@ -57,6 +57,17 @@ export function createStoryPlayer(opts) {
     function storyKey(book, index) {
         return String(book || '') + '|' + String(index);
     }
+    /**
+     * 重新读盘：清空内存进度后按文件内容重填（保持 progress 引用不变，闭包里的其它函数继续共用同一份）。
+     * 备份导入说书进度后必须调用；否则 player 手里还是启动时的旧进度，下一次 pickNext 保存会把它写回去。
+     */
+    function reloadProgress() {
+        const next = loadProgress();
+        for (const k of Object.keys(progress))
+            delete progress[k];
+        for (const k of Object.keys(next))
+            progress[k] = next[k];
+    }
     function resolveBook(books, want) {
         const w = String(want || '').trim();
         if (!w)
@@ -237,5 +248,5 @@ export function createStoryPlayer(opts) {
             st.queue = [];
         return { ok: true, book };
     }
-    return { books, start, next, reset };
+    return { books, start, next, reset, reloadProgress };
 }

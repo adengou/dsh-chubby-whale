@@ -2,7 +2,7 @@
  * dsh-chubby-whale —— 浏览器端入口（模块化组装）
  * 依赖模块：client/styles.ts（样式）、client/menu.ts（菜单）、client/anim.ts（动画）
  */
-import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle } from './client/styles.js'
+import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle, recoverDotStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
 import { handleFileDrop } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
@@ -10,6 +10,7 @@ import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth, type 
 import { createVoiceBridge } from './client/voice-bridge.js'
 import { createActionTable, type ActionHost } from './client/actions.js'
 import { registerCultureActions } from './client/actions/culture.js'
+import { registerContentActions } from './client/actions/content.js'
 import { registerSystemActions } from './client/actions/system.js'
 import { registerVoiceActions } from './client/actions/voice.js'
 import { createPersona } from './client/persona.js'
@@ -24,6 +25,8 @@ import { createStoryController } from './client/story.js'
 import { createLocalRouter } from './client/chat-route.js'
 import { createChatSender } from './client/chat.js'
 import { createReminderPoller } from './client/reminders.js'
+import { createReminderManager } from './client/reminder-manage.js'
+import { createRecover } from './client/recover.js'
 ;(window as any).__ModuleLoader__.load({
   id: 'dsh-chubby-whale',
   factory: (require: any) => {
@@ -43,6 +46,7 @@ import { createReminderPoller } from './client/reminders.js'
     // 动作表：菜单动作 → 处理器（新增动作只改 client/actions/*.ts 与菜单数据，不动本文件）
     const actions = createActionTable<ActionHost>()
     registerCultureActions(actions)
+    registerContentActions(actions)
     registerSystemActions(actions)
     registerVoiceActions(actions)
 
@@ -146,6 +150,9 @@ import { createReminderPoller } from './client/reminders.js'
       const [hidden, setHidden] = R.useState(false)
       const [menu, setMenu] = R.useState(null as any)
       const [subOpen, setSubOpen] = R.useState('')
+      // 说书书单（菜单「选本书 ▸」用）：tried 区分「还没拉」与「拉过但为空/失败」
+      const [storyBooks, setStoryBooks] = R.useState([] as string[])
+      const [storyBooksTried, setStoryBooksTried] = R.useState(false)
       const [balanceText, setBalanceText] = R.useState('')
       const [lang, setLang] = R.useState((() => { try { return localStorage.getItem('chubby-lang') || 'zh' } catch { return 'zh' } })())
       const [chatOpen, setChatOpen] = R.useState(false)
@@ -273,6 +280,17 @@ import { createReminderPoller } from './client/reminders.js'
       function setStatus(): void { bubble.dismissStatus() }
       function restoreIdleStatus(): void { }
 
+      // 提醒管理面板：清单 + 「下一条输入」（数字=删 / d=顺延）共用同一个实例；
+      // 聊天框与语音最终都走 sendText，所以拦截只接一处（逻辑在 client/reminder-manage.ts）。
+      const reminderManager = createReminderManager({ bubble: (text, ms) => showBubble(text, ms) })
+      // 「让它游走」可逆：隐藏时右下角留「○」恢复点，Ctrl+Shift+W 也走同一条恢复路径（不刷新页面）
+      const recover = createRecover({ recover: () => setHidden(false) })
+      // 全局快捷键：捕获阶段登记，避免被宿主页面的 keydown 先吃掉
+      R.useEffect(() => {
+        const unbind = recover.bindHotkey(window)
+        return () => { try { unbind() } catch (e) { } }
+      }, [])
+
       // ===== 拖放：必须在【捕获阶段】抢在 HARNESS 自己的拖放处理之前 =====
       // React 的 onDrop 走冒泡阶段，宿主的 drop 处理器会先接走文件，鱼永远收不到。
       // 这里用 window 捕获监听 + 命中判定：落点在鱼身上才归鱼，其它位置仍交给宿主。
@@ -386,6 +404,24 @@ import { createReminderPoller } from './client/reminders.js'
         setSubOpen('')
         // 只在「菜单打开」这个时机拉一次；10 秒节流，连点右键不会狂打接口
         refreshMenuStats()
+        // 书单不进节流：本地接口、数据量小，每次打开菜单都拉一遍，书单换了立刻能看到
+        refreshStoryBooks()
+      }
+
+      /**
+       * 「选本书 ▸」的数据源：成功写入书名数组；失败/空列表按「取到过但为空」处理，
+       * 菜单里显示「书单没取到，稍后再试」，点那一项会重试（story-books 动作）。
+       */
+      function refreshStoryBooks(): void {
+        getJson('/story/books', { cache: 'no-store' })
+          .then((d: any) => {
+            const list = (d && d.ok && Array.isArray(d.books))
+              ? d.books.map((b: any) => String(b || '').trim()).filter(Boolean)
+              : []
+            setStoryBooks(list)
+            setStoryBooksTried(true)
+          })
+          .catch(() => { setStoryBooks([]); setStoryBooksTried(true) })
       }
 
       // 菜单数值的最近一次拉取时刻记在 menuStatsAtRef（见组件顶部 hooks 区）
@@ -524,6 +560,10 @@ import { createReminderPoller } from './client/reminders.js'
           setScale(s)
         },
         hide: () => setHidden(true),
+        // 游走可逆 + 提醒管理：都只在这里接线，处理器在 client/actions/system.ts
+        isHidden: () => hidden,
+        recover: () => { try { setHidden(false) } catch (e) { } },
+        openReminders: () => { try { reminderManager.open() } catch (e) { } },
         setChatOpen: (v) => setChatOpen(v),
         setVoiceMode: (v) => { voiceModeRef.current = v },
         setMessages: (v) => setMessages(v),
@@ -579,11 +619,12 @@ import { createReminderPoller } from './client/reminders.js'
         diag: (patch) => { try { Object.assign(((window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})), patch) } catch (e) { } },
       }
 
-      // 动作分发：先关菜单，再交给动作表；未注册的动作给一句兜底提示
+      // 动作分发：先关菜单，再交给动作表；未注册的动作（或处理器抛错）给一句兜底提示
       async function runAction(action: string): Promise<void> {
         setMenu(null)
-        const ok = await actions.run(action, actionHost)
-        if (!ok) showBubble('这个功能小鲸还在学，稍后加上～')
+        let ok = false
+        try { ok = await actions.run(action, actionHost) } catch (e) { ok = false }
+        if (!ok) showBubble('这个功能还没接上')
       }
 
       // 聊天
@@ -639,6 +680,11 @@ import { createReminderPoller } from './client/reminders.js'
       })
       // 旧调用点名称保留（拖放 / 语音 / 调试口都调 sendText）
       function sendText(rawText: string, opts?: { voice?: boolean }): Promise<void> {
+        // 提醒管理面板最近打开 60 秒内：数字=删、d=顺延先接住；
+        // 其余输入（正常对话）原样放行，绝不误吞（判断都在 client/reminder-manage.ts）
+        try {
+          if (reminderManager.intercept(String(rawText == null ? '' : rawText))) return Promise.resolve()
+        } catch (e) { }
         return chat.send(rawText, opts)
       }
 
@@ -731,6 +777,8 @@ import { createReminderPoller } from './client/reminders.js'
       }, [])
 
       // ===== 渲染 =====
+      // 隐藏时右下角留一个极小的「○」恢复点（点一下回来，不刷新页面）
+      const recoverProps = recover.dot(hidden)
       function renderItems(items: any[]): any[] {
         const out: any[] = []
         for (let i = 0; i < items.length; i++) {
@@ -776,6 +824,7 @@ import { createReminderPoller } from './client/reminders.js'
           h('canvas', { ref: canvasRef, width: CW, height: CH, style: canvasStyle }),
         ),
         h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef })),
+        recoverProps ? h('div', Object.assign({}, recoverProps, { style: recoverDotStyle }), '○') : null,
         menu ? h('div', { style: menuStyle(menu), 'data-menu-root': '1' },
           h('div', { style: { padding: '8px 14px', borderBottom: '1px solid #1f4a85', color: '#9FD8FF', fontSize: 12, display: 'flex', justifyContent: 'space-between' } },
             // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
@@ -786,7 +835,7 @@ import { createReminderPoller } from './client/reminders.js'
               onClick: () => { try { refreshMenuStats(true) } catch (e) { } },
             }, balanceText || '--'),
           ),
-          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel })),
+          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel, storyBooks: storyBooks, storyBooksTried: storyBooksTried })),
         ) : null,
         h('div', { style: chatPanelStyle(chatOpen) },
           h('div', { style: headStyle },

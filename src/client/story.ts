@@ -86,7 +86,12 @@ export function createStoryController(host: StoryHost): StoryController {
   function start(hint: string): void {
     if (refs.busy.current) { host.bubble('正讲着呢，听完这段再说～', 3000); return }
     const headers = clientHeaders(host.clientId)
-    getJson('/story/start' + (hint ? '?hint=' + encodeURIComponent(hint) : ''), { headers })
+    // 参数格式以 host/routes/story.ts 为准：现行只认 hint（书名也算 hint）。
+    // 书名另外以 book 传一份（同值），既满足「按书名点播」的调用约定，又不改后端协议。
+    const query = hint
+      ? '?book=' + encodeURIComponent(hint) + '&hint=' + encodeURIComponent(hint)
+      : ''
+    getJson('/story/start' + query, { headers })
       .then((d: any) => {
         if (!d || !d.ok) { host.bubble('说书没开成：' + ((d && d.error) || '没读到书'), 5000); return }
         playPiece(d)
