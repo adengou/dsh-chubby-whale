@@ -389,6 +389,28 @@
     ];
   }
 
+  // src/client/narration-progress.ts
+  var current = null;
+  function startProgress(label, lines, intro = "") {
+    const lens = (lines || []).map((l) => String(l || "").replace(/\s+/g, "").length).filter((n) => n > 0);
+    const cum = [];
+    let sum = 0;
+    for (const n of lens) {
+      sum += n;
+      cum.push(sum);
+    }
+    current = {
+      label: String(label || ""),
+      lineLens: lens,
+      cum,
+      introLen: String(intro || "").replace(/\s+/g, "").length,
+      spoken: 0
+    };
+  }
+  function stopProgress() {
+    current = null;
+  }
+
   // src/client/image.ts
   var DEFAULT_MAX_EDGE = 1280;
   var DEFAULT_QUALITY = 0.85;
@@ -2543,28 +2565,6 @@
         return take(true);
       }
     };
-  }
-
-  // src/client/narration-progress.ts
-  var current = null;
-  function startProgress(label, lines, intro = "") {
-    const lens = (lines || []).map((l) => String(l || "").replace(/\s+/g, "").length).filter((n) => n > 0);
-    const cum = [];
-    let sum = 0;
-    for (const n of lens) {
-      sum += n;
-      cum.push(sum);
-    }
-    current = {
-      label: String(label || ""),
-      lineLens: lens,
-      cum,
-      introLen: String(intro || "").replace(/\s+/g, "").length,
-      spoken: 0
-    };
-  }
-  function stopProgress() {
-    current = null;
   }
 
   // src/client/duilian.ts
@@ -5404,6 +5404,10 @@
       }
       function clearNarrating() {
         narration.clear();
+        try {
+          stopProgress();
+        } catch (e) {
+        }
         try {
           storyNarratingRef.current = false;
         } catch (e) {

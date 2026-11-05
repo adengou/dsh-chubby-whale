@@ -235,6 +235,42 @@ try {
   ok('能加载 playback.ts', false, String(e.message))
 }
 
+
+// ---------- ⑧ 模块封装（导出冻结 / 进度状态） ----------
+console.log('\n[8] 模块封装与叙述进度')
+try {
+  const im = await import('../src/shared/immutable.ts')
+  const frozenArr = im.deepFreeze([1, 2, 3])
+  let threw = false
+  try { frozenArr.push(4) } catch (e) { threw = true }
+  ok('deepFreeze 冻结数组（push 抛错）', threw)
+  const frozenObj = im.deepFreeze({ a: { b: 1 } })
+  let threw2 = false
+  try { frozenObj.a.b = 2 } catch (e) { threw2 = true }
+  ok('deepFreeze 递归冻结嵌套对象', threw2 && frozenObj.a.b === 1)
+  ok('deepFreeze 对原始值不报错', im.deepFreeze(5) === 5 && im.deepFreeze(null) === null)
+
+  const np = await import('../src/client/narration-progress.ts')
+  const lines = ['寒蝉凄切。', '对长亭晚，骤雨初歇。', '念去去、千里烟波，暮霭沉沉楚天阔。']
+  np.startProgress('念诗·雨霖铃', lines, '念首诗——雨霖铃，宋，柳永。')
+  ok('开场白不占句数', np.bumpProgress('念首诗——雨霖铃，宋，柳永。') === '念诗·雨霖铃：念首诗——雨霖铃，宋，柳永。')
+  ok('第一句显示 1/N', np.bumpProgress('寒蝉凄切。').includes('（第 1/3 句）'))
+  ok('第二句显示 2/N', np.bumpProgress('对长亭晚，骤雨初歇。').includes('（第 2/3 句）'))
+  ok('末句封顶 3/3', np.bumpProgress('念去去、千里烟波，暮霭沉沉楚天阔。').includes('（第 3/3 句）'))
+  np.stopProgress()
+  ok('stopProgress 后不再出进度', np.bumpProgress('多情自古伤离别。') === '')
+
+  const wk = await import('../src/client/wake.ts')
+  const gate = wk.createWakeGate({ windowMs: 30000 })
+  ok('谐音容错：大粉鱼', gate.check('大粉鱼。').hit === true)
+  ok('谐音容错：大飞鱼', gate.check('大飞鱼。').hit === true)
+  ok('繁体折算：大肥魚', gate.check('大肥魚。').hit === true)
+  ok('正常词不误唤醒：大鲤鱼', gate.check('大鲤鱼').hit === false)
+  ok('长句不误唤醒：大时代…', gate.check('在《大时代》中，丁蟹的丁字是大谐音。').hit === false)
+} catch (e) {
+  ok('能加载封装/进度/唤醒模块', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

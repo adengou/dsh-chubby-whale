@@ -4,6 +4,7 @@
  */
 import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle, recoverDotStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
+import { stopProgress } from './client/narration-progress.js'
 import { handleFileDrop } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth, type GrowthInfo } from './client/look.js'
@@ -82,6 +83,9 @@ import { createRecover } from './client/recover.js'
     }
     function clearNarrating(): void {
       narration.clear()
+      // 念诗被打断（说"停"/新提问）时进度状态也要清，
+      // 否则下一次说书的开场气泡会挂着上一首诗的「第 x/y 句」
+      try { stopProgress() } catch (e) { }
       try { storyNarratingRef.current = false } catch (e) { }
     }
     let greetedOnce = false   // 打招呼只打一次（防挂载重复）
