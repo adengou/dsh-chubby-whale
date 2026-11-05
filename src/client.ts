@@ -393,7 +393,7 @@ import { createReminderPoller } from './client/reminders.js'
         refreshBalance()
         getJson('/growth', { cache: 'no-store' })
           .then((d: any) => {
-            if (d && d.ok && d.stage != null) setGrowthLabel(String(d.stage) + '（' + Number(d.exp) + '）')
+            if (d && d.ok && d.stage != null) setGrowthLabel(String(d.stage) + '（' + Number(d.exp) + (Number(d.nextExp) ? '/' + Number(d.nextExp) : '') + '）')
             else setGrowthLabel('--')
           })
           .catch(() => { setGrowthLabel('--') })

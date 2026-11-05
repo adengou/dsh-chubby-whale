@@ -30,10 +30,11 @@ export const canvasStyle = { width: '100%', height: '100%', display: 'block' }
 export const menuStyle = (menu: any) => ({
   position: 'fixed' as const,
   left: (menu ? Math.min(menu.x, window.innerWidth - 220) : 0) + 'px',
-  top: (menu ? Math.min(menu.y, window.innerHeight - 400) : 0) + 'px',
+  top: (menu ? Math.max(8, Math.min(menu.y, window.innerHeight - 520)) : 0) + 'px',
   width: 210,
-  maxHeight: 480,
+  maxHeight: (typeof window !== "undefined" ? Math.max(200, Math.min(480, window.innerHeight - 32)) : 480),
   overflowY: 'auto' as const,
+  paddingBottom: 10,
   background: 'rgba(12,28,52,0.98)',
   border: '1px solid #2E6BB8',
   borderRadius: 10,

@@ -26,10 +26,11 @@
   var menuStyle = (menu) => ({
     position: "fixed",
     left: (menu ? Math.min(menu.x, window.innerWidth - 220) : 0) + "px",
-    top: (menu ? Math.min(menu.y, window.innerHeight - 400) : 0) + "px",
+    top: (menu ? Math.max(8, Math.min(menu.y, window.innerHeight - 520)) : 0) + "px",
     width: 210,
-    maxHeight: 480,
+    maxHeight: typeof window !== "undefined" ? Math.max(200, Math.min(480, window.innerHeight - 32)) : 480,
     overflowY: "auto",
+    paddingBottom: 10,
     background: "rgba(12,28,52,0.98)",
     border: "1px solid #2E6BB8",
     borderRadius: 10,
@@ -280,7 +281,6 @@
       { type: "sep" },
       // ── 账本与版本（版本永远在最底下）──
       { type: "item", label: "\u9C7C\u7CAE\u8D26\u672C", action: "fishfood" },
-      { type: "item", label: "\u4F59\u989D\uFF1A" + balanceText, action: "balance" },
       { type: "item", label: "\u6210\u957F\uFF1A" + growthText, action: "growth" },
       { type: "item", label: "\u7248\u672C\uFF1Av" + version, action: "version" }
     ];
@@ -4495,7 +4495,7 @@
           menuStatsAtRef.current = now;
           refreshBalance();
           getJson("/growth", { cache: "no-store" }).then((d) => {
-            if (d && d.ok && d.stage != null) setGrowthLabel(String(d.stage) + "\uFF08" + Number(d.exp) + "\uFF09");
+            if (d && d.ok && d.stage != null) setGrowthLabel(String(d.stage) + "\uFF08" + Number(d.exp) + (Number(d.nextExp) ? "/" + Number(d.nextExp) : "") + "\uFF09");
             else setGrowthLabel("--");
           }).catch(() => {
             setGrowthLabel("--");
