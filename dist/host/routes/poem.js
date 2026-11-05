@@ -4,12 +4,22 @@
  * 去重：data/poem-seen.json（["标题|作者|首句", ...]），一轮念完自动清空重来。
  * 文件缺失/损坏只记 POEM-LOAD-FAIL，按空诗册处理；空时返回 {ok:true,item:null,reason:'no-data'}。
  */
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 export function createPoemHandler(opts) {
     const POEMS_FILE = join(opts.dataDir, 'poems.json');
     const SEEN_FILE = join(opts.runtimeDir || opts.dataDir, 'poem-seen.json');
     let poems = null;
+    let poemsMtime = 0;
+    /** 诗库文件最后修改时间；改 poems.json 后自动失效，不必重启 */
+    function fileMtime(p) {
+        try {
+            return statSync(p).mtimeMs;
+        }
+        catch {
+            return 0;
+        }
+    }
     let seen = null;
     function keyOf(p) {
         // 同题不同作很多（蝶恋花/浣溪沙 等），键里加上首句前 12 字
@@ -17,7 +27,8 @@ export function createPoemHandler(opts) {
         return String(p.title || '') + '|' + String(p.author || '') + '|' + first.slice(0, 12);
     }
     function loadPoems() {
-        if (poems)
+        const mt = fileMtime(POEMS_FILE);
+        if (poems && mt > 0 && mt === poemsMtime)
             return poems;
         const out = [];
         const keys = new Set();
@@ -57,6 +68,7 @@ export function createPoemHandler(opts) {
             console.error('POEM-LOAD-FAIL file=' + POEMS_FILE + ' err=' + String(err?.message || err));
         }
         poems = out;
+        poemsMtime = mt;
         return poems;
     }
     function loadSeen() {
