@@ -1517,6 +1517,88 @@ try {
   ok('能加载统计路由', false, String(e.message))
 }
 
+
+// ---------- ㉛ 云端数据源：按清单取数 + 失败回退本地 ----------
+console.log('\n[31] 云端数据源 host/data/cloud.ts')
+try {
+  const { createCloudDataPort } = await import('../src/host/data/cloud.ts')
+  let localCalls = 0
+  const local = {
+    readStoryIndex: async () => { localCalls++; return [{ book: '本地书' }] },
+    readStoryBook: async () => { localCalls++; return [{ book: '本地书', title: 't', piece: 1, total: 1, text: 'x', index: 0 }] },
+    readCulture: async () => { localCalls++; return [{ name: '本地成语' }] },
+    readPoemsChunk: async (i) => { localCalls++; return { index: i, total: 1, items: [{ title: '本地诗', author: '某', lines: ['本地句'] }] } },
+    readDuilian: async () => { localCalls++; return { items: [{ upper: '上', lower: '下' }] } },
+    readDaily: async () => { localCalls++; return [{ date: '2026-01-01', text: '本地每日' }] },
+  }
+  const files = {
+    'manifest.json': { version: 'v2', generatedAt: 'g2', files: [
+      { path: 'poems/poems-00.json' }, { path: 'poems/poems-01.json' },
+      { path: 'culture/chengyu.json' }, { path: 'culture/minsu-00.json' },
+      { path: 'story/index.json' }, { path: 'story/聊斋.json' },
+      { path: 'duilian.json' }, { path: 'daily.json' },
+    ] },
+    'poems/poems-00.json': { index: 0, total: 2, items: [{ title: '静夜思', author: '李白', dynasty: '唐', lines: ['床前明月光'] }] },
+    'poems/poems-01.json': { index: 1, total: 2, items: [{ title: '望岳', author: '杜甫', lines: ['岱宗夫如何'] }] },
+    'culture/chengyu.json': { items: [{ name: '一鼓作气', text: '振作' }] },
+    'story/index.json': { books: [{ book: '聊斋', author: '蒲松龄' }] },
+    // 云端 story 文件是「数组」，normalizeStoryChunks 只吃数组（本地 {chunks} 由 repo 自己拆）
+    'story/聊斋.json': [{ title: '画皮', total: 1, text: '故事正文' }],
+    'duilian.json': { items: [{ upper: '风声雨声读书声', lower: '家事国事天下事' }] },
+    'daily.json': { items: [{ date: '2026-11-06', text: '云端的每日一句' }] },
+  }
+  const calls = []
+  let failNext = false
+  const fetchImpl = async (url) => {
+    // 云端路径经过 encodePath：中文书名会被百分号编码，这里解回来再查表
+    const path = decodeURIComponent(String(url).split('/culture/v1/')[1] || '')
+    calls.push(path)
+    if (failNext) throw new Error('network down')
+    const data = files[path]
+    if (data === undefined) return { ok: false, status: 404, text: async () => '', json: async () => null }
+    return { ok: true, status: 200, text: async () => JSON.stringify(data), json: async () => data }
+  }
+  const cloud = createCloudDataPort({ local, baseUrl: 'https://adnoon.example/culture/v1/', fetchImpl })
+
+  const p0 = await cloud.readPoemsChunk(0)
+  ok('诗词分片：取云端并归一化', p0.items.length === 1 && p0.items[0].title === '静夜思' && p0.total === 2, JSON.stringify(p0.items.map((x) => x.title)))
+  const p1 = await cloud.readPoemsChunk(1)
+  ok('诗词分片：按索引取对应文件', p1.items[0].title === '望岳')
+
+  const cul = await cloud.readCulture('chengyu')
+  ok('文化：云端取成语', cul.length === 1 && cul[0].name === '一鼓作气')
+  const dui = await cloud.readDuilian()
+  ok('对联：云端取', dui.items.length === 1 && dui.items[0].upper.indexOf('风声') === 0)
+  const day = await cloud.readDaily()
+  ok('每日：云端取', day.length === 1 && day[0].text === '云端的每日一句')
+  const idx = await cloud.readStoryIndex()
+  ok('书单：云端取', idx.length === 1 && idx[0].book === '聊斋' && idx[0].author === '蒲松龄')
+  const book = await cloud.readStoryBook('聊斋')
+  ok('书：云端取并归一化', book.length === 1 && book[0].book === '聊斋')
+
+  // 清单 TTL：连续取多个文件时 manifest 只拉一次
+  const manifestCalls = calls.filter((c) => c === 'manifest.json').length
+  ok('清单 30 秒内只拉一次', manifestCalls === 1, 'manifest 请求 ' + manifestCalls + ' 次')
+
+  // 网络失败 → 回退本地，且不抛。
+  // 用独立实例：上面那个实例已缓存了分片，不会再发请求，测不出"网络失败"。
+  let badCalls = 0
+  const cloudBad = createCloudDataPort({
+    local,
+    baseUrl: 'https://adnoon.example/culture/v1/',
+    fetchImpl: async () => { badCalls++; throw new Error('network down') },
+  })
+  const before = localCalls
+  const fb = await cloudBad.readPoemsChunk(0)
+  ok('网络失败 → 回退本地诗词', fb.items[0].title === '本地诗' && localCalls > before, 'local 调用 ' + (localCalls - before) + ' 次')
+  // 冷却期内继续走本地（不再打网络）
+  const badBefore = badCalls
+  const fb2 = await cloudBad.readCulture('chengyu')
+  ok('冷却期内直接走本地', fb2[0].name === '本地成语' && badCalls === badBefore, '网络请求 ' + (badCalls - badBefore) + ' 次')
+} catch (e) {
+  ok('能加载云端数据源', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
