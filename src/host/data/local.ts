@@ -86,7 +86,8 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     const file = join(CULTURE_DIR, CULTURE_FILES[kind])
     const mt = fileMtime(file)
     const cached = cultureCache.get(kind)
-    if (cached && mt > 0 && cached.mtimeMs === mt) return cached.value
+    // 返回浅拷贝：调用方 push/splice 改的是自己那份，不会把缓存里的数组改掉
+    if (cached && mt > 0 && cached.mtimeMs === mt) return cached.value.slice()
     const raw = await loadJsonArray(file, 'CULTURE-LOAD-FAIL')
     const out = normalizeCultureItems(kind, raw)
     cultureCache.set(kind, { value: out, mtimeMs: mt })
@@ -111,12 +112,12 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
       }
       poemsCache = { value: normalizePoemItems(raw || []), mtimeMs: mt }
     }
-    return { index: 0, total: 1, items: poemsCache.value }
+    return { index: 0, total: 1, items: poemsCache.value.slice() }
   }
 
   async function readDuilian(): Promise<DuilianData> {
     const mt = fileMtime(DUILIAN_FILE)
-    if (duilianCache && mt > 0 && duilianCache.mtimeMs === mt) return duilianCache.value
+    if (duilianCache && mt > 0 && duilianCache.mtimeMs === mt) return { ...duilianCache.value }
     let raw: any = null
     try {
       raw = JSON.parse(await readFile(DUILIAN_FILE, 'utf8'))
@@ -132,7 +133,7 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
 
   async function readDaily(): Promise<DailyItem[]> {
     const mt = fileMtime(DAILY_FILE)
-    if (dailyCache && mt > 0 && dailyCache.mtimeMs === mt) return dailyCache.value
+    if (dailyCache && mt > 0 && dailyCache.mtimeMs === mt) return dailyCache.value.slice()
     let raw: any = null
     try {
       raw = JSON.parse(await readFile(DAILY_FILE, 'utf8'))

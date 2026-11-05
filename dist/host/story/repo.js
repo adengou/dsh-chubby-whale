@@ -56,7 +56,8 @@ export function createStoryRepo(opts) {
             // 命中：顺手 touch 一下，保持 LRU 顺序
             bookCache.delete(book);
             bookCache.set(book, cached);
-            return Promise.resolve(cached.chunks);
+            // 浅拷贝返回：调用方排序/切分不会改到缓存里的数组
+            return Promise.resolve(cached.chunks.slice());
         }
         const running = inflight.get(book);
         // 文件没被改过才复用；mtime 变了说明数据刚更新，得重新读，不能拿旧书糊弄

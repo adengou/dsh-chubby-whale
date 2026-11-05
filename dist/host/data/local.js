@@ -77,8 +77,9 @@ export function createLocalDataPort(opts) {
         const file = join(CULTURE_DIR, CULTURE_FILES[kind]);
         const mt = fileMtime(file);
         const cached = cultureCache.get(kind);
+        // 返回浅拷贝：调用方 push/splice 改的是自己那份，不会把缓存里的数组改掉
         if (cached && mt > 0 && cached.mtimeMs === mt)
-            return cached.value;
+            return cached.value.slice();
         const raw = await loadJsonArray(file, 'CULTURE-LOAD-FAIL');
         const out = normalizeCultureItems(kind, raw);
         cultureCache.set(kind, { value: out, mtimeMs: mt });
@@ -105,12 +106,12 @@ export function createLocalDataPort(opts) {
             }
             poemsCache = { value: normalizePoemItems(raw || []), mtimeMs: mt };
         }
-        return { index: 0, total: 1, items: poemsCache.value };
+        return { index: 0, total: 1, items: poemsCache.value.slice() };
     }
     async function readDuilian() {
         const mt = fileMtime(DUILIAN_FILE);
         if (duilianCache && mt > 0 && duilianCache.mtimeMs === mt)
-            return duilianCache.value;
+            return { ...duilianCache.value };
         let raw = null;
         try {
             raw = JSON.parse(await readFile(DUILIAN_FILE, 'utf8'));
@@ -127,7 +128,7 @@ export function createLocalDataPort(opts) {
     async function readDaily() {
         const mt = fileMtime(DAILY_FILE);
         if (dailyCache && mt > 0 && dailyCache.mtimeMs === mt)
-            return dailyCache.value;
+            return dailyCache.value.slice();
         let raw = null;
         try {
             raw = JSON.parse(await readFile(DAILY_FILE, 'utf8'));

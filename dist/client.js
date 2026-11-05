@@ -390,46 +390,59 @@
   }
 
   // src/client/narration-progress.ts
-  var current = null;
-  function startProgress(label, lines, intro = "") {
-    const lens = (lines || []).map((l) => String(l || "").replace(/\s+/g, "").length).filter((n) => n > 0);
-    const cum = [];
-    let sum = 0;
-    for (const n of lens) {
-      sum += n;
-      cum.push(sum);
+  function createProgress() {
+    let current = null;
+    function index() {
+      if (!current) return 0;
+      const eff = current.spoken - current.introLen;
+      if (eff < 0) return 0;
+      let done = 0;
+      for (const c of current.cum) {
+        if (c <= eff) done++;
+      }
+      const total = current.cum.length;
+      return Math.min(total, done + 1);
     }
-    current = {
-      label: String(label || ""),
-      lineLens: lens,
-      cum,
-      introLen: String(intro || "").replace(/\s+/g, "").length,
-      spoken: 0
+    return {
+      start(label, lines, intro = "") {
+        const lens = (lines || []).map((l) => String(l || "").replace(/\s+/g, "").length).filter((n) => n > 0);
+        const cum = [];
+        let sum = 0;
+        for (const n of lens) {
+          sum += n;
+          cum.push(sum);
+        }
+        current = {
+          label: String(label || ""),
+          cum,
+          introLen: String(intro || "").replace(/\s+/g, "").length,
+          spoken: 0
+        };
+      },
+      stop() {
+        current = null;
+      },
+      active() {
+        return current !== null;
+      },
+      index,
+      bump(segment) {
+        if (!current) return "";
+        const seg = String(segment || "");
+        const idx = index();
+        current.spoken += seg.replace(/\s+/g, "").length;
+        const total = current.cum.length;
+        const head = total > 0 && idx > 0 ? current.label + "\uFF08\u7B2C " + idx + "/" + total + " \u53E5\uFF09" : current.label;
+        return head + (seg.trim() ? "\uFF1A" + seg.trim() : "");
+      }
     };
   }
-  function stopProgress() {
-    current = null;
-  }
-  function progressIndex() {
-    if (!current) return 0;
-    const eff = current.spoken - current.introLen;
-    if (eff < 0) return 0;
-    let done = 0;
-    for (const c of current.cum) {
-      if (c <= eff) done++;
-    }
-    const total = current.cum.length;
-    return Math.min(total, done + 1);
-  }
-  function bumpProgress(segment) {
-    if (!current) return "";
-    const seg = String(segment || "");
-    const idx = progressIndex();
-    current.spoken += seg.replace(/\s+/g, "").length;
-    const total = current.cum.length;
-    const head = total > 0 && idx > 0 ? current.label + "\uFF08\u7B2C " + idx + "/" + total + " \u53E5\uFF09" : current.label;
-    return head + (seg.trim() ? "\uFF1A" + seg.trim() : "");
-  }
+  var defaultProgress = createProgress();
+  var startProgress = defaultProgress.start;
+  var stopProgress = defaultProgress.stop;
+  var progressActive = defaultProgress.active;
+  var progressIndex = defaultProgress.index;
+  var bumpProgress = defaultProgress.bump;
 
   // src/client/image.ts
   var DEFAULT_MAX_EDGE = 1280;
