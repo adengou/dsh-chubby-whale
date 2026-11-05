@@ -51,7 +51,7 @@
   "scripts": {
     "build": "node scripts/check-bom.mjs && tsc -p tsconfig.json && esbuild src/client.ts --bundle --format=iife --external:react --outfile=dist/client.js",
     "prepublishOnly": "npm run build",
-    "test": "node scripts/test.mjs"
+    "test": "node scripts/check-text.mjs && node scripts/test.mjs"
   },
   "repository": {
     "type": "git",
