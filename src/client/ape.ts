@@ -45,6 +45,13 @@ export type ApeParams = {
   quietLongMs: number
   /** 一段里至少累计这么多说话时长才算有效语音 */
   minSpeechMs: number
+  /**
+   * 说完话后最多再等多久（毫秒）。背景噪声落在"中间带"（高于安静阈值、又不到起判阈值）时，
+   * 静音永远不累计——实测会让每句话都等满 6 秒窗口。用"距最后一次说话帧的时长"兜底。
+   */
+  maxWaitAfterSpeechMs: number
+  /** 判定为"环境噪声"的电平上限：比底噪高出多少 dB 以内才算噪声（防止把大声讲话当噪声） */
+  noiseNearDb: number
   /** 平稳性判别：电平起伏小于 spreadDb 且持续 steadyMs → 判定为环境噪声而非说话 */
   steadyWindowFrames: number
   steadySpreadDb: number
@@ -70,10 +77,12 @@ export const APE_DEFAULTS: ApeParams = {
   quietMidMs: 450,
   quietLongMs: 600,
   minSpeechMs: 150,
+  maxWaitAfterSpeechMs: 900,
+  noiseNearDb: 14,
   maxSegmentMs: 6000,
-  steadyWindowFrames: 25,   // 25 帧 × 60ms = 1.5s
+  steadyWindowFrames: 10,   // 25 帧 × 60ms = 1.5s
   steadySpreadDb: 3,
-  steadyMs: 900,
+  steadyMs: 400,
 }
 
 export type ApeStep = {
@@ -99,6 +108,8 @@ export class Ape {
   private elapsedMs = 0
   private runMs = 0
   private hadSpeech = false
+  private lastSpeechAtMs = 0
+  private noiseTail = false
   private bandMs = 0
   private steadyHist: number[] = []
   private steadyMs = 0
@@ -151,34 +162,37 @@ export class Ape {
       const spread = this.steadyHist.length >= 8
         ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist)
         : 99
-      let justConfirmedNoise = false
-      if (spread < p.steadySpreadDb) {
+      const nearFloor = (db - this.floorDb) <= p.noiseNearDb
+      const steadyNow = spread < p.steadySpreadDb && nearFloor
+
+      if (steadyNow) {
         this.steadyMs += p.frameMs
         if (this.steadyMs >= p.steadyMs) {
-          // 确认为环境噪声：噪声底抬到当前电平，本段已累计的"说话"作废，并进入冷却
+          // 恒定电平持续够久 = 环境噪声（风扇、空调等）。
+          // 不能直接抹掉已成立的说话，但要从这一帧开始把它当"安静"来累计，
+          // 否则静音永远涨不起来，一句话就要白等满 6 秒窗口（实测过）。
+          this.noiseTail = true
           this.floorDb = this.floorDb * 0.7 + db * 0.3
-          this.speechMs = 0
-          this.runMs = 0
-          this.hadSpeech = false
-          this.steadyHist.length = 0
-          this.steadyMs = 0
-          this.steadyCooldownMs = 2000
-          justConfirmedNoise = true
         }
       } else {
         this.steadyMs = 0
+        this.noiseTail = false
       }
-      if (this.steadyCooldownMs > 0) {
-        // 冷却期内不把电平算作说话（否则噪声会反复触发）
+
+      if (this.noiseTail) {
+        // 噪声尾：按安静累计（这样才能提前收尾）
+        this.quietMs += p.frameMs
+        this.bandMs = 0
+      } else if (this.steadyCooldownMs > 0) {
         this.steadyCooldownMs -= p.frameMs
-      } else if (!justConfirmedNoise) {
+      } else {
         this.speechMs += p.frameMs
         this.runMs += p.frameMs
         this.hadSpeech = true
+        this.lastSpeechAtMs = this.elapsedMs
+        this.quietMs = 0
+        this.bandMs = 0
       }
-      this.quietMs = 0
-      this.bandMs = 0
-    
     } else if (db <= offsetTh) {
       // 安静帧：噪声底跟随（下降快）
       this.quietMs += p.frameMs

@@ -842,11 +842,13 @@
     quietMidMs: 450,
     quietLongMs: 600,
     minSpeechMs: 150,
+    maxWaitAfterSpeechMs: 900,
+    noiseNearDb: 14,
     maxSegmentMs: 6e3,
-    steadyWindowFrames: 25,
+    steadyWindowFrames: 10,
     // 25 帧 × 60ms = 1.5s
     steadySpreadDb: 3,
-    steadyMs: 900
+    steadyMs: 400
   };
   var Ape = class {
     p;
@@ -857,6 +859,8 @@
     elapsedMs = 0;
     runMs = 0;
     hadSpeech = false;
+    lastSpeechAtMs = 0;
+    noiseTail = false;
     bandMs = 0;
     steadyHist = [];
     steadyMs = 0;
@@ -897,31 +901,31 @@
         this.steadyHist.push(db);
         while (this.steadyHist.length > p.steadyWindowFrames) this.steadyHist.shift();
         const spread = this.steadyHist.length >= 8 ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist) : 99;
-        let justConfirmedNoise = false;
-        if (spread < p.steadySpreadDb) {
+        const nearFloor = db - this.floorDb <= p.noiseNearDb;
+        const steadyNow = spread < p.steadySpreadDb && nearFloor;
+        if (steadyNow) {
           this.steadyMs += p.frameMs;
           if (this.steadyMs >= p.steadyMs) {
+            this.noiseTail = true;
             this.floorDb = this.floorDb * 0.7 + db * 0.3;
-            this.speechMs = 0;
-            this.runMs = 0;
-            this.hadSpeech = false;
-            this.steadyHist.length = 0;
-            this.steadyMs = 0;
-            this.steadyCooldownMs = 2e3;
-            justConfirmedNoise = true;
           }
         } else {
           this.steadyMs = 0;
+          this.noiseTail = false;
         }
-        if (this.steadyCooldownMs > 0) {
+        if (this.noiseTail) {
+          this.quietMs += p.frameMs;
+          this.bandMs = 0;
+        } else if (this.steadyCooldownMs > 0) {
           this.steadyCooldownMs -= p.frameMs;
-        } else if (!justConfirmedNoise) {
+        } else {
           this.speechMs += p.frameMs;
           this.runMs += p.frameMs;
           this.hadSpeech = true;
+          this.lastSpeechAtMs = this.elapsedMs;
+          this.quietMs = 0;
+          this.bandMs = 0;
         }
-        this.quietMs = 0;
-        this.bandMs = 0;
       } else if (db <= offsetTh) {
         this.quietMs += p.frameMs;
         this.bandMs = 0;
