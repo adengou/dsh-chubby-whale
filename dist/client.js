@@ -1990,6 +1990,129 @@
     };
   }
 
+  // src/client/duilian.ts
+  var COUPLETS = [
+    {
+      "upper": "\u98CE\u58F0\u96E8\u58F0\u8BFB\u4E66\u58F0\uFF0C\u58F0\u58F0\u5165\u8033",
+      "lower": "\u5BB6\u4E8B\u56FD\u4E8B\u5929\u4E0B\u4E8B\uFF0C\u4E8B\u4E8B\u5173\u5FC3",
+      "source": "\u660E\xB7\u987E\u5BAA\u6210\u9898\u65E0\u9521\u4E1C\u6797\u4E66\u9662",
+      "cat": "\u4E66\u9662"
+    },
+    {
+      "upper": "\u6D77\u7EB3\u767E\u5DDD\uFF0C\u6709\u5BB9\u4E43\u5927",
+      "lower": "\u58C1\u7ACB\u5343\u4EDE\uFF0C\u65E0\u6B32\u5219\u521A",
+      "source": "\u6E05\xB7\u6797\u5219\u5F90\u81EA\u9898\u8054",
+      "cat": "\u683C\u8A00"
+    },
+    {
+      "upper": "\u5BA4\u96C5\u4F55\u987B\u5927",
+      "lower": "\u82B1\u9999\u4E0D\u5728\u591A",
+      "source": "\u6E05\xB7\u90D1\u677F\u6865",
+      "cat": "\u683C\u8A00"
+    },
+    {
+      "upper": "\u5220\u7E41\u5C31\u7B80\u4E09\u79CB\u6811",
+      "lower": "\u9886\u5F02\u6807\u65B0\u4E8C\u6708\u82B1",
+      "source": "\u6E05\xB7\u90D1\u677F\u6865",
+      "cat": "\u683C\u8A00"
+    },
+    {
+      "upper": "\u5899\u4E0A\u82A6\u82C7\uFF0C\u5934\u91CD\u811A\u8F7B\u6839\u5E95\u6D45",
+      "lower": "\u5C71\u95F4\u7AF9\u7B0B\uFF0C\u5634\u5C16\u76AE\u539A\u8179\u4E2D\u7A7A",
+      "source": "\u76F8\u4F20\u4E3A\u660E\xB7\u89E3\u7F19\u4F5C",
+      "cat": "\u8C10\u8DA3"
+    },
+    {
+      "upper": "\u94C1\u80A9\u62C5\u9053\u4E49",
+      "lower": "\u5999\u624B\u8457\u6587\u7AE0",
+      "source": "\u674E\u5927\u948A\u300A\u6668\u949F\u62A5\u300B\u521B\u520A\u53F7\uFF081916\uFF09",
+      "cat": "\u683C\u8A00"
+    },
+    {
+      "upper": "\u5929\u589E\u5C81\u6708\u4EBA\u589E\u5BFF",
+      "lower": "\u6625\u6EE1\u4E7E\u5764\u798F\u6EE1\u95E8",
+      "source": "\u4F20\u7EDF\u6625\u8054",
+      "cat": "\u6625\u8054"
+    },
+    {
+      "upper": "\u4E00\u5143\u590D\u59CB",
+      "lower": "\u4E07\u8C61\u66F4\u65B0",
+      "source": "\u4F20\u7EDF\u6625\u8054",
+      "cat": "\u6625\u8054"
+    },
+    {
+      "upper": "\u6625\u56DE\u5927\u5730",
+      "lower": "\u798F\u6EE1\u4EBA\u95F4",
+      "source": "\u4F20\u7EDF\u6625\u8054",
+      "cat": "\u6625\u8054"
+    },
+    {
+      "upper": "\u95E8\u8FCE\u767E\u798F",
+      "lower": "\u6237\u7EB3\u5343\u7965",
+      "source": "\u4F20\u7EDF\u6625\u8054",
+      "cat": "\u6625\u8054"
+    },
+    {
+      "upper": "\u4E94\u6E56\u56DB\u6D77\u7686\u6625\u8272",
+      "lower": "\u4E07\u6C34\u5343\u5C71\u5C3D\u5F97\u8F89",
+      "source": "\u4F20\u7EDF\u6625\u8054",
+      "cat": "\u6625\u8054"
+    },
+    {
+      "upper": "\u677E\u7AF9\u6885\u5C81\u5BD2\u4E09\u53CB",
+      "lower": "\u6843\u674E\u674F\u6625\u98CE\u4E00\u5BB6",
+      "source": "\u4F20\u7EDF",
+      "cat": "\u683C\u8A00"
+    },
+    {
+      "upper": "\u798F\u5982\u4E1C\u6D77\u957F\u6D41\u6C34",
+      "lower": "\u5BFF\u6BD4\u5357\u5C71\u4E0D\u8001\u677E",
+      "source": "\u4F20\u7EDF\u5BFF\u8054",
+      "cat": "\u5BFF\u8054"
+    },
+    {
+      "upper": "\u5899\u4E0A\u753B\u9A6C\u4E0D\u80FD\u9A91",
+      "lower": "\u955C\u91CC\u70E7\u997C\u96BE\u5145\u9965",
+      "source": "\u4F20\u7EDF\uFF08\u6C11\u95F4\u4FD7\u8054\uFF09",
+      "cat": "\u8C10\u8DA3"
+    },
+    {
+      "upper": "\u6C34\u6E05\u77F3\u51FA\u9C7C\u53EF\u6570",
+      "lower": "\u6797\u6DF1\u65E0\u4EBA\u9E1F\u76F8\u547C",
+      "source": "\u5B8B\xB7\u82CF\u8F7C\u300A\u814A\u65E5\u6E38\u5B64\u5C71\u8BBF\u60E0\u52E4\u60E0\u601D\u4E8C\u50E7\u300B\u8BD7\u53E5",
+      "cat": "\u666F\u89C2"
+    },
+    {
+      "upper": "\u9752\u5C71\u4E0D\u58A8\u5343\u79CB\u753B",
+      "lower": "\u6D41\u6C34\u65E0\u5F26\u4E07\u53E4\u7434",
+      "source": "\u4F20\u7EDF\uFF08\u6D41\u4F20\u751A\u5E7F\uFF0C\u4F5C\u8005\u5F85\u8003\uFF09",
+      "cat": "\u666F\u89C2"
+    },
+    {
+      "upper": "\u56E0\u8377\u800C\u5F97\u85D5",
+      "lower": "\u6709\u674F\u4E0D\u987B\u6885",
+      "source": "\u4F20\u7EDF\u8C10\u97F3\u8054\uFF08\u8377=\u4F55\u3001\u85D5=\u5076\uFF1B\u674F=\u5E78\u3001\u6885=\u5A92\uFF09",
+      "cat": "\u8C10\u8DA3"
+    },
+    {
+      "upper": "\u4E24\u821F\u5E76\u884C\uFF0C\u6A79\u901F\u4E0D\u5982\u5E06\u5FEB",
+      "lower": "\u516B\u97F3\u9F50\u594F\uFF0C\u7B1B\u6E05\u96BE\u6BD4\u7BAB\u548C",
+      "source": "\u4F20\u7EDF\u8C10\u97F3\u8054\uFF08\u6A79\u901F=\u9C81\u8083\u3001\u5E06\u5FEB=\u6A0A\u54D9\uFF1B\u7B1B\u6E05=\u72C4\u9752\u3001\u7BAB\u548C=\u8427\u4F55\uFF09",
+      "cat": "\u8C10\u8DA3"
+    },
+    {
+      "upper": "\u753B\u4E0A\u8377\u82B1\u548C\u5C1A\u753B",
+      "lower": "\u4E66\u4E34\u6C49\u5E16\u7FF0\u6797\u4E66",
+      "source": "\u4F20\u7EDF\u56DE\u6587\u8054",
+      "cat": "\u8C10\u8DA3"
+    }
+  ];
+  function pickCouplet(excludeUpper) {
+    const pool = COUPLETS.length > 1 && excludeUpper ? COUPLETS.filter((c) => c.upper !== excludeUpper) : COUPLETS;
+    const src = pool.length > 0 ? pool : COUPLETS;
+    return src[Math.floor(Math.random() * src.length)];
+  }
+
   // src/client/actions/culture.ts
   function recitePoem(host, poem) {
     const body = String(poem.text || "");
@@ -2012,6 +2135,7 @@
       }
     }, 600);
   }
+  var lastCouplet = "";
   function registerCultureActions(table) {
     table.define("poem", (host) => {
       getJson("/poem").then((d) => {
@@ -2096,7 +2220,15 @@
       }).catch(() => host.bubble("\u6CA1\u67E5\u5230"));
     });
     table.define("culture-couplet", (host) => {
-      host.bubble("\u5BF9\u8054\u5C0F\u9CB8\u8FD8\u5728\u6574\u7406\uFF0C\u56DE\u5934\u7ED9\u4F60\u51FA\u4E00\u5BF9\uFF5E");
+      const c = pickCouplet(lastCouplet);
+      lastCouplet = c.upper;
+      host.bubble("\u4E0A\u8054\uFF1A" + c.upper + "\uFF08\u5148\u5BF9\u4E00\u5BF9\uFF0C\u672C\u9CB8 6 \u79D2\u540E\u63ED\u6653\u4E0B\u8054\uFF09", 5600);
+      setTimeout(() => {
+        try {
+          host.bubble("\u4E0B\u8054\uFF1A" + c.lower + "\n\u2014\u2014" + c.source, 7e3);
+        } catch (e) {
+        }
+      }, 6e3);
     });
     table.definePrefix("music:", (host, name) => {
       host.stopSpeak();

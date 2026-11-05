@@ -5,9 +5,6 @@
  * 新增菜单动作时只改这里（+ client/menu.ts 的菜单数据），不动 client.ts。
  */
 
-import { pickCouplet } from '../duilian.js'
-
-let lastCouplet = ''
 
 import type { ActionHost, ActionTable } from '../actions.js'
 import { getJson } from '../http.js'
