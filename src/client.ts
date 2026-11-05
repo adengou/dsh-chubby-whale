@@ -48,7 +48,25 @@ import { parseDue, cleanReminderText } from './shared/time.js'
     const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-narration-rate'); return (s && /^[+-]\\d{1,2}%$/.test(s)) ? s : '-25%' } catch (e) { return '-25%' } })()
     const storyNarratingRef = { current: false }
     const persona = createPersona()
-    let lastPoemSpeech = ''   // 刚念过的诗（朗读稿），支持「再念刚才那首」
+    let lastPoemSpeech = ''
+    // 叙述锁带时间上限：念诗/说书期间不理麦克风，但绝不能"忘了解锁"把耳朵永久关掉
+    let narrateUntil = 0
+    let lastSpeakingAt = 0   // 最近一次真正在朗读的时刻（用于锁的自愈）
+    const NARRATE_MIN_MS = 8000
+    const NARRATE_MAX_MS = 5 * 60 * 1000
+    function setNarrating(ms: number): void {
+      const dur = Math.max(NARRATE_MIN_MS, Math.min(Number(ms) || 60000, NARRATE_MAX_MS))
+      narrateUntil = Date.now() + dur
+      try { storyNarratingRef.current = true } catch (e) { }
+    }
+    function clearNarrating(): void {
+      narrateUntil = 0
+      try { storyNarratingRef.current = false } catch (e) { }
+    }
+    /** 按文字长度估朗读要多久（每字约 260ms，念诗 -25% 语速） */
+    function estimateSpeakMs(text: string): number {
+      return Math.round(String(text || '').length * 260) + 3000
+    }   // 刚念过的诗（朗读稿），支持「再念刚才那首」
     let lastLineNorm = ''   // 人设台词去重：上一句台词的规范化文本
     let lastLineAt = 0
     let greetedOnce = false   // 打招呼只打一次（防挂载重复）
@@ -405,6 +423,18 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         const tStatus = setInterval(() => {
           // 占线自愈：一次请求异常不能让后续提问永远被「还在想上一句」挡住
           try {
+            // 叙述锁自愈：过了时限还锁着就强制解除（防止"鱼听不到"）
+            try {
+              if (narrateUntil && Date.now() > narrateUntil) {
+            // 更狠的一条：TTS 已经不在出声（完成/被打断/失败），4 秒后必须解锁
+            if (narrateUntil && !ttsPlaying && lastSpeakingAt && Date.now() - lastSpeakingAt > 4000) {
+              clearNarrating()
+              try { (window as any).__chubbyWhale.narrReset = ((window as any).__chubbyWhale.narrReset || 0) + 1 } catch (e4) { }
+            }
+                clearNarrating()
+                try { (window as any).__chubbyWhale.narrReset = ((window as any).__chubbyWhale.narrReset || 0) + 1 } catch (e3) { }
+              }
+            } catch (e3) { }
             if (busyRef.current && Date.now() - busyAtRef.current > 35000) {
               busyAtRef.current = Date.now(); setBusy(false); busyRef.current = false
               try { (window as any).__chubbyWhale.busyReset = ((window as any).__chubbyWhale.busyReset || 0) + 1 } catch (e2) { }
@@ -490,7 +520,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           return
         }
         storyBusyRef.current = true
-        storyNarratingRef.current = true
+        setNarrating(estimateSpeakMs(text))
         speakText(text, {
           rate: normalizeRate(d.rate, NARRATION_RATE),
           onDone: () => {
@@ -602,8 +632,8 @@ import { parseDue, cleanReminderText } from './shared/time.js'
               animRef.current?.talkFor(6000)
               const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + author + '。' + collapsePoemBody(body)
             lastPoemSpeech = speech
-            storyNarratingRef.current = true
-            sayLine(persona.line('poemStart'), 4000); setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' }) } }) } catch (e) { } }, 600)
+            setNarrating(estimateSpeakMs(speech))
+            sayLine(persona.line('poemStart'), 4000); setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { clearNarrating(); sayLine(persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' }) } }) } catch (e) { } }, 600)
             } else showBubble('诗册没读到')
           }).catch(() => showBubble('诗册没读到'))
           return
@@ -886,9 +916,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             showBubble('念诗·' + p.title + '（' + String(p.author || '佚名') + '）', 15000)
             const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + String(p.author || '佚名') + '。' + collapsePoemBody(body)
             lastPoemSpeech = speech
-            storyNarratingRef.current = true
+            setNarrating(estimateSpeakMs(speech))
             sayLine(persona.line('poemStart'), 4000)
-            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' }) } }) } catch (e) { } }, 600)
+            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { clearNarrating(); sayLine(persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' }) } }) } catch (e) { } }, 600)
           }).catch(() => showBubble('诗册没读到', 4000))
           return true
         }
@@ -908,9 +938,9 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             showBubble('念诗·' + p.title + '（' + String(p.author || '佚名') + '）', 15000)
             const speech = '念首诗——' + p.title + '，' + (p.dynasty ? p.dynasty + '，' : '') + String(p.author || '佚名') + '。' + collapsePoemBody(body)
             lastPoemSpeech = speech
-            storyNarratingRef.current = true
+            setNarrating(estimateSpeakMs(speech))
             sayLine(persona.line('poemStart'), 4000)
-            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { storyNarratingRef.current = false; sayLine(persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' }) } }) } catch (e) { } }, 600)
+            setTimeout(() => { try { speakText(speech, { rate: NARRATION_RATE, onDone: () => { clearNarrating(); sayLine(persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' }) } }) } catch (e) { } }, 600)
           }).catch(() => showBubble('诗册没读到', 4000))
           return true
         }
@@ -1135,10 +1165,10 @@ import { parseDue, cleanReminderText } from './shared/time.js'
             // 叙述锁：念诗/说书进行中，麦克风拾到的内容不当作新发言
             // （否则会掐断朗读、变成"自言自语"）；只放行明确的"停"指令
             try {
-              if (storyNarratingRef.current) {
+              if (Date.now() < narrateUntil) {
                 if (/停|别念|不念|够了|算了|打住/.test(String(text || ''))) {
                   try { stopTts() } catch (e) { }
-                  storyNarratingRef.current = false
+                  clearNarrating()
                   showBubble('好，不念了', 2500)
                 } else {
                   try { (window as any).__chubbyWhale.narrDrop = ((window as any).__chubbyWhale.narrDrop || 0) + 1 } catch (e) { }
@@ -1151,6 +1181,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
           },
           onStatus: (st: any) => {
             ttsPlaying = st === 'speaking'
+            if (ttsPlaying) { try { lastSpeakingAt = Date.now() } catch (e) { } }
           },
           onDiag: (d: any) => { try { (window as any).__chubbyWhale.voiceDiag = d } catch (e) { } },
           // 念诗/说书：气泡跟着当前句走，主人能看到"念到哪了"
@@ -1177,7 +1208,7 @@ import { parseDue, cleanReminderText } from './shared/time.js'
         try { if (voiceRef.current) voiceRef.current.speak(text, o) } catch (e) { }
       }
       function stopTts(): void {
-        storyNarratingRef.current = false   // 停止朗读 = 解除叙述锁，避免锁忘了放
+        clearNarrating()   // 停止朗读 = 解除叙述锁
         try { if (voiceRef.current) voiceRef.current.stopSpeaking() } catch (e) { }
       }
       function muteMic(): void { try { if (voiceRef.current) voiceRef.current.mute(true) } catch (e) { } }

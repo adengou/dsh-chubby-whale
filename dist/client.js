@@ -1974,6 +1974,28 @@
       const storyNarratingRef = { current: false };
       const persona = createPersona();
       let lastPoemSpeech = "";
+      let narrateUntil = 0;
+      let lastSpeakingAt = 0;
+      const NARRATE_MIN_MS = 8e3;
+      const NARRATE_MAX_MS = 5 * 60 * 1e3;
+      function setNarrating(ms) {
+        const dur = Math.max(NARRATE_MIN_MS, Math.min(Number(ms) || 6e4, NARRATE_MAX_MS));
+        narrateUntil = Date.now() + dur;
+        try {
+          storyNarratingRef.current = true;
+        } catch (e) {
+        }
+      }
+      function clearNarrating() {
+        narrateUntil = 0;
+        try {
+          storyNarratingRef.current = false;
+        } catch (e) {
+        }
+      }
+      function estimateSpeakMs(text) {
+        return Math.round(String(text || "").length * 260) + 3e3;
+      }
       let lastLineNorm = "";
       let lastLineAt = 0;
       let greetedOnce = false;
@@ -2471,6 +2493,23 @@
           }
           const tStatus = setInterval(() => {
             try {
+              try {
+                if (narrateUntil && Date.now() > narrateUntil) {
+                  if (narrateUntil && !ttsPlaying && lastSpeakingAt && Date.now() - lastSpeakingAt > 4e3) {
+                    clearNarrating();
+                    try {
+                      window.__chubbyWhale.narrReset = (window.__chubbyWhale.narrReset || 0) + 1;
+                    } catch (e4) {
+                    }
+                  }
+                  clearNarrating();
+                  try {
+                    window.__chubbyWhale.narrReset = (window.__chubbyWhale.narrReset || 0) + 1;
+                  } catch (e3) {
+                  }
+                }
+              } catch (e3) {
+              }
               if (busyRef.current && Date.now() - busyAtRef.current > 35e3) {
                 busyAtRef.current = Date.now();
                 setBusy(false);
@@ -2578,7 +2617,7 @@
             return;
           }
           storyBusyRef.current = true;
-          storyNarratingRef.current = true;
+          setNarrating(estimateSpeakMs(text));
           speakText(text, {
             rate: normalizeRate(d.rate, NARRATION_RATE2),
             onDone: () => {
@@ -2782,12 +2821,12 @@
                 animRef.current?.talkFor(6e3);
                 const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + author + "\u3002" + collapsePoemBody(body);
                 lastPoemSpeech = speech;
-                storyNarratingRef.current = true;
+                setNarrating(estimateSpeakMs(speech));
                 sayLine(persona.line("poemStart"), 4e3);
                 setTimeout(() => {
                   try {
                     speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
-                      storyNarratingRef.current = false;
+                      clearNarrating();
                       sayLine(persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
                     } });
                   } catch (e) {
@@ -3152,12 +3191,12 @@
               showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + String(p.author || "\u4F5A\u540D") + "\uFF09", 15e3);
               const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + String(p.author || "\u4F5A\u540D") + "\u3002" + collapsePoemBody(body);
               lastPoemSpeech = speech;
-              storyNarratingRef.current = true;
+              setNarrating(estimateSpeakMs(speech));
               sayLine(persona.line("poemStart"), 4e3);
               setTimeout(() => {
                 try {
                   speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
-                    storyNarratingRef.current = false;
+                    clearNarrating();
                     sayLine(persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
                   } });
                 } catch (e) {
@@ -3185,12 +3224,12 @@
               showBubble("\u5FF5\u8BD7\xB7" + p.title + "\uFF08" + String(p.author || "\u4F5A\u540D") + "\uFF09", 15e3);
               const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + p.title + "\uFF0C" + (p.dynasty ? p.dynasty + "\uFF0C" : "") + String(p.author || "\u4F5A\u540D") + "\u3002" + collapsePoemBody(body);
               lastPoemSpeech = speech;
-              storyNarratingRef.current = true;
+              setNarrating(estimateSpeakMs(speech));
               sayLine(persona.line("poemStart"), 4e3);
               setTimeout(() => {
                 try {
                   speakText(speech, { rate: NARRATION_RATE2, onDone: () => {
-                    storyNarratingRef.current = false;
+                    clearNarrating();
                     sayLine(persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
                   } });
                 } catch (e) {
@@ -3514,13 +3553,13 @@
               } catch (e) {
               }
               try {
-                if (storyNarratingRef.current) {
+                if (Date.now() < narrateUntil) {
                   if (/停|别念|不念|够了|算了|打住/.test(String(text || ""))) {
                     try {
                       stopTts();
                     } catch (e) {
                     }
-                    storyNarratingRef.current = false;
+                    clearNarrating();
                     showBubble("\u597D\uFF0C\u4E0D\u5FF5\u4E86", 2500);
                   } else {
                     try {
@@ -3543,6 +3582,12 @@
             },
             onStatus: (st) => {
               ttsPlaying = st === "speaking";
+              if (ttsPlaying) {
+                try {
+                  lastSpeakingAt = Date.now();
+                } catch (e) {
+                }
+              }
             },
             onDiag: (d) => {
               try {
@@ -3594,7 +3639,7 @@
           }
         }
         function stopTts() {
-          storyNarratingRef.current = false;
+          clearNarrating();
           try {
             if (voiceRef.current) voiceRef.current.stopSpeaking();
           } catch (e) {
