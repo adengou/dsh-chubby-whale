@@ -2955,6 +2955,95 @@ try {
   ok('能加载记忆仓储', false, String(e.message))
 }
 
+
+// ---------- 56 聊天路由：长期记忆摘要触发 + 提示注入顺序 ----------
+console.log('\n[56] 摘要触发与提示注入 host/routes/chat.ts')
+try {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-summary-test-'))
+  const { createCache } = await import('../src/host/cache.ts')
+  const { createChatHandler } = await import('../src/host/routes/chat.ts')
+  const cache = createCache({ dir, memBytes: 32 * 1024 })
+
+  let summaryCalls = 0
+  let mainCalls = 0
+  let lastSystem = ''
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init && init.body))
+    const sys = String((body.messages && body.messages[0] && body.messages[0].content) || '')
+    if (sys.indexOf('整理长期记忆') >= 0) {
+      summaryCalls++
+      return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: '主人喜欢白饭' } }] }) }
+    }
+    mainCalls++
+    lastSystem = sys
+    return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: '答' + mainCalls } }], usage: { total_tokens: 5 } }) }
+  }
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.json = () => { try { return JSON.parse(Buffer.concat(out.chunks).toString('utf8')) } catch (e) { return null } }
+    return out
+  }
+  const mkReq = (body) => {
+    const buf = Buffer.from(JSON.stringify(body))
+    return { method: 'POST', headers: {}, destroy() { }, on() { }, resume() { }, async *[Symbol.asyncIterator]() { yield buf } }
+  }
+  const hist6 = Array.from({ length: 6 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: 'h' + i }))
+  const makeDeps = (history, opts = {}) => ({
+    getKey: () => 'k',
+    loadHistory: () => history,
+    appendTurns: () => { },
+    loadState: () => ({ intimacy: 0 }),
+    saveState: () => { },
+    systemPrompt: 'SYS',
+    addExp: () => ({ upgraded: false }),
+    addTokens: () => { },
+    cache,
+    loadMemorySummary: () => '主人喜欢白饭',
+    saveMemorySummary: opts.save || (() => { }),
+    model: 'deepseek-flash',
+  })
+
+  // ① 前 9 次不总结，第 10 次才总结
+  const saved = []
+  const h = createChatHandler(makeDeps(hist6, { save: (x) => saved.push(x) }))
+  for (let i = 0; i < 9; i++) await h(mkReq({ message: '消息' + i }), mkRes())
+  await new Promise((r) => setTimeout(r, 10))
+  ok('前 9 次不总结', summaryCalls === 0 && saved.length === 0, 'summary=' + summaryCalls)
+  await h(mkReq({ message: '第十次' }), mkRes())
+  await new Promise((r) => setTimeout(r, 30))
+  ok('第 10 次触发一次总结', summaryCalls === 1 && saved.length === 1 && saved[0] === '主人喜欢白饭', 'summary=' + summaryCalls)
+
+  // ② 历史不足 6 条：第 10 次也不总结
+  summaryCalls = 0
+  const h2 = createChatHandler(makeDeps(hist6.slice(0, 2), { save: () => { } }))
+  for (let i = 0; i < 10; i++) await h2(mkReq({ message: '短历史' + i }), mkRes())
+  await new Promise((r) => setTimeout(r, 30))
+  ok('历史不足 6 条不总结', summaryCalls === 0, 'summary=' + summaryCalls)
+
+  // ③ 提示注入顺序：人设 → 语言规则 → 长期记忆 → 语音说明
+  lastSystem = ''
+  const h3 = createChatHandler(makeDeps(hist6))
+  await h3(mkReq({ message: 'hello there', voice: true }), mkRes())
+  const sys = lastSystem
+  const iLang = sys.indexOf('【语言规则')
+  const iMem = sys.indexOf('关于主人的长期记忆')
+  const iVoice = sys.indexOf('【输入说明】')
+  ok('系统提示注入顺序：语言 → 记忆 → 语音', sys.indexOf('SYS') === 0 && iLang > 0 && iMem > iLang && iVoice > iMem, 'lang=' + iLang + ' mem=' + iMem + ' voice=' + iVoice)
+  ok('英文提问带语言硬约束', sys.indexOf('Reply in English only') > 0)
+
+  globalThis.fetch = realFetch
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载聊天路由（摘要用例）', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
