@@ -111,6 +111,7 @@ const TOGGLE_EN: Record<string, [string, string]> = {
   '语音朗读：': ['Voice output: on', 'Voice output: off'],
   '语音待命：': ['Voice standby: on', 'Voice standby: off'],
   '语音聊天：': ['Voice chat: on', 'Voice chat: off'],
+  '流式回复：': ['Streaming replies: on', 'Streaming replies: off'],
 }
 
 export function tr(label: string, lang: string): string {
@@ -174,6 +175,8 @@ export interface MenuState {
   poemRate?: string
   /** 叙述语速（缺省 -25%，典故/成语用） */
   narrationRate?: string
+  /** 流式回复开关（缺省视为开；关掉后等整段回复再开口） */
+  streamOn?: boolean
 }
 
 export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
@@ -226,6 +229,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     ] },
     { type: 'item', label: '语音待命：' + (earOn ? '开' : '关'), action: 'wake' },
     { type: 'item', label: '语音聊天：' + (voiceChatOn ? '开' : '关'), action: 'chatmode' },
+    { type: 'item', label: '流式回复：' + (state.streamOn === false ? '关' : '开'), action: 'stream-toggle' },
     { type: 'item', label: '端点检测：经典/自适应', action: 'endpoint' },
     { type: 'item', label: '耳朵自检（听力诊断）', action: 'ear-check' },
     { type: 'sep' },

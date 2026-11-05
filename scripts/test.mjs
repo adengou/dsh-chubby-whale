@@ -372,6 +372,27 @@ try {
   ok('能加载 rates.ts', false, String(e.message))
 }
 
+
+// ---------- ⑬ 菜单：新增开关与语速项 ----------
+console.log('\n[13] 菜单 buildMenu / tr')
+try {
+  const menu = await import('../src/client/menu.ts')
+  const items = menu.buildMenu('9.9.9', { streamOn: false, narrationRate: '-15%', poemRate: '-20%', storyRate: '-30%' })
+  const flat = JSON.stringify(items)
+  const labels = []
+  const walk = (arr) => { for (const it of arr) { if (it.label) labels.push(it.label); if (it.items) walk(it.items) } }
+  walk(items)
+  ok('菜单含「流式回复：关」', labels.indexOf('流式回复：关') >= 0)
+  ok('菜单含「叙述语速：-15% ▸」', labels.some((x) => x.indexOf('叙述语速：-15%') === 0))
+  ok('菜单含「念诗语速：-20% ▸」', labels.some((x) => x.indexOf('念诗语速：-20%') === 0))
+  ok('菜单含「说书语速：-30% ▸」', labels.some((x) => x.indexOf('说书语速：-30%') === 0))
+  ok('EN 流式回复', menu.tr('流式回复：关', 'en') === 'Streaming replies: off')
+  ok('EN 叙述语速', menu.tr('叙述语速：-15% ▸', 'en') === 'Narration speed: -15% ▸')
+  ok('EN 念诗语速', menu.tr('念诗语速：-20% ▸', 'en') === 'Poem speed: -20% ▸')
+} catch (e) {
+  ok('能加载 menu.ts', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

@@ -29,6 +29,14 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
 
   // —— 位置与大小 ——
   table.define('home', (host) => { host.homePos(); host.bubble('回到角落啦') })
+// 流式回复开关：chubby-stream 以前只有人读、没人写（死键）
+table.define('stream-toggle', (host) => {
+  try {
+    const off = localStorage.getItem('chubby-stream') === 'off'
+    localStorage.setItem('chubby-stream', off ? 'on' : 'off')
+    host.bubble(off ? '流式回复：开（边生成边说）' : '流式回复：关（等整段再开口）', 4000)
+  } catch (e) { host.bubble('改不了（浏览器禁止存储）', 3000) }
+})
   table.define('bigger', (host) => { host.nudgeScale(0.1) })
   table.define('smaller', (host) => { host.nudgeScale(-0.1) })
   // —— 让它游走：隐藏后仍可恢复（恢复点 / Ctrl+Shift+W / 菜单项都走 host.recover）——

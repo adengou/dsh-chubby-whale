@@ -235,7 +235,8 @@
   var TOGGLE_EN = {
     "\u8BED\u97F3\u6717\u8BFB\uFF1A": ["Voice output: on", "Voice output: off"],
     "\u8BED\u97F3\u5F85\u547D\uFF1A": ["Voice standby: on", "Voice standby: off"],
-    "\u8BED\u97F3\u804A\u5929\uFF1A": ["Voice chat: on", "Voice chat: off"]
+    "\u8BED\u97F3\u804A\u5929\uFF1A": ["Voice chat: on", "Voice chat: off"],
+    "\u6D41\u5F0F\u56DE\u590D\uFF1A": ["Streaming replies: on", "Streaming replies: off"]
   };
   function tr(label, lang) {
     if (lang !== "en") return label;
@@ -310,6 +311,7 @@
       ] },
       { type: "item", label: "\u8BED\u97F3\u5F85\u547D\uFF1A" + (earOn ? "\u5F00" : "\u5173"), action: "wake" },
       { type: "item", label: "\u8BED\u97F3\u804A\u5929\uFF1A" + (voiceChatOn ? "\u5F00" : "\u5173"), action: "chatmode" },
+      { type: "item", label: "\u6D41\u5F0F\u56DE\u590D\uFF1A" + (state.streamOn === false ? "\u5173" : "\u5F00"), action: "stream-toggle" },
       { type: "item", label: "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94", action: "endpoint" },
       { type: "item", label: "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09", action: "ear-check" },
       { type: "sep" },
@@ -3698,6 +3700,15 @@
       host.homePos();
       host.bubble("\u56DE\u5230\u89D2\u843D\u5566");
     });
+    table.define("stream-toggle", (host) => {
+      try {
+        const off = localStorage.getItem("chubby-stream") === "off";
+        localStorage.setItem("chubby-stream", off ? "on" : "off");
+        host.bubble(off ? "\u6D41\u5F0F\u56DE\u590D\uFF1A\u5F00\uFF08\u8FB9\u751F\u6210\u8FB9\u8BF4\uFF09" : "\u6D41\u5F0F\u56DE\u590D\uFF1A\u5173\uFF08\u7B49\u6574\u6BB5\u518D\u5F00\u53E3\uFF09", 4e3);
+      } catch (e) {
+        host.bubble("\u6539\u4E0D\u4E86\uFF08\u6D4F\u89C8\u5668\u7981\u6B62\u5B58\u50A8\uFF09", 3e3);
+      }
+    });
     table.define("bigger", (host) => {
       host.nudgeScale(0.1);
     });
@@ -6529,7 +6540,13 @@
               } catch (e) {
                 return true;
               }
-            })(), narrationRate: narrationRate(), storyRate: (() => {
+            })(), narrationRate: narrationRate(), streamOn: (() => {
+              try {
+                return localStorage.getItem("chubby-stream") !== "off";
+              } catch (e) {
+                return true;
+              }
+            })(), storyRate: (() => {
               try {
                 const s = localStorage.getItem("chubby-story-rate") || "-35%";
                 return /^-\d{1,2}%$/.test(s) ? s : "-35%";
