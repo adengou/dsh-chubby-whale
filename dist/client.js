@@ -473,6 +473,7 @@
   var NARRATION_RATES = ["-15%", "-20%", "-25%", "-30%"];
   deepFreeze(NARRATION_RATES);
   var DEFAULT_NARRATION_RATE = "-25%";
+  var CHAT_REPLY_RATE = "-10%";
   function narrationRate() {
     try {
       const s = localStorage.getItem("chubby-narration-rate");
@@ -2467,11 +2468,11 @@
           wakeStats.passed++;
           if (!said) {
             try {
-              if (host.say) host.say("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
-              else host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
+              if (host.say) host.say("\u672C\u9CB8\u5728\u5462\uFF5E", 3200, { rate: "-15%" });
+              else host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 3200);
             } catch (e) {
               try {
-                host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
+                host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 3200);
               } catch (e2) {
               }
             }
@@ -5074,7 +5075,7 @@
       const speakSegs = (segs) => {
         for (const seg of segs) {
           try {
-            host.speak(seg, { rate: "+0%" });
+            host.speak(seg, { rate: CHAT_REPLY_RATE });
           } catch (e) {
           }
         }
@@ -5849,6 +5850,8 @@
             narrating: () => storyNarratingRef.current,
             stopSpeaking: () => stopTts(),
             bubble: showBubble,
+            // 喊名字的应答要"出声"，不能只弹字：桥里拿不到 say 时会退化成纯气泡
+            say: (text, ms2, opts) => sayLine(text, ms2, opts),
             sendText: (text, opts) => sendText(text, opts),
             onVoiceHeard: () => {
               try {
@@ -6604,7 +6607,7 @@
           try {
             if (localStorage.getItem("chubby-voice") === "off") return;
             const v = bridge.get();
-            if (v && v.speak && !v.speaking()) v.speak(text, { rate: voiceOpts && voiceOpts.rate || "+0%", pitch: voiceOpts && voiceOpts.pitch || "" });
+            if (v && v.speak && !v.speaking()) v.speak(text, { rate: voiceOpts && voiceOpts.rate || CHAT_REPLY_RATE, pitch: voiceOpts && voiceOpts.pitch || "" });
           } catch (e) {
           }
         }
@@ -6612,7 +6615,7 @@
           const rp = String(text || "");
           if (!rp.trim()) return;
           if (!replyDeduper.allow(rp)) return;
-          speakText(rp, { rate: rp.length >= 80 ? narrationRate() : "+0%" });
+          speakText(rp, { rate: rp.length >= 80 ? narrationRate() : CHAT_REPLY_RATE });
         }
         R.useEffect(() => {
           const next = lookForGrowth(growth);

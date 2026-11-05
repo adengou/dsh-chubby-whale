@@ -14,6 +14,9 @@ deepFreeze(NARRATION_RATES)
 
 export const DEFAULT_NARRATION_RATE = '-25%'
 
+/** 聊天短回复的默认语速：+0% 实测偏快（主人 2026-11-06 反馈），统一慢一档 */
+export const CHAT_REPLY_RATE = '-10%'
+
 /** 读当前叙述语速（非法值回落默认 -25%） */
 export function narrationRate(): string {
   try {

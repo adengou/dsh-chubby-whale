@@ -399,6 +399,7 @@ try {
   }
   const rates = await import('../src/client/rates.ts')
   ok('默认叙述语速 -25%', rates.narrationRate() === '-25%')
+  ok('聊天短回复语速 -10%（比 +0% 慢一档）', rates.CHAT_REPLY_RATE === '-10%')
   ok('非法值不写入', rates.setNarrationRate('-99%') === false && rates.narrationRate() === '-25%')
   ok('合法值写入成功', rates.setNarrationRate('-15%') === true)
   ok('写入后读到新值', rates.narrationRate() === '-15%')
@@ -3234,7 +3235,7 @@ try {
     narrating: () => false,
     stopSpeaking: () => { stopped++ },
     bubble: (t) => bubbles.push(t),
-    say: (t) => said.push(t),
+    say: (t, ms, opts) => said.push({ t, ms, opts }),
     sendText: (t, o) => sent.push({ t, o }),
     onVoiceHeard: () => { },
     onSpeaking: () => { },
@@ -3253,7 +3254,9 @@ try {
   // ② 只喊名字：应一声，不劳烦模型
   const before = sent.length
   captured.onHeard('大肥鱼')
-  ok('只喊名字时本地应一声', sent.length === before && said.indexOf('本鲸在呢～') >= 0, said.join(' | '))
+  const ack = said[said.length - 1]
+  ok('只喊名字时本地应一声', sent.length === before && ack && ack.t === '本鲸在呢～', JSON.stringify(ack))
+  ok('应答走语音、带 -15% 慢速', !!ack && ack.opts && ack.opts.rate === '-15%' && ack.ms === 3200, JSON.stringify(ack && ack.opts))
 
   // ③ 句首喊名字 + 正文：剥掉名字再答
   captured.onHeard('大肥鱼你好呀')
@@ -3275,6 +3278,11 @@ try {
   // ⑥ 诊断里能看出过了几段
   const info = b.wakeInfo()
   ok('诊断：通过的段数在涨', info.passed >= 3 && info.hits >= 2, JSON.stringify({ passed: info.passed, hits: info.hits }))
+  const { readFileSync: rf7 } = await import('node:fs')
+  const cSrc = rf7('src/client.ts', 'utf8')
+  const chSrc = rf7('src/client/chat.ts', 'utf8')
+  ok('桥接必须把 say 传给 voice-bridge（否则只弹字不出声）', /say:\s*\(text:[^\n]*=>\s*sayLine\(/.test(cSrc))
+  ok('聊天与流式回复都用统一语速', cSrc.indexOf('CHAT_REPLY_RATE') >= 0 && chSrc.indexOf('CHAT_REPLY_RATE') >= 0)
 } catch (e) {
   ok('能加载语音桥（随时说）', false, String(e.message))
 }

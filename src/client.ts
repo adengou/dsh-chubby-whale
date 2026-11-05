@@ -5,7 +5,7 @@
 import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle, recoverDotStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
 import { stopProgress } from './client/narration-progress.js'
-import { narrationRate } from './client/rates.js'
+import { narrationRate, CHAT_REPLY_RATE } from './client/rates.js'
 import { handleFileDrop } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth, type GrowthInfo } from './client/look.js'
@@ -207,6 +207,8 @@ import { createRecover } from './client/recover.js'
           narrating: () => storyNarratingRef.current,
           stopSpeaking: () => stopTts(),
           bubble: showBubble,
+          // 喊名字的应答要"出声"，不能只弹字：桥里拿不到 say 时会退化成纯气泡
+          say: (text: string, ms?: number, opts?: any) => sayLine(text, ms, opts),
           sendText: (text: string, opts?: { voice?: boolean }) => sendText(text, opts),
           onVoiceHeard: () => { try { voiceModeRef.current = true } catch (e) { } },
           onSpeaking: (playing: boolean) => {
@@ -780,7 +782,7 @@ import { createRecover } from './client/recover.js'
         try {
           if (localStorage.getItem('chubby-voice') === 'off') return
           const v: any = bridge.get()
-          if (v && v.speak && !v.speaking()) v.speak(text, { rate: (voiceOpts && voiceOpts.rate) || '+0%', pitch: (voiceOpts && voiceOpts.pitch) || '' })
+          if (v && v.speak && !v.speaking()) v.speak(text, { rate: (voiceOpts && voiceOpts.rate) || CHAT_REPLY_RATE, pitch: (voiceOpts && voiceOpts.pitch) || '' })
         } catch (e) { }
       }
       /** 统一的回复朗读入口：长回复走叙述语速，同一句回复 30 秒内不重复念 */
@@ -789,7 +791,7 @@ import { createRecover } from './client/recover.js'
         if (!rp.trim()) return
         // 同一句回复 30 秒内不重复念（client/text.ts 的 deduper，重复时计数 dupReply）
         if (!replyDeduper.allow(rp)) return
-        speakText(rp, { rate: rp.length >= 80 ? narrationRate() : '+0%' })
+        speakText(rp, { rate: rp.length >= 80 ? narrationRate() : CHAT_REPLY_RATE })
       }
 
       // ===== 成长 → 外观（L5）：档位变化时热更新 canvas 外观，不重建动画器 =====
