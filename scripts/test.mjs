@@ -745,6 +745,106 @@ try {
   ok('能加载 TTS 路由', false, String(e.message))
 }
 
+
+// ---------- ㉒ ASR 路由：噪声不写缓存 / 白名单 / 失败码 ----------
+console.log('\n[22] ASR 路由 host/routes/asr.ts（假 req/res + 假 fetch）')
+try {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-asr-test-'))
+  const { createCache } = await import('../src/host/cache.ts')
+  const { createAsrHandler } = await import('../src/host/routes/asr.ts')
+  const cache = createCache({ dir, memBytes: 2 * 1024 * 1024 })
+
+  let reply = { ok: true, status: 200, text: '主人好' }
+  let rejectWith = null
+  const fetchCalls = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    fetchCalls.push({ url, body: init && init.body })
+    if (rejectWith) throw rejectWith
+    return { ok: reply.ok, status: reply.status, text: async () => (typeof reply.text === 'string' ? JSON.stringify({ text: reply.text }) : '') }
+  }
+
+  const mkReq = (body) => {
+    const buf = Buffer.from(JSON.stringify(body))
+    return { headers: {}, destroy() { }, on() { }, resume() { }, async *[Symbol.asyncIterator]() { yield buf } }
+  }
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.bodyText = () => Buffer.concat(out.chunks).toString('utf8')
+    out.json = () => { try { return JSON.parse(out.bodyText()) } catch (e) { return null } }
+    return out
+  }
+  const audio = Buffer.from('fake-audio-bytes').toString('base64')
+
+  // ① 空音频
+  let res = mkRes()
+  await createAsrHandler({ cache, getKey: () => 'k' })(mkReq({ audio: '' }), res)
+  ok('空音频 → 400', res.code === 400 && res.json().error === 'empty audio')
+
+  // ② 非法 base64
+  res = mkRes()
+  await createAsrHandler({ cache, getKey: () => 'k' })(mkReq({ audio: '!!!not-base64!!!' }), res)
+  ok('非法 base64 → 400', res.code === 400 && res.json().error === 'bad base64')
+
+  // ③ 没 key
+  res = mkRes()
+  await createAsrHandler({ cache, getKey: () => '' })(mkReq({ audio }), res)
+  ok('没有密钥 → ok:false NO_KEY', res.json() && res.json().ok === false && res.json().error === 'NO_KEY')
+
+  // ④ 正常识别 + 缓存命中
+  const handle = createAsrHandler({ cache, getKey: () => 'k' })
+  fetchCalls.length = 0
+  res = mkRes()
+  await handle(mkReq({ audio }), res)
+  ok('正常识别 → 文本', res.json() && res.json().ok === true && res.json().text === '主人好', JSON.stringify(res.json()))
+  res = mkRes()
+  await handle(mkReq({ audio }), res)
+  ok('同音频第二次命中缓存（fetch 只一次）', fetchCalls.length === 1 && res.json().cached === true, 'fetch=' + fetchCalls.length)
+
+  // ⑤ 噪声结果：不写缓存、按空文本返回
+  reply = { ok: true, status: 200, text: '嗯。' }
+  fetchCalls.length = 0
+  res = mkRes()
+  await handle(mkReq({ audio: Buffer.from('noise-audio').toString('base64') }), res)
+  ok('噪声结果 → 空文本', res.json() && res.json().text === '', JSON.stringify(res.json()))
+  res = mkRes()
+  await handle(mkReq({ audio: Buffer.from('noise-audio').toString('base64') }), res)
+  ok('噪声结果不写缓存（第二次仍要请求）', fetchCalls.length === 2, 'fetch=' + fetchCalls.length)
+  reply = { ok: true, status: 200, text: '主人好' }
+
+  // ⑥ 上游 HTTP 错误
+  reply = { ok: false, status: 503, text: 'busy' }
+  res = mkRes()
+  await handle(mkReq({ audio: Buffer.from('http-err').toString('base64') }), res)
+  ok('上游 503 → ok:false 带状态码', res.json() && res.json().ok === false && /503/.test(String(res.json().error)), String(res.json() && res.json().error))
+  reply = { ok: true, status: 200, text: '主人好' }
+
+  // ⑦ 超时错误分类
+  rejectWith = Object.assign(new Error('aborted'), { name: 'AbortError' })
+  res = mkRes()
+  await handle(mkReq({ audio: Buffer.from('timeout').toString('base64') }), res)
+  ok('超时 → error=timeout', res.json() && res.json().error === 'timeout', String(res.json() && res.json().error))
+  rejectWith = null
+
+  // ⑧ format 白名单：非法值回落 webm（防 CRLF 注入）
+  fetchCalls.length = 0
+  res = mkRes()
+  await handle(mkReq({ audio: Buffer.from('fmt').toString('base64'), format: 'exe' }), res)
+  const bodyText = fetchCalls[0] && fetchCalls[0].body ? fetchCalls[0].body.toString('latin1') : ''
+  ok('非法 format 回落 webm', bodyText.indexOf('filename="audio.webm"') >= 0)
+
+  globalThis.fetch = realFetch
+  rmSync(dir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载 ASR 路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
