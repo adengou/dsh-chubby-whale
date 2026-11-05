@@ -102,13 +102,29 @@ export function tr(label: string, lang: string): string {
 
 /** 默认音色：晓伊（与 C# 版一致） */
 const DEFAULT_VOICE = 'zh-CN-XiaoyiNeural'
-export function buildMenu(version: string, state?: { voiceOn?: boolean; earOn?: boolean; voiceChatOn?: boolean; balance?: string; growth?: string }): MenuItem[] {
-  const voiceOn = state && state.voiceOn ? true : false
-  const earOn = state && state.earOn ? true : false
-  const voiceChatOn = state && state.voiceChatOn ? true : false
-  const chatLang = (state && state.chatLang) ? String(state.chatLang) : 'auto'
-  const ttsVoice = (state && state.ttsVoice) ? String(state.ttsVoice) : DEFAULT_VOICE
-  const chatCacheOn = !(state && state.chatCacheOn === false)
+
+/** 菜单状态：开关/语音/语言等字段只用于菜单文案与勾选，缺省值保持旧行为 */
+export interface MenuState {
+  voiceOn?: boolean
+  earOn?: boolean
+  voiceChatOn?: boolean
+  /** 聊天缓存开关（缺省视为开） */
+  chatCacheOn?: boolean
+  /** 聊天语言：'auto' | 'zh' | 'en'（缺省 auto） */
+  chatLang?: string
+  /** 当前音色（缺省晓伊） */
+  ttsVoice?: string
+  balance?: string
+  growth?: string
+}
+
+export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
+  const voiceOn = state.voiceOn ? true : false
+  const earOn = state.earOn ? true : false
+  const voiceChatOn = state.voiceChatOn ? true : false
+  const chatLang = state.chatLang ? String(state.chatLang) : 'auto'
+  const ttsVoice = state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE
+  const chatCacheOn = !(state.chatCacheOn === false)
   const voiceTick = (voice: string): string => (ttsVoice === voice ? '✓ ' : '')
   const balanceText = (state && state.balance) ? state.balance : '--'
   const growthText = (state && state.growth) ? state.growth : '--'

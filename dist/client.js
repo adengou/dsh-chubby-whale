@@ -188,13 +188,13 @@
     return label;
   }
   var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
-  function buildMenu(version, state) {
-    const voiceOn = state && state.voiceOn ? true : false;
-    const earOn = state && state.earOn ? true : false;
-    const voiceChatOn = state && state.voiceChatOn ? true : false;
-    const chatLang = state && state.chatLang ? String(state.chatLang) : "auto";
-    const ttsVoice = state && state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
-    const chatCacheOn = !(state && state.chatCacheOn === false);
+  function buildMenu(version, state = {}) {
+    const voiceOn = state.voiceOn ? true : false;
+    const earOn = state.earOn ? true : false;
+    const voiceChatOn = state.voiceChatOn ? true : false;
+    const chatLang = state.chatLang ? String(state.chatLang) : "auto";
+    const ttsVoice = state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
+    const chatCacheOn = !(state.chatCacheOn === false);
     const voiceTick = (voice) => ttsVoice === voice ? "\u2713 " : "";
     const balanceText = state && state.balance ? state.balance : "--";
     const growthText = state && state.growth ? state.growth : "--";
@@ -550,8 +550,8 @@
     function stop() {
       cancelAnimationFrame(raf);
     }
-    function talkFor(ms) {
-      state.talkUntil = performance.now() + ms;
+    function talkFor(ms2) {
+      state.talkUntil = performance.now() + ms2;
     }
     function pushHeart() {
       state.hearts.push({ age: 0, dx: Math.random() - 0.5 });
@@ -849,13 +849,13 @@
       } catch (e) {
       }
     }
-    function scheduleNext(ms) {
+    function scheduleNext(ms2) {
       if (!running) return;
       if (restartTimer) clearTimeout(restartTimer);
       restartTimer = setTimeout(() => {
         restartTimer = null;
         beginWindow();
-      }, ms);
+      }, ms2);
     }
     function beginWindow() {
       if (!running || !rec) return;
@@ -1355,14 +1355,14 @@
         }
       });
     }
-    async function fetchWithTimeout(url, init, ms) {
+    async function fetchWithTimeout(url, init, ms2) {
       const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timer = ctl ? setTimeout(() => {
         try {
           ctl.abort();
         } catch (e) {
         }
-      }, ms) : null;
+      }, ms2) : null;
       try {
         return await fetch(url, ctl ? { ...init, signal: ctl.signal } : init);
       } finally {
@@ -1766,10 +1766,10 @@
   function delJson(path, init) {
     return fetch(apiUrl(path), Object.assign({ method: "DELETE" }, init || {})).then((r) => r.json());
   }
-  function timeoutSignal(ms) {
+  function timeoutSignal(ms2) {
     try {
       const AS = typeof AbortSignal !== "undefined" ? AbortSignal : null;
-      if (AS && typeof AS.timeout === "function") return AS.timeout(Number(ms) || 0);
+      if (AS && typeof AS.timeout === "function") return AS.timeout(Number(ms2) || 0);
     } catch (e) {
     }
     return void 0;
@@ -2901,7 +2901,7 @@
       } catch (e) {
       }
     }
-    function show(text, ms = 2400) {
+    function show(text, ms2 = 2400) {
       const el = opts.el();
       if (!el) return;
       const p = opts.pos();
@@ -2926,7 +2926,7 @@
             if (opts.onHide) opts.onHide();
           } catch (e) {
           }
-        }, ms);
+        }, ms2);
       } catch (e) {
       }
     }
@@ -2952,8 +2952,8 @@
   function createNarrationLock() {
     let until = 0;
     return {
-      lock(ms) {
-        const dur = Math.max(NARRATE_MIN_MS, Math.min(Number(ms) || 6e4, NARRATE_MAX_MS));
+      lock(ms2) {
+        const dur = Math.max(NARRATE_MIN_MS, Math.min(Number(ms2) || 6e4, NARRATE_MAX_MS));
         until = Date.now() + dur;
       },
       clear() {
@@ -3520,6 +3520,83 @@
     return { send };
   }
 
+  // src/client/reminders.ts
+  var DUE_PATH = "/reminders?action=due";
+  function ms(v, def) {
+    const n = Math.round(Number(v));
+    return isFinite(n) && n > 0 ? n : def;
+  }
+  function createReminderPoller(host, opts) {
+    const o = opts || {};
+    const intervalMs = ms(o.intervalMs, 2e4);
+    const retryMs = ms(o.retryMs, 2e3);
+    const gapMs = ms(o.gapMs, 3e3);
+    const bubbleMs = ms(o.bubbleMs, 8e3);
+    const fetchJson = typeof host.getJson === "function" ? host.getJson : getJson;
+    const queue = [];
+    let dueTimer = null;
+    let pollTimer = null;
+    function pump() {
+      if (dueTimer) return;
+      if (queue.length === 0) return;
+      if (host.isSpeaking() || host.isNarrating() || host.isBusy()) {
+        dueTimer = setTimeout(() => {
+          dueTimer = null;
+          pump();
+        }, retryMs);
+        return;
+      }
+      const item = queue.shift();
+      const body = String(item && item.text || "").trim() || "\u65F6\u95F4\u5230\u4E86";
+      const line = "\u4E3B\u4EBA\uFF0C\u63D0\u9192\u4F60\uFF1A" + body;
+      host.bubble(line, bubbleMs);
+      host.talkFor(3e3);
+      try {
+        host.speak(line);
+      } catch (e) {
+      }
+      dueTimer = setTimeout(() => {
+        dueTimer = null;
+        pump();
+      }, gapMs);
+    }
+    function stopPoll() {
+      if (pollTimer !== null) {
+        try {
+          clearInterval(pollTimer);
+        } catch (e) {
+        }
+        pollTimer = null;
+      }
+    }
+    function start() {
+      stopPoll();
+      pollTimer = setInterval(() => {
+        fetchJson(DUE_PATH).then((d) => {
+          const due = d && d.due || [];
+          for (const it of due) {
+            if (it && it.text) queue.push(it);
+          }
+          pump();
+        }).catch(() => {
+        });
+      }, intervalMs);
+      return stopPoll;
+    }
+    function dispose() {
+      if (dueTimer !== null) {
+        try {
+          clearTimeout(dueTimer);
+        } catch (e) {
+        }
+        dueTimer = null;
+      }
+      queue.length = 0;
+      stopPoll();
+    }
+    return { pump, start, dispose };
+  }
+
   // src/client.ts
   window.__ModuleLoader__.load({
     id: "dsh-chubby-whale",
@@ -3578,8 +3655,8 @@
       let lastPoemSpeech = "";
       const narration = createNarrationLock();
       let lastSpeakingAt = 0;
-      function setNarrating(ms) {
-        narration.lock(ms);
+      function setNarrating(ms2) {
+        narration.lock(ms2);
         try {
           storyNarratingRef.current = true;
         } catch (e) {
@@ -3682,8 +3759,7 @@
         const storyBusyRef = R.useRef(false);
         const storyBookRef = R.useRef("");
         const storyAutoRef = R.useRef(false);
-        const dueQueueRef = R.useRef([]);
-        const dueTimerRef = R.useRef(null);
+        const reminderPollerRef = R.useRef(null);
         const [scale, setScale] = R.useState(1);
         const [hidden, setHidden] = R.useState(false);
         const [menu, setMenu] = R.useState(null);
@@ -3801,13 +3877,9 @@
         R.useEffect(() => {
           return () => {
             try {
-              if (dueTimerRef.current) {
-                clearTimeout(dueTimerRef.current);
-                dueTimerRef.current = null;
-              }
+              if (reminderPollerRef.current) reminderPollerRef.current.dispose();
             } catch {
             }
-            dueQueueRef.current = [];
             stopTts();
             melody.stop();
             try {
@@ -3832,8 +3904,8 @@
             }
           }
         });
-        function showBubble(text, ms = 2400) {
-          bubble.show(text, ms);
+        function showBubble(text, ms2 = 2400) {
+          bubble.show(text, ms2);
         }
         function setStatus() {
           bubble.dismissStatus();
@@ -4072,9 +4144,9 @@
           clearNarrate: clearNarrating,
           bubble: showBubble,
           speak: speakText,
-          talkFor: (ms) => {
+          talkFor: (ms2) => {
             try {
-              animRef.current?.talkFor(ms);
+              animRef.current?.talkFor(ms2);
             } catch (e) {
             }
           },
@@ -4088,33 +4160,31 @@
           },
           refs: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef }
         });
-        function pumpDueReminders() {
-          if (dueTimerRef.current) return;
-          if (dueQueueRef.current.length === 0) return;
-          if (ttsPlaying || storyNarratingRef.current || busyLock.isBusy()) {
-            dueTimerRef.current = setTimeout(() => {
-              dueTimerRef.current = null;
-              pumpDueReminders();
-            }, 2e3);
-            return;
-          }
-          const item = dueQueueRef.current.shift();
-          const body = String(item.text || "").trim() || "\u65F6\u95F4\u5230\u4E86";
-          const line = "\u4E3B\u4EBA\uFF0C\u63D0\u9192\u4F60\uFF1A" + body;
-          showBubble(line, 8e3);
-          animRef.current?.talkFor(3e3);
-          try {
-            speakText(line);
-          } catch (e) {
-          }
-          dueTimerRef.current = setTimeout(() => {
-            dueTimerRef.current = null;
-            pumpDueReminders();
-          }, 3e3);
+        if (!reminderPollerRef.current) {
+          reminderPollerRef.current = createReminderPoller({
+            getJson: (path, init) => getJson(path, init),
+            bubble: (text, ms2) => showBubble(text, ms2),
+            talkFor: (ms2) => {
+              try {
+                animRef.current?.talkFor(ms2);
+              } catch (e) {
+              }
+            },
+            speak: (text) => {
+              try {
+                speakText(text);
+              } catch (e) {
+              }
+            },
+            isSpeaking: () => ttsPlaying,
+            isNarrating: () => storyNarratingRef.current,
+            isBusy: () => busyLock.isBusy()
+          });
         }
+        const reminderPoller = reminderPollerRef.current;
         const actionHost = {
-          bubble: (text, ms) => showBubble(text, ms),
-          say: (text, ms, opts) => sayLine(text, ms, opts),
+          bubble: (text, ms2) => showBubble(text, ms2),
+          say: (text, ms2, opts) => sayLine(text, ms2, opts),
           speak: (text, opts) => speakText(text, opts),
           speakReply: (text) => speakReply(text),
           narrate: setNarrating,
@@ -4122,9 +4192,9 @@
           stopSpeak: () => stopTts(),
           stopMelody: () => melody.stop(),
           playMelody: (notes, bpm, onDone) => melody.play(notes, bpm, onDone),
-          talkFor: (ms) => {
+          talkFor: (ms2) => {
             try {
-              animRef.current?.talkFor(ms);
+              animRef.current?.talkFor(ms2);
             } catch (e) {
             }
           },
@@ -4236,14 +4306,14 @@
         const localRouter = createLocalRouter({
           persona,
           narrationRate: NARRATION_RATE2,
-          bubble: (text, ms) => showBubble(text, ms),
-          say: (text, ms, opts) => sayLine(text, ms, opts),
+          bubble: (text, ms2) => showBubble(text, ms2),
+          say: (text, ms2, opts) => sayLine(text, ms2, opts),
           speak: (text, opts) => speakText(text, opts),
           narrate: setNarrating,
           clearNarrate: clearNarrating,
-          talkFor: (ms) => {
+          talkFor: (ms2) => {
             try {
-              animRef.current?.talkFor(ms);
+              animRef.current?.talkFor(ms2);
             } catch (e) {
             }
           },
@@ -4252,14 +4322,14 @@
         });
         const chat = createChatSender({
           persona,
-          bubble: (text, ms) => showBubble(text, ms),
-          say: (text, ms, voiceOpts) => sayLine(text, ms, voiceOpts),
+          bubble: (text, ms2) => showBubble(text, ms2),
+          say: (text, ms2, voiceOpts) => sayLine(text, ms2, voiceOpts),
           speak: (text, opts) => speakText(text, opts),
           speakReply: (text) => speakReply(text),
           stopSpeak: () => stopTts(),
-          talkFor: (ms) => {
+          talkFor: (ms2) => {
             try {
-              animRef.current?.talkFor(ms);
+              animRef.current?.talkFor(ms2);
             } catch (e) {
             }
           },
@@ -4282,9 +4352,9 @@
           narrationRate: NARRATION_RATE2,
           route: (text) => localRouter.route(text),
           replyDeduper,
-          recordChatLatency: (ms) => {
+          recordChatLatency: (ms2) => {
             try {
-              latDiag.chatMs = ms;
+              latDiag.chatMs = ms2;
               latDiag.updates++;
             } catch (e) {
             }
@@ -4313,17 +4383,7 @@
           }
         }, []);
         R.useEffect(() => {
-          const timer = setInterval(() => {
-            getJson("/reminders?action=due").then((d) => {
-              const due = d && d.due || [];
-              for (const it of due) {
-                if (it && it.text) dueQueueRef.current.push(it);
-              }
-              pumpDueReminders();
-            }).catch(() => {
-            });
-          }, 2e4);
-          return () => clearInterval(timer);
+          return reminderPoller.start();
         }, []);
         R.useEffect(() => {
           if (!earOnRef.current) return;
@@ -4366,11 +4426,11 @@
         }
         function prefetchFiller() {
         }
-        function sayLine(text, ms = 3500, voiceOpts) {
+        function sayLine(text, ms2 = 3500, voiceOpts) {
           if (!lineDeduper.allow(text)) return;
           if (!text) return;
           try {
-            showBubble(text, ms);
+            showBubble(text, ms2);
           } catch (e) {
           }
           try {

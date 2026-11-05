@@ -22,6 +22,7 @@ import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag,
 import { createStoryController } from './client/story.js'
 import { createLocalRouter } from './client/chat-route.js'
 import { createChatSender } from './client/chat.js'
+import { createReminderPoller } from './client/reminders.js'
 ;(window as any).__ModuleLoader__.load({
   id: 'dsh-chubby-whale',
   factory: (require: any) => {
@@ -131,8 +132,8 @@ import { createChatSender } from './client/chat.js'
       // 最近一次说书的书名（「从头讲这本书」要按它重置进度）
       const storyBookRef = R.useRef('')
     const storyAutoRef = R.useRef(false)   // 点播讲故事：自动连播到"这一回讲完"
-      const dueQueueRef = R.useRef([] as any[])
-      const dueTimerRef = R.useRef(null as any)
+      // 到点提醒：轮询 + 播报队列在 client/reminders.ts；ref 缓存保证跨渲染只建一个实例
+      const reminderPollerRef = R.useRef(null as any)
 
       const [scale, setScale] = R.useState(1)
       const [hidden, setHidden] = R.useState(false)
@@ -235,10 +236,8 @@ import { createChatSender } from './client/chat.js'
       // （SpeechRecognition 当前没用到；VAD 的 MediaRecorder 由下面语音待命的 effect 自己 stopEar）
       R.useEffect(() => {
         return () => {
-          try {
-            if (dueTimerRef.current) { clearTimeout(dueTimerRef.current); dueTimerRef.current = null }
-          } catch { }
-          dueQueueRef.current = []
+          // 提醒链卸载顺序：撤到点定时器 → 清队列 → 停轮询（由 dispose 内部固定），再停朗读
+          try { if (reminderPollerRef.current) reminderPollerRef.current.dispose() } catch { }
           stopTts()
           melody.stop()
           try {
@@ -435,30 +434,19 @@ import { createChatSender } from './client/chat.js'
         refs: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
       })
 
-      // ===== 到点提醒：多条排队，逐条显示 + 朗读，间隔 3 秒 =====
-      function pumpDueReminders(): void {
-        if (dueTimerRef.current) return
-        if (dueQueueRef.current.length === 0) return
-        // 提醒是低优先级：本鱼正在说/在想/在说书时排队等，绝不插队抢话筒
-        if (ttsPlaying || storyNarratingRef.current || busyLock.isBusy()) {
-          dueTimerRef.current = setTimeout(() => {
-            dueTimerRef.current = null
-            pumpDueReminders()
-          }, 2000)
-          return
-        }
-        const item = dueQueueRef.current.shift()
-        // 照 C# FishForm：气泡与朗读都用「主人，提醒你：」+ 正文；正文为空兜底「时间到了」
-        const body = String(item.text || '').trim() || '时间到了'
-        const line = '主人，提醒你：' + body
-        showBubble(line, 8000)
-        animRef.current?.talkFor(3000)
-        try { speakText(line) } catch (e) { }
-        dueTimerRef.current = setTimeout(() => {
-          dueTimerRef.current = null
-          pumpDueReminders()
-        }, 3000)
+      // ===== 到点提醒：轮询 + 队列播报在 client/reminders.ts，这里只注入宿主能力 =====
+      if (!reminderPollerRef.current) {
+        reminderPollerRef.current = createReminderPoller({
+          getJson: (path, init) => getJson(path, init),
+          bubble: (text, ms) => showBubble(text, ms),
+          talkFor: (ms) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
+          speak: (text) => { try { speakText(text) } catch (e) { } },
+          isSpeaking: () => ttsPlaying,
+          isNarrating: () => storyNarratingRef.current,
+          isBusy: () => busyLock.isBusy(),
+        })
       }
+      const reminderPoller = reminderPollerRef.current
 
       // 菜单动作：动作表 + 处理器注册（client/actions/*.ts），客户端只留组装与分发
       const actionHost: ActionHost = {
@@ -593,7 +581,6 @@ import { createChatSender } from './client/chat.js'
         return chat.send(rawText, opts)
       }
 
-      // 提醒轮询（每 20 秒检查一次，与 C# 一致）——到点的全部排队，逐条播报
       // 调试口：控制台输入 __chubbyWhale.say("你好呀") 可直接测「对话 + 朗读」链路（不经过麦克风）
       R.useEffect(() => {
         try {
@@ -604,17 +591,9 @@ import { createChatSender } from './client/chat.js'
         } catch (e) { }
       }, [])
       // 提醒轮询（每 20 秒检查一次，与 C# 一致）——到点的全部排队，逐条播报
+      // 轮询与队列细节在 client/reminders.ts；卸载收尾由上面的 effect 调 dispose
       R.useEffect(() => {
-        const timer = setInterval(() => {
-          getJson('/reminders?action=due').then((d: any) => {
-            const due = (d && d.due) || []
-            for (const it of due) {
-              if (it && it.text) dueQueueRef.current.push(it)
-            }
-            pumpDueReminders()
-          }).catch(() => { })
-        }, 20000)
-        return () => clearInterval(timer)
+        return reminderPoller.start()
       }, [])
       // ===== 语音模块（client/voice.ts + client/voice-bridge.ts）=====
       // 回调与生命周期只在 voice-bridge 里建一份（见组件顶部），这里只负责启动/收尾。

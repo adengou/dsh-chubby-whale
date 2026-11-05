@@ -5,6 +5,9 @@
 
 import { imageToB64 } from './image.js'
 
+// 图片读成 base64（去掉 data: 前缀）的实现已统一到 image.ts；这里原样再导出，保持 dropzone 的旧接口不变
+export { readFileAsBase64 } from './image.js'
+
 /** 一次最多吃 4MB（C# 是 12MB，网页版请求体小一点更稳） */
 export const MAX_DROP_BYTES = 4 * 1024 * 1024
 /** 文档只取前 4000 字（原先 8000）：总结效果几乎无差，输入 token 省一半 */
@@ -44,18 +47,6 @@ export function isTextFile(file: any): boolean {
 /** 文档正文 → 送给模型的 message（截前 4000 字） */
 export function buildTextPrompt(text: string): string {
   return '总结一下这篇文档：\n' + String(text || '').slice(0, MAX_TEXT_CHARS)
-}
-
-/** 图片读成 base64（去掉 data: 前缀） */
-export function readFileAsBase64(file: any): Promise<string> {
-  return new Promise((resolve) => {
-    try {
-      const fr = new FileReader()
-      fr.onloadend = () => { const s = String(fr.result || ''); resolve(s.indexOf(',') >= 0 ? s.slice(s.indexOf(',') + 1) : s) }
-      fr.onerror = () => resolve('')
-      fr.readAsDataURL(file)
-    } catch (e) { resolve('') }
-  })
 }
 
 /**
