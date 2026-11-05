@@ -78,11 +78,16 @@ export function createStoryController(host: StoryHost): StoryController {
       onDone: () => {
         refs.busy.current = false
         refs.narrating.current = false
-        if (refs.auto.current && d && d.isLast === false) {
+        if (d && d.isLast === false) {
+          // 长故事在数据里被切成好几段（《画皮》3 段、《婴宁》6 段），
+          // 以前这里只在「连播」开关打开时才接着讲，默认听完第一段就停，
+          // 听起来就是"讲到一半就说讲完了"。改成默认自动续讲，只到最后一段才报完。
+          refs.auto.current = true
+          host.bubble('这一段讲完啦，接着往后讲…', 4000)
           setTimeout(() => { try { next() } catch (e) { } }, 800)
         } else {
           refs.auto.current = false
-          host.bubble(d && d.isLast ? host.persona.line('poemDone') : '这段讲完啦～点菜单「接着说」听下一段', 6000)
+          host.bubble(host.persona.line('poemDone'), 6000)
         }
       },
     })

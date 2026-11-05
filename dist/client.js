@@ -4338,7 +4338,9 @@
         onDone: () => {
           refs.busy.current = false;
           refs.narrating.current = false;
-          if (refs.auto.current && d && d.isLast === false) {
+          if (d && d.isLast === false) {
+            refs.auto.current = true;
+            host.bubble("\u8FD9\u4E00\u6BB5\u8BB2\u5B8C\u5566\uFF0C\u63A5\u7740\u5F80\u540E\u8BB2\u2026", 4e3);
             setTimeout(() => {
               try {
                 next();
@@ -4347,7 +4349,7 @@
             }, 800);
           } else {
             refs.auto.current = false;
-            host.bubble(d && d.isLast ? host.persona.line("poemDone") : "\u8FD9\u6BB5\u8BB2\u5B8C\u5566\uFF5E\u70B9\u83DC\u5355\u300C\u63A5\u7740\u8BF4\u300D\u542C\u4E0B\u4E00\u6BB5", 6e3);
+            host.bubble(host.persona.line("poemDone"), 6e3);
           }
         }
       });
