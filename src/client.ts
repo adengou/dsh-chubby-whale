@@ -305,6 +305,15 @@ import { createRecover } from './client/recover.js'
         onHide: () => { try { restoreIdleStatus() } catch (e) { } },
       })
       function showBubble(text: string, ms = 2400): void { bubble.show(text, ms) }
+      // 首次安装兜底：没配 Key 时给一句人话（离线功能照常可用），别让主人对着麦克风干等。
+      // 每次页面加载最多提示一次；只读 /status，不发模型请求。
+      R.useEffect(() => {
+        getJson('/status').then((d: any) => {
+          if (d && d.ok && d.key === false) {
+            showBubble('还没配 Key：聊天和语音要用 Key（deepseekKey / siliconflowKey），念诗、说书、典故、提醒照样能用～ 配置方法见 README', 9000)
+          }
+        }).catch(() => { })
+      }, [])
       // ===== 状态提示（已按主人要求去掉）=====
       // 原来闲时一直挂「在听…」，还出现过"讲着话却显示在听"的矛盾。
       // 现在不主动显示任何状态字：只听/只在真正有内容时冒气泡（听到、回复、念完…）。

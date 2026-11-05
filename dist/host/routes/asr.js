@@ -56,7 +56,7 @@ export function createAsrHandler(opts) {
             }
             const key = opts.getKey();
             if (!key) {
-                sendJson(res, { ok: false, error: 'NO_KEY', text: '' });
+                sendJson(res, { ok: false, error: 'NO_KEY', text: '', hint: '没配语音识别 Key（siliconflowKey），语音听不见；打字也能聊' });
                 return;
             }
             // 用完整音频字节做 key（只取前 4000 字符容易撞 key）

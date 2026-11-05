@@ -835,7 +835,7 @@ try {
   // ③ 没 key
   res = mkRes()
   await createAsrHandler({ cache, getKey: () => '' })(mkReq({ audio }), res)
-  ok('没有密钥 → ok:false NO_KEY', res.json() && res.json().ok === false && res.json().error === 'NO_KEY')
+  ok('没有密钥 → ok:false NO_KEY + 人话提示', res.json() && res.json().ok === false && res.json().error === 'NO_KEY' && String(res.json().hint || '').indexOf('siliconflowKey') >= 0, JSON.stringify(res.json()))
 
   // ④ 正常识别 + 缓存命中
   const handle = createAsrHandler({ cache, getKey: () => 'k' })
@@ -3157,6 +3157,58 @@ try {
   globalThis.fetch = realFetch
 } catch (e) {
   ok('能加载只读状态接口', false, String(e.message))
+}
+
+
+// ---------- 59 首次安装无双 KEY 的兜底 ----------
+console.log('\n[59] 无双 KEY 的兜底')
+try {
+  const { createVoiceBridge } = await import('../src/client/voice-bridge.ts')
+
+  // ① 语音桥：识别返回 NO_KEY → 弹一次人话提示；重开语音待命可再弹一次
+  const bubbles = []
+  let captured = null
+  const fakeVoice = {
+    start: async () => { }, stop() { }, speak() { }, stopSpeaking() { },
+    speaking: () => false, recognizing: () => false,
+    setVoiceName() { }, voiceName: () => '', setEndpointMode() { }, endpointInfo: () => ({ mode: 'classic' }),
+    lastSegment: () => null, lastTtsInfo: () => null, mute() { }, stats: {}, status: () => 'idle',
+  }
+  const bridge = createVoiceBridge({
+    narration: { active: () => false, clear() { }, expire: () => false },
+    narrating: () => false,
+    stopSpeaking: () => { },
+    bubble: (t) => bubbles.push(t),
+    sendText: () => { },
+    onVoiceHeard: () => { },
+    onSpeaking: () => { },
+    diag: () => { },
+    makeVoice: (opts) => { captured = opts; return fakeVoice },
+  })
+  bridge.ensure()
+  captured.onDiag({ stage: 'asr-no-key', hint: '没配语音识别 Key（siliconflowKey），语音听不见；打字也能聊' })
+  captured.onDiag({ stage: 'asr-no-key' })
+  ok('无识别 Key：只提示一次', bubbles.length === 1 && bubbles[0].indexOf('siliconflowKey') >= 0, bubbles.join(' | '))
+  captured.onDiag({ stage: 'other' })
+  ok('其它诊断不弹提示', bubbles.length === 1)
+  await bridge.start()
+  captured.onDiag({ stage: 'asr-no-key' })
+  ok('重开语音待命后可再提示一次', bubbles.length === 2, String(bubbles.length))
+
+  // ② 客户端首次安装提示：有"还没配 Key"的人话，且只读 /status
+  const { readFileSync: rf5 } = await import('node:fs')
+  const clientSrc = rf5('src/client.ts', 'utf8')
+  ok('首次安装会给 Key 提示', clientSrc.indexOf('还没配 Key') >= 0 && clientSrc.indexOf("getJson('/status')") >= 0)
+  const voiceSrc = rf5('src/client/voice.ts', 'utf8')
+  ok('无 Key 后不再反复上传识别', voiceSrc.indexOf('asrNoKey') >= 0 && voiceSrc.indexOf('if (asrNoKey)') >= 0)
+  ok('重开语音会话会重新尝试', voiceSrc.indexOf('asrNoKey = false') >= 0)
+
+  // ③ 离线功能不依赖 Key（服务端不拦截：文化/诗词/说书用的是本地数据）
+  const { readFileSync: rf6 } = await import('node:fs')
+  const asrSrc = rf6('src/host/routes/asr.ts', 'utf8')
+  ok('ASR 无 Key 只回错误、不抛', asrSrc.indexOf("error: 'NO_KEY'") >= 0 && asrSrc.indexOf('hint:') >= 0)
+} catch (e) {
+  ok('能加载无双 KEY 兜底用例', false, String(e.message))
 }
 
 console.log('\n────────────────────')

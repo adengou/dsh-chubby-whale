@@ -165,6 +165,8 @@ export function createVoice(opts: VoiceOptions): Voice {
   let rec: MediaRecorder | null = null
   let timeBuf: Float32Array | null = null
   let running = false
+  // 识别没配 Key（NO_KEY）：本次语音会话内不再上传，避免每段窗口都白打一次请求
+  let asrNoKey = false
   let muted = false
 
   // ---- 一段录音的状态 ----
@@ -274,6 +276,8 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     // 已停止（关语音待命/卸载）：这段不能再上传，也不能把状态从 idle 回写成
     // recognizing/listening —— 那正是"关了还在听"的来源。
     if (!running) return
+    // 已知没配识别 Key：直接跳过，不再上传（否则每句话都白打一次请求）
+    if (asrNoKey) { stats.skippedSilent++; scheduleNext(150); return }
     stats.windows++
     // 太安静：直接丢（识别服务对静音会编词，浪费钱还制造幻觉）
     if (epMode === 'ape') {
@@ -303,6 +307,14 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       const data = await res.json()
       // 请求期间可能已经关掉语音待命/卸载：这时候不能再把结果当主人说话
       if (!running) return
+      // 没配识别 Key：记一次、通知上层给一句提示，本次会话内不再重试
+      if (data && data.error === 'NO_KEY') {
+        stats.asrFail++
+        stats.lastError = 'asr: NO_KEY'
+        asrNoKey = true
+        try { opts.onDiag && opts.onDiag({ stage: 'asr-no-key', hint: String(data.hint || '') }) } catch (e) { }
+        return
+      }
       if (!data || !data.ok) { stats.asrFail++; stats.lastError = 'asr: ' + String((data && data.error) || 'failed'); return }
       try { lastSeg = { mode: epMode, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) } } catch (e) { }
       const text = String(data.text || '').trim()
@@ -662,6 +674,7 @@ const asrAborts = new Set<AbortController>()
 
   // ---- 对外接口 ----
   async function start(): Promise<void> {
+    asrNoKey = false   // 重新开语音会话就再试一次（主人可能刚配好 Key）
     if (running) return
     running = true
     try {

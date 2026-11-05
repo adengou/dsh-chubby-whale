@@ -84,6 +84,8 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
   // 唤醒门：命中唤醒词刷新 30 秒有效窗
   const gate = createWakeGate()
   const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 }
+  // 识别没配 Key 的提示只弹一次（每次重开语音待命可以再弹一次）
+  let asrNoKeyNotified = false
 
   function wakeInfo(): any {
     const now = Date.now()
@@ -182,7 +184,16 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
         pushWake()
       },
       onStatus: (st: any) => { try { host.onSpeaking(st === 'speaking') } catch (e) { } },
-      onDiag: (d: any) => { try { host.diag({ voiceDiag: d }) } catch (e) { } },
+      onDiag: (d: any) => {
+        try { host.diag({ voiceDiag: d }) } catch (e) { }
+        // 语音识别没配 Key：给一句人话，别让主人对着麦克风干等
+        try {
+          if (d && d.stage === 'asr-no-key' && !asrNoKeyNotified) {
+            asrNoKeyNotified = true
+            host.bubble(String(d.hint || '没配语音识别 Key，本鲸听不见；打字也能聊～'), 8000)
+          }
+        } catch (e) { }
+      },
       // 念诗/说书：气泡跟着当前句走，主人能看到"念到哪了"
       onSegment: (seg: string) => {
         try {
@@ -212,6 +223,7 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
     get: () => voice,
     ensure,
     start(): Promise<Voice> {
+      asrNoKeyNotified = false
       const v = ensure()
       // start() 自己不抛错（内部兜底），失败靠状态/统计判断，不把异常甩到渲染层
       return Promise.resolve(v.start()).then(() => { pushWake(); return v })

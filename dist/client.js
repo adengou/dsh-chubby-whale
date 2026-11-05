@@ -1463,6 +1463,7 @@
     let rec = null;
     let timeBuf = null;
     let running = false;
+    let asrNoKey = false;
     let muted = false;
     let parts = [];
     let winPeak = -160;
@@ -1591,6 +1592,11 @@
     }
     async function onWindowDone(blob) {
       if (!running) return;
+      if (asrNoKey) {
+        stats.skippedSilent++;
+        scheduleNext(150);
+        return;
+      }
       stats.windows++;
       if (epMode === "ape") {
         const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150);
@@ -1637,6 +1643,16 @@
         }
         const data = await res.json();
         if (!running) return;
+        if (data && data.error === "NO_KEY") {
+          stats.asrFail++;
+          stats.lastError = "asr: NO_KEY";
+          asrNoKey = true;
+          try {
+            opts.onDiag && opts.onDiag({ stage: "asr-no-key", hint: String(data.hint || "") });
+          } catch (e) {
+          }
+          return;
+        }
         if (!data || !data.ok) {
           stats.asrFail++;
           stats.lastError = "asr: " + String(data && data.error || "failed");
@@ -2065,6 +2081,7 @@
       }
     }
     async function start() {
+      asrNoKey = false;
       if (running) return;
       running = true;
       try {
@@ -2368,6 +2385,7 @@
     let pendingVoice = readStoredVoiceName();
     const gate = createWakeGate();
     const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 };
+    let asrNoKeyNotified = false;
     function wakeInfo() {
       const now = Date.now();
       const remainingMs = gate.remainingMs(now);
@@ -2494,6 +2512,13 @@
             host.diag({ voiceDiag: d });
           } catch (e) {
           }
+          try {
+            if (d && d.stage === "asr-no-key" && !asrNoKeyNotified) {
+              asrNoKeyNotified = true;
+              host.bubble(String(d.hint || "\u6CA1\u914D\u8BED\u97F3\u8BC6\u522B Key\uFF0C\u672C\u9CB8\u542C\u4E0D\u89C1\uFF1B\u6253\u5B57\u4E5F\u80FD\u804A\uFF5E"), 8e3);
+            }
+          } catch (e) {
+          }
         },
         // 念诗/说书：气泡跟着当前句走，主人能看到"念到哪了"
         onSegment: (seg) => {
@@ -2530,6 +2555,7 @@
       get: () => voice,
       ensure,
       start() {
+        asrNoKeyNotified = false;
         const v = ensure();
         return Promise.resolve(v.start()).then(() => {
           pushWake();
@@ -5958,6 +5984,14 @@
         function showBubble(text, ms2 = 2400) {
           bubble.show(text, ms2);
         }
+        R.useEffect(() => {
+          getJson("/status").then((d) => {
+            if (d && d.ok && d.key === false) {
+              showBubble("\u8FD8\u6CA1\u914D Key\uFF1A\u804A\u5929\u548C\u8BED\u97F3\u8981\u7528 Key\uFF08deepseekKey / siliconflowKey\uFF09\uFF0C\u5FF5\u8BD7\u3001\u8BF4\u4E66\u3001\u5178\u6545\u3001\u63D0\u9192\u7167\u6837\u80FD\u7528\uFF5E \u914D\u7F6E\u65B9\u6CD5\u89C1 README", 9e3);
+            }
+          }).catch(() => {
+          });
+        }, []);
         function setStatus() {
           bubble.dismissStatus();
         }
