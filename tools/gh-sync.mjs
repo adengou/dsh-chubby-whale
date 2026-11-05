@@ -42,11 +42,24 @@ async function req(method, path, body, tries = 3) {
 }
 
 function localBlobs() {
-  const files = execFileSync('git', ['-c', 'core.quotePath=false', 'ls-files', '-z'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-    .split('\0').filter(Boolean)
+  // 用 git 索引里的 blob sha（就是提交里存的那份字节，已做换行符归一化）。
+  // 之前用 hash-object 读工作区文件，CRLF 会让每个文本文件都算成"不同"，导致每次全量重传。
+  const out = execFileSync('git', ['-c', 'core.quotePath=false', 'ls-files', '-s', '-z'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   const map = new Map()
-  for (const f of files) map.set(f.replace(/\\/g, '/'), execFileSync('git', ['hash-object', '--', f], { encoding: 'utf8' }).trim())
+  for (const line of out.split('\0').filter(Boolean)) {
+    // 格式：<mode> <sha> <stage>\t<path>
+    const tab = line.indexOf('\t')
+    if (tab < 0) continue
+    const meta = line.slice(0, tab).split(' ')
+    const path = line.slice(tab + 1).replace(/\\/g, '/')
+    map.set(path, meta[1])
+  }
   return map
+}
+
+/** 取 git 里存的原始字节（与索引 blob sha 对应），上传时用它，保证 sha 对得上 */
+function blobBytes(path) {
+  return execFileSync('git', ['cat-file', 'blob', 'HEAD:' + path], { maxBuffer: 64 * 1024 * 1024 })
 }
 
 async function remoteTree(branch) {
@@ -77,7 +90,7 @@ let done = 0
 async function worker() {
   while (idx < toUpload.length) {
     const [path] = toUpload[idx++]
-    const blob = await req('POST', `/repos/${OWNER}/${REPO}/git/blobs`, { content: readFileSync(path).toString('base64'), encoding: 'base64' })
+    const blob = await req('POST', `/repos/${OWNER}/${REPO}/git/blobs`, { content: blobBytes(path).toString('base64'), encoding: 'base64' })
     entries.push({ path, mode: '100644', type: 'blob', sha: blob.sha })
     done++
     if (done % 20 === 0) console.log(`    ${done}/${toUpload.length}`)
