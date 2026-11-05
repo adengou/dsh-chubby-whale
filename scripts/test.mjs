@@ -3102,6 +3102,63 @@ try {
   ok('能加载原子写/配置模块', false, String(e.message))
 }
 
+
+// ---------- 58 只读状态接口：status/state/growth/fishfood/balance ----------
+console.log('\n[58] 只读状态 host/routes/misc.ts')
+try {
+  const { createMiscHandlers } = await import('../src/host/routes/misc.ts')
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.json = () => { try { return JSON.parse(Buffer.concat(out.chunks).toString('utf8')) } catch (e) { return null } }
+    return out
+  }
+  let hasKey = true
+  const mk = (over = {}) => createMiscHandlers({
+    assetPath: 'nope.png',
+    getKey: () => (hasKey ? 'sk-secret' : ''),
+    loadState: () => ({ intimacy: 100 }),
+    loadGrowth: () => ({ exp: 250 }),
+    loadFishfood: () => ({ chatTokens: 100, storyTokens: 20 }),
+    loadPet: () => ({ intimacy: 8 }),
+    loadIntimacy: () => 100,
+    ...over,
+  })
+  let res = mkRes()
+  await mk().handleStatus({}, res)
+  ok('状态：只报有没有 key，不泄露 key 本身', res.json().ok === true && res.json().key === true && JSON.stringify(res.json()).indexOf('sk-secret') < 0, JSON.stringify(res.json()))
+  hasKey = false
+  res = mkRes(); await mk().handleStatus({}, res)
+  ok('没有 key 时 key:false', res.json().key === false)
+  hasKey = true
+
+  res = mkRes(); await mk().handleState({}, res)
+  ok('亲密度取 state', res.json().intimacy === 100)
+  res = mkRes(); await mk().handleGrowth({}, res)
+  ok('成长：阶段与下一门槛', res.json().exp === 250 && res.json().stage === '熟悉' && res.json().nextExp === 800)
+  res = mkRes(); await mk().handleFishfood({}, res)
+  ok('鱼粮：total = chat + story', res.json().total === 120, JSON.stringify(res.json()))
+
+  // 余额：无 key / 正常 / HTTP 错误 / 网络异常
+  const realFetch = globalThis.fetch
+  res = mkRes(); await mk({ getKey: () => '' }).handleBalance({}, res)
+  ok('余额：无 key 给 NO_KEY', res.json().ok === false && res.json().error === 'NO_KEY' && res.json().balance === null)
+  globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ balance_infos: [{ currency: 'CNY', total_balance: '12.50' }] }) })
+  res = mkRes(); await mk().handleBalance({}, res)
+  ok('余额：正常解析 CNY', res.json().ok === true && res.json().balance === '12.50' && res.json().currency === 'CNY')
+  globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => 'err' })
+  res = mkRes(); await mk().handleBalance({}, res)
+  ok('余额：HTTP 500 → ok:false', res.json().ok === false && res.json().balance === null)
+  globalThis.fetch = async () => { throw new Error('net down') }
+  res = mkRes(); await mk().handleBalance({}, res)
+  ok('余额：网络异常 → ok:false（不抛）', res.json().ok === false && res.json().balance === null)
+  globalThis.fetch = realFetch
+} catch (e) {
+  ok('能加载只读状态接口', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
