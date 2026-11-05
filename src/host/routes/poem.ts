@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { writeJsonAtomic } from '../atomic.js'
 import { sendJson, sendError } from '../respond.js'
 import type { DataPort } from '../ports.js'
-import { normalizePoemItems, poemKeyOf } from '../data/normalize.js'
+import { poemKeyOf } from '../../shared/poem.js'
 
 export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string; dataPort: DataPort }) {
   const SEEN_FILE = join(opts.runtimeDir || opts.dataDir || '.', 'poem-seen.json')
@@ -24,13 +24,14 @@ export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string;
   async function loadPoems(): Promise<any[]> {
     try {
       const first = await opts.dataPort.readPoemsChunk(0)
-      const out: any[] = Array.isArray(first && first.items) ? first.items.slice() : []
+      // 数据层（local/cloud）已经归一化过去重过，这里不再重复归一化（737 首诗每请求扫一遍纯属浪费）
+    const out: any[] = Array.isArray(first && first.items) ? first.items.slice() : []
       const total = Math.max(1, Number(first && first.total) || 1)
       for (let i = 1; i < total; i++) {
         const chunk = await opts.dataPort.readPoemsChunk(i)
         if (chunk && Array.isArray(chunk.items)) out.push(...chunk.items)
       }
-      return normalizePoemItems(out)
+      return out
     } catch (err: any) {
       console.error('POEM-LOAD-FAIL err=' + String(err?.message || err))
       return []

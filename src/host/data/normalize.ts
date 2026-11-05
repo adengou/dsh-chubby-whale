@@ -10,6 +10,7 @@
  */
 import type { StoryChunk } from '../story/repo.js'
 import type { CultureKind, DailyItem, DuilianData, DuilianItem } from '../ports.js'
+import { poemKeyOf } from '../../shared/poem.js'
 
 /** 说书段落：与 host/story/repo.ts 原 normalizeBook 完全一致；index 用原数组序号（进度 key） */
 export function normalizeStoryChunks(book: string, raw: any): StoryChunk[] {
@@ -36,10 +37,8 @@ export function normalizeStoryChunks(book: string, raw: any): StoryChunk[] {
  * 诗的去重键：同题不同作很多（蝶恋花/浣溪沙 等），键里加上首句前 12 字。
  * poem 路由记录「已念过」也用它，保证与数据规范化口径一致。
  */
-export function poemKeyOf(p: any): string {
-  const first = Array.isArray(p?.lines) ? String(p.lines[0] || '') : String(p?.text || '')
-  return String(p?.title || '') + '|' + String(p?.author || '') + '|' + first.slice(0, 12)
-}
+// 去重键定义在 shared/poem.ts（路由也要用，两边口径必须一致）
+export { poemKeyOf }
 
 /** 诗词条目：只留路由用到的字段，标题/首句为空的丢掉，按 poemKeyOf 去重 */
 export function normalizePoemItems(raw: any): any[] {

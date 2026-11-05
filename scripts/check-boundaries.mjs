@@ -99,7 +99,7 @@ function checkFile(file) {
   // B6 路由层不直接摸实现：routes/** 只能依赖 respond/body/http/ports/shared/data 纯函数，
   //    要拿数据一律走注入的端口（否则改实现就会波及路由）
   if (rel.includes('/host/routes/')) {
-    const forbiddenRoutes = ["'../store.js'", "'../repos/", "'../story/repo.js'", "'../cache.js'"]
+    const forbiddenRoutes = ["'../store.js'", "'../repos/", "'../story/repo.js'", "'../cache.js'", "'../data/"]
     for (let i = 0; i < lines.length; i++) {
       const m = lines[i].match(/from '([^']+)'/)
       if (!m) continue

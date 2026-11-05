@@ -1461,6 +1461,62 @@ try {
   ok('能加载简报路由', false, String(e.message))
 }
 
+
+// ---------- ㉚ 统计路由：只读汇总的数值口径 ----------
+console.log('\n[30] 统计路由 host/routes/stats.ts')
+try {
+  const { createStatsHandler } = await import('../src/host/routes/stats.ts')
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.json = () => { try { return JSON.parse(Buffer.concat(out.chunks).toString('utf8')) } catch (e) { return null } }
+    return out
+  }
+  const nowTs = 1000000
+  const handler = createStatsHandler({
+    cacheStats: async () => ({ tts: 150, chat: 6, asr: 849 }),
+    loadState: () => ({ intimacy: 100 }),
+    loadGrowth: () => ({ exp: 250 }),
+    loadFishfood: () => ({ chatTokens: 327756, storyTokens: 12 }),
+    loadPersonality: () => ({ catchphrases: ['哼'], preferences: ['白饭'], notes: '备注', selfNarrative: '自述' }),
+    startedAt: nowTs - 5000,
+    now: () => nowTs,
+  })
+  let res = mkRes()
+  await handler.handleStats({ method: 'GET', url: '/api/chubby-whale/stats' }, res)
+  const st = res.json()
+  ok('统计 ok', st.ok === true)
+  ok('缓存条目数透传', st.cache.tts === 150 && st.cache.chat === 6 && st.cache.asr === 849)
+  ok('鱼粮 total = chat + story', st.fishfood.total === 327768, String(st.fishfood.total))
+  ok('成长经验/阶段/下一门槛', st.growth.exp === 250 && st.growth.stage === '熟悉' && st.growth.nextExp === 800)
+  ok('亲密度取 state', st.intimacy === 100)
+  ok('人格只出四个展示字段', Array.isArray(st.personality.catchphrases) && st.personality.notes === '备注' && st.personality.selfNarrative === '自述')
+  ok('uptimeMs 按装配时间算', st.uptimeMs === 5000, String(st.uptimeMs))
+
+  // 坏值兜底：负数/NaN/非字符串列表
+  const bad = createStatsHandler({
+    cacheStats: async () => { throw new Error('cache down') },
+    loadState: () => ({ intimacy: -5 }),
+    loadGrowth: () => ({ exp: Number.NaN }),
+    loadFishfood: () => ({ chatTokens: -1, storyTokens: 'x' }),
+    loadPersonality: () => ({ catchphrases: ['ok', 1, null], notes: 42 }),
+  })
+  res = mkRes()
+  await bad.handleStats({ method: 'GET' }, res)
+  const b = res.json()
+  ok('缓存读取失败按 0', b.cache.tts === 0 && b.cache.chat === 0 && b.cache.asr === 0)
+  ok('坏数值归零', b.growth.exp === 0 && b.intimacy === 0 && b.fishfood.total === 0)
+  ok('列表只留字符串', b.personality.catchphrases.length === 1 && b.personality.notes === '')
+
+  res = mkRes()
+  await handler.handleStats({ method: 'POST' }, res)
+  ok('非 GET → 405', res.code === 405)
+} catch (e) {
+  ok('能加载统计路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
