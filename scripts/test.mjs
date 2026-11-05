@@ -1141,6 +1141,89 @@ try {
   ok('能加载备份路由', false, String(e.message))
 }
 
+
+// ---------- ㉖ 提醒路由：参数校验 / 重复间隔夹取 / 增删 ----------
+console.log('\n[26] 提醒路由 host/routes/reminders.ts')
+try {
+  const { createReminderHandlers } = await import('../src/host/routes/reminders.ts')
+  const added = []
+  const removed = []
+  const handlers = createReminderHandlers({
+    loadReminders: () => [{ id: 'r1', text: '喝水' }],
+    addReminder: (text, at, repeat) => { const r = { id: 'r' + (added.length + 1), text, at, repeat }; added.push(r); return r },
+    dueReminders: () => [{ id: 'r1', text: '喝水' }],
+    removeReminder: (id) => { removed.push(id) },
+  })
+  const mkReq = (body, method, url) => {
+    const buf = Buffer.from(typeof body === 'string' ? body : JSON.stringify(body || {}))
+    return {
+      method, url: url || '/api/chubby-whale/reminders', headers: {},
+      destroy() { }, on() { }, resume() { },
+      async *[Symbol.asyncIterator]() { yield buf },
+    }
+  }
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.bodyText = () => Buffer.concat(out.chunks).toString('utf8')
+    out.json = () => { try { return JSON.parse(out.bodyText()) } catch (e) { return null } }
+    return out
+  }
+
+  let res = mkRes()
+  await handlers.handleReminders(mkReq(null, 'GET'), res)
+  ok('GET 列表', res.json().ok === true && res.json().reminders.length === 1)
+
+  res = mkRes()
+  await handlers.handleReminders(mkReq(null, 'GET', '/api/chubby-whale/reminders?action=due'), res)
+  ok('GET action=due', res.json().ok === true && res.json().due.length === 1)
+
+  const at = new Date(Date.now() + 3600000).toISOString()
+  res = mkRes()
+  await handlers.handleReminders(mkReq({ text: '该喝水了', at, repeat: 300 }, 'POST'), res)
+  ok('POST 新增提醒', res.json().ok === true && added.length === 1 && added[0].text === '该喝水了')
+  ok('重复间隔 300 秒保留', added[0].repeat === 300, String(added[0].repeat))
+
+  res = mkRes()
+  await handlers.handleReminders(mkReq({ text: '太短', at, repeat: 10 }, 'POST'), res)
+  ok('重复间隔 <60 秒按不重复', added[1].repeat === 0)
+  res = mkRes()
+  await handlers.handleReminders(mkReq({ text: '太长', at, repeat: 99999999 }, 'POST'), res)
+  ok('重复间隔 >7 天按不重复', added[2].repeat === 0)
+
+  res = mkRes()
+  await handlers.handleReminders(mkReq({ text: 'x'.repeat(500), at }, 'POST'), res)
+  ok('超长文本截到 200 字', added[3].text.length === 200, 'len=' + added[3].text.length)
+
+  res = mkRes()
+  await handlers.handleReminders(mkReq({ text: '没有时间' }, 'POST'), res)
+  ok('缺时间 → 400', res.code === 400 && res.json().error === 'text and at required')
+
+  res = mkRes()
+  await handlers.handleReminders(mkReq({ text: '时间非法', at: '不是时间' }, 'POST'), res)
+  ok('时间非法 → 400', res.code === 400)
+
+  res = mkRes()
+  await handlers.handleReminders(mkReq(null, 'DELETE', '/api/chubby-whale/reminders?id=r1'), res)
+  ok('DELETE 指定 id', res.json().ok === true && removed.indexOf('r1') >= 0)
+  res = mkRes()
+  await handlers.handleReminders(mkReq(null, 'DELETE'), res)
+  ok('DELETE 不带 id → 不删任何东西', res.json().ok === true && removed.length === 1)
+
+  res = mkRes()
+  await handlers.handleReminders(mkReq(null, 'PUT'), res)
+  ok('其它方法 → 405', res.code === 405)
+
+  res = mkRes()
+  await handlers.handleReminders(mkReq(null, 'POST', '/api/chubby-whale/reminders'), res)
+  // 空 body 走 JSON 解析失败 → {} → 400（不是 500）
+  ok('空 body → 400 而不是 500', res.code === 400)
+} catch (e) {
+  ok('能加载提醒路由', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
