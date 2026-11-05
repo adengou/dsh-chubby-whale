@@ -34,9 +34,9 @@ export interface Look {
 }
 
 /** 外观档位阈值：与 host 的成长阶段边界 200 / 800 对齐 */
-export const TIER_EXP = [0, 200, 800]
+export const TIER_EXP = [0, 200, 800]
 deepFreeze(TIER_EXP)
-export const TIER_NAMES = ['初识', '熟络', '黏人']
+export const TIER_NAMES = ['初识', '熟络', '黏人']
 deepFreeze(TIER_NAMES)
 
 const LOOKS: Look[] = [
@@ -67,7 +67,7 @@ export function lookForGrowth(info?: GrowthInfo | null): Look {
   return LOOKS[tierOf(info.exp)]
 }
 
-export const DEFAULT_GROWTH: GrowthInfo = { exp: 0, stage: '初识', nextExp: 200, tier: 0 }
+export const DEFAULT_GROWTH: GrowthInfo = { exp: 0, stage: '初识', nextExp: 200, tier: 0 }
 deepFreeze(DEFAULT_GROWTH)
 
 /** 解析 GET /growth 响应；ok 不为 true 或经验值非法时返回 null（调用方按初识处理） */

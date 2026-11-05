@@ -51,7 +51,7 @@ export const SELF_NARRATIVE_SYSTEM_PROMPT = [
   '3) 只写心情、状态、语气倾向：累了、想撒娇、话少、精神好一点之类；不写事实、计划、承诺、时间地点。',
   '4) 不许提名字、家人、生日、出生地、语言规则、安全底线；不许自称 AI 或大模型。',
   '5) 核心设定只读参考，禁止复述、禁止改写、禁止补充。',
-].join('\n')
+].join('\n')
 deepFreeze(SELF_NARRATIVE_SYSTEM_PROMPT)
 
 /**

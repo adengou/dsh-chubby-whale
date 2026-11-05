@@ -15,7 +15,7 @@ export const BUBBLE_CSS =
   '.chubby-bubble.show{opacity:1;}'
 
 /** 这些是「纯状态字」：气泡里只剩它们时才允许静默收起 */
-export const STATUS_TEXTS = ['在听…', '在想…', '识别中…', '在说…']
+export const STATUS_TEXTS = ['在听…', '在想…', '识别中…', '在说…']
 deepFreeze(STATUS_TEXTS)
 
 /** 注入气泡样式（已存在则跳过） */

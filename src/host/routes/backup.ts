@@ -238,7 +238,7 @@ export const BACKUP_CLEANERS: Record<BackupDataField, Cleaner> = {
   pet: cleanPet,
   reminders: cleanReminders,
   storyProgress: cleanStoryProgress,
-}
+}
 deepFreeze(BACKUP_CLEANERS)
 
 export function createBackupHandlers(deps: BackupDeps) {

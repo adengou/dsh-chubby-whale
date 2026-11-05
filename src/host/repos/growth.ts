@@ -15,13 +15,13 @@ export const GROWTH_STAGES = [
   { exp: 800, name: '亲密' },
   { exp: 2500, name: '知心' },
   { exp: 5000, name: '家人' },
-]
+]
 deepFreeze(GROWTH_STAGES)
 
 /** 每天最多涨 12 点经验（照 C# Growth.DailyCap） */
 export const EXP_DAILY_CAP = 12
 /** 各来源的每日上限（照 C# Growth.SourceCap；未知来源按 3） */
-export const EXP_SOURCE_CAP: Record<string, number> = { chat: 5, praise: 6, feed: 6, story: 4, company: 6 }
+export const EXP_SOURCE_CAP: Record<string, number> = { chat: 5, praise: 6, feed: 6, story: 4, company: 6 }
 deepFreeze(EXP_SOURCE_CAP)
 export const EXP_SOURCE_DEFAULT_CAP = 3
 

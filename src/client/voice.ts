@@ -111,7 +111,7 @@ export const TTS_VOICES: string[] = [
   'en-US-JennyNeural',
   'en-GB-SoniaNeural',
   'auto',
-]
+]
 deepFreeze(TTS_VOICES)
 
 /** 默认音色：晓伊（与菜单默认与 C# 版一致） */

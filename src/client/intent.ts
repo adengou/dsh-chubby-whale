@@ -38,7 +38,7 @@ export const BOOK_ALIAS: Array<[RegExp, string]> = [
   [/东周/, '东周列国志'],
   [/三侠五义/, '三侠五义'],
   [/镜花缘/, '镜花缘'],
-]
+]
 deepFreeze(BOOK_ALIAS)
 
 /** 诗名索引（按长度降序，保证「雨霖铃」优先于「雨」这类短名） */

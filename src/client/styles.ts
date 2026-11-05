@@ -26,7 +26,7 @@ export const stageStyle = (scale: number, hidden: boolean) => ({
   display: hidden ? 'none' : 'block',
 })
 
-export const canvasStyle = { width: '100%', height: '100%', display: 'block' }
+export const canvasStyle = { width: '100%', height: '100%', display: 'block' }
 deepFreeze(canvasStyle)
 
 /**
@@ -100,7 +100,7 @@ export const headStyle = {
 }
 
 export const bodyStyle = { height: 240, overflowY: 'auto' as const, padding: '12px 14px' }
-export const inputRowStyle = { display: 'flex', gap: 8, padding: '10px 12px', borderTop: '1px solid rgba(93,160,240,0.25)', background: 'rgba(6,16,32,0.6)' }
+export const inputRowStyle = { display: 'flex', gap: 8, padding: '10px 12px', borderTop: '1px solid rgba(93,160,240,0.25)', background: 'rgba(6,16,32,0.6)' }
 deepFreeze(inputRowStyle)
 export const inputStyle = {
   flex: 1,

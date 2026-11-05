@@ -84,7 +84,7 @@ export const APE_DEFAULTS: ApeParams = {
   steadyWindowFrames: 10,   // 25 帧 × 60ms = 1.5s
   steadySpreadDb: 3,
   steadyMs: 400,
-}
+}
 deepFreeze(APE_DEFAULTS)
 
 export type ApeStep = {

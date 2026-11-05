@@ -47,7 +47,7 @@ export const EXTRACTION_SYSTEM_PROMPT = [
   '3) 直接写内容，不要加「主人说」「主人喜欢」这类前缀，不要加书名号或引号。',
   '4) 鲸鱼自己的核心设定（名字、家人、生日、出生地、语言规则、安全边界）是锁定的，绝对不能写进 JSON；也不要收住址、电话、证件、账号密码等隐私。',
   '5) 没有值得记的新信息，就返回 {"catchphrases":[],"preferences":[],"notes":""}。',
-].join('\n')
+].join('\n')
 deepFreeze(EXTRACTION_SYSTEM_PROMPT)
 
 /** 把最近若干条对话压成「主人：… / 肥鲸：…」文本；没有可用内容时返回空串 */

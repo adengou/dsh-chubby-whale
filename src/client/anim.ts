@@ -11,11 +11,11 @@
 import { lookFor, type Look } from './look.js'
 import { deepFreeze } from '../shared/immutable.js'
 
-export const EYE_L = { x: 679, y: 430, r: 68 }
+export const EYE_L = { x: 679, y: 430, r: 68 }
 deepFreeze(EYE_L)
-export const EYE_R = { x: 860, y: 435, r: 68 }
+export const EYE_R = { x: 860, y: 435, r: 68 }
 deepFreeze(EYE_R)
-export const MOUTH = { x: 779, y: 525, rw: 26, rh: 18 }
+export const MOUTH = { x: 779, y: 525, rw: 26, rh: 18 }
 deepFreeze(MOUTH)
 
 export interface AnimState {
