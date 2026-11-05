@@ -2003,6 +2003,103 @@ try {
   ok('能加载点播路由', false, String(e.message))
 }
 
+
+// ---------- ㊴ 说书控制器：气泡/语速/连播/中断守卫 ----------
+console.log('\n[39] 说书控制器 client/story.ts')
+try {
+  const { createStoryController } = await import('../src/client/story.ts')
+  const realFetch = globalThis.fetch
+  const hits = []
+  globalThis.fetch = async (url) => {
+    const u = String(url)
+    hits.push(u)
+    if (u.indexOf('/story/start') >= 0) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, book: '聊斋', title: '画皮', piece: 1, total: 2, isFirst: true, isLast: false, text: '第一段正文', remain: 1 }) }
+    }
+    if (u.indexOf('/story/next') >= 0) {
+      return { ok: true, status: 200, json: async () => ({ ok: true, book: '聊斋', title: '画皮', piece: 2, total: 2, isFirst: false, isLast: true, text: '第二段正文', remain: 0 }) }
+    }
+    return { ok: false, status: 404, json: async () => ({ ok: false }) }
+  }
+
+  const bubbles = []
+  const spoken = []
+  let narrated = 0
+  const refs = { busy: { current: false }, narrating: { current: false }, auto: { current: true }, book: { current: '' } }
+  const host = {
+    clientId: 'c-test',
+    persona: { line: () => '这一回就讲到这里。' },
+    narrate: () => { narrated++ },
+    clearNarrate: () => { refs.narrating.current = false },
+    bubble: (t) => { bubbles.push(t) },
+    speak: (t, o) => { spoken.push({ t, rate: o && o.rate, onDone: o && o.onDone }) },
+    talkFor: () => { },
+    narrationRate: () => '-25%',
+    isVoiceOff: () => false,
+    refs,
+  }
+  const story = createStoryController(host)
+
+  // ① 播一段：气泡带书名与第几段、叙述锁、说书语速
+  story.playPiece({ book: '聊斋', title: '画皮', piece: 1, total: 2, isLast: false, text: '第一段正文' })
+  ok('气泡标出书名与第几段', bubbles[0] === '正在讲《聊斋》｜画皮（第 1/2 段）', bubbles[0])
+  ok('上了叙述锁', narrated === 1 && refs.busy.current === true)
+  ok('说书语速 -35%', spoken[0] && spoken[0].rate === '-35%', String(spoken[0] && spoken[0].rate))
+
+  // ② 连播开着：这一段念完自动接下一段
+  bubbles.length = 0
+  hits.length = 0
+  spoken[0].onDone()
+  ok('连播开：提示"接着往后讲"', bubbles.some((b) => b.indexOf('接着往后讲') >= 0), bubbles.join(' | '))
+  ok('段落结束后释放占线', refs.busy.current === false && refs.narrating.current === false)
+  await new Promise((r) => setTimeout(r, 900))
+  ok('自动请求下一段', hits.some((u) => u.indexOf('/story/next') >= 0), hits.join(','))
+  ok('下一段气泡显示第 2/2 段', bubbles.some((b) => b.indexOf('（第 2/2 段）') >= 0), bubbles.join(' | '))
+
+  // ③ 最后一段念完：关连播 + 报"讲完"
+  bubbles.length = 0
+  const last = spoken[spoken.length - 1]
+  last.onDone()
+  ok('最后一段：报讲完', bubbles.some((b) => b.indexOf('这一回就讲到这里') >= 0), bubbles.join(' | '))
+  ok('最后一段：关掉连播', refs.auto.current === false)
+
+  // ④ 连播关着：念完只提示"点菜单接着说"
+  refs.auto.current = false
+  bubbles.length = 0
+  spoken.length = 0
+  story.playPiece({ book: '聊斋', title: '婴宁', piece: 1, total: 3, isLast: false, text: '正文' })
+  spoken[0].onDone()
+  ok('连播关：提示点菜单接着', bubbles.some((b) => b.indexOf('点菜单「接着说」') >= 0), bubbles.join(' | '))
+  refs.auto.current = true
+
+  // ⑤ 语音关着：只出气泡、不念、不占线
+  bubbles.length = 0
+  spoken.length = 0
+  const offHost = { ...host, isVoiceOff: () => true }
+  const storyOff = createStoryController(offHost)
+  storyOff.playPiece({ book: '聊斋', title: '画皮', piece: 3, total: 3, isLast: true, text: '正文' })
+  ok('语音关：不朗读', spoken.length === 0)
+  ok('语音关：气泡注明', bubbles.some((b) => b.indexOf('（语音朗读关着）') >= 0), bubbles.join(' | '))
+  ok('语音关：不占线', refs.busy.current === false)
+
+  // ⑥ 正在讲时再点「接着说」被拒绝
+  refs.busy.current = true
+  bubbles.length = 0
+  story.next()
+  ok('正讲着时拒绝插队', bubbles.some((b) => b.indexOf('正讲着呢') >= 0), bubbles.join(' | '))
+  refs.busy.current = false
+
+  // ⑦ 点书名开讲：start 同时带 book 与 hint
+  hits.length = 0
+  story.start('聊斋')
+  await new Promise((r) => setTimeout(r, 50))
+  ok('开讲请求带 book 与 hint', hits.some((u) => u.indexOf('book=') >= 0 && u.indexOf('hint=') >= 0), hits.join(','))
+
+  globalThis.fetch = realFetch
+} catch (e) {
+  ok('能加载说书控制器', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
