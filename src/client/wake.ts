@@ -42,12 +42,29 @@ export type WakeGate = {
   words: string[]
 }
 
+/** 繁体折简体：ASR 偶尔给「大肥魚」「小藍魚」，不折就永远匹配不上 */
+const TRAD_TO_SIMPLE: Record<string, string> = { '魚': '鱼', '飛': '飞', '藍': '蓝', '籃': '篮', '蘭': '兰', '鯨': '鲸' }
+
 /** 归一化：去掉空白与常见标点、统一小写（ASR 会给出"大肥鱼，"这种带标点的结果） */
 export function normalizeWakeText(text: unknown): string {
   return String(text == null ? '' : text)
+    .split('')
+    .map((c) => TRAD_TO_SIMPLE[c] || c)
+    .join('')
     .replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, '')
     .toLowerCase()
 }
+
+/**
+ * 谐音容错：ASR 把「大肥鱼」识别成「大粉鱼」「大飞鱼」时，主人会以为鱼没反应。
+ * 只在大/小 + 1 个易混字 + 鱼/鲸 这种短句上放行，避免把「大鲤鱼」这类正常词当唤醒。
+ */
+const WAKE_FUZZY: RegExp[] = [
+  /^大(肥|飞|粉|菲|非|废|悲|白|百|杯)鱼/,
+  /^小(蓝|篮|兰)?(鱼|鲸)/,
+  /^(肥|飞)(鲸|鱼)/,
+  /^大(肥|飞)鲸/,
+]
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -66,7 +83,20 @@ export function stripWakeWords(input: unknown, words: string[] = WAKE_WORDS): { 
   // 长词优先：'小蓝鱼' 命中时不能被 '蓝鱼' 先剥成 '小'
   const sorted = (words || []).filter(Boolean).map((w) => String(w)).sort((a, b) => b.length - a.length)
   const hits = sorted.filter((w) => norm.indexOf(normalizeWakeText(w)) >= 0)
-  if (!hits.length) return { hit: false, text: raw.trim(), word: '' }
+  if (!hits.length) {
+    // 字面没命中 → 试谐音容错（整句要短，避免长句里恰好含「大X鱼」被误唤醒）
+    if (norm.length <= 12) {
+      for (const re of WAKE_FUZZY) {
+        const m = norm.match(re)
+        if (m) {
+          const rest = norm.replace(re, '')
+          const keep = /[\u4e00-\u9fa5a-z0-9]/i.test(rest) ? rest : ''
+          return { hit: true, text: keep, word: m[0] }
+        }
+      }
+    }
+    return { hit: false, text: raw.trim(), word: '' }
+  }
 
   // 在原文上剥（每个字之间容忍空白，ASR 偶尔会插空格）
   let out = raw

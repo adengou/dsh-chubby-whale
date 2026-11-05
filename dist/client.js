@@ -1845,9 +1845,16 @@
   // src/client/wake.ts
   var WAKE_WORDS = ["\u5927\u80A5\u9C7C", "\u5C0F\u84DD\u9C7C", "\u80A5\u9CB8", "\u80A5\u9C7C", "\u5C0F\u9C7C", "\u84DD\u9C7C", "\u9C7C\u9C7C", "\u80A5\u80A5"];
   var WAKE_WINDOW_MS = 3e4;
+  var TRAD_TO_SIMPLE = { "\u9B5A": "\u9C7C", "\u98DB": "\u98DE", "\u85CD": "\u84DD", "\u7C43": "\u7BEE", "\u862D": "\u5170", "\u9BE8": "\u9CB8" };
   function normalizeWakeText(text) {
-    return String(text == null ? "" : text).replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, "").toLowerCase();
+    return String(text == null ? "" : text).split("").map((c) => TRAD_TO_SIMPLE[c] || c).join("").replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, "").toLowerCase();
   }
+  var WAKE_FUZZY = [
+    /^大(肥|飞|粉|菲|非|废|悲|白|百|杯)鱼/,
+    /^小(蓝|篮|兰)?(鱼|鲸)/,
+    /^(肥|飞)(鲸|鱼)/,
+    /^大(肥|飞)鲸/
+  ];
   function escapeRe(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
@@ -1857,7 +1864,19 @@
     if (!norm) return { hit: false, text: "", word: "" };
     const sorted = (words || []).filter(Boolean).map((w) => String(w)).sort((a, b) => b.length - a.length);
     const hits = sorted.filter((w) => norm.indexOf(normalizeWakeText(w)) >= 0);
-    if (!hits.length) return { hit: false, text: raw.trim(), word: "" };
+    if (!hits.length) {
+      if (norm.length <= 12) {
+        for (const re of WAKE_FUZZY) {
+          const m = norm.match(re);
+          if (m) {
+            const rest = norm.replace(re, "");
+            const keep = /[\u4e00-\u9fa5a-z0-9]/i.test(rest) ? rest : "";
+            return { hit: true, text: keep, word: m[0] };
+          }
+        }
+      }
+      return { hit: false, text: raw.trim(), word: "" };
+    }
     let out = raw;
     for (const w of hits) {
       const pattern = w.split("").map(escapeRe).join("\\s*");
