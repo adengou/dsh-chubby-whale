@@ -385,7 +385,15 @@ export function createChatSender(host: ChatHost): ChatController {
       if (data && data.upgraded) host.bubble('本鲸又长大一点啦！', 4000)
     } catch (err: any) {
       if (!host.epoch.isCurrent(myEpoch)) return   // 被停止说话/新提问作废：不弹错误、不念旧答案
-      const timedOut = !!err && (err.name === 'AbortError' || err.code === 20 || err.code === 2)
+      // AbortSignal.timeout() 的拒绝名是 TimeoutError（Node 24 code=23），只认 AbortError/20/2
+      // 会把「超时」报成普通失败（diag 里看不出是超时）；口径与 client/story.ts 保持一致
+      const timedOut = !!err && (
+        err.name === 'AbortError' ||
+        err.name === 'TimeoutError' ||
+        err.code === 20 ||
+        err.code === 2 ||
+        err.code === 23
+      )
       const tip = timedOut ? '主人，本鲸等太久啦（网络慢），再问一次？' : host.persona.line('error')
       if (d1) d1.lastChat = { stage: timedOut ? 'timeout' : 'error', error: String((err && err.message) || err).slice(0, 60), at: Date.now() }
       fishTip(host, tip, 5000)

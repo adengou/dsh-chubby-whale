@@ -5565,8 +5565,8 @@
         const v = host.voice();
         const cur = v && v.endpointInfo ? v.endpointInfo().mode : readEndpointMode();
         const next = cur === "ape" ? "classic" : "ape";
-        writeEndpointMode(next);
         if (v && v.setEndpointMode) v.setEndpointMode(next);
+        else writeEndpointMode(next);
         const real = v && v.endpointInfo ? v.endpointInfo().mode : next;
         host.bubble(real === "ape" ? "端点检测：自适应（试用）" : "端点检测：经典（稳定）", 4e3);
       } catch (e) {
@@ -7390,7 +7390,7 @@
         if (data && data.upgraded) host.bubble("本鲸又长大一点啦！", 4e3);
       } catch (err) {
         if (!host.epoch.isCurrent(myEpoch)) return;
-        const timedOut = !!err && (err.name === "AbortError" || err.code === 20 || err.code === 2);
+        const timedOut = !!err && (err.name === "AbortError" || err.name === "TimeoutError" || err.code === 20 || err.code === 2 || err.code === 23);
         const tip = timedOut ? "主人，本鲸等太久啦（网络慢），再问一次？" : host.persona.line("error");
         if (d1) d1.lastChat = { stage: timedOut ? "timeout" : "error", error: String(err && err.message || err).slice(0, 60), at: Date.now() };
         fishTip(host, tip, 5e3);
