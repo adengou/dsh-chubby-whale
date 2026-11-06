@@ -479,7 +479,8 @@ console.log('\n[F] 中止在途请求（B98）：停止说书要真的掐断 fet
   story.next()
   ok('正在讲时的「接着说」被挡下，且不误伤在途请求',
     calls.length === 1 && d.done === false && d.aborted === false, bubbleText(h.bubbles))
-  // 「停止说话 / 歇会儿」：client.ts 的 stopTts() 清 busy + narrating
+  // 「停止说话 / 歇会儿」：client.ts 的 stopTts() 现在会先 story.abort()，再清 busy + narrating
+  story.abort()
   h.refs.busy.current = false
   h.refs.narrating.current = false
   await flush()
@@ -502,25 +503,31 @@ console.log('\n[F] 中止在途请求（B98）：停止说书要真的掐断 fet
   const d = defer()
   story.start('')
   await flush()
-  // 菜单「歇会儿 / 停止说话」（actions/system.ts）只清 busy 这一下
+  // 2026-11-07 B98 收尾：中止改成显式调用（client.ts stopTts() → story.abort()），
+  // 不再靠包 busy.current 的写。所以「只清 busy」本身**不再**中止——这是有意的契约，
+  // 停口路径必须走 stopTts()（菜单 pause / tts-stop 本来就会先调 host.stopSpeak()）。
   h.refs.busy.current = false
   await flush()
-  ok('只清 busy（菜单 pause / tts-stop 的写法）也算停止：在途请求照样 abort',
+  ok('只清 busy 不再隐式中止（契约：停口必须走 stopTts → story.abort()）',
+    d.aborted === false && d.signal.aborted === false, 'aborted=' + d.aborted)
+  story.abort()
+  await flush()
+  ok('显式 story.abort() 才中止在途请求',
     d.aborted === true && d.signal.aborted === true, 'aborted=' + d.aborted + ' signal=' + d.signal.aborted)
 }
 {
-  // client.ts 每次渲染都会 createStoryController：停止钩子只在第一个实例上装一次，
-  // 发请求的是后来那个实例。共享状态（gen / inflight）必须按 refs.busy 找回同一份。
+  // client.ts 每次渲染都会 createStoryController：在途状态必须按 refs 共享，
+  // 这样「渲染 2 发的请求」也能被任何一次 stopTts()（挂在最新实例上）中止。
   clearTimers(); resetFetch(); resetCounters()
   const h = mkHost()
-  createStoryController(h.host)                 // 渲染 1：装钩子
+  const first = createStoryController(h.host)   // 渲染 1
   const second = createStoryController(h.host)  // 渲染 2：真正发请求的实例
   const d = defer()
   second.start('')
   await flush()
-  h.refs.busy.current = false
+  first.abort()                                 // 停止走的是最新实例，但共享同一份在途状态
   await flush()
-  ok('重渲染重建控制器后，停止仍能掐断在途请求（共享状态按 refs.busy 找回本轮）',
+  ok('重渲染重建控制器后，abort 仍能掐断在途请求（共享状态按 refs 找回本轮）',
     d.aborted === true && d.signal.aborted === true, 'aborted=' + d.aborted)
   ok('重渲染后停止同样静默（不弹失败、不念旧段）',
     h.speaks.length === 0 && !h.bubbles.some((b) => b.indexOf('连不上') >= 0 || b.indexOf('等太久') >= 0),
@@ -533,6 +540,7 @@ console.log('\n[F] 中止在途请求（B98）：停止说书要真的掐断 fet
   const d = defer({ ignoreAbort: true })   // 模拟 abort 太晚 / 浏览器照样把响应送达
   story.start('')
   await flush()
+  story.abort()
   h.refs.busy.current = false
   h.refs.narrating.current = false
   await flush()
@@ -551,6 +559,7 @@ console.log('\n[F] 中止在途请求（B98）：停止说书要真的掐断 fet
   const old = defer({ ignoreAbort: true })
   story.start('')
   await flush()
+  story.abort()
   h.refs.busy.current = false
   h.refs.narrating.current = false
   await flush()

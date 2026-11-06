@@ -6770,27 +6770,6 @@
     } catch (e) {
     }
   }
-  var stopHooks = /* @__PURE__ */ new WeakSet();
-  function installStopHook(refs, shared) {
-    const busy = refs ? refs.busy : null;
-    if (!busy || stopHooks.has(busy)) return;
-    try {
-      let on = !!busy.current;
-      Object.defineProperty(busy, "current", {
-        configurable: true,
-        enumerable: true,
-        get: () => on,
-        set: (v) => {
-          const next = !!v;
-          const was = on;
-          on = next;
-          if (was && !next) abortInflightOf(shared, "stop");
-        }
-      });
-      stopHooks.add(busy);
-    } catch (e) {
-    }
-  }
   function isAbortError(err) {
     if (!err) return false;
     return err.name === "AbortError" || err.name === "TimeoutError" || err.code === 20 || err.code === 23 || err.code === 2;
@@ -6807,7 +6786,6 @@
   function createStoryController(host) {
     const refs = host.refs;
     const shared = sharedStateOf(refs);
-    installStopHook(refs, shared);
     function bumpGen() {
       shared.gen += 1;
       return shared.gen;
@@ -7069,7 +7047,14 @@
         host.bubble("这本书从头讲～", 3e3);
       });
     }
-    return { playPiece, start, next, reset };
+    return {
+      playPiece,
+      start,
+      next,
+      reset,
+      // 显式中止：由 stopTts() 调用；迟到结果仍由 stillMine 丢弃（双保险）
+      abort: () => abortInflightOf(shared, "stop")
+    };
   }
 
   // src/client/poem-titles.ts
@@ -9759,6 +9744,10 @@
           bridge.stopSpeak();
           try {
             melody.stop();
+          } catch (e) {
+          }
+          try {
+            story.abort();
           } catch (e) {
           }
           try {
