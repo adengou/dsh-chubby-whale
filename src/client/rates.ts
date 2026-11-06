@@ -70,7 +70,8 @@ export function poemRate(fallback: string = DEFAULT_POEM_RATE): string {
 /** 读当前聊天语速（非法值回落默认 -20%）；用时现读，菜单改完立即生效 */
 export function chatRate(): string {
   try {
-    const s = localStorage.getItem('chubby-chat-rate')
+    // 读侧也 trim：手改/旧版本可能留下 ' -10% '，不 trim 会静默回默认（写侧早就 trim 了）
+    const s = String(localStorage.getItem('chubby-chat-rate') || '').trim()
     if (s && CHAT_RATES.indexOf(s) >= 0) return s
   } catch (e) { }
   return DEFAULT_CHAT_RATE
@@ -91,7 +92,8 @@ export function setChatRate(rate: string): boolean {
 /** 读当前叙述语速（非法值回落默认 -25%） */
 export function narrationRate(): string {
   try {
-    const s = localStorage.getItem('chubby-narration-rate')
+    // 同 chatRate：读侧 trim，与写侧同口径
+    const s = String(localStorage.getItem('chubby-narration-rate') || '').trim()
     if (s && NARRATION_RATES.indexOf(s) >= 0) return s
   } catch (e) { }
   return DEFAULT_NARRATION_RATE

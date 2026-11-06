@@ -144,9 +144,12 @@ try {
   const dense = run(['😀'.repeat(40) + '。'], 8)
   ok('超密 emoji + 小 maxLen 也不劈代理对', dense.every((s) => s.isWellFormed()) && dense.join('').split('😀').length - 1 === 40)
 
-  // 超长无标点：limit 是「攒够了就吐」的触发阈值，不是截断上限（一次 delta 多长就吐多长）
+  // 超长无标点：limit 是触发阈值，同时也是**硬上限**（2026-11-07 改）
+  // 为什么改：一次 delta 若 500 字，原来整段吐给 TTS，一次念几分钟、打断也晚；
+  // 现在按阈值切段，但保证不丢字、不劈代理对。
   const long = run(['啊'.repeat(500)])
-  ok('超长无标点整段吐出（不丢字、不瘫）', long.length === 1 && long[0].length === 500, '段数=' + long.length + ' 长度=' + (long[0] || '').length)
+  ok('超长无标点按阈值切段（不丢字）', long.length === Math.ceil(500 / 40) && long.join('') === '啊'.repeat(500), '段数=' + long.length + ' 长度=' + (long[0] || '').length)
+  ok('切段后每段不超过阈值', long.every((s) => s.length <= 40), long.map((s) => s.length).join(','))
 
   const tiny = text.createSentenceBuffer(2)
   ok('maxLen 下限生效（2 字才吐）', tiny.push('啊').length === 0 && tiny.push('啊').length === 1)
