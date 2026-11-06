@@ -34,6 +34,36 @@ const LEARN_TIMEOUT = 20 * 1000
 const LEARN_LINE_MAX = 300
 
 /**
+ * 按 Unicode 码点截断：`String.prototype.slice` 按 UTF-16 码元切，正好切在 emoji 代理对中间
+ * 会留下孤立代理（实测「'字'×299 + '🙂'」会切出半个表情 U+D83D）。喂模型的每行都走这里。
+ * 与 host/personality/merge.ts 的 clampText 同一口径（按「字」而不是按码元）。
+ */
+function clipCodePoints(s: string, max: number): string {
+  const chars = Array.from(s)
+  return chars.length > max ? chars.slice(0, max).join('') : s
+}
+
+/**
+ * 取正整数选项：显式 0 表示「最快（1）」，缺省 / 非数值才回落默认值。
+ *
+ * 审计修复 F9（2026-11-07）：原实现是 `Math.floor(Number(opts.every) || LEARN_EVERY)`，
+ * 显式传 0 被 `||` 当成「没传」回落 20，而传 -3 却被 `Math.max(1, ·)` 收成 1——
+ * 同属「最小」语义，0 与负数结果相反，是 0 边界反转（与 merge.ts 的 keepNewest 同源问题）。
+ */
+function positiveOption(value: any, fallback: number): number {
+  if (value === undefined || value === null) return fallback
+  const n = Math.floor(Number(value))
+  return Number.isFinite(n) ? Math.max(1, n) : fallback
+}
+
+/** 取非负毫秒选项：显式 0 表示「不设最小间隔」，缺省 / 非数值才回落默认值（同 F9 的 0 边界） */
+function nonNegativeOption(value: any, fallback: number): number {
+  if (value === undefined || value === null) return fallback
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.max(0, n) : fallback
+}
+
+/**
  * 提取提示词：只要求 JSON，且明确禁止把鲸鱼的核心设定写进来。
  * 「没有新信息就返回空」让模型自己收手，配合 applyCandidate 的“无变化不写盘”，
  * 没新东西时不会产生版本、历史或请求以外的副作用。
@@ -56,7 +86,7 @@ export function buildExtractionUser(messages: any[]): string {
   const lines: string[] = []
   for (const m of arr.slice(-LEARN_MESSAGE_COUNT)) {
     if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') continue
-    const text = m.content.replace(/[\s\u3000]+/g, ' ').trim().slice(0, LEARN_LINE_MAX)
+    const text = clipCodePoints(m.content.replace(/[\s\u3000]+/g, ' ').trim(), LEARN_LINE_MAX)
     if (!text) continue
     lines.push((m.role === 'user' ? '主人' : '肥鲸') + '：' + text)
   }
@@ -98,8 +128,8 @@ export interface LearnState {
  * 纯函数（now 由调用方传入），便于离线断言。
  */
 export function shouldLearn(state: LearnState, now: number, opts: { every?: number; minIntervalMs?: number } = {}): boolean {
-  const every = Math.max(1, Math.floor(Number(opts.every) || LEARN_EVERY))
-  const minIntervalMs = Math.max(0, Number(opts.minIntervalMs) || LEARN_MIN_INTERVAL_MS)
+  const every = positiveOption(opts.every, LEARN_EVERY)
+  const minIntervalMs = nonNegativeOption(opts.minIntervalMs, LEARN_MIN_INTERVAL_MS)
   const successes = Math.floor(Number(state && state.successes) || 0)
   const last = Number(state && state.lastAttemptAt) || 0
   // lastAttemptAt=0 表示从未尝试过（不是“1970 年刚试过”），直接放行
