@@ -5337,6 +5337,32 @@
   }
 
   // src/client/actions/system.ts
+  var KIND_BUCKETS = [
+    { key: "chat", label: "聊天" },
+    { key: "story", label: "说书" },
+    { key: "summary", label: "摘要" },
+    { key: "personality", label: "人格" }
+  ];
+  function bucketNum(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  function kindBucketText(byKind) {
+    const src = byKind && typeof byKind === "object" && !Array.isArray(byKind) ? byKind : null;
+    if (!src) return "";
+    const parts = [];
+    let costSum = 0;
+    for (const { key, label } of KIND_BUCKETS) {
+      const b = src[key] && typeof src[key] === "object" && !Array.isArray(src[key]) ? src[key] : null;
+      const tokens = bucketNum(b && b.tokens);
+      const cost = bucketNum(b && b.costCny);
+      if (tokens <= 0 && cost <= 0) continue;
+      parts.push(label + " " + tokens + (cost > 0 ? "（￥" + cost.toFixed(4) + "）" : ""));
+      if (cost > 0) costSum += cost;
+    }
+    if (parts.length === 0) return "";
+    return parts.join(" · ") + (costSum > 0 ? "；￥" + costSum.toFixed(4) : "");
+  }
   function registerSystemActions(table) {
     let cacheToggleBusy = false;
     let cacheToggleSeq = 0;
@@ -5437,7 +5463,9 @@
           cny > 0 ? "≈ ¥" + cny.toFixed(4) + "（今日 ¥" + dayCny.toFixed(4) + "）" : "金额：暂无可拆分用量",
           cny > 0 ? "按官方价目（" + String(d.priceCheckedAt || "") + " 核对）估算" : ""
         ].filter(Boolean);
-        host.bubble(parts.join("，"), 6e3);
+        const text = parts.join("，");
+        const buckets = kindBucketText(d.byKind);
+        host.bubble(buckets ? text + "\n分桶：" + buckets : text, 6e3);
       }).catch(() => host.bubble("鱼粮查不到"));
     });
     table.define("growth", (host) => {
