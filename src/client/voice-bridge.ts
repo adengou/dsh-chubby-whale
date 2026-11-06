@@ -24,11 +24,53 @@ import { isInterruptCommand } from '../shared/noise.js'
 /**
  * 整句打断指令的判定已统一到 shared/noise.ts 的 isInterruptCommand()（2026-11-07 B93）：
  * 五个规范词 + 19 条口语说法同一份真源，不再与 echo-filter 各抄一份。
- * 叙述期仍保留 NARR_STOP_RE 的放宽匹配（句中带「不念/算了」也停，容忍度高）。
  */
 
-/** 说书/念诗期间"别念了"这类放宽匹配（句中带"不念/算了"也停，叙述中容忍度高） */
-const NARR_STOP_RE = /停|别念|不念|够了|算了|打住/
+/**
+ * 叙述期停止判定（2026-11-07 B99 收紧了旧子串正则 /停|别念|不念|够了|算了|打住/）。
+ *
+ * 旧规则对**任意子串**放行：说书/念诗时主人只要说了带「停/算了/打住/别念」的话就停。
+ * 用测试桩把这批 ASR 形态的口语文本逐句喂进叙述期判定后，发现两头都错
+ * （下表是断言里的样本，不是从麦克风录下来的转写；判定行为是实跑的）：
+ *   · 误停（主人没喊停，说书却停了，还弹一句「好，不念了」）——
+ *     「他停下脚步，回头看了我一眼」「别念旧情」「我算了算，今天才吃了三碗白饭」
+ *     「不念书的人多了去了」「他打住了话头」「别念错字啊」「前面路口停一下车」；
+ *   · 漏判（真·停止说法反而掉进 narrDrop，说书照念）——
+ *     「先不要念了」（没有「不念」连写）、「别读了吧」（只认「别念」不认「别读」）、
+ *     「我不想听了」（没有停止词）。
+ *
+ * 新规则保留"叙述期容忍度高"的设计意图（句中出现停止小句也认），但只认**像指令**的位置：
+ *   ① 段内整句就是打断指令 —— 仍走 shared/noise.ts 的 isInterruptCommand()
+ *      （停/安静/暂停/别吵/别说了…），不另起一份词表；
+ *   ② 停止小句必须**收在句子（按标点切开的段）末尾**：停止词后面只跟补语
+ *      （下来/下去/一下/一停…）和语气助词（了/吧/呀/啊…），或干脆到此为止。所以
+ *        「行了行了，别念了，我要睡了」→「别念了」自成一段，命中；
+ *        「先不要念了」「别读了吧」「我不想听了」→ 句末就是停止小句，命中；
+ *        「他停下脚步」「别念旧情」「我算了算」「不念书的人」「他打住了话头」
+ *        → 停止词后面接的是实词（脚步/旧情/算/书/话头），不像指令，不再误停。
+ *   ③ 先按标点切段再逐段判（ASR 结果基本带标点）；一段里没有标点时按整句判，
+ *      于是「行了行了别念了我要睡了」这种无标点长句会漏判 —— 这是有意的保守：
+ *      漏判只是多听两句（再喊一次、或用菜单「停止说话」），误判是把说书直接掐掉。
+ *
+ * 已知残留（如实记下，不靠想象补规则）：句末本身就是停止词的普通叙述句仍会被当成指令
+ * （如「雨停了」「他停下来」「他不再念了」）。要再细分得先有真实 ASR 语料，本批不做。
+ */
+const NARR_SEG_RE = /[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]+/
+/** 停止小句：停止词 + 可选补语 + 语气助词（可叠） + 可选反问尾，且必须收在段末 */
+const NARR_STOP_CLAUSE_RE = /(?:停|打住|够了|算了|(?:不|别)(?:要|用|再)?(?:念|说|讲|读|播|出声)|不想(?:再)?(?:听|看))(?:下来|下去|住|一停|一下|一会|一会儿|下)?(?:了|啦|吧|呀|啊|嘛|呗|哦|哟|哈|哇|呢)*(?:行不行|行吗|好不好|可以吗|好吗|好么)?$/
+
+/** 叙述期：这句话是不是"让本鱼停下来"（规则与取舍见上面的 B99 说明） */
+function isNarrationStop(text: string): boolean {
+  const raw = String(text || '')
+  if (!raw) return false
+  for (const seg of raw.split(NARR_SEG_RE)) {
+    const norm = normalizeWakeText(seg)
+    if (!norm) continue
+    if (isStopCommand(norm)) return true
+    if (NARR_STOP_CLAUSE_RE.test(norm)) return true
+  }
+  return false
+}
 
 /** 文本里有没有实际内容（汉字/字母/数字）；只有标点/空白不算一句话 */
 const HAS_CONTENT_RE = /[\u4e00-\u9fa5a-z0-9]/i
@@ -194,7 +236,7 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
         try {
           if (host.narration.active()) {
             let narrStop = false
-            try { narrStop = NARR_STOP_RE.test(String(text || '')) || isStopCommand(normalizeWakeText(text)) } catch (e) { }
+            try { narrStop = isNarrationStop(String(text || '')) } catch (e) { }
             if (narrStop) stopNarration('好，不念了')
             else bump('narrDrop')
             return
