@@ -48,6 +48,21 @@
  * 错误语义（路由据此回 501 让客户端降级到浏览器朗读）：
  *   - 本机没装 python / edge-tts → err.code = 'TTS_UNAVAILABLE'
  *   - 合成超时 / 进程非 0 退出 / 网络失败 → 普通 Error（路由 500）
+ *   - 调用方中止（req.signal，客户端断连）→ Error 且 name='AbortError'（没有 code，路由按断连处理）
+ *
+ * ── 断连中止（2026-11-07 B94）──────────────────────────────────────────────
+ *   路由把「客户端走了」变成 req.signal 传进来。本层只做三件事，且刻意**不杀**常驻 worker：
+ *     ① 立刻放弃等待：探测 / 等 worker / 等回包三段都被 signal 打断（raceAbort、tts/worker.ts 的
+ *        pending 摘除），不再干等到 20s 预算耗尽；
+ *     ② 清理并作废本次产物：临时 mp3 照旧在 finally 删；worker 那条路如果 python 还在往里写
+ *        （Windows 句柄没放开、unlink 报 EBUSY），再排一次延迟清理，绝不复用这份文件；
+ *     ③ 不回退重跑：worker 因 abort 返回 false 时不再走单次 spawn，避免同一段文本合成两遍。
+ *   取舍（为什么"不等待"而不是"连 python 一起停"）：常驻 worker 是**跨请求共享**的（并发的另几段
+ *   还在排队），为一次断连杀掉它，会连带失败掉别人的合成、还要重付一次启动 + import 开销
+ *   （实测冷启动约 2.5s）。所以宁可让 worker 把已排队的这一段跑完、回包因 pending 已摘除而被丢弃
+ *   （结果不写缓存、不回包），代价是一段文本的 CPU/网络白跑，但省掉杀进程与重启的连锁反应。
+ *   真要「连 python 都立刻停」得给 worker 协议加跨进程取消指令，超出本批范围。
+ *   单次 spawn 回退路径不受此限：那个 python 是**本请求独占**的，abort 时直接 kill（tts/spawn.ts）。
  */
 import { readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -104,8 +119,16 @@ export function createEdgeTtsEngine(opts = {}) {
             }
         },
         async synthesize(req) {
+            const sig = req.signal;
+            // 调用方已经放弃（客户端断连）：连解释器探测都不必等，直接按中止返回
+            if (sig && sig.aborted)
+                throw abortError();
             const startedAt = Date.now();
-            const outcome = await resolveProbe(opts.python);
+            // 探测结果进程内缓存、并发共享：abort 只让「本请求」不再等它，探测自己继续跑完
+            // （≤2s，别的请求与后续请求还要用它的结论；取消共享探测反而会让别人多等一次）
+            const outcome = await raceAbort(resolveProbe(opts.python), sig);
+            if (!outcome)
+                throw abortError();
             // 确定不可用 → 501；探测超时（慢机器）→ 用 pending 候选直接合成验证
             const interp = outcome.interp || (outcome.failed ? null : outcome.pending);
             if (!interp) {
@@ -119,6 +142,7 @@ export function createEdgeTtsEngine(opts = {}) {
                 // 杀掉健康的 worker（并发请求被迫改走慢路径，下次还要重付启动开销）。
                 let done = false;
                 try {
+                    // req 里已经带着 signal：worker 的「等 ready / 等回包」两段都会被 abort 打断（tts/worker.ts）
                     done = await worker.synth(interp, req, tmpFile, remaining(startedAt));
                 }
                 catch (e) {
@@ -126,13 +150,20 @@ export function createEdgeTtsEngine(opts = {}) {
                     logWarn('worker 合成异常，回退单次 spawn', e);
                     done = false;
                 }
+                // worker 侧「按 abort 提前放弃」也返回 false：这里必须先认出中止，否则会误走单次 spawn、
+                // 把刚被放弃的那段又完整合成一遍（B94 要治的浪费之一）。
+                if (sig && sig.aborted)
+                    throw abortError();
                 if (!done) {
                     const left = remaining(startedAt);
                     // 预算已经被 worker 吃光时，再 spawn 一个 python 只会立刻被超时杀掉，
                     // 纯属白起进程 + 白留临时文件：直接按超时失败。
                     if (left < MIN_CLI_BUDGET_MS)
                         throw new Error('tts timeout');
+                    // 回退路径同样带 signal：abort 时直接杀掉这个一次性子进程（本请求独占，杀得干净）
                     await synthViaCli(interp, req, tmpFile, left);
+                    if (sig && sig.aborted)
+                        throw abortError();
                 }
                 const buf = await readFile(tmpFile);
                 if (!buf || !buf.length)
@@ -142,7 +173,12 @@ export function createEdgeTtsEngine(opts = {}) {
                 return buf;
             }
             finally {
-                await removeTemp(tmpFile);
+                const removed = await removeTemp(tmpFile);
+                // 中止时 python 可能还在往这个文件里写（常驻 worker 刻意不杀，取舍见文件头）：
+                // Windows 上句柄没放开会 EBUSY，removeTemp 的几次重试（约 300ms）未必等到它写完。
+                // 这里再排一次延迟清理，别让一个作废请求的 mp3 躺到下次引擎创建时才被 sweep 掉。
+                if (!removed && sig && sig.aborted)
+                    scheduleLateCleanup(tmpFile);
             }
         },
         /** 测试/宿主关闭用：停掉常驻 worker（不属于 TtsEngine 端口，路由不依赖） */
@@ -160,22 +196,80 @@ const TMP_PREFIX = 'chubby-tts-';
 const TMP_STALE_MS = 60 * 60 * 1000;
 /** 回退单次 spawn 至少要留这么多预算，否则不值得起进程 */
 const MIN_CLI_BUDGET_MS = 1000;
+/** 中止后临时文件第一次删不掉（python 还握着句柄）时，隔多久再补删一次 */
+const LATE_CLEANUP_MS = 5000;
+/**
+ * 中止类错误：name='AbortError'，与 fetch / AbortSignal 同一口径，排障时能和「真正的合成失败」
+ * 「超时」分开。**刻意不设 code**：TTS_UNAVAILABLE 的语义是「本机没有 python/edge_tts，改走浏览器
+ * 朗读」，中止不是它；路由会先用 client.gone() 把断连摘出去，所以也不会落进失败记账。
+ */
+function abortError(message = 'tts aborted by caller') {
+    const e = new Error(message);
+    e.name = 'AbortError';
+    return e;
+}
+/**
+ * 在 signal 中止时立刻放弃等待：被等的 Promise 继续跑（探测结果仍会写进模块级缓存），
+ * 我们只是不再等它 —— 「abort 立刻返回」就靠这个，不需要取消共享工作。
+ * 不传 signal 时原样返回（同一个 Promise 身份），行为与改动前完全一致。
+ * 被等的 Promise 自己 reject 时按 undefined 收尾：探测那侧契约是「绝不 reject」，
+ * 真 reject 了也只会让本次按中止返回，而不是把未知异常拖进合成的失败口径。
+ */
+function raceAbort(p, signal) {
+    if (!signal)
+        return p;
+    if (signal.aborted)
+        return Promise.resolve(undefined);
+    return new Promise((resolve) => {
+        let settled = false;
+        const onAbort = () => finish(undefined);
+        const finish = (v) => {
+            if (settled)
+                return;
+            settled = true;
+            try {
+                signal.removeEventListener('abort', onAbort);
+            }
+            catch { }
+            resolve(v);
+        };
+        try {
+            signal.addEventListener('abort', onAbort, { once: true });
+        }
+        catch { }
+        p.then((v) => finish(v), () => finish(undefined));
+    });
+}
+/**
+ * 延迟再清一次临时文件（只在 abort 路径、且第一次删失败时用）。
+ * 定时器 unref：不拖住宿主退出，也不让测试因为一个清理定时器挂着不结束。
+ */
+function scheduleLateCleanup(file) {
+    try {
+        const timer = setTimeout(() => { void removeTemp(file); }, LATE_CLEANUP_MS);
+        if (timer.unref)
+            timer.unref();
+    }
+    catch { }
+}
 /**
  * 删临时文件：Windows 上 python 可能还握着 mp3 句柄（edge_tts 是边下边写），
- * 立即 unlink 会 EBUSY/EPERM。重试几次再放弃；真的删不掉就留给下次启动的 sweepStaleTmp。
+ * 立即 unlink 会 EBUSY/EPERM。重试几次；真的删不掉就返回 false 交给调用方决定
+ * （abort 路径会再排一次延迟清理，其它路径留给下次启动的 sweepStaleTmp）。
  */
 async function removeTemp(file) {
     for (let i = 0; i < 3; i++) {
         try {
             await unlink(file);
-            return;
+            return true;
         }
         catch {
             if (i === 2)
-                return;
+                return false;
             await new Promise((r) => setTimeout(r, i === 0 ? 100 : 200));
         }
     }
+    return false;
 }
 /** 启动时清扫：tmp 里超过 1 小时的 chubby-tts-*.mp3（崩溃遗留 / 句柄一直没放开） */
 async function sweepStaleTmp() {

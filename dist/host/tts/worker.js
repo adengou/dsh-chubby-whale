@@ -17,6 +17,13 @@
  *   · ready 成功后运行期崩溃/退出：立刻用返回值失败掉所有排队请求，不必等 20s 超时。
  *   · 只有「进程不可信」（超时 / stdin 写失败）才 kill；某一段合成返回 ok:false 时
  *     保留健康 worker，避免连带拖垮同一时刻的其它请求。
+ *
+ * 调用方中止（2026-11-07 B94，req.signal = 客户端断连）：
+ *   · 等 worker 启动的那段（settleWithin）与等回包的那段都会被 signal 打断，立即回 false，
+ *     不再干等到 20s 预算耗尽；
+ *   · **刻意不杀 worker**：它是跨请求共享的，杀一次会连带失败掉并发的其它段，还要重付启动开销
+ *     （取舍详见 host/tts-engine.ts 的文件头）。做法是把本请求从 pending 里摘掉 ——
+ *     python 稍后照常回 {"id":…,"ok":…}，因为找不到对应项而被丢弃；产物由引擎侧作废清理。
  */
 import { spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -295,20 +302,36 @@ export function createWorkerRunner() {
     /**
      * 在预算内等一个 Promise 落地：超时返回 null（不取消原 Promise——startWorker 是单飞共享的，
      * 别的请求还要用它）。用在这里是为了让「等 ready / 等别的请求启动 worker」也算进本次预算。
+     * signal 存在且中止时同样立刻返回 null：客户端都走了，没必要再陪别人把这次启动等完。
      */
-    function settleWithin(p, ms) {
+    function settleWithin(p, ms, signal) {
+        if (signal && signal.aborted)
+            return Promise.resolve(null);
         return new Promise((resolve) => {
             let done = false;
             let timer = null;
-            const finish = (v) => {
+            function finish(v) {
                 if (done)
                     return;
                 done = true;
                 if (timer)
                     clearTimeout(timer);
+                if (signal) {
+                    try {
+                        signal.removeEventListener('abort', onAbort);
+                    }
+                    catch { }
+                }
                 resolve(v);
-            };
+            }
+            function onAbort() { finish(null); }
             timer = setTimeout(() => finish(null), Math.max(1, ms));
+            if (signal) {
+                try {
+                    signal.addEventListener('abort', onAbort, { once: true });
+                }
+                catch { }
+            }
             p.then((v) => finish(v), () => finish(null));
         });
     }
@@ -317,11 +340,17 @@ export function createWorkerRunner() {
      * budgetMs 是**这次调用**的总预算（含等待 ready、含等别人正在启动的 worker），
      * 不是「启动等一份、合成再等一份」——否则默认 20s 预算实际会拖到 30s。
      * 失败一律用返回值表达，不抛异常：抛异常会让上层多一条与回退路径并行的错误分支。
+     * req.signal 中止时同样返回 false —— 上层据 signal.aborted 区分「中止」与「真失败」，不重跑。
      */
     async function synth(interp, req, outFile, budgetMs) {
+        const sig = req.signal;
+        // 调用方已经走了：连 worker 都不必等（也别白等一次启动），直接回「本次不可用」
+        if (sig && sig.aborted)
+            return false;
         const deadline = Date.now() + Math.max(1, budgetMs);
-        const w = await settleWithin(startWorker(interp, deadline - Date.now()), deadline - Date.now());
-        // 启动失败 / 冷却中 / 预算在启动阶段就用完了 → 交给上层单次 spawn
+        const w = await settleWithin(startWorker(interp, deadline - Date.now()), deadline - Date.now(), sig);
+        // 启动失败 / 冷却中 / 预算在启动阶段就用完 / 调用方中止 → 交给上层（上层看 signal 决定是
+        // 回退单次 spawn 还是按中止收尾）
         if (!w)
             return false;
         const id = ++seq;
@@ -329,26 +358,46 @@ export function createWorkerRunner() {
         const ok = await new Promise((resolve) => {
             let settled = false;
             let timer = null;
-            const finish = (v) => {
+            function finish(v) {
                 if (settled)
                     return;
                 settled = true;
                 if (timer)
                     clearTimeout(timer);
+                // pending 在这里统一摘除：中止后 python 迟到的回包找不到对应项，自然被丢弃
+                w.pending.delete(id);
+                if (sig) {
+                    try {
+                        sig.removeEventListener('abort', onAbort);
+                    }
+                    catch { }
+                }
                 resolve(v);
-            };
+            }
+            function onAbort() {
+                // 客户端走了：立刻放弃等待这一段，但**不杀 worker**（它是跨请求共享的，取舍见文件头）。
+                // 代价是这一段的 python 仍会把 mp3 写完、再回一行 JSON（被丢弃）——引擎侧随后删临时文件，
+                // 删不掉（Windows 句柄未放开）时再排一次延迟清理。
+                finish(false);
+            }
             timer = setTimeout(() => {
                 if (settled)
                     return;
-                settled = true;
                 w.pending.delete(id);
                 w.dead = true;
                 bumpStat('timeouts');
                 // 超时：整个 worker 已经不可信（可能卡在网络/ffmpeg 上），杀掉由上层回退单次 spawn
                 killWorker();
-                resolve(false);
+                // 走统一的收尾（清定时器 / 摘 abort 监听），避免这次请求的 signal 上留一个死监听
+                finish(false);
             }, Math.max(1, deadline - Date.now()));
             w.pending.set(id, { resolve: finish, timer });
+            if (sig) {
+                try {
+                    sig.addEventListener('abort', onAbort, { once: true });
+                }
+                catch { }
+            }
             try {
                 w.child.stdin?.write(payload + '\n');
             }
@@ -365,7 +414,10 @@ export function createWorkerRunner() {
             //   ① 上面已经杀掉了（超时 / 写失败）——再杀是空操作；
             //   ② worker 回了 {"ok":false}（例如某段文本 NoAudioReceived）——进程本身健康，
             //      杀掉会连带失败掉其它并发请求，还要重新付出 worker 启动开销。
-            if (w.err) {
+            // （中止也走这里：同上，进程健康，不能为一次断连连累并发请求。）
+            // 中止不是合成失败：别把这段的 stderr 当成"回退单次 spawn"的告警打出去（上层会记
+            // TTS-CLIENT-ABORT，两种口径混在一起排障时看花眼）。
+            if (w.err && !(sig && sig.aborted)) {
                 console.warn('[tts] worker 合成失败，回退单次 spawn：' + tailText(w.err));
                 w.err = '';
             }

@@ -2,13 +2,17 @@
  * host/routes/chat.ts —— 聊天路由（可复用模块）
  * 外呼统一走 host/http.ts：主聊天 30 秒、记忆摘要 20 秒（后台跑，不吊住回复）；
  * 请求体上限 6MB，单图 base64 上限 4MB（≈3MB 原图，超限回 413，与流式同一口径）
+ * 客户端断连（30s 硬超时/切页/断网）立刻中止外呼，不把模型跑完、不记账（B94）：
+ *   · 中途被 abort：没有完整回复 → 不写记忆、不记鱼粮、不回包（日志是 CHAT-CLIENT-ABORT）；
+ *   · 回复已完整拿到、只是回不去（abort 晚到一步）：照常记账/写记忆 —— 已经付过费，
+ *     丢掉反而让记忆里少一轮真实对话。两条口径都由 scripts/test-chat-abort.mjs 钉住。
  * 纯函数（语言判定/缓存 key/prompt 组装）在 host/chat-core.ts，流式路由共用同一份；
  * 本文件只做 HTTP 编排与「缓存 → 模型 → 记忆/成长」的调用顺序。
  *
  * 模型名不写死：由 index.ts 用 readChatModel 按配置算好，经 deps.model 注入；
  * max_tokens 预算见 chat-core.ts 的 CHAT_MAX_TOKENS / SUMMARY_MAX_TOKENS。
  */
-import { fetchJson, isTimeoutError, sendTooLarge } from '../http.js';
+import { fetchJson, isAbortError, isTimeoutError, isTimeoutOnly, sendTooLarge, watchClientGone } from '../http.js';
 import { readJsonBody } from '../body.js';
 import { sendJson, sendError } from '../respond.js';
 import { DEFAULT_CHAT_MODEL } from '../config.js';
@@ -20,12 +24,23 @@ const CHAT_MAX_BODY = 6 * 1024 * 1024; // 6MB（图片 base64 约 4MB * 1.34）
 const NET_FALLBACK = '主人，本鲸一时想不起来话（网络或接口有点问题）……';
 /** 图片超限文案：与 host/routes/chat-stream.ts 的同一句保持一致（路由之间不横向 import，各持一份） */
 const IMAGE_TOO_LARGE_FALLBACK = '主人，这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～';
+/**
+ * 客户端已经走了的日志标签（B94）：与上游超时/网络错误分开，排障时一眼能分清谁先放弃。
+ * 分两条是因为时机差一步：外呼发出后断开（中止外呼）/ 请求体还没读完就断开（根本没发起外呼）。
+ * 文案刻意不写 CHAT-TIMEOUT / CHAT-NETWORK 这两个标签名（与 /asr 的「不计入 ASR 失败」同口径）：
+ * 否则按标签 grep 日志时会自己命中自己。
+ */
+const LOG_CLIENT_ABORT_OUTBOUND = '[chat] CHAT-CLIENT-ABORT 客户端已断开，上游外呼已中止（不计入上游超时/网络失败）';
+const LOG_CLIENT_ABORT_REQUEST = '[chat] CHAT-CLIENT-ABORT 客户端已断开，请求中止（未发起外呼，不计入上游失败）';
 export function createChatHandler(opts) {
     let summaryCount = 0;
     let summarizing = false;
     // 装配值优先；直接构造 handler（离线测试/旧调用方）时回落到配置模块的默认模型
     const model = opts.model || DEFAULT_CHAT_MODEL;
     return async function handleChat(req, res) {
+        // 先挂断连观察器：读 body → 外呼 → 写记忆的整段都在它的看护下，结束时必须 dispose（finally）。
+        // 客户端 30s 硬超时/切页/断网先走了以后，宿主不再把这次付费外呼跑满、也不把半截状态记进账（B94）。
+        const client = watchClientGone(req, res);
         try {
             const parsed = await readJsonBody(req, CHAT_MAX_BODY);
             if (!parsed.ok) {
@@ -119,7 +134,7 @@ export function createChatHandler(opts) {
                         temperature: 0.8,
                         thinking: { type: 'disabled' },
                     }),
-                }, CHAT_TIMEOUT);
+                }, CHAT_TIMEOUT, client.signal);
                 if (!r.ok) {
                     console.error('[chat] CHAT-HTTP ' + r.status + ' ' + String(r.text || '').slice(0, 200));
                     sendJson(res, { ok: false, error: `HTTP ${r.status}`, reply: NET_FALLBACK });
@@ -128,11 +143,21 @@ export function createChatHandler(opts) {
                 data = r.data;
             }
             catch (err) {
-                // 超时/网络错误：用户看到的仍是原来的兜底文案，日志里留标签
-                if (isTimeoutError(err))
+                // 客户端先走了（30s 硬超时/切页/断网）：这次外呼是**我们自己** abort 的，不是上游超时、
+                // 也不是网络故障。处理口径与 /asr 一致：不回包（连接已断，没人收）、不写记忆、不记账，
+                // 只留专用诊断（B94：此前这里会把它记成 CHAT-TIMEOUT，排障时分不清是谁先放弃的）。
+                if (client.gone()) {
+                    console.error(LOG_CLIENT_ABORT_OUTBOUND);
+                    return;
+                }
+                // 分类口径（host/http.ts）：内部超时 = TimeoutError；调用方中止但没标 gone = AbortError；其余算网络错
+                if (isTimeoutOnly(err))
                     console.error('[chat] CHAT-TIMEOUT ' + CHAT_TIMEOUT + 'ms 无响应，已中止');
+                else if (isAbortError(err))
+                    console.error('[chat] CHAT-ABORT 外呼被中止（无客户端断连标记）');
                 else
                     console.error('[chat] CHAT-NETWORK ' + String(err?.message || err));
+                // 回给客户端的 error 字段沿用旧口径（超时/中止类都算 timeout），不改客户端可见语义
                 sendJson(res, { ok: false, error: isTimeoutError(err) ? 'timeout' : String(err?.message || err), reply: NET_FALLBACK });
                 return;
             }
@@ -251,9 +276,18 @@ export function createChatHandler(opts) {
         }
         catch (err) {
             try {
+                // 请求体都没收完客户端就断了（req 'aborted' / ECONNRESET）：不算内部错误，也不往死连接写兜底包
+                if (client.gone()) {
+                    console.error(LOG_CLIENT_ABORT_REQUEST);
+                    return;
+                }
                 sendError(res, err, { reply: '主人，本鲸卡住了（内部错误）……' });
             }
             catch { }
+        }
+        finally {
+            // 结束就摘监听：已结束的 handler 没必要继续响应 'close'/'aborted'（与 /asr 同一收口口径）
+            client.dispose();
         }
     };
 }

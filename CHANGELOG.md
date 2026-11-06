@@ -4,6 +4,27 @@
 
 ## [未发布]
 
+## [1.1.66] - 2026-11-07
+
+### 修复（B94 HTTP 错误分类与聊天断连分身）
+- **`isTimeoutError` 把「客户端走了」与「上游太慢」混为一类**：日志分不清，路由也没法据此分流。新增 `isAbortError` / `isTimeoutOnly`（旧函数语义原样保留，不破既有断言）
+- **`/chat` 不接断连**：客户端走了仍把模型跑完、且把 AbortError 记成 `CHAT-TIMEOUT`；请求体断连还会往死连接回 200 兜底包。现在断连即 abort 上游、**半截不记账**（`resolve` 出的完整回复仍照常记账——已付费的语义不变）
+- **`/chat-stream` 漏 `req` 侧断连信号**、每请求留一个 `res close` 监听不摘、断连后仍往死 socket 写 `stream: client closed` 帧
+- `http.ts` 新增公共 `watchClientGone`（三形状判定，正常结束有 `writableFinished` 守护）
+
+### 修复（B94 TTS 断连中止分身）
+- **客户端走了仍在合成**：`/tts` 完全没有断连检测，`TtsEngine`/`cloudTts` 也没有 signal 通道。现在 signal 一路贯到 worker/CLI/云端
+- 取舍写在代码里：edge-tts **共享 worker 不杀**（杀掉会连带失败并发段并重付启动），只把本次从 pending 摘除、产物作废；CLI 回退路径本请求独占 python，abort 直接 kill；临时文件 `EBUSY` 时 5s 补删一次
+- abort 的请求**不记账、不写缓存、不进降级闸、不回退 edge-tts**，只留一行 `TTS-CLIENT-ABORT` 诊断
+
+### 修复（主代理）
+- **整句打断词表三处各抄一份**：`echo-filter` 认 19 条、`voice-bridge` 只认 8 条 → 「停下来吧」在闸门能放行、到桥接却认不出。统一到 `shared/noise.ts` 的 `INTERRUPT_PHRASES` + `isInterruptCommand()`
+- `intent.ts` 头部「纯函数」口径修正：判定同步，但会触发一次 `ensurePoemTitles()` 后台预热（有网络副作用），单测须 stub
+
+### 测试
+- 新增 `test-chat-abort.mjs`(51)、`test-tts-abort.mjs`(61)，接入 `npm test`；`test-shared-voice` +7
+- 全链 **4033 项 0 失败**（`node tools/test-count.mjs`：56 个套件，失败 0，未识别 0）
+
 ## [1.1.65] - 2026-11-07
 
 ### 修复（B93 音色白名单同源分身）

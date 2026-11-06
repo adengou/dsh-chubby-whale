@@ -21,10 +21,34 @@ function bodyTooLarge() {
 export function isBodyTooLarge(err) {
     return Boolean(err && err.code === BODY_TOO_LARGE);
 }
-/** 超时/中止类错误（AbortSignal.timeout 抛 TimeoutError，手动 abort 抛 AbortError） */
+/**
+ * 错误名（B94）：只看 name，不猜 instanceof —— DOMException 跨 realm 不可靠，
+ * 测试里的替身错误也只是 Object.assign(new Error(...), { name })。
+ * 有的运行时/薄封装会把中止原因再包一层（err.reason = 原始 reason），这里顺手认一层。
+ */
+function errorName(err) {
+    return String((err && err.name) || '');
+}
+/** 超时/中止类错误 —— **兼容旧语义：TimeoutError 与 AbortError 都算**（既有测试与 asr 路由按此口径） */
 export function isTimeoutError(err) {
-    const n = String((err && err.name) || '');
+    const n = errorName(err);
     return n === 'TimeoutError' || n === 'AbortError';
+}
+/**
+ * 只因**调用方**（外部 signal：客户端断连 / 切页 / 上层主动取消）中止 —— AbortError。
+ * 依据：fetch 被中止时以 signal.reason 拒绝；AbortController.abort() 的默认 reason 是 AbortError。
+ * 与内部超时（TimeoutError）互斥：路由据此把「客户端走了」与「上游太慢」分开记日志/记账
+ * （B93 取证：两者混在 isTimeoutError 里时，CHAT-TIMEOUT / ASR-TIMEOUT 分不出是谁先放弃的）。
+ */
+export function isAbortError(err) {
+    return errorName(err) === 'AbortError' || errorName(err && err.reason) === 'AbortError';
+}
+/**
+ * 只是内部**超时**（AbortSignal.timeout(ms) 到点）—— TimeoutError；调用方中止不算。
+ * 旧名 isTimeoutError 被「两者都算」的历史语义占着，区分用的新名字另起（B94）。
+ */
+export function isTimeoutOnly(err) {
+    return errorName(err) === 'TimeoutError' || errorName(err && err.reason) === 'TimeoutError';
 }
 /** N 毫秒后自动中止的 signal（Node 18+ 的 AbortSignal.timeout，项目 engines 要求 >=22） */
 export function timeoutSignal(ms) {
@@ -36,6 +60,25 @@ function pickSignal(signal, init) {
     if (!cand)
         return undefined;
     return typeof cand.addEventListener === 'function' && typeof cand.aborted === 'boolean' ? cand : undefined;
+}
+/**
+ * 取中止原因（B94）：先触发那一方的 reason 原样转发；老运行时 signal 没有 reason 时
+ * 按来源补一个**同名**的 DOMException —— 否则内部超时会退化成 AbortError，
+ * isTimeoutOnly 就再也认不出「这是超时还是客户端中止」（手写兜底路径的关键）。
+ */
+function abortReason(src, name) {
+    if (src && src.reason !== undefined)
+        return src.reason;
+    const D = globalThis.DOMException;
+    if (typeof D === 'function') {
+        try {
+            return new D('aborted: ' + name, name);
+        }
+        catch { }
+    }
+    const e = new Error('aborted: ' + name);
+    e.name = name;
+    return e;
 }
 /**
  * 把「内部超时」和「调用方中止」（客户端断连等外部 signal）合成一个 signal：任一触发都中止外呼。
@@ -80,12 +123,11 @@ function combineSignals(timeout, outer) {
     }
     function onAbort(ev) {
         unhookOuter();
-        const src = ev && (ev.target || ev.currentTarget);
+        // 事件没带源 signal（少数实现）时按「谁已经中止」判来源：绝不能把超时当调用方中止
+        const given = ev && (ev.target || ev.currentTarget);
+        const src = given || (timeout.aborted ? timeout : outer);
         try {
-            if (src && src.reason !== undefined)
-                ctl.abort(src.reason);
-            else
-                ctl.abort();
+            ctl.abort(abortReason(src, src === timeout ? 'TimeoutError' : 'AbortError'));
         }
         catch { }
     }
@@ -93,7 +135,7 @@ function combineSignals(timeout, outer) {
     if (timeout.aborted || outer.aborted) {
         const src = timeout.aborted ? timeout : outer;
         try {
-            ctl.abort(src.reason);
+            ctl.abort(abortReason(src, src === timeout ? 'TimeoutError' : 'AbortError'));
         }
         catch { }
         return { signal: ctl.signal, dispose() { } };
@@ -218,4 +260,75 @@ export async function readBody(req, maxBytes) {
     if (overflow)
         throw bodyTooLarge(); // 已经读空，路由这时写 413 能送到客户端
     return Buffer.concat(chunks);
+}
+/**
+ * 盯住「客户端是不是走了」（B94：从 routes/asr.ts 的私有实现提成公共件，两条 chat 路由共用）。
+ * 返回的 signal 交给 host/http.ts 的外呼（fetchWithTimeout / fetchJson 的第 4 个参数）：
+ * 客户端一走，还在等上游的那次付费请求就立刻中止，不必跑满超时、也不把回复写进记忆。
+ * onGone 可选：仅供路由在自己的 controller 上收口（如 /chat-stream 的空闲/总时长 controller），
+ * 在 ctl.abort() 之后调用一次，抛错只吞掉。
+ *
+ * 为什么不能只听 req 的 close（Node 24 本机实测，时间线见 scripts/test-asr-abort.mjs）：
+ * 请求体读完时 req 就会发 close（此时 req.complete=true、res.writableEnded=false、响应还没写）——
+ * 只看 close 会把**每个正常请求**都误判成断连。真正的断连有三种形状：
+ *   ① req 'aborted'：请求体还没收完客户端就断了（Node 24 实测会发，虽已标记废弃）；
+ *   ② req 'close' 且 req.complete === false：①的兜底（老版本/某些客户端不发 aborted）；
+ *   ③ res 'close' 且响应没写完（writableEnded 与 writableFinished 都为 false）：客户端发完了
+ *      body、等不到结果先走了 —— 客户端 30s 硬超时就是这个形状（宿主还在跑 30s 的聊天/60s 的识别）。
+ * 正常结束的 res 'close' 里 writableFinished=true，不会命中 ③，所以不会误中止正常请求。
+ */
+export function watchClientGone(req, res, onGone) {
+    const ctl = new AbortController();
+    let gone = false;
+    const mark = () => {
+        if (gone)
+            return;
+        gone = true;
+        try {
+            ctl.abort();
+        }
+        catch { }
+        if (onGone) {
+            try {
+                onGone();
+            }
+            catch { }
+        }
+    };
+    const onReqAborted = () => mark();
+    const onReqClose = () => { if (!req || req.complete === false)
+        mark(); };
+    const onResClose = () => { if (!res || !(res.writableEnded || res.writableFinished))
+        mark(); };
+    const on = (target, ev, fn) => {
+        // 测试里的假 req/res 未必是 EventEmitter：没有 on 就静默跳过（既有用例都是这种形状）
+        if (!target || typeof target.on !== 'function')
+            return;
+        try {
+            target.on(ev, fn);
+        }
+        catch { }
+    };
+    const off = (target, ev, fn) => {
+        if (!target || typeof target.removeListener !== 'function')
+            return;
+        try {
+            target.removeListener(ev, fn);
+        }
+        catch { }
+    };
+    on(req, 'aborted', onReqAborted);
+    on(req, 'close', onReqClose);
+    on(res, 'close', onResClose);
+    return {
+        signal: ctl.signal,
+        gone: () => gone,
+        dispose() {
+            // req/res 是每请求对象，不摘也不会串到下一个请求；但已结束的 handler 没必要继续响应
+            // 'close'/'aborted'（多做一次无意义的 abort），排障时也容易看花眼
+            off(req, 'aborted', onReqAborted);
+            off(req, 'close', onReqClose);
+            off(res, 'close', onResClose);
+        },
+    };
 }
