@@ -21,6 +21,7 @@ import { createCache } from './host/cache.js';
 import { createPrefs, createCacheToggleHandler } from './host/prefs.js';
 import { createPersonalityRepo } from './host/personality.js';
 import { createPersonalityLearner } from './host/personality-learn.js';
+import { estimateCostCny, readUsageSplit } from './shared/pricing.js';
 import { createSelfNarrativeWriter } from './host/personality-write.js';
 import { createPersonalityHandlers } from './host/routes/personality.js';
 import { createChatHandler } from './host/routes/chat.js';
@@ -126,12 +127,20 @@ export function apply(ctx, rawConfig) {
     // 这里只维护一小段可回滚的附加人格；学习默认开，config.json 的 personalityLearning:false 可关。
     const personality = createPersonalityRepo(RUNTIME_DIR);
     const personalityLearningEnabled = readPersonalityLearning(PLUGIN_DIR, config);
+    // 内部模型调用也要进鱼账本（2026-11-07 B97）：摘要 / 人格学习 / 人格自写共用一个注入式账本端口。
+    // 金额口径与聊天链路相同（shared/pricing.ts），拿不到 usage 拆分就不记金额。
+    const internalLedger = {
+        addTokens: store.addTokens,
+        readUsageSplit,
+        estimateCostCny,
+    };
     const personalityLearner = createPersonalityLearner({
         repo: personality,
         getKey,
         loadHistory: store.loadHistory,
         enabled: () => personalityLearningEnabled,
         model: chatModel,
+        ledger: internalLedger,
     });
     if (!personalityLearningEnabled)
         console.log('[chubby-whale] personalityLearning=false（可变人格学习已关闭）');
@@ -145,6 +154,7 @@ export function apply(ctx, rawConfig) {
         corePrompt: () => SYSTEM_PROMPT,
         enabled: () => personalityWritingEnabled,
         model: chatModel,
+        ledger: internalLedger,
     });
     if (!personalityWritingEnabled)
         console.log('[chubby-whale] personalityWriting=false（近期心境自写已关闭，已存心境仍注入）');

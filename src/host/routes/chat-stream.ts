@@ -417,7 +417,7 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
               if (nowSummary !== summaryAtReply) { console.error('[chat-stream] SUMMARY-SKIP 摘要已被改写'); return }
             } catch { }
             saveSummary(s2)
-          }, model)
+          }, model, opts.addTokens)
         } catch { }
       }
     } catch (err: any) {

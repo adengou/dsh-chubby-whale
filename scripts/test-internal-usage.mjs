@@ -16,7 +16,8 @@
  *   [5] 总量口径：真仓储（repos/fishfood.ts）跑一遍，证明 kind='summary'/'personality'
  *       与 kind='chat' 的 chatTokens/dayTokens/monthTokens/totalTokens **逐个字段相等**
  *       （该仓储只把 'story' 单独计，其余 kind 一律并进 chatTokens）；
- *   [6] 接线现状（只打印，不断言）：仓库里三个调用点目前都还没被装配层注入记账端口。
+ *   [6] 装配接线（断言，2026-11-07 主代理完成接线后升级）：两条聊天路由必须把 addTokens 传给
+ *       summarizeMemory、index.ts 必须给 L2/L3 注入 ledger —— 只做记账口不接线等于白做。
  *
  * 说明：本批次（B97）只允许改 chat-core / personality-learn / personality-write / ports，
  * 不允许改 package.json 与 scripts/test.mjs，所以本文件**不在 npm test 清单里**，需手动跑：
@@ -535,8 +536,8 @@ try {
       [before.totalTokens, before.chatTokens, before.promptTokens, before.costCny])
   }
 
-  // ========== [6] 接线现状（只打印，不断言） ==========
-  console.log('\n[6] 接线现状（信息，不计入断言）')
+  // ========== [6] 装配接线（断言） ==========
+  console.log('\n[6] 装配接线（漏接线 → 记账口白做）')
   {
     // 只截「这一次调用」的实参文本：按括号配对扫，别用宽松正则——宽松写法会把
     // index.ts 里聊天路由的 addTokens 误当成人格链路的注入（假绿）。
@@ -554,9 +555,8 @@ try {
     }
     for (const rel of ['src/host/routes/chat.ts', 'src/host/routes/chat-stream.ts']) {
       const args = argText(readFileSync(path.join(ROOT, rel), 'utf8'), 'summarizeMemory')
-      if (args === null) { console.log('  · ' + rel + '：没找到 summarizeMemory 调用点（文件结构变了，需人工核对）'); continue }
-      const wired = /\baddTokens\b/.test(args)
-      console.log('  · ' + rel + '：' + (wired ? '已把记账端口传给 summarizeMemory' : '仍只传 5 个实参 → 该链路仍漏账，属已知缺口'))
+      if (args === null) { ok(rel + ' 里能找到 summarizeMemory 调用点', false); continue }
+      ok(rel + ' 把记账端口传给 summarizeMemory（第 6 参）', /\bopts\.addTokens\b/.test(args), String(args).replace(/\s+/g, ' ').slice(-60))
     }
     const idx = readFileSync(path.join(ROOT, 'src/index.ts'), 'utf8')
     for (const [label, call] of [
@@ -564,9 +564,8 @@ try {
       ['L3 自写 createSelfNarrativeWriter', 'createSelfNarrativeWriter'],
     ]) {
       const args = argText(idx, call)
-      if (args === null) { console.log('  · src/index.ts：没找到 ' + call + ' 装配（需人工核对）'); continue }
-      const wired = /\bledger\b/.test(args)
-      console.log('  · src/index.ts：' + label + '：' + (wired ? '已注入 ledger' : '未注入 ledger → 该链路仍漏账，属已知缺口'))
+      if (args === null) { ok('src/index.ts 里能找到 ' + call + ' 装配', false); continue }
+      ok('src/index.ts 给 ' + label + ' 注入 ledger', /\bledger\s*:/.test(args), String(args).replace(/\s+/g, ' ').slice(0, 60))
     }
   }
 } finally {

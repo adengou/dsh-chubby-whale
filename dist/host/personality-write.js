@@ -155,6 +155,21 @@ export function createSelfNarrativeWriter(deps) {
                 console.error('[personality] SELF-HTTP ' + r.status + ' ' + String(r.text || '').slice(0, 200));
                 return { ok: false, reason: 'HTTP ' + r.status };
             }
+            // 鱼账本（B97）：这次自写确实花掉了 token，拿到 usage 就记账；拿不到不猜（与聊天同一口径）。
+            // 放在限域验收/写盘之前：后面 SELF-SKIP / SELF-SAME / 写盘失败都不该把已花的 token 吞掉。
+            try {
+                const led = deps.ledger;
+                const u = r.data && r.data.usage;
+                if (led && typeof led.addTokens === 'function' && typeof led.readUsageSplit === 'function'
+                    && typeof led.estimateCostCny === 'function' && u && typeof u.total_tokens === 'number') {
+                    const split = led.readUsageSplit(u);
+                    const cost = split ? led.estimateCostCny(split, model) : null;
+                    led.addTokens('personality', u.total_tokens, split
+                        ? { promptTokens: split.promptTokens, completionTokens: split.completionTokens, cacheHitTokens: split.cacheHitTokens, costCny: cost ? cost.cny : undefined, source: 'personality' }
+                        : undefined);
+                }
+            }
+            catch { }
             const content = r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message
                 ? r.data.choices[0].message.content : '';
             // 身份词/长度在这里收口：不合格整句丢弃，不写盘（只记一行 SELF-SKIP）

@@ -249,7 +249,8 @@ export function createChatHandler(opts: ChatRouteDeps) {
             }
           } catch { }
           saveSummary(s)
-        }, model)
+        // 第 6 参：后台摘要的 token 也要进鱼账本（2026-11-07 B97）
+        }, model, opts.addTokens)
           .catch(() => { })
           .finally(() => { summarizing = false })
       }
