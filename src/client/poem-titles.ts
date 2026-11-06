@@ -42,6 +42,8 @@ const RETRY_DELAY_MS = 60 * 1000
 const MAX_ATTEMPTS = 3
 let attempts = 0
 let nextTryAt = 0
+/** 在途闸：同一时刻只有一个请求（detectIntent 可能在同步循环里连调多次） */
+let inflight = false
 
 /** 归一化：只留非空字符串，按长度降序（与内联时代一致：「雨霖铃」先于「雨」这类短名） */
 function normalize(list: unknown): string[] {
@@ -123,15 +125,22 @@ export function poemTitles(): readonly string[] {
 /** 后台预热（幂等）：就绪/尝试上限/退避窗口内都直接返回；从不抛错、从不阻塞调用方 */
 export function ensurePoemTitles(): void {
   if (cache.length > 0) return
+  if (inflight) return
   if (attempts >= MAX_ATTEMPTS) return
   if (Date.now() < nextTryAt) return
   started = true
   attempts++
-  const failed = (): void => { nextTryAt = Date.now() + RETRY_DELAY_MS }
+  inflight = true
+  // 失败：退出在途闸并设置退避窗口
+  const failed = (): void => {
+    inflight = false
+    nextTryAt = Date.now() + RETRY_DELAY_MS
+  }
   getJson(API_PATH, { signal: timeoutSignal(FETCH_TIMEOUT_MS) })
     .then((data: any) => {
       // host 失败时返回 {ok:false, titles:[]}：按「没拿到」处理，保持降级
       if (data && data.ok === true && Array.isArray(data.titles) && data.titles.length > 0) {
+        inflight = false
         apply(data.titles, true)
         return
       }

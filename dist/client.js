@@ -1360,10 +1360,10 @@
     if (/[，、；,;]/.test(last)) return 140;
     return 200;
   }
-  function prefetchTargets(queue, narration, inflight = 0, has, maxInflight = 3) {
+  function prefetchTargets(queue, narration, inflight2 = 0, has, maxInflight = 3) {
     const depth = narration ? 3 : 2;
     const cap = Math.max(0, Math.floor(Number(maxInflight) || 0));
-    let n = Math.max(0, Math.floor(Number(inflight) || 0));
+    let n = Math.max(0, Math.floor(Number(inflight2) || 0));
     const out = [];
     for (let i = 0; i < depth && i < queue.length; i++) {
       const t = queue[i];
@@ -6822,6 +6822,7 @@
   var MAX_ATTEMPTS = 3;
   var attempts = 0;
   var nextTryAt = 0;
+  var inflight = false;
   function normalize(list) {
     const out = [];
     if (!Array.isArray(list)) return out;
@@ -6886,15 +6887,19 @@
   }
   function ensurePoemTitles() {
     if (cache.length > 0) return;
+    if (inflight) return;
     if (attempts >= MAX_ATTEMPTS) return;
     if (Date.now() < nextTryAt) return;
     started = true;
     attempts++;
+    inflight = true;
     const failed = () => {
+      inflight = false;
       nextTryAt = Date.now() + RETRY_DELAY_MS;
     };
     getJson(API_PATH, { signal: timeoutSignal(FETCH_TIMEOUT_MS) }).then((data) => {
       if (data && data.ok === true && Array.isArray(data.titles) && data.titles.length > 0) {
+        inflight = false;
         apply(data.titles, true);
         return;
       }

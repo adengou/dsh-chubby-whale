@@ -619,7 +619,9 @@ async function runPoemTitlesDegradedSuite(mod, ctx) {
     mod.poemTitles.ensurePoemTitles()
     mod.poemTitles.ensurePoemTitles()
     mod.poemTitles.ensurePoemTitles()
-    ok('poem-titles：只拉一次（重复 ensure 不再打网络）', ctx.fetches.length === 1, String(ctx.fetches.length))
+    // 2026-11-07 起：失败后有界重试（60s 退避、最多 3 次）。同一时刻的重复 ensure 仍只发一次，
+    // 但"本页永不再试"已改成"窗口内不重试、最多 3 次"。
+    ok('poem-titles：同一时刻重复 ensure 只打一次网络（退避生效）', ctx.fetches.length === 1, String(ctx.fetches.length))
     await settle()
     ok('poem-titles：失败后保持降级（空表、不抛）', mod.poemTitles.poemTitles().length === 0)
 
@@ -627,7 +629,7 @@ async function runPoemTitlesDegradedSuite(mod, ctx) {
     mod.intent.detectIntent('背雨霖铃')
     mod.poemTitles.ensurePoemTitles()
     await settle()
-    ok('poem-titles：失败后本页不再重试（detectIntent 多次调用仍只有 1 次请求）',
+    ok('poem-titles：退避窗口内不重试（多次识别仍只有 1 次请求）',
       ctx.fetches.length === 1, 'requests=' + ctx.fetches.length)
     ok('poem-titles：未就绪时泛化意图照常识别（背首诗 → poem）',
       (() => { const h = mod.intent.detectIntent('背首诗'); return !!h && h.kind === 'poem' })())
