@@ -3567,6 +3567,7 @@
   }
 
   // src/client/actions/culture.ts
+  var reciteEpoch = 0;
   function recitePoem(host, poem) {
     const body = String(poem.text || "");
     const author = String(poem.author || "佚名");
@@ -3582,7 +3583,9 @@
     const speech = intro + collapsePoemBody(body);
     host.narrate(estimateSpeakMs(speech));
     host.say(host.persona.line("poemStart"), 4e3);
+    const myEpoch = ++reciteEpoch;
     setTimeout(() => {
+      if (myEpoch !== reciteEpoch) return;
       try {
         host.speak(speech, {
           rate: poemRate(host.narrationRate()),

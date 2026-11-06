@@ -16,6 +16,14 @@ import { setNarrationRate, setChatRate, poemRate } from '../rates.js'
 /** 念诗需要的最小能力集（菜单动作与点播路由共用） */
 export type ReciteHost = Pick<ActionHost, 'bubble' | 'talkFor' | 'narrate' | 'clearNarrate' | 'say' | 'speak' | 'persona' | 'narrationRate'>
 
+/** 念诗代际：每次开念 or 主动取消都 +1；延迟回调里比对，防止「停止说话」后仍开念 */
+let reciteEpoch = 0
+
+/** 取消待开念的念诗（停止说话/歇会儿时调用） */
+export function cancelRecite(): void {
+  reciteEpoch++
+}
+
 /** 念诗：气泡 + 叙述锁 + 朗读 + 念完收尾（菜单「念首诗」与点播「背首诗」共用一份） */
 export function recitePoem(host: ReciteHost, poem: any): void {
   const body = String(poem.text || '')
@@ -30,7 +38,10 @@ export function recitePoem(host: ReciteHost, poem: any): void {
   const speech = intro + collapsePoemBody(body)
   host.narrate(estimateSpeakMs(speech))
   host.say(host.persona.line('poemStart'), 4000)
+  // 延迟 600ms 让「念诗·标题」气泡先亮；回调里校验代际——停止说话时 cancelRecite() 会让它作废
+  const myEpoch = ++reciteEpoch
   setTimeout(() => {
+    if (myEpoch !== reciteEpoch) return
     try {
       host.speak(speech, {
         rate: poemRate(host.narrationRate()),
