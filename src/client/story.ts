@@ -14,6 +14,13 @@
  *     否则旧实例的 onDone 会把新实例的占线清掉。
  *   · 停止检测：请求回来时 busy 已被「歇会儿/停止说话」清掉（client.ts 的 stopTts 会清 storyBusyRef），
  *     据此丢弃这段结果，不再念、不再接。
+ *   · 停止即中止（2026-11-07 B98）：只清 busy 不够 —— 请求还挂在服务端，响应照样送达，服务端
+ *     「响应送出后记已讲」照样触发，主人根本没听的那段就成了已完成。所以本轮给说书请求配了一个
+ *     AbortController（同一时刻只在途一个）：refs.busy 从 true 被外部写成 false（停止说话 / 歇会儿 /
+ *     叙述锁过期）时立刻 abort；新一轮请求开始也先 abort 上一条。AbortError 按「用户主动停」处理：
+ *     静默、不算失败、不改状态；abort 之后迟到的结果仍由 stillMine 兜底丢弃。
+ *     请求在途时 busy 由本模块持有，所以停止方唯一的把手就是 busy 这把锁；停止钩子用
+ *     Object.defineProperty 包住 busy.current 的写，不额外要求 client.ts 改接线。
  *   · 请求在途也算「在讲」（2026-11-07）：narrating 从发请求那一刻就立起来。P0 打断只认
  *     `narrating || ttsPlaying`（client/chat.ts），请求在途期间标记为假的话，主人这时提问打不断
  *     这一轮，响应回来会把说书接在回答后面（违反并发纪律规则 4）。
@@ -84,19 +91,76 @@ const SPEAK_GUARD_RATIO = 0.2
 const SPEAK_GUARD_MAX_MS = 2 * 60 * 1000
 
 /**
+ * 在途的说书请求（B98）。
+ * reason：'' = 还没中止；'stop' = 停止说话/歇会儿/兜底到点；'superseded' = 被新一轮请求顶掉；
+ * 'timeout' = 25 秒超时（仍按「等太久」提示）。
+ */
+type Inflight = { ctrl: any; reason: string }
+
+/**
  * 控制器共享状态（按 refs.busy 这个稳定对象取）。
  * 组件每次渲染都会 createStoryController，闭包变量会重置；
  * 旧实例的 onDone / 旧请求要能和「新一次操作」比对同一份 gen，必须放到共享状态里。
+ * inflight 也放这里：停止动作来自组件外部（client.ts/actions），只能按 refs.busy 找回本轮的请求。
  */
-type SharedState = { gen: number; guard: any }
+type SharedState = { gen: number; guard: any; inflight: Inflight | null }
 const sharedStates = new WeakMap<object, SharedState>()
 
 function sharedStateOf(refs: StoryRefs): SharedState {
   const key: any = refs && refs.busy ? refs.busy : null
-  if (!key) return { gen: 0, guard: null }
+  if (!key) return { gen: 0, guard: null, inflight: null }
   let s = sharedStates.get(key)
-  if (!s) { s = { gen: 0, guard: null }; sharedStates.set(key, s) }
+  if (!s) { s = { gen: 0, guard: null, inflight: null }; sharedStates.set(key, s) }
   return s
+}
+
+/** 建一个可主动中止的控制器；没有 AbortController 的老浏览器（iOS Safari < 12.2）返回 null */
+function makeAbortController(): any {
+  try {
+    const AC: any = typeof AbortController !== 'undefined' ? AbortController : null
+    if (AC) return new AC()
+  } catch (e) { }
+  return null
+}
+
+/**
+ * 掐断在途请求：只断连接，**不动** busy/narrating ——
+ * 那两把锁要么已被停止方清掉（停止说话 / 歇会儿），要么由各自收尾负责，
+ * 在这里顺手改会误伤刚重开的那一轮。
+ */
+function abortInflightOf(shared: SharedState, reason: string): void {
+  const round = shared.inflight
+  if (!round) return
+  shared.inflight = null
+  round.reason = reason
+  try { round.ctrl.abort() } catch (e) { }
+}
+
+/**
+ * 停止钩子：说书请求在途时，busy 这把锁是本模块持有的，停止方（client.ts 的 stopTts、
+ * actions/system.ts 的 pause / tts-stop）唯一的动作就是把它写成 false。
+ * 包一层 busy.current 的写，外部把它从 true 写成 false 的瞬间就 abort 在途请求；
+ * 自家收尾写的 false 不会有事（那时 inflight 已经结算为空）。
+ */
+const stopHooks = new WeakSet<object>()
+function installStopHook(refs: StoryRefs, shared: SharedState): void {
+  const busy: any = refs ? refs.busy : null
+  if (!busy || stopHooks.has(busy)) return
+  try {
+    let on = !!busy.current
+    Object.defineProperty(busy, 'current', {
+      configurable: true,
+      enumerable: true,
+      get: () => on,
+      set: (v: any) => {
+        const next = !!v
+        const was = on
+        on = next
+        if (was && !next) abortInflightOf(shared, 'stop')
+      },
+    })
+    stopHooks.add(busy)
+  } catch (e) { }
 }
 
 /** fetch 被 abort 时不同运行时的错误形状不一样，统一认一下 */
@@ -123,6 +187,8 @@ function storyErrorText(raw: any): string {
 export function createStoryController(host: StoryHost): StoryController {
   const refs = host.refs
   const shared = sharedStateOf(refs)
+  // 停止说话 / 歇会儿 把 busy 清掉的那一下要能 abort 在途请求（每次渲染重建控制器也只需装一次）
+  installStopHook(refs, shared)
 
   /** 作废旧代际（旧请求/旧 onDone 拿到它就不再往下走） */
   function bumpGen(): number {
@@ -189,9 +255,20 @@ export function createStoryController(host: StoryHost): StoryController {
     }, REQUEST_DEADLINE_MS)
   }
 
+  /** 本次在途请求结算（只清自己的那一条，别把新一轮的句柄抹掉） */
+  function settleInflight(round: Inflight | null): void {
+    if (!round) return
+    if (shared.inflight === round) shared.inflight = null
+  }
+
   /**
    * 说书请求的公共流程：同步占线 → 带超时拉 JSON → 令牌/停止校验 → 交回调。
    * 失败（网络错/超时/作废）时的收尾都在这里，调用方只处理业务字段。
+   *
+   * 可中止（B98）：请求挂在自己的 AbortController 上，同一时刻只留一个在途。
+   *   · 新一轮请求开始：先 abort 上一条（reason=superseded）；
+   *   · 停止说话 / 歇会儿：installStopHook 把 busy 清掉时 abort（reason=stop）；
+   *   · 25 秒超时：超时信号桥接到同一个 controller（reason=timeout），文案照旧「等太久」。
    */
   function requestStory(
     path: string,
@@ -199,16 +276,53 @@ export function createStoryController(host: StoryHost): StoryController {
     texts: { slow: string; fail: string },
     onData: (d: any, token: number) => void,
   ): void {
+    abortInflightOf(shared, 'superseded')
     const token = beginRound()
     const deadline = armDeadline(token, texts.slow)
-    const init = { headers: clientHeaders(host.clientId), signal: timeoutSignal(REQUEST_TIMEOUT_MS) }
+    const ctrl = makeAbortController()
+    const timeoutSig = timeoutSignal(REQUEST_TIMEOUT_MS)
+    const round: Inflight | null = ctrl ? { ctrl, reason: '' } : null
+    let detachTimeout: (() => void) | null = null
+    if (round) {
+      shared.inflight = round
+      // 超时信号不再直接交给 fetch：请求只认我们自己的 controller，
+      // 到点先桥接成一次 abort（连接立刻断，服务端不会收尾成「已讲」）。
+      if (timeoutSig) {
+        const onTimeout = (): void => {
+          if (round.reason) return
+          round.reason = 'timeout'
+          try { ctrl.abort() } catch (e) { }
+        }
+        try {
+          if (typeof timeoutSig.addEventListener === 'function') {
+            timeoutSig.addEventListener('abort', onTimeout)
+            detachTimeout = () => {
+              try { timeoutSig.removeEventListener('abort', onTimeout) } catch (e) { }
+            }
+          }
+        } catch (e) { }
+      }
+    }
+    const init = { headers: clientHeaders(host.clientId), signal: ctrl ? ctrl.signal : timeoutSig }
+    const finish = (): void => {
+      clearTimeout(deadline)
+      if (detachTimeout) { detachTimeout(); detachTimeout = null }
+      settleInflight(round)
+    }
     const p = post ? postJson(path, undefined, init) : getJson(path, init)
     p.then((d: any) => {
-      clearTimeout(deadline)
+      finish()
       if (!stillMine(token)) return
       onData(d, token)
     }).catch((err: any) => {
-      clearTimeout(deadline)
+      const reason = round ? round.reason : ''
+      finish()
+      // 用户主动停（停止说话 / 歇会儿）或被新一轮顶掉：静默收手 —— 不算失败、不弹错、不改状态。
+      // 占线已由「停」的一方清掉；这里再 release 会误伤刚重开的那一轮。
+      if (reason === 'stop' || reason === 'superseded') {
+        if (stillMine(token)) release(token)
+        return
+      }
       if (!stillMine(token)) return
       release(token)
       host.bubble(isAbortError(err) ? texts.slow : texts.fail, 5000)
