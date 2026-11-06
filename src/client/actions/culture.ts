@@ -114,7 +114,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
     host.bubble('说书语速：' + rate, 4000)
   })
 
-  // —— 民间故事：标题 + 出处 + 整篇（超 6000 字才截），叙述语速 ——
+  // —— 民间故事：标题 + 出处 + 整篇完整念（不截断；长故事靠 TTS 队列逐块念完），叙述语速 ——
   table.define('culture-tale', (host) => {
     getJson('/culture?type=minsu').then((d: any) => {
       if (!(d && d.ok && d.item)) { host.bubble('故事没讲成'); return }
@@ -122,7 +122,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
       const body = collapseText(d.item.text)
       host.bubble('讲民间故事·' + tp.title + (tp.book ? '（出自《' + tp.book + '》）' : ''), 9000)
       host.talkFor(5000)
-      host.speak('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body.slice(0, 6000), {
+      host.speak('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body, {
         rate: host.narrationRate(),
         onDone: () => finishSpeech(host, '故事讲完啦～'),
       })

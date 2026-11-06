@@ -3690,7 +3690,7 @@
         const body = collapseText(d.item.text);
         host.bubble("讲民间故事·" + tp.title + (tp.book ? "（出自《" + tp.book + "》）" : ""), 9e3);
         host.talkFor(5e3);
-        host.speak("讲个民间故事——" + tp.title + (tp.book ? "，出自《" + tp.book + "》" : "") + "。" + body.slice(0, 6e3), {
+        host.speak("讲个民间故事——" + tp.title + (tp.book ? "，出自《" + tp.book + "》" : "") + "。" + body, {
           rate: host.narrationRate(),
           onDone: () => finishSpeech(host, "故事讲完啦～")
         });
