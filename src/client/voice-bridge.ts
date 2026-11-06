@@ -8,15 +8,42 @@
  * 另补两条 client 侧接线（审查确认的缺口）：
  *   · 音色：菜单「换个声音」选完 → setVoiceName 立即生效（下一个 /tts 就带新 voice，
  *     不重建实例）；试听也走宿主 /tts（strict：失败静默，不回落浏览器语音）。
- *   · 唤醒词：识别结果先过 client/wake.ts 的门，只有最近 30 秒内被叫过才交给聊天。
- *     ASR 上传节奏不变（仍是每 6 秒窗口一段），减少的是误触发与误回话。
+ *   · 唤醒词：识别结果先过 client/wake.ts 的门，命中就把唤醒词从正文里剥掉；
+ *     2026-11-06 起唤醒词**不再是拦话门槛**（主人定的"随时可以说"），
+ *     现在只剩三个用途：① 只喊名字时应一声；② 句首/句中的词剥掉再送模型；
+ *     ③ 30 秒有效窗只作诊断（wakeInfo），不参与放行判定。
  */
 
 import { createVoice, normalizeVoiceName, readStoredVoiceName } from './voice.js'
 import type { Voice } from './voice.js'
 import type { NarrationLock } from './narration.js'
 import { bumpProgress } from './narration-progress.js'
-import { createWakeGate, normalizeWakeText, loadCustomWakeWords, WAKE_WORDS } from './wake.js'
+import { createWakeGate, normalizeWakeText, loadCustomWakeWords, stripWakeWords, WAKE_WORDS } from './wake.js'
+import { isInterruptWord } from '../shared/noise.js'
+
+/**
+ * 朗读场景里可以直接掐断的整句。
+ * 另外五个规范打断词（停 / 别 / 不 / 闭嘴 / 打住）以 shared/noise.ts 的 INTERRUPT_WORDS
+ * 为唯一真相源——宿主 ASR 专门放行这五个，客户端原来只认"停"，喊「别」「不」会被当成
+ * 正文送去模型（喊了不生效）。这里不再抄一份，统一走 isInterruptWord()。
+ */
+const STOP_PHRASES: string[] = ['停下', '停一下', '别说了', '别讲了', '别念了', '别吵', '安静', '够了']
+
+/** 说书/念诗期间"别念了"这类放宽匹配（句中带"不念/算了"也停，叙述中容忍度高） */
+const NARR_STOP_RE = /停|别念|不念|够了|算了|打住/
+
+/** 文本里有没有实际内容（汉字/字母/数字）；只有标点/空白不算一句话 */
+const HAS_CONTENT_RE = /[\u4e00-\u9fa5a-z0-9]/i
+
+/**
+ * 归一化后的整句是不是"停止"指令。
+ * 只认整句：正文里恰好含"别""不"的正常发言不能被当成指令吞掉。
+ */
+function isStopCommand(norm: string): boolean {
+  if (!norm) return false
+  if (isInterruptWord(norm)) return true
+  return STOP_PHRASES.indexOf(norm) >= 0
+}
 
 export type VoiceBridgeHost = {
   /** 叙述锁：念诗/说书期间拾到的话不当作新发言（只放行明确的"停"） */
@@ -84,39 +111,43 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
   // 唤醒门：命中唤醒词刷新 30 秒有效窗
   const gate = createWakeGate({ words: loadCustomWakeWords() })
 
-// 唤醒词表按需同步（2026-11-07）：主人换词后不必重开语音待命/刷新页面。
-// loadCustomWakeWords() 返回 undefined 表示「用默认表」；gate 内部持有同一个数组引用，
-// 原地替换元素即可生效，且不会丢掉「30 秒有效窗」的状态（重建 gate 会丢）。
-let wakeWordsSig = ''
-function syncWakeWords(): void {
-  let next: string[]
-  try {
-    const custom = loadCustomWakeWords()
-    next = (custom && custom.length ? custom : WAKE_WORDS).slice()
-  } catch (e) {
-    return
+  // 唤醒词表按需同步（2026-11-07）：主人换词后不必重开语音待命/刷新页面。
+  // loadCustomWakeWords() 返回 undefined 表示「用默认表」；gate 内部持有同一个数组引用，
+  // 原地替换元素即可生效，且不会丢掉「30 秒有效窗」的状态（重建 gate 会丢）。
+  let wakeWordsSig = ''
+  function syncWakeWords(): void {
+    let next: string[]
+    try {
+      const custom = loadCustomWakeWords()
+      next = (custom && custom.length ? custom : WAKE_WORDS).slice()
+    } catch (e) {
+      return
+    }
+    const sig = next.join('|')
+    if (sig === wakeWordsSig) return
+    wakeWordsSig = sig
+    try {
+      gate.words.length = 0
+      for (const w of next) gate.words.push(w)
+    } catch (e) { }
   }
-  const sig = next.join('|')
-  if (sig === wakeWordsSig) return
-  wakeWordsSig = sig
-  try {
-    gate.words.length = 0
-    for (const w of next) gate.words.push(w)
-  } catch (e) { }
-}
+
   const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 }
   // 识别没配 Key 的提示只弹一次（每次重开语音待命可以再弹一次）
   let asrNoKeyNotified = false
+  // 关页面时释放麦克风的监听（每桥只挂一个，dispose 摘掉）
+  let unloadHandler: (() => void) | null = null
 
   function wakeInfo(): any {
-  syncWakeWords()
+    syncWakeWords()
     const now = Date.now()
     const remainingMs = gate.remainingMs(now)
     return {
       awake: remainingMs > 0,
       remainingMs,
       windowMs: gate.windowMs,
-      words: gate.words,
+      // 给出去的是副本：调用方（菜单/诊断）拿到的是可写数组，不能顺着它改门里的词表
+      words: gate.words.slice(),
       hits: wakeStats.hits,
       passed: wakeStats.passed,
       dropped: wakeStats.dropped,
@@ -126,6 +157,33 @@ function syncWakeWords(): void {
 
   function pushWake(): void {
     try { host.diag({ wake: wakeInfo() }) } catch (e) { }
+  }
+
+  /** 停止朗读 + 清叙述锁 + 说一声（stopSpeaking 在 host 侧会连带清锁，这里再兜一次） */
+  function stopNarration(notice: string): void {
+    try { host.stopSpeaking() } catch (e) { }
+    try { host.narration.clear() } catch (e) { }
+    try { host.bubble(notice, 2500) } catch (e) { }
+  }
+
+  /** 打断词是否要生效：正在朗读才停；没在朗读就把这句话当正文交给聊天（不吞正常发言） */
+  function tryInterrupt(text: string): boolean {
+    let spoken = ''
+    try {
+      // 先剥唤醒词：「大肥鱼，停」也算喊停（原来只认光秃秃的「停」）
+      const probe = stripWakeWords(text, gate.words)
+      spoken = normalizeWakeText(probe.hit ? probe.text : text)
+    } catch (e) {
+      return false
+    }
+    if (!isStopCommand(spoken)) return false
+    let speaking = false
+    try { speaking = host.speaking ? !!host.speaking() : true } catch (e) { speaking = false }
+    if (!speaking) return false
+    try { host.stopSpeaking() } catch (e) { }
+    try { host.bubble('好，不说了', 2000) } catch (e) { }
+    bump('wakeBreak')
+    return true
   }
 
   function build(): Voice {
@@ -138,30 +196,16 @@ function syncWakeWords(): void {
         // 叙述锁：念诗/说书拾到的话不当作新发言（只放行明确的"停"）
         try {
           if (host.narration.active()) {
-            if (/停|别念|不念|够了|算了|打住/.test(String(text || ''))) {
-              try { host.stopSpeaking() } catch (e) { }
-              host.narration.clear()
-              host.bubble('好，不念了', 2500)
-            } else {
-              bump('narrDrop')
-            }
+            let narrStop = false
+            try { narrStop = NARR_STOP_RE.test(String(text || '')) || isStopCommand(normalizeWakeText(text)) } catch (e) { }
+            if (narrStop) stopNarration('好，不念了')
+            else bump('narrDrop')
             return
           }
         } catch (e) { }
-
         // 打断词直通唤醒门：正在朗读时主人喊"停"必须立刻停，
         // 不能先要求喊唤醒词（否则只能去点菜单「停止说话」）。
-        try {
-          if (/^(停|停下|停一下|别说了|别讲了|别念了|别吵|闭嘴|安静|打住|够了)$/.test(normalizeWakeText(text))) {
-            const speaking = host.speaking ? !!host.speaking() : true
-            if (speaking) {
-              try { host.stopSpeaking() } catch (e) { }
-              try { host.bubble('好，不说了', 2000) } catch (e) { }
-              bump('wakeBreak')
-              return
-            }
-          }
-        } catch (e) { }
+        if (tryInterrupt(text)) return
 
         // 语音聊天关着：只听不接话（菜单「语音聊天」的语义）
         try {
@@ -173,21 +217,24 @@ function syncWakeWords(): void {
         } catch (e) { }
 
         // 唤醒词不再当门槛：主人 2026-11-06 定的是"随时可以说"。
-        // 唤醒词只剩两个用途：① 只喊名字时应一声；② 唤醒词出现在句首时从正文里剥掉。
+        // 唤醒词只剩两个用途：① 只喊名字时应一声；② 句中出现时从正文里剥掉。
+        // （30 秒有效窗只用来诊断，不参与放行判定，见文件头。）
         syncWakeWords()
         const r = gate.check(text)
         if (r.hit) { wakeStats.hits++; wakeStats.lastHitAt = Date.now() }
         const said = r.hit ? r.text : String(text || '').trim()
         wakeStats.passed++
-        // 只喊了名字（剥掉唤醒词后没剩内容）：应一声，不劳烦模型。
-        // 之前只弹气泡不出声，主人喊了名字会觉得"鱼没反应"；
-        // 改成 say（会朗读；同一句 25 秒去重，重复喊不会连珠炮）。
-        if (!said) {
-          try {
-            if (host.say) host.say('本鲸在呢～', 3200)
-            else host.bubble('本鲸在呢～', 3200)
-          } catch (e) {
-            try { host.bubble('本鲸在呢～', 3200) } catch (e2) { }
+        // 剥完没剩实际内容（只喊了名字，或只有标点/气口）：
+        // 真喊了名字就应一声（say 会朗读；同一句 25 秒去重，重复喊不会连珠炮）；
+        // 没喊名字的碎屑直接丢，别让模型回一句"什么意思"。
+        if (!HAS_CONTENT_RE.test(said)) {
+          if (r.hit) {
+            try {
+              if (host.say) host.say('本鲸在呢～', 3200)
+              else host.bubble('本鲸在呢～', 3200)
+            } catch (e) {
+              try { host.bubble('本鲸在呢～', 3200) } catch (e2) { }
+            }
           }
           pushWake()
           return
@@ -221,11 +268,29 @@ function syncWakeWords(): void {
     })
     voice = v
     try { host.diag({ voice: v, wake: wakeInfo() }) } catch (e) { }
-    // 关页面时自己把麦克风放掉，免得轨道悬着
-    try {
-      if (typeof window !== 'undefined') window.addEventListener('beforeunload', () => { try { v.stop() } catch (e) { } })
-    } catch (e) { }
+    bindUnload()
     return v
+  }
+
+  /**
+   * 关页面时自己把麦克风放掉，免得轨道悬着。
+   * 只挂一个 beforeunload（原来每次 build 都挂一个匿名函数，dispose 后重建就越挂越多，
+   * 旧监听还攥着已丢弃的实例 —— 并发纪律：监听要在卸载时清干净）。
+   */
+  function bindUnload(): void {
+    if (unloadHandler) return
+    try {
+      if (typeof window === 'undefined' || !window.addEventListener) return
+      unloadHandler = () => { try { if (voice) voice.stop() } catch (e) { } }
+      window.addEventListener('beforeunload', unloadHandler)
+    } catch (e) { unloadHandler = null }
+  }
+
+  function unbindUnload(): void {
+    try {
+      if (unloadHandler && typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('beforeunload', unloadHandler)
+    } catch (e) { }
+    unloadHandler = null
   }
 
   function ensure(): Voice {
@@ -243,10 +308,13 @@ function syncWakeWords(): void {
     },
     stop(): void {
       if (voice) { try { voice.stop() } catch (e) { } }
+      // 停止待命不继承上一次的唤醒窗（菜单开关走的是 stop()，不是 dispose()）
+      try { gate.reset() } catch (e) { }
     },
     dispose(): void {
       if (voice) { try { voice.stop() } catch (e) { } }
       voice = null
+      unbindUnload()
       // 重开语音待命时不该继承上一次的唤醒窗
       try { gate.reset() } catch (e) { }
     },
