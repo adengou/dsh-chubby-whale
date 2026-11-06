@@ -209,13 +209,14 @@ try {
       res.code === 200 && calls.length === 1 && calls[0].voice === 'en-US-AnaNeural',
       'voice=' + (calls[0] && calls[0].voice))
 
-    // 现状快照（不是「应该如此」）：服务端只做字符集校验，B91 报告的「HTTP 直调可绕过白名单」属实。
-    // 将来若把客户端白名单抬到 shared 并在服务端校验，请同步改这条断言（并保留 auto/默认回落）。
+    // B93 收口：白名单已提到 shared/voices.ts 并在服务端校验，「HTTP 直调可绕过白名单」的缺口关闭。
+    // 语义仍是「不 400、回落默认」，并带 x-tts-voice: fallback 供排障（细则见 scripts/test-voices-shared.mjs）。
     res = mkRes(); calls.length = 0
     await handle(mkReq({ text: 'hello japanese', voice: 'ja-JP-NanamiNeural' }), res)
-    ok('已知缺口快照：白名单外但字符合法 → 引擎仍会收到它（B92 只记录，不改白名单语义）',
-      res.code === 200 && calls.length === 1 && calls[0].voice === 'ja-JP-NanamiNeural',
-      'voice=' + (calls[0] && calls[0].voice))
+    ok('白名单外但字符合法 → 200 且回落默认（不再原样传给引擎）',
+      res.code === 200 && calls.length === 1 && calls[0].voice === 'en-US-AnaNeural'
+      && res.headers['x-tts-voice'] === 'fallback',
+      'voice=' + (calls[0] && calls[0].voice) + ' header=' + (res.headers && res.headers['x-tts-voice']))
   }
 
   // ---------- E /tts 请求体上限 ----------
@@ -242,7 +243,7 @@ try {
     ok('tts.ts 不直连仓储/存储/缓存（ADR 0002 规则 A）', !banned.test(ttsSrc))
     ok('asr.ts 不直连具体实现（不 import tts-engine / cloud-tts）',
       !/from\s+'\.\.\/tts-engine|from\s+'\.\.\/voice\/cloud-tts/.test(asrSrc))
-    ok('/tts 装配层恒注入 engine（路由内自建只是兜底，拿不到 dispose 句柄）',
+    ok('/tts 装配层恒注入 engine（B93 起路由不自建，engine 必传）',
       /createTtsHandler\(\{[^)]*engine:\s*ttsEngine/.test(idxSrc))
     ok('/asr 装配层恒注入 getKey（路由不自己读 config/环境变量）',
       /createAsrHandler\(\{[^)]*getKey:/.test(idxSrc))

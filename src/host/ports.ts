@@ -162,11 +162,14 @@ export interface ChatStreamRouteDeps {
   saveMemorySummary?: (s: string) => void
 }
 
-/** /tts 的依赖：合成引擎可替换，缓存走缓存端口 */
+/**
+ * /tts 的依赖：合成引擎**必须**由装配层构造并注入（路由内不自建，否则拿不到 dispose 句柄），
+ * 缓存走缓存端口。
+ * 注：原 `voice?: string` 字段是死字段（声明后全仓无人读取），B93 已删。
+ */
 export interface TtsRouteDeps {
-  voice?: string
   cache?: CachePort
-  engine?: TtsEngine
+  engine: TtsEngine
   /** 云端 TTS（火山豆包语音）：有 Key 时优先，失败由路由回退 engine（edge-tts） */
   cloudTts?: { synthesize: (text: string) => Promise<Buffer>; enabled: () => boolean }
 }
