@@ -8,18 +8,26 @@ DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下�
 | 渠道 | 地址 |
 | --- | --- |
 | 主仓库（Gitee） | <https://gitee.com/adengou/dsh-chubby-whale> |
+| 镜像（GitHub） | <https://github.com/adengou/dsh-chubby-whale> |
+| npm 包 | <https://www.npmjs.com/package/dsh-chubby-whale> |
 | 更新日志 | [CHANGELOG.md](CHANGELOG.md) |
 
 > 语音待命的信号处理设计与调参：见 [docs/耳朵算法.md](docs/耳朵算法.md)
-> 发版规范（只发 Gitee）：见 [docs/发布规范.md](docs/发布规范.md)
+> 发版规范（Gitee 必发；GitHub / npm 可达时同步同一版本）：见 [docs/发布规范.md](docs/发布规范.md)
 
-## 安装（两种来源任选）
+## 安装（三种来源任选）
 
 ```bash
-# ① 从 Gitee 装（推荐）
+# ① npm 包（最省事，装发布版）
+dsh plugin --profile web add "dsh-chubby-whale"
+
+# ② 从 Gitee 装（主仓库）
 dsh plugin --profile web add "git+https://gitee.com/adengou/dsh-chubby-whale.git"
 
-# ② 本地 link（开发调试）
+# ③ 从 GitHub 装（镜像，连通时与 Gitee 同一版本）
+dsh plugin --profile web add "git+https://github.com/adengou/dsh-chubby-whale.git"
+
+# ④ 本地 link（开发调试）
 dsh plugin --profile web add "link:C:\Users\<你>\.dsh\plugins\dsh-chubby-whale"
 
 # 装完重启 dsh web
