@@ -275,7 +275,7 @@ export function apply(ctx, rawConfig) {
     const culture = createCultureHandlers({ dataDir: DATA_DIR, runtimeDir: RUNTIME_DIR, dataPort });
     const poem = createPoemHandler({ runtimeDir: RUNTIME_DIR, dataPort });
     // 诗名索引：客户端点诗识别按需拉取（数据是包内只读文件，读一次后进程内缓存）
-    const poemTitles = createPoemTitlesHandler({ dataDir: DATA_DIR });
+    const poemTitles = createPoemTitlesHandler({ dataDir: DATA_DIR, dataPort });
     const briefing = createBriefingHandlers({
         loadGrowth: store.loadGrowth,
         loadReminders: store.loadReminders,

@@ -49,11 +49,16 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
   const POEMS_FILE = join(opts.dataDir, 'poems.json')
   const DUILIAN_FILE = join(opts.dataDir, 'duilian.json')
   const DAILY_FILE = join(opts.dataDir, 'daily.json')
+  /** 诗名索引 / 曲库：随包只读数据文件（路由经 DataPort 的同名可选方法取，见 ports.ts） */
+  const POEM_TITLES_FILE = join(opts.dataDir, 'poem-titles.json')
+  const MELODIES_FILE = join(opts.dataDir, 'melodies.json')
 
   const cultureCache = new Map<CultureKind, CacheEntry<any[]>>()
   let poemsCache: CacheEntry<any[]> | null = null
   let duilianCache: CacheEntry<DuilianData> | null = null
   let dailyCache: CacheEntry<DailyItem[]> | null = null
+  let poemTitlesCache: CacheEntry<{ titles: string[] } | null> | null = null
+  let melodiesCache: CacheEntry<any | null> | null = null
 
   /**
    * 文件最后修改时间（读不到返回 0）；缓存据此失效，改数据不必重启。
@@ -95,6 +100,30 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     const out: DuilianData = { total: d.total, items: d.items.map((x: DuilianItem) => ({ ...x })), cats }
     if (d.note) out.note = d.note
     return out
+  }
+
+  /**
+   * 诗名索引：只认 {titles:[...]}，过滤空串/非字符串（与改造前 poem-titles 路由的过滤口径一致）；
+   * 空表按「没数据」处理（调用方返回 null，路由走既有 ok:false 兜底）。
+   */
+  function pickTitles(raw: any): string[] {
+    const list = raw && Array.isArray(raw.titles) ? raw.titles : []
+    const out: string[] = []
+    for (const item of list) if (typeof item === 'string' && item) out.push(item)
+    return out
+  }
+
+  /**
+   * 曲库：保留整份对象（路由自己取 songs / notes / lyrics），songs 条目浅拷贝后返回，
+   * 缓存本体不交给调用方（与其它读口同一条缓存所有权纪律）。
+   * 合法 JSON 但不是对象（例如字面量 null / 数字）按不可用处理，路由走既有失败兜底。
+   */
+  function cloneMelodies(raw: any): any | null {
+    if (!raw || typeof raw !== 'object') return null
+    const songs = Array.isArray(raw.songs)
+      ? raw.songs.filter((s: any) => s && typeof s === 'object').map((s: any) => ({ ...s }))
+      : []
+    return { ...raw, songs }
   }
 
   async function readStoryIndex(): Promise<StoryBookMeta[]> {
@@ -171,5 +200,46 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     return cloneItems(out)
   }
 
-  return { readStoryIndex, readStoryBook, readCulture, readPoemsChunk, readDuilian, readDaily }
+  /**
+   * 诗名索引：缺文件 / 坏 JSON / 空表一律 null（不抛），路由按既有 ok:false 兜底。
+   * 缓存口径与其它读口一致：按 mtime 失效，坏 JSON 这类确定性失败可以记空缓存，
+   * 瞬时读错误不写缓存（否则一次文件占用会把诗名永久锁成空）。
+   */
+  async function readPoemTitles(): Promise<{ titles: string[] } | null> {
+    const mt = fileMtime(POEM_TITLES_FILE)
+    if (poemTitlesCache && mt > 0 && poemTitlesCache.mtimeMs === mt) {
+      const hit = poemTitlesCache.value
+      return hit ? { titles: hit.titles.slice() } : null
+    }
+    const loaded = await loadJsonFile(POEM_TITLES_FILE, 'POEM-TITLES-LOAD-FAIL')
+    let out: { titles: string[] } | null = null
+    if (loaded.ok) {
+      const titles = pickTitles(loaded.raw)
+      if (titles.length > 0) out = { titles }
+      // 合法 JSON 但结构不对/空表：留痕，与「文件坏了」同口径按不可用处理
+      else console.error('POEM-TITLES-LOAD-FAIL file=' + POEM_TITLES_FILE + ' err=empty or bad structure')
+    }
+    if (!loaded.cacheable) return out
+    poemTitlesCache = { value: out, mtimeMs: mt }
+    return out ? { titles: out.titles.slice() } : null
+  }
+
+  /** 曲库：缺文件 / 坏 JSON / 非对象一律 null（不抛）；返回副本，缓存本体不外泄 */
+  async function readMelodies(): Promise<any | null> {
+    const mt = fileMtime(MELODIES_FILE)
+    if (melodiesCache && mt > 0 && melodiesCache.mtimeMs === mt) {
+      return melodiesCache.value === null ? null : cloneMelodies(melodiesCache.value)
+    }
+    const loaded = await loadJsonFile(MELODIES_FILE, 'MELODIES-LOAD-FAIL')
+    const out = loaded.ok ? cloneMelodies(loaded.raw) : null
+    if (loaded.ok && !out) console.error('MELODIES-LOAD-FAIL file=' + MELODIES_FILE + ' err=bad structure')
+    if (!loaded.cacheable) return out
+    melodiesCache = { value: out, mtimeMs: mt }
+    return out ? cloneMelodies(out) : null
+  }
+
+  return {
+    readStoryIndex, readStoryBook, readCulture, readPoemsChunk, readDuilian, readDaily,
+    readPoemTitles, readMelodies,
+  }
 }

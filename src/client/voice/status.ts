@@ -16,6 +16,8 @@ export type VoiceStats = {
   skippedSilent: number    // 因太安静被丢
   uploaded: number         // 上传次数
   asrFail: number          // 识别失败
+  /** 上一段还在识别时被丢弃的段数（忙则丢，不排队；2026-11-07） */
+  asrBusyDropped?: number
   asrRetry?: number        // 超时自动重试次数（2026-11-06）
   asrTexts: number         // 识别出文字的段数
   heard: number            // 通过过滤、真正交给上层的
@@ -40,7 +42,7 @@ export type VoiceStats = {
  */
 export function createVoiceStats(): VoiceStats {
   return {
-    windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrRetry: 0, asrTexts: 0, heard: 0,
+    windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrBusyDropped: 0, asrRetry: 0, asrTexts: 0, heard: 0,
     echoDropped: 0, shortDropped: 0, dupDropped: 0, qDropped: 0, ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
   }
 }

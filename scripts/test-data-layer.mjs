@@ -503,12 +503,13 @@ console.log('\n[I] 封装：端口面与模块边界')
 try {
   const { createLocalDataPort } = await imp('src/host/data/local.ts')
   const { createCloudDataPort } = await imp('src/host/data/cloud.ts')
-  const want = ['readCulture', 'readDaily', 'readDuilian', 'readPoemsChunk', 'readStoryBook', 'readStoryIndex']
+  // 2026-11-07 B86：poem-titles / melodies 从「路由直读 data/」收口到端口，端口面由 6 项变 8 项
+  const want = ['readCulture', 'readDaily', 'readDuilian', 'readMelodies', 'readPoemTitles', 'readPoemsChunk', 'readStoryBook', 'readStoryIndex']
   const dir = mkTmp('whale-data-face-')
   const local = createLocalDataPort({ dataDir: dir, story: { listBooks: async () => [], loadBook: async () => [] } })
   const cloud = createCloudDataPort({ local, fetchImpl: async () => ({ ok: false, status: 500, text: async () => '' }) })
-  ok('本地端口只暴露 DataPort 的 6 个方法（不泄漏缓存/inflight/路径）', Object.keys(local).sort().join(',') === want.join(','), Object.keys(local).join(','))
-  ok('云端端口只暴露 DataPort 的 6 个方法', Object.keys(cloud).sort().join(',') === want.join(','))
+  ok('本地端口只暴露 DataPort 的 8 个方法（不泄漏缓存/inflight/路径）', Object.keys(local).sort().join(',') === want.join(','), Object.keys(local).join(','))
+  ok('云端端口只暴露 DataPort 的 8 个方法', Object.keys(cloud).sort().join(',') === want.join(','))
 
   // 数据层不该 import 说书实现：StoryChunk 由 ports.ts 定义；
   // 只有「本地实现注入仓储」「适配层产出仓储」这两处需要 StoryRepo 这个接口类型。

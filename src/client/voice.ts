@@ -423,6 +423,8 @@ export function createVoice(opts: VoiceOptions): Voice {
 
     // 单飞闸门：上一段还没识别完，这一段直接丢（忙则丢，不排队 —— 理由见本文件「ASR 并发治理」段）
     if (asrBusy) {
+      // 丢段也记账：否则「怎么好像漏了一句」只能翻 diag 流（2026-11-07）
+      try { stats.asrBusyDropped = (stats.asrBusyDropped || 0) + 1 } catch (e) { }
       try { opts.onDiag && opts.onDiag({ stage: 'asr-busy-drop', hint: '上一段还在识别，这一段丢弃（不排队）' }) } catch (e) { }
       scheduleNext(150)
       return

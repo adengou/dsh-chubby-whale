@@ -1101,9 +1101,14 @@ import { evPrevent, evStop } from './client/util.js'
       // ===== 语音模块（client/voice.ts + client/voice-bridge.ts）=====
       // 回调与生命周期只在 voice-bridge 里建一份（见组件顶部），这里只负责启动/收尾。
       R.useEffect(() => {
-        if (!earOnRef.current) return
-        void bridge.start()
-        return () => { bridge.dispose() }
+        // 清理器**始终**注册：sayLine 现在走 bridge.ensure()，待命关着也会建实例（只朗读不开麦）；
+        // 若只在 earOn 时注册 dispose，这类实例在 SPA 卸载时不会被回收（2026-11-07 B88 审计建议）。
+        const cleanup = (): void => { try { bridge.dispose() } catch (e) { } }
+        if (earOnRef.current) {
+          void bridge.start()
+          return cleanup
+        }
+        return cleanup
       }, [])
 
       // ---- 旧调用点兼容层：全部转到新模块 ----
@@ -1139,7 +1144,17 @@ import { evPrevent, evStop } from './client/util.js'
         try { showBubble(text, ms) } catch (e) { }
         try {
           if (localStorage.getItem('chubby-voice') === 'off') return
-          const v: any = bridge.get()
+          // 与 speakText / bridge.speak 同一条路：必须用 ensure()，不能用 get()。
+          // 待命关着刷新页面时实例没建过，get() 为 null —— 开场问候/情绪台词就只剩气泡没声
+          // （朗读开关仍开）；而念诗/说书/提醒走 speakText → bridge.speak → ensure() 一直有声。
+          // ensure() 只建朗读对象、不开麦克风（麦克风仍由 start() 开），见 voice-bridge.ts 的
+          // speak 注释与 docs/坑.md 坑 23「麦克风与朗读解耦」。
+          // 取舍：最直接的行为变化是「待命关 + 刷新页面」时问候/情绪台词从无声变有声；
+          // 附带侧效应是这一状态下菜单「语音自检」会看到实例（0 统计）而不是「模块还没起来」。
+          // 判断依据：菜单「语音待命」= 常驻听写（关=停录音、实例留着复用），真正管出声的是「语音朗读」
+          // （chubby-voice=off，上面那行照旧拦下）；且同一会话里关待命（实例还在）时本行本来就出声。
+          // 若主代理判定「待命关就该全静」，把 ensure() 改回 get() 即回滚（一行）。
+          const v: any = bridge.ensure()
           if (v && v.speak && !v.speaking()) v.speak(text, { rate: (voiceOpts && voiceOpts.rate) || chatRate(), pitch: (voiceOpts && voiceOpts.pitch) || '' })
         } catch (e) { }
       }

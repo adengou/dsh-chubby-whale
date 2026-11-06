@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.59";
+  var VERSION = "1.1.60";
 
   // src/client/styles.ts
   var W = 240;
@@ -1256,6 +1256,7 @@
       skippedSilent: 0,
       uploaded: 0,
       asrFail: 0,
+      asrBusyDropped: 0,
       asrRetry: 0,
       asrTexts: 0,
       heard: 0,
@@ -1770,6 +1771,10 @@
         return;
       }
       if (asrBusy) {
+        try {
+          stats.asrBusyDropped = (stats.asrBusyDropped || 0) + 1;
+        } catch (e) {
+        }
         try {
           opts.onDiag && opts.onDiag({ stage: "asr-busy-drop", hint: "上一段还在识别，这一段丢弃（不排队）" });
         } catch (e) {
@@ -4434,6 +4439,7 @@
     recentStarts.set(key, now);
     return true;
   }
+  var poemGen = 0;
   function recitePoem(host, poem) {
     if (!beginOnce("poem")) {
       host.bubble("正在念呢，稍等～", 2e3);
@@ -4451,21 +4457,28 @@
     host.bubble("念诗·" + poem.title + "（" + author + "）" + (totalLines > 1 ? "· 共 " + totalLines + " 句" : ""), 15e3);
     host.talkFor(6e3);
     const speech = intro + collapsePoemBody(body);
+    const my = ++poemGen;
     host.narrate(estimateSpeakMs(speech));
     host.say(host.persona.line("poemStart"), 4e3);
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      if (my !== poemGen) return;
+      try {
+        stopProgress();
+      } catch (e) {
+      }
+      host.clearNarrate();
+      host.say(host.persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
+    };
     try {
       host.speak(speech, {
         rate: poemRate(host.narrationRate()),
-        onDone: () => {
-          try {
-            stopProgress();
-          } catch (e) {
-          }
-          host.clearNarrate();
-          host.say(host.persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
-        }
+        onDone: release
       });
     } catch (e) {
+      release();
     }
   }
   function finishSpeech(host, doneText) {
@@ -9352,11 +9365,17 @@
           return reminderPoller.start();
         }, []);
         R.useEffect(() => {
-          if (!earOnRef.current) return;
-          void bridge.start();
-          return () => {
-            bridge.dispose();
+          const cleanup = () => {
+            try {
+              bridge.dispose();
+            } catch (e) {
+            }
           };
+          if (earOnRef.current) {
+            void bridge.start();
+            return cleanup;
+          }
+          return cleanup;
         }, []);
         function speakText(text, o) {
           try {
@@ -9397,7 +9416,7 @@
           }
           try {
             if (localStorage.getItem("chubby-voice") === "off") return;
-            const v = bridge.get();
+            const v = bridge.ensure();
             if (v && v.speak && !v.speaking()) v.speak(text, { rate: voiceOpts && voiceOpts.rate || chatRate(), pitch: voiceOpts && voiceOpts.pitch || "" });
           } catch (e) {
           }
