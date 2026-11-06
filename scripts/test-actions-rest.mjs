@@ -320,14 +320,14 @@ try {
   const tbl = actions.createActionTable()
   voice.registerVoiceActions(tbl)
 
-  // E1：实例里的门还是旧词表 → 气泡补"重开语音待命后生效"
+  // E1：唤醒门每次判定前都会 syncWakeWords（voice-bridge），词表已即时生效 → 不再补生效提示
   let bubbles = []
   await tbl.run('wake-word:新词', {
     bubble: (t) => bubbles.push(String(t)),
     wakeInfo: () => ({ words: ['大肥鱼', '肥鲸'] }),
   })
   ok('唤醒词写进存储（菜单/门读同一键）', storage.getItem('chubby-wake-word') === '新词', String(storage.getItem('chubby-wake-word')))
-  ok('门还是旧词表 → 气泡说清生效时机', bubbles[0] === '唤醒词：新词（重开语音待命后生效）', bubbles[0])
+  ok('门词表已同步 → 不再补生效提示', bubbles[0] === '唤醒词：新词', bubbles[0])
 
   // E2：门的词表已经换过 → 不再加提示
   bubbles = []
@@ -337,14 +337,14 @@ try {
   })
   ok('门已是新词表 → 不加多余提示', bubbles[0] === '唤醒词：新词', bubbles[0])
 
-  // E3：恢复默认（空值）时，门仍是自定义词 → 也要说清
+  // E3：恢复默认（空值）时同样即时生效（syncWakeWords 同步）→ 不补「等重开」的提示
   bubbles = []
   await tbl.run('wake-word:', {
     bubble: (t) => bubbles.push(String(t)),
     wakeInfo: () => ({ words: ['新词'] }),
   })
   ok('恢复默认会清掉存储', storage.getItem('chubby-wake-word') === null, String(storage.getItem('chubby-wake-word')))
-  ok('门还是自定义词 → 说清"默认"要等重开', bubbles[0] === '唤醒词：默认（大肥鱼/肥鲸等）（重开语音待命后生效）', bubbles[0])
+  ok('恢复默认不再补"等重开"提示', bubbles[0] === '唤醒词：默认（大肥鱼/肥鲸等）', bubbles[0])
 
   // E4：自定义词走 prompt，存的是 trim 后的值，气泡照抄存储口径
   bubbles = []

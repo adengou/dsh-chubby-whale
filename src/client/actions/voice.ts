@@ -14,11 +14,12 @@ import { setCustomWakeWord, WAKE_WORDS } from '../wake.js'
 /**
  * 唤醒门里的词表是否已经是这次设置的结果。
  *
- * 门在 client/voice-bridge.ts 建实例时读一次 localStorage（createWakeGate({words: loadCustomWakeWords()})），
- * 之后不再重读；所以换完唤醒词、当前实例还活着时，门用的仍是旧词表
- * （结果：「只说新唤醒词」不会被应一声，句首的新词也不会被剥掉）。
- * 这里只比对 host.wakeInfo().words（client/wake.ts 注明该表就是给提示文案用的）；
- * 拿不到门状态时返回 true —— 不猜、不乱加提示。
+ * 旧实现里门只在建实例时读一次 localStorage，之后不再重读；2026-11-07 起
+ * client/voice-bridge.ts 的 syncWakeWords() 会在**每次识别判定前与 wakeInfo() 里**
+ * 把 gate.words 原地同步成 localStorage 的最新值（不重建门、不丢 30 秒窗），
+ * 所以换完词即时生效 —— 不再需要「重开语音待命」。
+ * 这里仍保留比对，只用于诊断：门没跟上时记一笔 wakeSyncLag，而不是给主人一句错的生效时机。
+ * 拿不到门状态时返回 true —— 不猜、不乱报。
  */
 function wakeWordsLive(host: ActionHost, want: string[]): boolean {
   let info: any = null
@@ -30,9 +31,21 @@ function wakeWordsLive(host: ActionHost, want: string[]): boolean {
   return true
 }
 
-/** 唤醒词气泡后缀：门还没换成新词表时，说清「什么时候生效」，别让主人以为换了没反应 */
+/**
+ * 唤醒词气泡后缀：现在恒为空串。
+ *
+ * 旧文案「（重开语音待命后生效）」已经失真：syncWakeWords 让换词即时生效，
+ * 不需要重开待命/刷新页面（voice-bridge.ts 文件头与 syncWakeWords 注释为证）。
+ * 保留函数是为了把「门没同步上」这种异常写进诊断（host.diag.wakeSyncLag），
+ * 而不是对主人说一句与实现矛盾的生效时机。
+ */
 function wakeHint(host: ActionHost, want: string[]): string {
-  try { return wakeWordsLive(host, want) ? '' : '（重开语音待命后生效）' } catch (e) { return '' }
+  try {
+    if (!wakeWordsLive(host, want)) {
+      try { host.diag({ wakeSyncLag: { want: want.slice(), at: Date.now() } }) } catch (e) { }
+    }
+  } catch (e) { }
+  return ''
 }
 
 export function registerVoiceActions(table: ActionTable<ActionHost>): void {
@@ -90,10 +103,12 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
           try {
             const w = host.wakeInfo ? host.wakeInfo() : null
             if (!w) return ''
+            // 唤醒词不是拦话门槛：30 秒窗只是"刚喊过名字"的诊断窗，窗外也照样能说话。
+            // 所以别再说「待唤醒（先喊…）」——那是旧实现"喊了才答话"的文案。
             const head = w.awake
-              ? ('醒着（还剩 ' + Math.round((Number(w.remainingMs) || 0) / 1000) + ' 秒）')
-              : ('待唤醒（先喊「' + ((w.words && w.words[0]) || '大肥鱼') + '」）')
-            return '\n唤醒词：' + head + '｜唤醒 ' + w.hits + ' 次｜放行 ' + w.passed + '｜挡下 ' + w.dropped
+              ? ('刚喊过名字（30 秒窗还剩 ' + Math.round((Number(w.remainingMs) || 0) / 1000) + ' 秒，只作诊断）')
+              : '这次没喊名字（不影响说话）'
+            return '\n唤醒词：' + head + '｜命中 ' + w.hits + ' 次｜接话 ' + w.passed + '｜语音聊天关着没接 ' + w.dropped
           } catch (e) { return '' }
         })()
         + (st.lastError ? '\n最近错误：' + st.lastError : '')
@@ -119,7 +134,7 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
     try { host.previewVoice('主人，这个声音好听吗？') } catch (e) { }
   })
 
-  // —— 唤醒词：默认 / 候选 / 自定义（存 localStorage；语音随时可说，唤醒词只用来剥句子开头）——
+  // —— 唤醒词：默认 / 候选 / 自定义（存 localStorage；语音随时可说，唤醒词只用来剥句子开头/叫名字应声）——
   table.definePrefix('wake-word:', (host, val) => {
     const word = str(val).trim()
     if (word === 'custom') {
@@ -129,7 +144,8 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
       const on = setCustomWakeWord(String(input))
       // 存储值 = trim 后截 12 字（client/wake.ts 的 setCustomWakeWord 口径），气泡照抄它
       const stored = String(input).trim().slice(0, 12)
-      // 当前实例里的唤醒门没重建就不算真生效：气泡补一句生效时机（见 wakeWordsLive）
+      // 词表即时生效（voice-bridge 的 syncWakeWords 在每次判定/wakeInfo 前同步），
+      // 气泡只报结果；万一门没跟上，wakeHint 会写诊断 wakeSyncLag 而不是补一句错时机。
       host.bubble(on
         ? '唤醒词：' + stored + wakeHint(host, [stored])
         : '唤醒词：默认（大肥鱼/肥鲸等）' + wakeHint(host, WAKE_WORDS))
