@@ -3,6 +3,19 @@
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
 ## [未发布]
+## [1.1.37] - 2026-11-06
+
+### 新功能（阶段 1：云端 TTS，可选启用）
+- 新增 `host/voice/cloud-tts.ts`：火山方舟豆包语音 2.0（HTTP 接口，`X-Api-Key` + `X-Api-Resource-Id: seed-tts-2.0`）
+- `/tts` 三层降级：**云端优先**（有 Key）→ **edge-tts 兜底（免费，现有引擎不动）** → 501 → 客户端浏览器朗读
+- 日字数熔断（`config.cloudVoice.dailyChars`，默认 5000），超限自动回 edge-tts，成本不会失控
+- 未配 Key 时行为与之前**完全一致**（直接走 edge-tts）
+
+### 配置（config.json，Key 不进包、不进备份）
+```json
+"cloudVoice": { "apiKey": "", "speaker": "zh_female_vv_uranus_bigtts", "resourceId": "seed-tts-2.0", "dailyChars": 5000 }
+```
+
 ## [1.1.36] - 2026-11-06
 
 ### 文档（火山引擎语音架构设计）

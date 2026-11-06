@@ -156,6 +156,8 @@ export interface TtsRouteDeps {
   voice?: string
   cache?: CachePort
   engine?: TtsEngine
+  /** 云端 TTS（火山豆包语音）：有 Key 时优先，失败由路由回退 engine（edge-tts） */
+  cloudTts?: { synthesize: (text: string) => Promise<Buffer>; enabled: () => boolean }
 }
 
 /** /asr 的依赖：只要求能拿到硅基流动 Key */

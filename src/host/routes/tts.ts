@@ -62,7 +62,19 @@ export function createTtsHandler(opts: TtsRouteDeps) {
           return
         }
       }
-      const buf = await engine.synthesize({ text: msg, voice, rate, pitch })
+      // 云端优先（火山豆包语音 2.0）：有 Key 且启用时先走云端；任何失败都回退 edge-tts（免费兜底）
+      let buf: Buffer
+      const cloud = opts.cloudTts
+      if (cloud && cloud.enabled()) {
+        try {
+          buf = await cloud.synthesize(msg)
+        } catch (ce: any) {
+          console.warn('[tts] CLOUD-FAIL 回退 edge-tts：' + String(ce?.message || ce).slice(0, 200))
+          buf = await engine.synthesize({ text: msg, voice, rate, pitch })
+        }
+      } else {
+        buf = await engine.synthesize({ text: msg, voice, rate, pitch })
+      }
       if (cache) { try { await cache.setJson(ck, buf, 'mp3') } catch { } }
       sendBuffer(res, buf, 'audio/mpeg', { 'cache-control': 'no-store' })
     } catch (err: any) {

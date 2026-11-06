@@ -38,6 +38,7 @@ import { createPoemHandler } from './host/routes/poem.js';
 import { createPoemTitlesHandler } from './host/routes/poem-titles.js';
 import { createBriefingHandlers } from './host/routes/briefing.js';
 import { createTtsHandler } from './host/routes/tts.js';
+import { createCloudTts, readCloudVoice } from './host/voice/cloud-tts.js';
 import { createAsrHandler } from './host/routes/asr.js';
 import { createDailyHandler } from './host/routes/daily.js';
 import { createBackupHandlers } from './host/routes/backup.js';
@@ -276,6 +277,8 @@ export function apply(ctx, rawConfig) {
         loadGrowth: store.loadGrowth,
         loadReminders: store.loadReminders,
     });
+    // 云端 TTS（火山方舟豆包语音 2.0）：config.json 里配 cloudVoice.apiKey 才启用；失败回退 edge-tts
+    const cloudTts = createCloudTts({ config: () => readCloudVoice(PLUGIN_DIR), runtimeDir: RUNTIME_DIR });
     const tts = createTtsHandler({ cache: ttsCache });
     const asr = createAsrHandler({ getKey: () => readSiliconFlowKey(PLUGIN_DIR), cache: asrCache });
     const personalityRoutes = createPersonalityHandlers({
