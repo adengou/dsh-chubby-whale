@@ -99,7 +99,9 @@ function checkFile(file) {
   // B6 路由层不直接摸实现：routes/** 只能依赖 respond/body/http/ports/shared/data 纯函数，
   //    要拿数据一律走注入的端口（否则改实现就会波及路由）
   if (rel.includes('/host/routes/')) {
-    const forbiddenRoutes = ["'../store.js'", "'../repos/", "'../story/repo.js'", "'../cache.js'", "'../data/"]
+    // 注意：清单元素**不带引号**——m[1] 是去掉引号的模块路径，带引号会恒不命中（2026-11-07 修）
+    // chat-core.js 是受控例外（见 docs/adr/0002）：无状态纯函数模块，不含存储实现
+    const forbiddenRoutes = ['../store.js', '../repos/', '../story/repo.js', '../cache.js', '../data/', '../prefs.js']
     for (let i = 0; i < lines.length; i++) {
       const m = lines[i].match(/from '([^']+)'/)
       if (!m) continue
@@ -111,7 +113,7 @@ function checkFile(file) {
 
   // B5 端口层零反依赖：host/ports.ts 只能引用 shared/ 或自身类型，不许 import 具体实现
   if (rel.endsWith('host/ports.ts')) {
-    const forbidden = ["'./tts-engine.js'", "'./store.js'", "'./data/", "'./repos/", "'./routes/", "'./story/", "'./personality"]
+    const forbidden = ['./tts-engine.js', './store.js', './data/', './repos/', './routes/', './story/', './personality']
     for (let i = 0; i < lines.length; i++) {
       const m = lines[i].match(/from '([^']+)'/)
       if (!m) continue

@@ -4,6 +4,40 @@
 
 ## [未发布]
 
+## [1.1.53] - 2026-11-07
+
+### 修复（B66 缓存/存储分身）
+- **`memSet` 别名泄漏**：内存缓存直接存调用方对象引用，外部改一下就改到了缓存里（坑 27 同类）；现在入缓存即拷贝
+- **内存命中把并发写入的新值顶掉**：`getJson` 在 `await stat` 期间若被并发 `setJson` 改写，旧条目会被写回；现在命中后核对条目身份，顺带修掉 `memBytes` 漂移
+- **写失败残留 `.tmp`**：`atomic.writeFileAtomic` 的 `finally` 只 close 不删临时文件，`cache.setJson` 也只覆盖 rename 失败分支；现在写/rename 失败都会清掉半截临时文件
+
+### 修复（B67 主代理：封装基础设施）
+- **封装检查器假绿（坑 25 复发）**：`check-boundaries.mjs` 的 B5/B6 禁令清单把路径写成带引号的 `"'../cache.js'"`，却拿去掉引号的 `m[1]` 做 `indexOf`，恒为 -1——**规则从来没生效过**。已去引号并补 `prefs.js`；负向验证：临时塞一个 `import '../store.js'` 的路由会让检查器以 exit 1 拦下
+- **hash 纯函数上移到 `shared/hash.ts`**：`routes/asr.ts`、`routes/tts.ts` 只为 `hashBytes`/`hashKey` 就直连 `cache.js`，违反 ADR 0002；现在路由从 shared 取，`cache.ts` 与 `chat-core.ts` 也改从 shared 取（旧路径保留 re-export）
+- **ADR 0002 增补受控例外**：`chat-core.js` 是无状态纯函数模块（常量/归一化/消息拼装），明确列为允许；仍禁止 store / repos / cache / prefs / story-repo / data 实现
+
+### 测试
+- 新增 `scripts/test-store-cache.mjs`（86 条：cache 拷贝隔离/LRU/字节上限/TTL/并发/坏条目/BOM/prune + atomic 原子写/重试/隔离 + store 门面往返），接入 `npm test`
+- 全链 **2166 项 0 失败**（2080 + 86）；接口清单 119 模块 / 716 导出
+
+## [1.1.52] - 2026-11-07
+
+### 修复（B64 内容路由分身）
+- **坏数据能把念诗拖死（P1）**：`poem.total` 来自数据文件，被直接当成 `for (i < total)` 的循环上界；数据若给出 `1e9`/`Infinity`，每次念诗要空转上亿次、请求永不返回。现在 `total` 限 1..64 且必须有限（越界打 `POEM-TOTAL-CAP`）
+- **`?title=` 未命中缺少标记**：注释承诺「回落随机并告诉客户端 `matched:false`」，实际没下发；已补齐
+- **池空重来会撞上一则**：`culture` 一轮播完重置时不排除上一则，有 1/n 概率「刚讲完又立刻同一则」；已与念诗同口径排除
+
+### 修复（B65 渲染层分身）
+- **每次卸载漏撤 4 个 window 监听**：`addEventListener(..., true)` 捕获监听配的 `removeEventListener` 少传 `capture`，DOM 按三元组匹配，撤不掉；闭包一直攥着旧 stage 与回调（重挂载/HMR 会叠加）
+- **一帧绘制异常 = 鱼永久冻结**：`loop` 只在末尾排下一帧，任何异常都会断掉 rAF 链且无日志；现在单帧绘制抽 `drawFrame` + try/catch，连续 300 帧异常才停表，首帧 warn 一次
+- **画布状态栈不配平**：`save()` 与 `restore()` 之间没有 `finally`，异常后旋转/位移留在栈顶、恢复后逐帧叠加；已用 `finally` 配平
+- **无 window 环境直接 ReferenceError**：`menuStyle` 在 `menu` 非空时裸读 `window`（同函数里 `maxHeight` 却做了守卫）；`menu.x` 非数还会生成 `"NaNpx"` 被整条忽略。已收敛到 `viewportSize()` + NaN 回退
+- **375px 视口聊天面板落在屏外**：固定 `right:236/width:340` 时左边界 = −201px；现在按视口收缩（≥584×526 时取值与旧版完全一致）
+
+### 测试
+- 新增 `scripts/test-content-routes.mjs`（88 条）与 `scripts/test-render-layer.mjs`（73 条，基线快照上 14 项红），均接入 `npm test`
+- 全链 **2080 项 0 失败**（1919 + 88 + 73）
+
 ## [1.1.51] - 2026-11-07
 
 ### 修复（B63 主代理：连播开关收口）

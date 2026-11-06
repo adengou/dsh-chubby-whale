@@ -4,7 +4,7 @@
  * 缓存：文本+音色+语速+音调 hash → 复用 mp3（省时间、省调用）
  * 语速由请求体 rate 决定（说书 -15%，普通聊天 +0%），服务端不再写死。
  */
-import { hashKey } from '../cache.js'
+import { hashKey } from '../../shared/hash.js'
 import { sendTooLarge } from '../http.js'
 import { readJsonBody } from '../body.js'
 import { sendJson, sendBuffer } from '../respond.js'

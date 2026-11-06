@@ -4,7 +4,8 @@
  *   {"allusions":[...],"tales":[...],"idioms":[...],"minsu":[...]}
  *   元素为「名称」或「书名|标题」；民间故事同时写 tales（C# 读它）和 minsu。
  *   读到旧格式 {"chengyu:名称": true} 时自动迁移成新结构。
- * 一轮讲完只清空同一类别的记录，别的类别进度保留。
+ * 一轮讲完只清空同一类别的记录，别的类别进度保留；一轮重来时先排除上一则，
+ * 避免「刚讲完又立刻同一则」（与念诗同口径，见 poem.ts 的同名处理）。
  * 数据经 DataPort 取（本地/云端由 index.ts 注入）；数据源读不到只记 CULTURE-LOAD-FAIL，按空池处理，绝不整类报错。
  * 原子写/坏文件隔离走 host/atomic.ts，JSON 响应走 host/respond.ts。
  */
@@ -18,6 +19,8 @@ import type { CultureKind, DataPort } from '../ports.js'
 export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: string; dataPort: DataPort }) {
   const SEEN_FILE = join(opts.runtimeDir || opts.dataDir, 'culture-seen.json')
   let seen: Record<string, boolean> | null = null
+  /** 上一次讲出来的条目键（按类别）：一轮重来时先排除它，避免「刚讲完又立刻同一则」 */
+  const lastServed = new Map<string, string>()
 
   /** 文化数据经数据源端口取（本地/云端由 index.ts 注入）；实现已兜底，这里只防注入实现意外抛错 */
   async function loadCulture(kind: CultureKind): Promise<any[]> {
@@ -117,6 +120,8 @@ export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: stri
   /**
    * 随机挑一条没讲过的。一轮讲完只清掉同类前缀的记录，
    * 别的类别（典故/故事/成语）的进度不受影响。
+   * 一轮重来后先排除刚讲过的上一条（池子只有一条时只能照旧重复）：
+   * 否则新一轮第一则有 1/n 概率与上一则完全相同，用户看到的就是「刚讲完又讲一遍」。
    */
   function pickUnseen<T>(arr: T[], prefix: string, keyOf: (x: T) => string): T | null {
     if (!arr || arr.length === 0) return null
@@ -128,10 +133,13 @@ export function createCultureHandlers(opts: { dataDir: string; runtimeDir?: stri
         if (k.startsWith(prefix + ':')) delete sn[k]
       }
       saveSeen()
-      pool = arr.slice()
+      const last = lastServed.get(prefix) || ''
+      pool = arr.filter((x: T) => full(x) !== last)
+      if (pool.length === 0) pool = arr.slice()
     }
     const item = pool[Math.floor(Math.random() * pool.length)]
     sn[full(item)] = true
+    lastServed.set(prefix, full(item))
     saveSeen()
     return item
   }

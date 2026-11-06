@@ -14,7 +14,6 @@
  *     FAT / exFAT 只有 2 秒精度，会出现「刚写就被判过期/排序并列」的偶发现象，属已知限制，
  *     只影响缓存命中率，不影响正确性（宁可重算，不返回错内容）。
  */
-import { createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir, readdir, unlink, stat, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CachePort } from './ports.js'
@@ -26,19 +25,9 @@ const RENAME_RETRY_DELAY_MS = 20
 /** prune 节流窗口：每次写都全量 readdir+stat 会把磁盘扫描串进回复延迟 */
 const PRUNE_INTERVAL_MS = 30000
 
-export function hashKey(text: string): string {
-  return createHash('sha1').update(text).digest('hex')
-}
-
-/** 短指纹（md5 前 8 位）：拼缓存 key 用（如长期记忆摘要的指纹） */
-export function shortHash(text: string): string {
-  return createHash('md5').update(String(text || '')).digest('hex').slice(0, 8)
-}
-
-/** 二进制内容 hash（ASR 音频用完整字节，避免只取前 4000 字符撞 key） */
-export function hashBytes(buf: Uint8Array | Buffer): string {
-  return createHash('sha1').update(buf).digest('hex')
-}
+// hash 纯函数已移到 shared/hash.ts（路由也能直接 import，不必为了算 hash 依赖缓存实现）。
+// 这里保留同名 re-export：旧导入路径（历史代码 / 测试）继续可用。
+export { hashKey, shortHash, hashBytes } from '../shared/hash.js'
 
 function sizeOf(value: any): number {
   if (value == null) return 0
@@ -53,8 +42,11 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => { setTimeout(resolve, ms) })
 }
 
+/** 内存条目：v=值（对外一律返回拷贝）、size=估算字节、at=写入时间、ttl=可选的存活毫秒（0=不按 ttl 过期） */
+type MemEntry = { v: any; size: number; at: number; ttl: number }
+
 export function createCache(opts: { dir: string; memLimit?: number; memBytes?: number; maxFiles?: number }): CachePort {
-  const mem = new Map<string, { v: any; size: number; at: number; ttl: number }>()
+  const mem = new Map<string, MemEntry>()
   const MEM_ITEMS = opts.memLimit || 500
   const MEM_BYTES = opts.memBytes || 32 * 1024 * 1024   // 内存里最多放 32MB
   const MAX_FILES = opts.maxFiles || 1200
@@ -142,13 +134,21 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
           const st = await stat(join(opts.dir, key + '.' + ext))
           alive = Date.now() - st.mtimeMs <= maxAgeMs
         } catch { alive = false }
+        // await 期间可能有并发 setJson 改写了同一条目（记住：它先同步写内存、再落盘）。
+        // 这时绝不能拿手里的旧 hit 去 delete/set —— 那会把刚写进去的新值顶回旧值，
+        // 而且绕过了 forget 的字节扣减，memBytes 从此漂移（容量越用越小）。
+        const cur = mem.get(key)
+        if (cur !== hit) {
+          if (!cur || !fresh(cur, maxAgeMs)) return null
+          return cloneHit(cur.v)             // 只认新条目，旧值绝不回写
+        }
       }
       if (alive) {
         mem.delete(key)
         mem.set(key, hit)                    // 命中后挪到队尾（LRU）
         return cloneHit(hit.v)
       }
-      forget(key)
+      forget(key)                            // 走到这里 mem.get(key) 仍是 hit（没有 await：同步段内不会变）
     }
     try {
       const file = join(opts.dir, key + '.' + ext)
@@ -174,13 +174,15 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
       // 原子写：先写唯一临时文件再 rename 覆盖（并发同 key 不会交错产出坏文件）
       const target = join(opts.dir, key + '.' + ext)
       const tmp = target + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp'
-      // POSIX：创建即 0600；Windows 忽略 mode。写出统一 UTF-8 无 BOM
-      if (ext === 'json') await writeFile(tmp, JSON.stringify(value), { encoding: 'utf8', mode: 0o600 })
-      else await writeFile(tmp, value, { mode: 0o600 })
       try {
+        // POSIX：创建即 0600；Windows 忽略 mode。写出统一 UTF-8 无 BOM
+        if (ext === 'json') await writeFile(tmp, JSON.stringify(value), { encoding: 'utf8', mode: 0o600 })
+        else await writeFile(tmp, value, { mode: 0o600 })
         await renameWithRetry(tmp, target)
       } catch (e) {
-        try { await unlink(tmp) } catch { }   // 改名失败别留垃圾
+        // 写失败（磁盘满 / 参数非法）与改名失败一样不能留半截临时文件：它会被
+        // 目录计数（prune 上限）和事后排障当成"缓存条目"。
+        try { await unlink(tmp) } catch { }
         throw e
       }
       await prune()
@@ -235,8 +237,8 @@ export function createCache(opts: { dir: string; memLimit?: number; memBytes?: n
     }
   }
 
-  // 内存直写：和 setJson 一样经 remember 打 at（可选 ttl），过期判定不会拿到没有时间的条目
-  function memSet(key: string, value: any, ttlMs = 0): void { remember(key, value, ttlMs) }
+  // 内存直写：和 setJson 一样经 remember 打 at（可选 ttl）并拷贝入缓存（坑 27：绝不把调用方对象存进内部）
+  function memSet(key: string, value: any, ttlMs = 0): void { remember(key, cloneHit(value), ttlMs) }
 
   /** 清空缓存（内存 + 磁盘文件）；用于「清空聊天缓存」「清除记忆」 */
   async function clear(): Promise<number> {

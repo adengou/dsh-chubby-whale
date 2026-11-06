@@ -126,7 +126,7 @@ export function writeFileAtomic(file, data) {
     mkdirSync(dirname(file), { recursive: true });
     const tmp = file + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp';
     // POSIX：创建即 0600（umask 无法把权限放回去）；Windows 忽略 mode 参数
-    const fd = openSync(tmp, 'w', 0o600);
+    const fd = openSync(tmp, 'w', 0o600); // 打开就失败（EACCES/ENOSPC）：临时文件还没建出来，无需清理
     try {
         if (typeof data === 'string')
             writeFileSync(fd, data, 'utf8');
@@ -140,12 +140,23 @@ export function writeFileAtomic(file, data) {
             catch { } // 个别文件系统不支持 fsync，失败不当错误
         }
     }
-    finally {
+    catch (err) {
+        // 写到一半失败（磁盘满 / data 参数非法）：半截临时文件必须删掉。
+        // 文件头承诺「失败清掉临时文件」，不走 rename 的失败路径同样适用。
         try {
             closeSync(fd);
         }
         catch { }
+        try {
+            unlinkSync(tmp);
+        }
+        catch { }
+        throw err;
     }
+    try {
+        closeSync(fd);
+    }
+    catch { }
     chmodPrivateFile(tmp); // 兜底：临时文件若已存在，'w' 会保留旧权限
     try {
         renameWithRetry(() => renameSync(tmp, file));

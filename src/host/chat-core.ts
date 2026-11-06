@@ -8,7 +8,7 @@
  *   · 历史截断 / 上下文指纹 / prompt 片段与消息组装
  * 不涉及 HTTP、不涉及 fetch、不持有任何状态，便于离线断言（scripts/selftest.mjs 仍用 chat.ts 的再导出）。
  */
-import { shortHash, hashKey } from './cache.js'
+import { shortHash, hashKey } from '../shared/hash.js'
 import { fetchJson } from './http.js'
 
 /** DeepSeek 对话接口地址（聊天与摘要共用） */

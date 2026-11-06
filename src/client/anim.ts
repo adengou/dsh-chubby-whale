@@ -345,9 +345,12 @@ export function createAnimator(opts: {
     ctx.restore()
   }
 
-  function loop(t: number): void {
-    // stop 之后即使还有一帧回调被派发到这里，也绝不再排下一帧（RAF 链必断）
-    if (!running) return
+  /**
+   * 单帧绘制（不含排帧）。抽出来是为了让 loop 能兜住异常：
+   * 旧实现把 requestAnimationFrame(loop) 写在函数末尾，任何一次绘制抛错都会让
+   * rAF 链直接断掉——鱼从此冻结，连重试的机会都没有。
+   */
+  function drawFrame(t: number): void {
     const dt = Math.max(0, Math.min(50, t - last))
     last = t
 
@@ -356,7 +359,7 @@ export function createAnimator(opts: {
     if (maintCountdown <= 0) maintain()
     // 不可见（卸载 / display:none / 标签页隐藏）时只保活 RAF，不做绘制：
     // 2MB 的鱼图每帧 drawImage 纯属白烧 GPU，恢复可见后下一拍自动续上。
-    if (!visible) { raf = requestAnimationFrame(loop); return }
+    if (!visible) return
 
     ctx.clearRect(0, 0, cw, ch)
 
@@ -370,32 +373,63 @@ export function createAnimator(opts: {
       ? (t - wagStart) / WAG_MS
       : -1
 
+    // save/restore 必须成对：重试机制下如果异常发生在中间，画布状态（旋转/位移）会
+    // 一直留在栈顶，下一帧 save 的又是被污染的状态，几次之后鱼就歪着画了。
     ctx.save()
-    if (wagP >= 0) {
-      // 包络 0→1→0，绕底部中心左右摆一小下 + 轻微上下浮动
-      const env = Math.sin(Math.PI * wagP)
-      const angle = Math.sin(wagP * Math.PI * 6) * 0.012 * env
-      const bob = Math.sin(wagP * Math.PI * 4) * 1.6 * env
-      ctx.translate(cw / 2, ch)
-      ctx.rotate(angle)
-      ctx.translate(0, bob)
-      ctx.translate(-cw / 2, -ch)
-    }
+    try {
+      if (wagP >= 0) {
+        // 包络 0→1→0，绕底部中心左右摆一小下 + 轻微上下浮动
+        const env = Math.sin(Math.PI * wagP)
+        const angle = Math.sin(wagP * Math.PI * 6) * 0.012 * env
+        const bob = Math.sin(wagP * Math.PI * 4) * 1.6 * env
+        ctx.translate(cw / 2, ch)
+        ctx.rotate(angle)
+        ctx.translate(0, bob)
+        ctx.translate(-cw / 2, -ch)
+      }
 
-    drawHalo(t)
-    if (img.complete && img.naturalWidth > 0) {
-      ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch)
+      drawHalo(t)
+      if (img.complete && img.naturalWidth > 0) {
+        ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch)
+      }
+      drawFinDots(t)
+      blinkT += dt
+      if (!blinkClosed && blinkT > blinkGap) { blinkClosed = true; blinkT = 0 }
+      if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
+      if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
+      if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0)
+      drawSplashes(dt)
+    } finally {
+      ctx.restore()
     }
-    drawFinDots(t)
-    blinkT += dt
-    if (!blinkClosed && blinkT > blinkGap) { blinkClosed = true; blinkT = 0 }
-    if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
-    if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
-    if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0)
-    drawSplashes(dt)
-    ctx.restore()
 
     drawHearts(dt / 1000)
+  }
+
+  /** 连续绘制异常上限（约 5 秒 / 60Hz）：到顶就停表，避免 60fps 无限重试白烧 CPU */
+  const FRAME_ERROR_LIMIT = 300
+  let frameErrors = 0
+
+  function loop(t: number): void {
+    // stop 之后即使还有一帧回调被派发到这里，也绝不再排下一帧（RAF 链必断）
+    if (!running) return
+    try {
+      drawFrame(t)
+      frameErrors = 0
+    } catch (e) {
+      frameErrors += 1
+      // 只在连续异常的第一帧记一次，别把控制台刷满
+      if (frameErrors === 1) {
+        try { console.warn('[chubby-whale] canvas 绘制异常，已继续排帧重试：', e) } catch (e2) { }
+      }
+      if (frameErrors >= FRAME_ERROR_LIMIT) {
+        try { console.warn('[chubby-whale] canvas 连续 ' + FRAME_ERROR_LIMIT + ' 帧绘制异常，停止动画（已画出的画面保留）') } catch (e2) { }
+        stop()
+        return
+      }
+    }
+    // stop() 可能在上面分支或外部被调用：确认还在跑才续帧
+    if (!running) return
     raf = requestAnimationFrame(loop)
   }
 

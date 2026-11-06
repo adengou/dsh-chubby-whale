@@ -11,6 +11,12 @@ import { join } from 'node:path';
 import { writeJsonAtomic } from '../atomic.js';
 import { sendJson, sendError } from '../respond.js';
 import { poemKeyOf } from '../../shared/poem.js';
+/**
+ * 分片数上限：正常数据是云端 poems-00..14 共 15 片（本地固定 1 片），这里留足余量。
+ * total 来自数据文件（外部输入），**绝不能直接当循环上界**：坏数据里的 1e9 / Infinity
+ * 会让每次念诗都空转上亿次、请求永不返回（分片越界时数据层快速返回空片，await 也拦不住）。
+ */
+const POEM_MAX_CHUNKS = 64;
 export function createPoemHandler(opts) {
     const SEEN_FILE = join(opts.runtimeDir || opts.dataDir || '.', 'poem-seen.json');
     let seen = null;
@@ -25,7 +31,12 @@ export function createPoemHandler(opts) {
             const first = await opts.dataPort.readPoemsChunk(0);
             // 数据层（local/cloud）已经归一化过去重过，这里不再重复归一化（737 首诗每请求扫一遍纯属浪费）
             const out = Array.isArray(first && first.items) ? first.items.slice() : [];
-            const total = Math.max(1, Number(first && first.total) || 1);
+            // 只认 1..POEM_MAX_CHUNKS 的有限数；NaN（缺字段/坏字符串）按 1 片，避免循环上界不可控
+            const declared = Number(first && first.total);
+            const total = Number.isFinite(declared) ? Math.min(Math.max(1, Math.trunc(declared)), POEM_MAX_CHUNKS) : 1;
+            if (declared > POEM_MAX_CHUNKS || declared === Infinity) {
+                console.error('POEM-TOTAL-CAP raw=' + String(declared) + ' used=' + total);
+            }
             for (let i = 1; i < total; i++) {
                 const chunk = await opts.dataPort.readPoemsChunk(i);
                 if (chunk && Array.isArray(chunk.items))
@@ -80,6 +91,7 @@ export function createPoemHandler(opts) {
             }
             // 指定标题：按「完整标题 = 」优先，其次「包含」，命中就直接背这一首（不参与随机池）
             let want = '';
+            let titleMissed = false;
             try {
                 const u = new URL(String(req?.url || ''), 'http://local');
                 want = String(u.searchParams.get('title') || '').trim();
@@ -104,6 +116,7 @@ export function createPoemHandler(opts) {
                     return;
                 }
                 // 没匹配到就回落随机（并告诉客户端 matched:false）
+                titleMissed = true;
             }
             const sn = loadSeen();
             let pool = list.filter((p) => !sn.has(poemKeyOf(p)));
@@ -122,6 +135,8 @@ export function createPoemHandler(opts) {
             saveSeen();
             sendJson(res, {
                 ok: true,
+                // 带了 ?title= 但库里没有：明确告诉客户端这是随机回落（不带 title 时维持原响应，不多出字段）
+                ...(titleMissed ? { matched: false } : {}),
                 item: {
                     title: p.title,
                     author: p.author,
