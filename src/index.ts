@@ -215,6 +215,11 @@ export function apply(ctx: any, rawConfig?: any): void {
     cacheEnabled: prefs.chatCacheEnabled,
     model: chatModel,
     onReply: onModelReply,
+    // 流式路径与普通 /chat 同口径：亲密度/成长/长期摘要（此前漏注入，导致客户端优先走流式时日常聊天不记账）
+    loadState: store.loadState,
+    saveState: store.saveState,
+    addExp: store.addExp,
+    saveMemorySummary: store.saveMemorySummary,
   })
   const storyPlayer = createStoryPlayer({
     // 说书播放器只认 listBooks/loadBook；数据源（本地/云端）由 DataPort 投影进来

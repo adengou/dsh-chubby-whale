@@ -35,7 +35,7 @@ import { sendTooLarge } from '../http.js';
 import { readJsonBody } from '../body.js';
 import { sendJson, sendSseHeaders } from '../respond.js';
 import { DEFAULT_CHAT_MODEL } from '../config.js';
-import { CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, } from '../chat-core.js';
+import { CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, summarizeMemory, } from '../chat-core.js';
 import { parseSseBuffer } from '../../shared/sse.js';
 const CHAT_IDLE_TIMEOUT = 30 * 1000; // 空闲超时：连续这么久没有上游数据才中止
 const CHAT_MAX_DURATION = 120 * 1000; // 总时长硬上限：不论有没有数据，到点就断
@@ -209,8 +209,19 @@ export function createChatStreamHandler(opts) {
                 try {
                     const hit = await opts.cache.getJson(cacheKey, 'json', CHAT_CACHE_TTL);
                     if (hit && typeof hit.reply === 'string' && hit.reply) {
+                        // 缓存命中与 /chat 同口径：只加亲密度，不加经验、不写记忆、不 onReply
+                        let cachedIntimacy = 0;
+                        try {
+                            if (opts.loadState && opts.saveState) {
+                                const st0 = opts.loadState();
+                                st0.intimacy = Math.min(100, (Number(st0.intimacy) || 0) + 1);
+                                opts.saveState(st0);
+                                cachedIntimacy = Number(st0.intimacy) || 0;
+                            }
+                        }
+                        catch { }
                         send({ delta: hit.reply });
-                        send({ done: true, reply: hit.reply, cached: true, ms: Date.now() - started });
+                        send({ done: true, reply: hit.reply, cached: true, intimacy: cachedIntimacy, ms: Date.now() - started });
                         res.end();
                         return;
                     }
@@ -397,6 +408,39 @@ export function createChatStreamHandler(opts) {
                     opts.onReply();
             }
             catch { }
+            // 长期记忆摘要（与 /chat 同口径，每 10 次）：后台跑不 await；写回前做代际校验
+            if (wantSummary && opts.saveMemorySummary && sumConvo) {
+                try {
+                    const saveSummary = opts.saveMemorySummary;
+                    const historyAtReply = (() => { try {
+                        return opts.loadHistory().length;
+                    }
+                    catch {
+                        return 0;
+                    } })();
+                    const summaryAtReply = memSummary;
+                    void summarizeMemory(key, sumConvo, memSummary || '（无）', (s2) => {
+                        try {
+                            const nowHistory = opts.loadHistory();
+                            if (Array.isArray(nowHistory) && nowHistory.length < historyAtReply) {
+                                console.error('[chat-stream] SUMMARY-SKIP 记忆已被清空');
+                                return;
+                            }
+                        }
+                        catch { }
+                        try {
+                            const nowSummary = String(opts.loadMemorySummary ? opts.loadMemorySummary() || '' : '');
+                            if (nowSummary !== summaryAtReply) {
+                                console.error('[chat-stream] SUMMARY-SKIP 摘要已被改写');
+                                return;
+                            }
+                        }
+                        catch { }
+                        saveSummary(s2);
+                    }, model);
+                }
+                catch { }
+            }
         }
         catch (err) {
             try {

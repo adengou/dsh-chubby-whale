@@ -130,7 +130,7 @@ export interface ChatRouteDeps {
   onReply?: () => void
 }
 
-/** 流式 /chat-stream 的依赖（不写亲密度/成长，只记 token 与记忆） */
+/** 流式 /chat-stream 的依赖（与普通 /chat 同口径：亲密度/成长/长期摘要都记） */
 export interface ChatStreamRouteDeps {
   getKey: KeyReader
   loadHistory: () => any[]
