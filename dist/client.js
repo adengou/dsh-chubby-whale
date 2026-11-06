@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.34";
+  var VERSION = "1.1.35";
 
   // src/client/styles.ts
   var W = 240;
@@ -2108,13 +2108,19 @@
     const recentHeard = [];
     let lastText = "";
     let lastTextAt = 0;
+    const acceptedSeg = [];
     function noteSpoken(text, now) {
       const t = String(text || "").trim();
       if (!t) return;
       spokenRecent.push({ text: t, at: typeof now === "number" ? now : Date.now() });
       while (spokenRecent.length > 12) spokenRecent.shift();
     }
-    function accept(text, nowIn) {
+    function accept(text, nowIn, segId) {
+      if (typeof segId === "number") {
+        if (acceptedSeg.indexOf(segId) >= 0) return { ok: false, reason: "dup" };
+        acceptedSeg.push(segId);
+        while (acceptedSeg.length > 50) acceptedSeg.shift();
+      }
       const plain = text.replace(/[\s。，！？,.!?、…~～]/g, "");
       const plainKey = echoKey(text);
       if (plain.length < 2 && !/^[停别不]$/.test(plain)) return { ok: false, reason: "trivial" };
@@ -2495,6 +2501,8 @@
     let asrNoKey = false;
     let muted = false;
     const seg = createSegmentState();
+    let segSeq = 0;
+    let curSegId = 0;
     let tickTimer = null;
     let restartTimer = null;
     const echoFilter = createEchoFilter();
@@ -2595,6 +2603,7 @@
       }, ms2);
     }
     function beginWindow() {
+      curSegId = ++segSeq;
       if (!running || !rec) return;
       try {
         if (rec.state !== "inactive") {
@@ -2682,6 +2691,7 @@
       }
     }
     async function onWindowDone(blob) {
+      const thisSegId = curSegId;
       if (!running) return;
       if (asrNoKey) {
         stats.skippedSilent++;
@@ -2785,7 +2795,7 @@
         const text = String(data.text || "").trim();
         if (!text) return;
         stats.asrTexts++;
-        const verdict = echoFilter.accept(text);
+        const verdict = echoFilter.accept(text, Date.now(), thisSegId);
         if (verdict.ok) {
           stats.heard++;
           setStatus("thinking");
@@ -2943,6 +2953,14 @@
       }
     }
     function ttsBrowserFallback(job, myToken) {
+      try {
+        disposeTtsAudio();
+      } catch (e) {
+      }
+      try {
+        stopBrowserSpeech();
+      } catch (e) {
+      }
       const canBrowser = !job.strict && browserVoiceUsable();
       if (job.strict || ttsSkipFailOn() || !canBrowser) {
         finishJob(job);

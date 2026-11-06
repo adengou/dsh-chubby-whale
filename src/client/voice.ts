@@ -207,6 +207,9 @@ export function createVoice(opts: VoiceOptions): Voice {
 
   // ---- 一段录音的状态（parts / 峰值 / 说话时长 / 静音时长 / 段起点）----
   const seg = createSegmentState()
+  // 录音段自增号：ASR 超时重试时同一段只处理一次（echoFilter 段级去重）
+  let segSeq = 0
+  let curSegId = 0
   let tickTimer: any = null
   let restartTimer: any = null
 
@@ -291,6 +294,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   }
 
   function beginWindow(): void {
+    curSegId = ++segSeq
     if (!running || !rec) return
     try {
       if (rec.state !== 'inactive') { try { rec.stop() } catch (e) { } scheduleNext(200); return }
@@ -355,6 +359,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   }
 
   async function onWindowDone(blob: Blob): Promise<void> {
+    const thisSegId = curSegId
     // 已停止（关语音待命/卸载）：这段不能再上传，也不能把状态从 idle 回写成
     // recognizing/listening —— 那正是"关了还在听"的来源。
     if (!running) return
@@ -435,7 +440,7 @@ export function createVoice(opts: VoiceOptions): Voice {
       if (!text) return
       stats.asrTexts++
       // 丢弃原因只在这里记一次（过滤器内部不再动 stats：原来同一个事件会被记两遍）
-      const verdict = echoFilter.accept(text)
+      const verdict = echoFilter.accept(text, Date.now(), thisSegId)
       if (verdict.ok) {
         stats.heard++
         setStatus('thinking')
@@ -596,6 +601,9 @@ const asrAborts = new Set<AbortController>()
    *   都没有                  → 结账继续，这一段记为丢失
    */
   function ttsBrowserFallback(job: TtsJob, myToken: number): void {
+    // 混音根因：浏览器朗读前没停可能仍在播的 edge-tts 音频 → 两路同时出声
+    try { disposeTtsAudio() } catch (e) { }
+    try { stopBrowserSpeech() } catch (e) { }
     const canBrowser = !job.strict && browserVoiceUsable()
     if (job.strict || ttsSkipFailOn() || !canBrowser) { finishJob(job); return }
     // 朗读期间开麦会把自己的声音录回去：与音频路径一致先闭麦，finishJob 里 700ms 后恢复

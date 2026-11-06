@@ -22,7 +22,8 @@ export type EchoVerdict = {
 
 export type EchoFilter = {
   /** 过滤一句 ASR 结果（now 可注入，便于单测；默认 Date.now()） */
-  accept: (text: string, now?: number) => EchoVerdict
+  /** segId：同一录音段的唯一号（防 ASR 超时重试把同段识别两次） */
+  accept: (text: string, now?: number, segId?: number) => EchoVerdict
   /** 记下"自己刚朗读过的整段"（回声比对用） */
   noteSpoken: (text: string, now?: number) => void
   /** 清空全部记忆（换会话/卸载时可用） */
@@ -36,6 +37,8 @@ export function createEchoFilter(): EchoFilter {
   const recentHeard: Array<{ text: string; at: number }> = []
   let lastText = ''
   let lastTextAt = 0
+  /** 已处理过的录音段（最近 50 个）：同一段只放行/处理一次，防重试重复 */
+  const acceptedSeg: number[] = []
 
   function noteSpoken(text: string, now?: number): void {
     const t = String(text || '').trim()
@@ -44,7 +47,13 @@ export function createEchoFilter(): EchoFilter {
     while (spokenRecent.length > 12) spokenRecent.shift()
   }
 
-  function accept(text: string, nowIn?: number): EchoVerdict {
+  function accept(text: string, nowIn?: number, segId?: number): EchoVerdict {
+    // 同一录音段只处理一次：ASR 超时重试会把同一段识别两次，第二次间隔超过 8s 去重窗 → 会变成"自言自语"
+    if (typeof segId === 'number') {
+      if (acceptedSeg.indexOf(segId) >= 0) return { ok: false, reason: 'dup' }
+      acceptedSeg.push(segId)
+      while (acceptedSeg.length > 50) acceptedSeg.shift()
+    }
     const plain = text.replace(/[\s。，！？,.!?、…~～]/g, '')
     const plainKey = echoKey(text)
     // 单字放行白名单：主人喊「停！」也要能打断说书/朗读
