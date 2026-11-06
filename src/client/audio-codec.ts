@@ -102,6 +102,8 @@ function writeAscii(view: DataView, offset: number, text: string): void {
 /**
  * Float32 采样 → 16bit PCM 单声道 WAV（小端）。
  * 采样先夹到 [-1,1]，非有限值按 0；负半轴用 0x8000、正半轴用 0x7fff，避免削顶溢出。
+ * 说明：16bit 单声道每个采样固定 2 字节，data 块长度恒为偶数，不会出现需要 padding 的奇数字节；
+ * 头部各字段（RIFF size = 36 + data、byteRate = sr×2、blockAlign = 2）均按 PCM 标准填写。
  */
 export function encodeWavPcm16(samples: Float32Array | number[] | null | undefined, sampleRate: number): ArrayBuffer {
   const src: any = samples || []
@@ -109,6 +111,8 @@ export function encodeWavPcm16(samples: Float32Array | number[] | null | undefin
   const rateRaw = Math.round(Number(sampleRate) || 48000)
   const sr = Math.max(8000, Math.min(96000, rateRaw))
   const dataBytes = n * 2
+  // RIFF 的 size 字段只有 32 位：溢出会写出一个宿主/识别服务读不懂的坏头
+  if (dataBytes > 0xffffffff - 36) throw new RangeError('wav too large')
   const buf = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes)
   const v = new DataView(buf)
   writeAscii(v, 0, 'RIFF')
@@ -134,9 +138,13 @@ export function encodeWavPcm16(samples: Float32Array | number[] | null | undefin
   return buf
 }
 
-/** WAV 能装下多少字节（调用方按它估算上传体积，避免超过宿主 8MB 上限） */
+/**
+ * WAV 能装下多少字节（调用方按它估算上传体积，避免超过宿主上限）。
+ * 采样数向上取整：与 encodeWavPcm16 的实际 data 长度（n×2）保持同一口径，
+ * 不用 round 是为了体积检查宁多算 2 字节，也别放过刚好卡线的情况。
+ */
 export function wavBytes(seconds: number, sampleRate: number): number {
   const sec = Math.max(0, Number(seconds) || 0)
   const sr = Math.max(8000, Math.min(96000, Math.round(Number(sampleRate) || 48000)))
-  return WAV_HEADER_BYTES + Math.round(sec * sr) * 2
+  return WAV_HEADER_BYTES + Math.ceil(sec * sr) * 2
 }

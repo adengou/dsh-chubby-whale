@@ -542,13 +542,16 @@
   var DEFAULT_MAX_EDGE = 1280;
   var DEFAULT_QUALITY = 0.85;
   var KEEP_RAW_BELOW = 400 * 1024;
-  function readFileAsBase64(file) {
+  function readFileAsDataUrl(file) {
     return new Promise((resolve) => {
       try {
         const fr = new FileReader();
         fr.onloadend = () => {
-          const s = String(fr.result || "");
-          resolve(s.indexOf(",") >= 0 ? s.slice(s.indexOf(",") + 1) : s);
+          try {
+            resolve(String(fr.result || ""));
+          } catch (e) {
+            resolve("");
+          }
         };
         fr.onerror = () => resolve("");
         fr.readAsDataURL(file);
@@ -557,12 +560,28 @@
       }
     });
   }
+  function mimeFromDataUrl(dataUrl) {
+    const m = /^data:([^;,]+)/i.exec(String(dataUrl || ""));
+    return m ? m[1].toLowerCase() : "";
+  }
   function decodeImage(file) {
     return new Promise((resolve) => {
       try {
         const w = typeof window !== "undefined" ? window : globalThis;
         if (typeof w.createImageBitmap === "function") {
-          Promise.resolve(w.createImageBitmap(file)).then((bmp) => resolve(bmp)).catch(() => resolve(null));
+          let p;
+          try {
+            p = w.createImageBitmap(file, { imageOrientation: "from-image" });
+          } catch (e) {
+            p = w.createImageBitmap(file);
+          }
+          Promise.resolve(p).then((bmp) => resolve(bmp)).catch(() => {
+            try {
+              Promise.resolve(w.createImageBitmap(file)).then((bmp) => resolve(bmp)).catch(() => resolve(null));
+            } catch (e) {
+              resolve(null);
+            }
+          });
           return;
         }
         const URLRef = w.URL || globalThis.URL;
@@ -589,41 +608,50 @@
     });
   }
   async function imageToB64(file, opts) {
-    const raw = await readFileAsBase64(file);
+    const dataUrl = await readFileAsDataUrl(file);
+    const at = dataUrl.indexOf(",");
+    const raw = at >= 0 ? dataUrl.slice(at + 1) : dataUrl;
     if (!raw) return null;
-    const rawMime = String(file && file.type || "image/jpeg");
+    const rawMime = mimeFromDataUrl(dataUrl) || String(file && file.type || "image/jpeg");
     const rawResult = { b64: raw, mime: rawMime, width: 0, height: 0, compressed: false };
     try {
-      if (raw.length <= KEEP_RAW_BELOW) return rawResult;
+      const declared = Number(file && file.size);
+      const rawBytes = isFinite(declared) && declared > 0 ? declared : Math.ceil(raw.length * 3 / 4);
+      if (rawBytes <= KEEP_RAW_BELOW) return rawResult;
       const maxEdge = Math.max(256, Math.min(4096, Math.round(Number(opts && opts.maxEdge) || DEFAULT_MAX_EDGE)));
       const quality = Math.min(0.95, Math.max(0.5, Number(opts && opts.quality) || DEFAULT_QUALITY));
       const img = await decodeImage(file);
       if (!img) return rawResult;
-      const iw = Math.max(1, Number(img.width || img.naturalWidth) || 1);
-      const ih = Math.max(1, Number(img.height || img.naturalHeight) || 1);
-      const scale = Math.min(1, maxEdge / Math.max(iw, ih));
-      const w = Math.max(1, Math.round(iw * scale));
-      const h = Math.max(1, Math.round(ih * scale));
-      const doc = typeof document !== "undefined" ? document : null;
-      if (!doc || typeof doc.createElement !== "function") return rawResult;
-      const canvas = doc.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const cx = canvas.getContext && canvas.getContext("2d");
-      if (!cx || typeof canvas.toDataURL !== "function") return rawResult;
-      cx.drawImage(img, 0, 0, w, h);
-      const dataUrl = String(canvas.toDataURL("image/jpeg", quality) || "");
-      const at = dataUrl.indexOf(",");
-      const b64 = at >= 0 ? dataUrl.slice(at + 1) : "";
-      if (!b64) return rawResult;
-      if (b64.length >= raw.length) return rawResult;
-      if (typeof img.close === "function") {
+      try {
+        const iw = Math.max(1, Number(img.width || img.naturalWidth) || 1);
+        const ih = Math.max(1, Number(img.height || img.naturalHeight) || 1);
+        const scale = Math.min(1, maxEdge / Math.max(iw, ih));
+        const w = Math.max(1, Math.round(iw * scale));
+        const h = Math.max(1, Math.round(ih * scale));
+        const doc = typeof document !== "undefined" ? document : null;
+        if (!doc || typeof doc.createElement !== "function") return rawResult;
+        const canvas = doc.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const cx = canvas.getContext && canvas.getContext("2d");
+        if (!cx || typeof canvas.toDataURL !== "function") return rawResult;
+        if (typeof cx.fillRect === "function") {
+          cx.fillStyle = "#fff";
+          cx.fillRect(0, 0, w, h);
+        }
+        cx.drawImage(img, 0, 0, w, h);
+        const out = String(canvas.toDataURL("image/jpeg", quality) || "");
+        const cut = out.indexOf(",");
+        const b64 = cut >= 0 ? out.slice(cut + 1) : "";
+        if (!b64) return rawResult;
+        if (b64.length >= raw.length) return rawResult;
+        return { b64, mime: "image/jpeg", width: w, height: h, compressed: true };
+      } finally {
         try {
-          img.close();
+          if (img && typeof img.close === "function") img.close();
         } catch (e) {
         }
       }
-      return { b64, mime: "image/jpeg", width: w, height: h, compressed: true };
     } catch (e) {
       return rawResult;
     }
@@ -633,6 +661,7 @@
   var MAX_DROP_BYTES = 4 * 1024 * 1024;
   var MAX_TEXT_CHARS = 4e3;
   var VISION_PROMPT = "看看这张图，说说你看到了什么";
+  var MAX_IMAGE_B64_CHARS = 4 * 1024 * 1024;
   var TEXT_EXTS = [".txt", ".md", ".json", ".log", ".csv"];
   function isImageFile(file) {
     return Boolean(file && typeof file.type === "string" && file.type.indexOf("image/") === 0);
@@ -646,6 +675,37 @@
   }
   function buildTextPrompt(text) {
     return "总结一下这篇文档：\n" + String(text || "").slice(0, MAX_TEXT_CHARS);
+  }
+  function readTextFile(file) {
+    try {
+      if (file && typeof file.text === "function") {
+        return Promise.resolve(file.text()).then((t) => String(t == null ? "" : t)).catch(() => readTextViaReader(file));
+      }
+    } catch (e) {
+    }
+    return readTextViaReader(file);
+  }
+  function readTextViaReader(file) {
+    return new Promise((resolve) => {
+      try {
+        if (typeof FileReader === "undefined") {
+          resolve("");
+          return;
+        }
+        const fr = new FileReader();
+        fr.onloadend = () => {
+          try {
+            resolve(String(fr.result || ""));
+          } catch (e) {
+            resolve("");
+          }
+        };
+        fr.onerror = () => resolve("");
+        fr.readAsText(file);
+      } catch (e) {
+        resolve("");
+      }
+    });
   }
   async function handleFileDrop(file, deps) {
     const d = deps || {};
@@ -672,7 +732,32 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body)
       });
-      return r.json();
+      let data = null;
+      try {
+        data = await r.json();
+      } catch (e) {
+        data = null;
+      }
+      const status = Number(r && r.status) || 0;
+      if (!data || r && r.ok === false || data.ok === false) {
+        const msg = String(data && (data.reply || data.error) || "").trim() || "请求失败" + (status ? "（HTTP " + status + "）" : "");
+        const err = new Error(msg);
+        err.reply = msg;
+        err.status = status;
+        throw err;
+      }
+      return data;
+    };
+    const fail = (e, fallback) => {
+      const msg = String(e && (e.reply || e.message) || e || "").trim() || fallback;
+      bubble(msg, 5e3);
+      const tooLarge = Number(e && e.status) === 413;
+      return {
+        ok: false,
+        kind: tooLarge ? "too-large" : "error",
+        error: msg,
+        reply: e && e.reply ? String(e.reply) : void 0
+      };
     };
     if (isImageFile(file)) {
       bubble("本鲸看看这张图…", 3e3);
@@ -683,6 +768,10 @@
         bubble("图片读不出来，再拖一次试试", 4e3);
         return { ok: false, kind: "error", error: "empty image" };
       }
+      if (b64.length > MAX_IMAGE_B64_CHARS) {
+        bubble("这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～", 5e3);
+        return { ok: false, kind: "too-large", error: "image too large" };
+      }
       try {
         const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime });
         const reply = String(reply0 && reply0.reply || "").trim() || "这条鱼看不懂这张图……";
@@ -690,17 +779,11 @@
         if (speak) speak(reply);
         return { ok: true, kind: "image", message: VISION_PROMPT, reply };
       } catch (e) {
-        bubble("图片处理失败", 4e3);
-        return { ok: false, kind: "error", error: String(e && e.message || e) };
+        return fail(e, "图片处理失败");
       }
     }
     if (isTextFile(file)) {
-      let text = "";
-      try {
-        text = String(await file.text());
-      } catch (e) {
-        text = "";
-      }
+      const text = String(await readTextFile(file) || "");
       if (!text.trim()) {
         bubble("这个文件里没读到字", 4e3);
         return { ok: false, kind: "error", error: "empty text" };
@@ -714,8 +797,7 @@
         if (speak) speak(reply);
         return { ok: true, kind: "text", message, reply };
       } catch (e) {
-        bubble("文档处理失败", 4e3);
-        return { ok: false, kind: "error", error: String(e && e.message || e) };
+        return fail(e, "文档处理失败");
       }
     }
     bubble("这个格式本鱼还不会看", 4e3);
@@ -1432,6 +1514,7 @@
     const rateRaw = Math.round(Number(sampleRate) || 48e3);
     const sr = Math.max(8e3, Math.min(96e3, rateRaw));
     const dataBytes = n * 2;
+    if (dataBytes > 4294967295 - 36) throw new RangeError("wav too large");
     const buf = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes);
     const v = new DataView(buf);
     writeAscii(v, 0, "RIFF");
@@ -1459,7 +1542,7 @@
   function wavBytes(seconds, sampleRate) {
     const sec = Math.max(0, Number(seconds) || 0);
     const sr = Math.max(8e3, Math.min(96e3, Math.round(Number(sampleRate) || 48e3)));
-    return WAV_HEADER_BYTES + Math.round(sec * sr) * 2;
+    return WAV_HEADER_BYTES + Math.ceil(sec * sr) * 2;
   }
 
   // src/client/browser-tts.ts
@@ -1484,6 +1567,7 @@
     const n = String(text || "").length;
     return Math.min(3e4, Math.max(4e3, 1500 + n * 220));
   }
+  var VOICE_WAIT_MS = 300;
   function speakViaBrowser(text, opts) {
     const src = String(text || "");
     const s = scopeOf(opts && opts.scope);
@@ -1491,13 +1575,33 @@
     return new Promise((resolve) => {
       let done = false;
       let startTimer = null;
+      let voiceTimer = null;
+      let onVoices = null;
+      let synthRef = null;
       const finish = () => {
         if (done) return;
         done = true;
         try {
-          if (startTimer) clearTimeout(startTimer);
+          if (startTimer) {
+            clearTimeout(startTimer);
+            startTimer = null;
+          }
         } catch (e) {
         }
+        try {
+          if (voiceTimer) {
+            clearTimeout(voiceTimer);
+            voiceTimer = null;
+          }
+        } catch (e) {
+        }
+        try {
+          if (onVoices && synthRef && typeof synthRef.removeEventListener === "function") {
+            synthRef.removeEventListener("voiceschanged", onVoices);
+          }
+        } catch (e) {
+        }
+        onVoices = null;
         resolve();
       };
       const watch = setTimeout(finish, ms2);
@@ -1516,27 +1620,27 @@
           realFinish();
           return;
         }
+        synthRef = Synth;
         const u = new Utt(src);
-        u.lang = "zh-CN";
+        const wantZh = /[\u4e00-\u9fa5]/.test(src);
+        u.lang = wantZh ? "zh-CN" : "en-US";
         u.onend = realFinish;
         u.onerror = realFinish;
-        try {
-          const vs = typeof Synth.getVoices === "function" ? Synth.getVoices() : null;
-          for (let i = 0; vs && i < vs.length; i++) {
-            if (vs[i] && /^zh/i.test(String(vs[i].lang || ""))) {
-              u.voice = vs[i];
-              break;
-            }
-          }
-        } catch (e) {
-        }
-        const busy = (() => {
+        const chooseVoice = () => {
           try {
-            return !!(Synth.speaking || Synth.pending);
+            const vs = typeof Synth.getVoices === "function" ? Synth.getVoices() : null;
+            for (let i = 0; vs && i < vs.length; i++) {
+              const v = vs[i];
+              if (!v) continue;
+              const lang = String(v.lang || "");
+              if (wantZh ? /^zh/i.test(lang) : /^en/i.test(lang)) {
+                u.voice = v;
+                break;
+              }
+            }
           } catch (e) {
-            return false;
           }
-        })();
+        };
         const speak = () => {
           try {
             Synth.speak(u);
@@ -1544,13 +1648,55 @@
             realFinish();
           }
         };
-        if (busy) {
+        const launch = () => {
+          if (done) return;
           try {
-            if (typeof Synth.cancel === "function") Synth.cancel();
+            if (voiceTimer) {
+              clearTimeout(voiceTimer);
+              voiceTimer = null;
+            }
           } catch (e) {
           }
-          startTimer = setTimeout(speak, 80);
-        } else speak();
+          try {
+            if (onVoices && typeof Synth.removeEventListener === "function") Synth.removeEventListener("voiceschanged", onVoices);
+          } catch (e) {
+          }
+          onVoices = null;
+          chooseVoice();
+          const busy = (() => {
+            try {
+              return !!(Synth.speaking || Synth.pending);
+            } catch (e) {
+              return false;
+            }
+          })();
+          if (busy) {
+            try {
+              if (typeof Synth.cancel === "function") Synth.cancel();
+            } catch (e) {
+            }
+            startTimer = setTimeout(speak, 80);
+          } else speak();
+        };
+        let waiting = false;
+        try {
+          const vs = typeof Synth.getVoices === "function" ? Synth.getVoices() : null;
+          if ((!vs || !vs.length) && typeof Synth.addEventListener === "function") {
+            waiting = true;
+            onVoices = () => {
+              if (done) return;
+              launch();
+            };
+            Synth.addEventListener("voiceschanged", onVoices);
+            voiceTimer = setTimeout(() => {
+              if (done) return;
+              launch();
+            }, VOICE_WAIT_MS);
+          }
+        } catch (e) {
+          waiting = false;
+        }
+        if (!waiting) launch();
       } catch (e) {
         realFinish();
       }
@@ -3418,82 +3564,114 @@
   }
   function estimateMelodySeconds(notes, bpm) {
     let beats = 0;
-    for (const pair of notes || []) beats += Number(pair && pair[1]) || 1;
+    for (const pair of notes || []) {
+      const d = Number(pair && pair[1]);
+      beats += isFinite(d) && d > 0 ? d : 1;
+    }
     return Math.round(beats * beatSeconds(bpm) * 10) / 10;
   }
   function createMelodyPlayer() {
     let ctx = null;
     let oscs = [];
     let doneTimer = null;
-    function stop() {
+    let seq = 0;
+    function ensureCtx() {
       try {
-        for (const o of oscs) {
-          try {
-            o.stop();
-          } catch (e) {
-          }
-        }
+        const AC = (typeof window !== "undefined" ? window.AudioContext : null) || (typeof window !== "undefined" ? window.webkitAudioContext : null);
+        if (!AC) return null;
+        if (!ctx || ctx.state === "closed") ctx = new AC();
+        return ctx;
       } catch (e) {
+        return null;
+      }
+    }
+    function stopNotes() {
+      for (const o of oscs) {
+        try {
+          o.stop();
+        } catch (e) {
+        }
       }
       oscs = [];
-      try {
-        if (doneTimer) {
+      if (doneTimer) {
+        try {
           clearTimeout(doneTimer);
-          doneTimer = null;
+        } catch (e) {
+        }
+        doneTimer = null;
+      }
+    }
+    function stop() {
+      seq++;
+      stopNotes();
+      try {
+        if (ctx && ctx.state !== "closed" && typeof ctx.suspend === "function") {
+          const p = ctx.suspend();
+          if (p && typeof p.catch === "function") p.catch(() => {
+          });
         }
       } catch (e) {
       }
-      try {
-        if (ctx) ctx.close();
-      } catch (e) {
-      }
-      ctx = null;
     }
     function play(notes, bpm, onDone) {
       try {
-        stop();
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        const c = new AC();
-        ctx = c;
-        try {
-          c.resume();
-        } catch (e) {
-        }
-        try {
-          if (c.state === "suspended") c.resume();
-        } catch (e) {
-        }
+        stopNotes();
+        const my = ++seq;
+        const c = ensureCtx();
+        if (!c) return;
         const beat = beatSeconds(bpm);
-        let t = c.currentTime + 0.05;
-        for (const pair of notes || []) {
-          const nm = String(pair && pair[0]);
-          const dur = Number(pair && pair[1]) || 1;
-          const f = NOTE_FREQ[nm];
-          if (!f) {
-            t += dur * beat;
-            continue;
-          }
-          const o = c.createOscillator();
-          const g = c.createGain();
-          o.frequency.value = f;
-          o.type = "sine";
-          g.gain.setValueAtTime(0.3, t);
-          g.gain.exponentialRampToValueAtTime(1e-3, t + dur * beat * 0.95);
-          o.connect(g);
-          g.connect(c.destination);
-          o.start(t);
-          o.stop(t + dur * beat);
-          oscs.push(o);
-          t += dur * beat;
-        }
-        const totalMs = Math.max(0, (t - c.currentTime) * 1e3) + 300;
-        if (onDone) doneTimer = setTimeout(() => {
+        const schedule = () => {
+          if (my !== seq) return;
           try {
-            onDone();
+            let t = (Number(c.currentTime) || 0) + 0.05;
+            const local = [];
+            for (const pair of notes || []) {
+              const nm = String(pair && pair[0]);
+              const rawDur = Number(pair && pair[1]);
+              const dur = isFinite(rawDur) && rawDur > 0 ? rawDur : 1;
+              const f = NOTE_FREQ[nm];
+              if (!f) {
+                t += dur * beat;
+                continue;
+              }
+              try {
+                const o = c.createOscillator();
+                const g = c.createGain();
+                o.frequency.value = f;
+                o.type = "sine";
+                g.gain.setValueAtTime(0.3, t);
+                g.gain.exponentialRampToValueAtTime(1e-3, t + dur * beat * 0.95);
+                o.connect(g);
+                g.connect(c.destination);
+                o.start(t);
+                o.stop(t + dur * beat);
+                local.push(o);
+              } catch (e) {
+              }
+              t += dur * beat;
+            }
+            oscs = local;
+            const totalMs = Math.max(0, (t - (Number(c.currentTime) || 0)) * 1e3) + 300;
+            if (onDone) {
+              doneTimer = setTimeout(() => {
+                doneTimer = null;
+                if (my !== seq) return;
+                try {
+                  onDone();
+                } catch (e) {
+                }
+              }, totalMs);
+            }
           } catch (e) {
           }
-        }, totalMs);
+        };
+        try {
+          const p = typeof c.resume === "function" ? c.resume() : null;
+          if (p && typeof p.then === "function") p.then(schedule, schedule);
+          else schedule();
+        } catch (e) {
+          schedule();
+        }
       } catch (e) {
       }
     }
@@ -4847,9 +5025,15 @@
       else state.mood = "idle";
       return state.mood;
     }
+    let moodTimer = null;
     function setMood(m, holdMs = 5e3) {
       state.mood = m;
-      setTimeout(() => {
+      try {
+        if (moodTimer) clearTimeout(moodTimer);
+      } catch (e) {
+      }
+      moodTimer = setTimeout(() => {
+        moodTimer = null;
         try {
           state.mood = "idle";
           refreshMood();
@@ -4857,9 +5041,10 @@
         }
       }, holdMs);
     }
+    const FALLBACK_LINE = "……本鲸在。";
     function line(event) {
       const lines = data.lines[event];
-      return pick(lines, event);
+      return pick(lines, event) || FALLBACK_LINE;
     }
     function greeting(now = Date.now()) {
       const h = new Date(now).getHours();
@@ -4896,9 +5081,18 @@
         setMood("sulk", 6e3);
         return { event: "scold", text: line("scold"), mood: "sulk" };
       }
-      if (/剩饭|倒掉|扔了/.test(t)) return { event: "leftover", text: line("leftover"), mood: "sulk" };
-      if (/胖|减肥|会长胖/.test(t)) return { event: "fatTalk", text: line("fatTalk"), mood: "sulk" };
-      if (/泡面|方便面/.test(t)) return { event: "instantNoodle", text: line("instantNoodle"), mood: "sulk" };
+      if (/剩饭|倒掉|扔了/.test(t)) {
+        setMood("sulk", 6e3);
+        return { event: "leftover", text: line("leftover"), mood: "sulk" };
+      }
+      if (/胖|减肥|会长胖/.test(t)) {
+        setMood("sulk", 6e3);
+        return { event: "fatTalk", text: line("fatTalk"), mood: "sulk" };
+      }
+      if (/泡面|方便面/.test(t)) {
+        setMood("sulk", 6e3);
+        return { event: "instantNoodle", text: line("instantNoodle"), mood: "sulk" };
+      }
       return null;
     }
     return {
@@ -4909,12 +5103,7 @@
       greeting,
       feed,
       reactTo,
-      touch,
-      /** 把 data/persona.json 里的菜单文案取出来（没配就返回原文） */
-      menuLabel: (key, fallback) => {
-        const m = data.menus[key];
-        return m ? String(m) : fallback;
-      }
+      touch
     };
   }
 

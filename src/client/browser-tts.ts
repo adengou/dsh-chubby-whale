@@ -31,11 +31,14 @@ export function browserVoiceUsable(scope?: any): boolean {
   } catch (e) { return false }
 }
 
-/** 按文本长度估一个看门狗时长：220ms/字、最少 4 秒、封顶 30 秒 */
+/** 按文本长度估一个看门狗时长：220ms/字、最少 4 秒、封顶 30 秒（上层每段 ≤56 字，估算 ≤13.8 秒） */
 export function watchdogMs(text: string): number {
   const n = String(text || '').length
   return Math.min(30000, Math.max(4000, 1500 + n * 220))
 }
+
+/** 等 voices 异步就位的上限：等不到就用默认音色先念，不能把朗读拖住 */
+const VOICE_WAIT_MS = 300
 
 /**
  * 念一段（Promise 永远 resolve）。
@@ -48,10 +51,20 @@ export function speakViaBrowser(text: string, opts?: { scope?: any; watchdog?: n
   return new Promise((resolve) => {
     let done = false
     let startTimer: any = null
+    let voiceTimer: any = null
+    let onVoices: any = null
+    let synthRef: any = null
     const finish = (): void => {
       if (done) return
       done = true
-      try { if (startTimer) clearTimeout(startTimer) } catch (e) { }
+      try { if (startTimer) { clearTimeout(startTimer); startTimer = null } } catch (e) { }
+      try { if (voiceTimer) { clearTimeout(voiceTimer); voiceTimer = null } } catch (e) { }
+      try {
+        if (onVoices && synthRef && typeof synthRef.removeEventListener === 'function') {
+          synthRef.removeEventListener('voiceschanged', onVoices)
+        }
+      } catch (e) { }
+      onVoices = null
       resolve()
     }
     // 看门狗：onend 不触发时也放行（Safari 的老毛病）
@@ -61,24 +74,55 @@ export function speakViaBrowser(text: string, opts?: { scope?: any; watchdog?: n
       const Synth: any = s && s.speechSynthesis
       const Utt: any = s && s.SpeechSynthesisUtterance
       if (!Synth || !Utt || typeof Synth.speak !== 'function') { realFinish(); return }
+      synthRef = Synth
       const u = new Utt(src)
-      u.lang = 'zh-CN'
+      // 语言按文本判断：英文界面/英文回复用 zh-CN 念会被系统音色读成怪腔
+      const wantZh = /[\u4e00-\u9fa5]/.test(src)
+      u.lang = wantZh ? 'zh-CN' : 'en-US'
       u.onend = realFinish
       u.onerror = realFinish
-      // 有中文音色就挑一个（Firefox 默认音色可能英文腔）
+      // 有同语言音色就挑一个（Firefox 默认音色可能英文腔）
+      const chooseVoice = (): void => {
+        try {
+          const vs = typeof Synth.getVoices === 'function' ? Synth.getVoices() : null
+          for (let i = 0; vs && i < vs.length; i++) {
+            const v = vs[i]
+            if (!v) continue
+            const lang = String(v.lang || '')
+            if (wantZh ? /^zh/i.test(lang) : /^en/i.test(lang)) { u.voice = v; break }
+          }
+        } catch (e) { }
+      }
+      const speak = (): void => { try { Synth.speak(u) } catch (e) { realFinish() } }
+      const launch = (): void => {
+        if (done) return
+        // 结束等待 voices：无论来自 voiceschanged 还是 300ms 超时，只放行一次
+        try { if (voiceTimer) { clearTimeout(voiceTimer); voiceTimer = null } } catch (e) { }
+        try {
+          if (onVoices && typeof Synth.removeEventListener === 'function') Synth.removeEventListener('voiceschanged', onVoices)
+        } catch (e) { }
+        onVoices = null
+        chooseVoice()
+        const busy = (() => { try { return !!(Synth.speaking || Synth.pending) } catch (e) { return false } })()
+        if (busy) {
+          // 先取消在播/在排队的，再隔一拍开口：立刻 speak 会被 Chrome/Safari 吞掉
+          try { if (typeof Synth.cancel === 'function') Synth.cancel() } catch (e) { }
+          startTimer = setTimeout(speak, 80)
+        } else speak()
+      }
+      // Firefox/Safari 首次 getVoices() 是空的（voiceschanged 之后才有）：
+      // 有事件就等最多 VOICE_WAIT_MS 挑个同语言音色；没有就去用默认音色，立刻开口。
+      let waiting = false
       try {
         const vs = typeof Synth.getVoices === 'function' ? Synth.getVoices() : null
-        for (let i = 0; vs && i < vs.length; i++) {
-          if (vs[i] && /^zh/i.test(String(vs[i].lang || ''))) { u.voice = vs[i]; break }
+        if ((!vs || !vs.length) && typeof Synth.addEventListener === 'function') {
+          waiting = true
+          onVoices = (): void => { if (done) return; launch() }
+          Synth.addEventListener('voiceschanged', onVoices)
+          voiceTimer = setTimeout(() => { if (done) return; launch() }, VOICE_WAIT_MS)
         }
-      } catch (e) { }
-      const busy = (() => { try { return !!(Synth.speaking || Synth.pending) } catch (e) { return false } })()
-      const speak = (): void => { try { Synth.speak(u) } catch (e) { realFinish() } }
-      if (busy) {
-        // 先取消在播/在排队的，再隔一拍开口：立刻 speak 会被 Chrome/Safari 吞掉
-        try { if (typeof Synth.cancel === 'function') Synth.cancel() } catch (e) { }
-        startTimer = setTimeout(speak, 80)
-      } else speak()
+      } catch (e) { waiting = false }
+      if (!waiting) launch()
     } catch (e) { realFinish() }
   })
 }

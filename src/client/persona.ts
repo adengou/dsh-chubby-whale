@@ -95,15 +95,25 @@ export function createPersona() {
     return state.mood
   }
 
-  /** 临时情绪（5 秒后自动回落到 refreshMood 的结果） */
+  // 临时情绪只有一个回落定时器：连续两次 setMood 时旧定时器必须取消，
+  // 否则旧定时器先到点会把后一次设置的（更长的）情绪提前清成 idle。
+  let moodTimer: any = null
+  /** 临时情绪（默认 5 秒后自动回落到 refreshMood 的结果） */
   function setMood(m: Mood, holdMs = 5000): void {
     state.mood = m
-    setTimeout(() => { try { state.mood = 'idle'; refreshMood() } catch (e) { } }, holdMs)
+    try { if (moodTimer) clearTimeout(moodTimer) } catch (e) { }
+    moodTimer = setTimeout(() => {
+      moodTimer = null
+      try { state.mood = 'idle'; refreshMood() } catch (e) { }
+    }, holdMs)
   }
+
+  /** 台词库缺 key 时的兜底：调用点（气泡/朗读）都不判空，绝不能返回空串 */
+  const FALLBACK_LINE = '……本鲸在。'
 
   function line(event: string): string {
     const lines = (data.lines as any)[event]
-    return pick(lines, event)
+    return pick(lines, event) || FALLBACK_LINE
   }
 
   function greeting(now = Date.now()): string {
@@ -136,9 +146,11 @@ export function createPersona() {
     if (/新米|开饭|锅巴/.test(t)) { setMood('excited', 6000); return { event: 'excited', text: line('excited'), mood: 'excited' } }
     if (/乖|可爱|好鱼|棒|喜欢你|真聪明|厉害/.test(t)) { setMood('shy', 5000); return { event: 'praise', text: line('praise'), mood: 'shy' } }
     if (/闭嘴|烦|滚|讨厌|笨蛋|丑/.test(t)) { setMood('sulk', 6000); return { event: 'scold', text: line('scold'), mood: 'sulk' } }
-    if (/剩饭|倒掉|扔了/.test(t)) return { event: 'leftover', text: line('leftover'), mood: 'sulk' }
-    if (/胖|减肥|会长胖/.test(t)) return { event: 'fatTalk', text: line('fatTalk'), mood: 'sulk' }
-    if (/泡面|方便面/.test(t)) return { event: 'instantNoodle', text: line('instantNoodle'), mood: 'sulk' }
+    // 下面三组和上面一样要落到状态机上：只返回 mood 不改 state.mood，
+    // 会出现"表情/状态还是 idle，台词已经是委屈"的不一致
+    if (/剩饭|倒掉|扔了/.test(t)) { setMood('sulk', 6000); return { event: 'leftover', text: line('leftover'), mood: 'sulk' } }
+    if (/胖|减肥|会长胖/.test(t)) { setMood('sulk', 6000); return { event: 'fatTalk', text: line('fatTalk'), mood: 'sulk' } }
+    if (/泡面|方便面/.test(t)) { setMood('sulk', 6000); return { event: 'instantNoodle', text: line('instantNoodle'), mood: 'sulk' } }
     return null
   }
 
@@ -151,11 +163,6 @@ export function createPersona() {
     feed,
     reactTo,
     touch,
-    /** 把 data/persona.json 里的菜单文案取出来（没配就返回原文） */
-    menuLabel: (key: string, fallback: string): string => {
-      const m = (data.menus as any)[key]
-      return m ? String(m) : fallback
-    },
   }
 }
 
