@@ -89,9 +89,21 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
   // —— 账本 / 成长 / 亲密度 / 余额 ——
   table.define('fishfood', (host) => {
     getJson('/fishfood').then((d: any) => {
-      if (d && d.ok) {
-        host.bubble('鱼粮账本：聊天 ' + d.chatTokens + ' tokens，说书 ' + d.storyTokens + ' tokens，共 ' + d.total, 5000)
-      } else host.bubble('鱼粮查不到')
+      if (!d || !d.ok) { host.bubble('鱼粮查不到'); return }
+      // 鱼账本（2026-11-07）：token 明细 + 人民币估算。金额缺省时只说 token ——
+      // 绝不显示「¥0.00」冒充「花了 0 元」：0 与「不知道」是两件事。
+      const inTok = Number(d.promptTokens) || 0
+      const outTok = Number(d.completionTokens) || 0
+      const hitTok = Number(d.cacheHitTokens) || 0
+      const cny = Number(d.costCny) || 0
+      const dayCny = Number(d.dayCostCny) || 0
+      const parts = [
+        '鱼粮账本：共 ' + (Number(d.total) || 0) + ' tokens（聊天 ' + (Number(d.chatTokens) || 0) + ' / 说书 ' + (Number(d.storyTokens) || 0) + '）',
+        inTok > 0 ? '输入 ' + inTok + '（缓存命中 ' + hitTok + '）· 输出 ' + outTok : '',
+        cny > 0 ? '≈ ¥' + cny.toFixed(4) + '（今日 ¥' + dayCny.toFixed(4) + '）' : '金额：暂无可拆分用量',
+        cny > 0 ? '按官方价目（' + String(d.priceCheckedAt || '') + ' 核对）估算' : ''
+      ].filter(Boolean)
+      host.bubble(parts.join('，'), 6000)
     }).catch(() => host.bubble('鱼粮查不到'))
   })
   table.define('growth', (host) => {

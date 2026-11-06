@@ -112,6 +112,8 @@ export function formatStats(payload: any): string {
   // —— 鱼粮总 token ——
   const ff = (s.fishfood && typeof s.fishfood === 'object') ? s.fishfood : ((s.fishFood && typeof s.fishFood === 'object') ? s.fishFood : {})
   const tokens = numOf(ff.total, ff.totalTokens, s.totalTokens, (s.tokens && typeof s.tokens === 'object') ? s.tokens.total : s.tokens, s.fishfoodTotal)
+    // 鱼账本（2026-11-07）：金额与 token 同源，没有就是 0（不显示，不冒充「花了 0 元」）
+    const costCny = Number(ff.costCny) || 0
 
   // —— 成长 / 亲密度 ——
   const g = (s.growth && typeof s.growth === 'object') ? s.growth : {}
@@ -134,7 +136,7 @@ export function formatStats(payload: any): string {
   const points = pts.length ? pts.join('；') : '暂无'
 
   return '统计卡\n缓存：tts ' + tts + ' 条｜chat ' + chat + ' 条｜asr ' + asr + ' 条'
-    + '\n鱼粮：' + tokens + ' tokens'
+    + '\n鱼粮：' + tokens + ' tokens' + (costCny > 0 ? ' · ≈ ¥' + costCny.toFixed(4) : '')
     + '\n成长：' + stage + '｜亲密度 ' + intimacy + '/100'
     + '\n人格要点：' + points
 }

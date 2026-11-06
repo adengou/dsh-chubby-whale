@@ -14,11 +14,20 @@ import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } fr
 /** JS 安全整数上限：超过后 +1 不再改变数值（显示与统计都失真），到这里就封顶 */
 const MAX_TOKEN = Number.MAX_SAFE_INTEGER
 
+/** 一次用量的明细（都可缺省：老路径只有 total） */
+export type TokenDetail = {
+  promptTokens?: number
+  completionTokens?: number
+  cacheHitTokens?: number
+  /** 本次调用的人民币估算（元），由 shared/pricing.ts 算好后传入 */
+  costCny?: number
+}
+
 export interface TokenRepo {
   loadFishfood(): any
   saveFishfood(obj: any): void
-  /** kind='story' 记说书 token，其余记聊天 token；同时累计总量/本月 */
-  addTokens(kind: string, n: number): any
+  /** kind='story' 记说书 token，其余记聊天 token；同时累计总量/本月；detail 可选（拆分与金额） */
+  addTokens(kind: string, n: number, detail?: TokenDetail): any
 }
 
 /** 非负整数（NaN/Infinity/负数/小数一律清洗，避免一条脏 usage 把整份鱼粮写成 null） */
@@ -32,6 +41,19 @@ function cleanToken(value: any): number {
 function addToken(current: any, add: number): number {
   const base = cleanToken(current)
   return Math.min(MAX_TOKEN, base + add)
+}
+
+/** 金额清洗：非负有限，保留 6 位小数（与 shared/pricing.ts 的输出精度一致） */
+function cleanCost(value: any): number {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.round(Math.min(1e9, n) * 1e6) / 1e6
+}
+
+/** 金额累加（同样封顶，防脏值把 total 变成 1e309） */
+function addCost(current: any, add: number): number {
+  const base = cleanCost(current)
+  return Math.round(Math.min(1e9, base + add) * 1e6) / 1e6
 }
 
 export function createTokenRepo(dataDir: string): TokenRepo {
@@ -69,14 +91,22 @@ export function createTokenRepo(dataDir: string): TokenRepo {
     const day = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
     const month = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0')
     const hadDay = typeof f.day === 'string' && f.day.length > 0
-    if (hadDay && f.day !== day) { f.chatTokens = 0; f.storyTokens = 0; f.dayTokens = 0 }
+    if (hadDay && f.day !== day) { f.chatTokens = 0; f.storyTokens = 0; f.dayTokens = 0; f.dayCostCny = 0 }
     f.day = day
     const hadMonth = typeof f.month === 'string' && f.month.length > 0
-    if (hadMonth && f.month !== month) f.monthTokens = 0
+    if (hadMonth && f.month !== month) { f.monthTokens = 0; f.monthCostCny = 0 }
     f.month = month
   }
 
-  function addTokens(kind: string, n: number): any {
+  /**
+   * 记一次用量。
+   * @param detail 输入/输出拆分与本次人民币估算（2026-11-07 鱼账本）：
+   *   拆分来自上游 usage（prompt_tokens / completion_tokens / prompt_cache_hit_tokens），
+   *   金额由 shared/pricing.ts 按「模型 × 高峰/空闲 × 缓存命中」算好再传进来 ——
+   *   仓储只负责累计与滚动，不自己判断价格（价格口径只有一个真源）。
+   *   旧调用方只传前两个参数时行为完全不变。
+   */
+  function addTokens(kind: string, n: number, detail?: TokenDetail): any {
     const f = loadFishfood()
     const add = cleanToken(n)
     if (add <= 0) return f                       // 没有可信用量：不写盘、不改计数（也不把 NaN 写进文件）
@@ -85,6 +115,20 @@ export function createTokenRepo(dataDir: string): TokenRepo {
     f.dayTokens = addToken(f.dayTokens, add)
     f.totalTokens = addToken(f.totalTokens, add)
     f.monthTokens = addToken(f.monthTokens, add)
+    // 拆分与金额：只在真的拿到时累加（拿不到就保持原值，不写 0 冒充「已知为 0」）
+    const d: any = detail || {}
+    const prompt = cleanToken(d.promptTokens)
+    const completion = cleanToken(d.completionTokens)
+    const hit = cleanToken(d.cacheHitTokens)
+    const cost = cleanCost(d.costCny)
+    if (prompt > 0) f.promptTokens = addToken(f.promptTokens, prompt)
+    if (completion > 0) f.completionTokens = addToken(f.completionTokens, completion)
+    if (hit > 0) f.cacheHitTokens = addToken(f.cacheHitTokens, hit)
+    if (cost > 0) {
+      f.costCny = addCost(f.costCny, cost)
+      f.dayCostCny = addCost(f.dayCostCny, cost)
+      f.monthCostCny = addCost(f.monthCostCny, cost)
+    }
     saveFishfood(f)
     return f
   }

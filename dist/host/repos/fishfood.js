@@ -24,6 +24,18 @@ function addToken(current, add) {
     const base = cleanToken(current);
     return Math.min(MAX_TOKEN, base + add);
 }
+/** 金额清洗：非负有限，保留 6 位小数（与 shared/pricing.ts 的输出精度一致） */
+function cleanCost(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0)
+        return 0;
+    return Math.round(Math.min(1e9, n) * 1e6) / 1e6;
+}
+/** 金额累加（同样封顶，防脏值把 total 变成 1e309） */
+function addCost(current, add) {
+    const base = cleanCost(current);
+    return Math.round(Math.min(1e9, base + add) * 1e6) / 1e6;
+}
 export function createTokenRepo(dataDir) {
     const FISHFOOD = join(dataDir, 'fishfood.json');
     function loadFishfood() {
@@ -69,14 +81,25 @@ export function createTokenRepo(dataDir) {
             f.chatTokens = 0;
             f.storyTokens = 0;
             f.dayTokens = 0;
+            f.dayCostCny = 0;
         }
         f.day = day;
         const hadMonth = typeof f.month === 'string' && f.month.length > 0;
-        if (hadMonth && f.month !== month)
+        if (hadMonth && f.month !== month) {
             f.monthTokens = 0;
+            f.monthCostCny = 0;
+        }
         f.month = month;
     }
-    function addTokens(kind, n) {
+    /**
+     * 记一次用量。
+     * @param detail 输入/输出拆分与本次人民币估算（2026-11-07 鱼账本）：
+     *   拆分来自上游 usage（prompt_tokens / completion_tokens / prompt_cache_hit_tokens），
+     *   金额由 shared/pricing.ts 按「模型 × 高峰/空闲 × 缓存命中」算好再传进来 ——
+     *   仓储只负责累计与滚动，不自己判断价格（价格口径只有一个真源）。
+     *   旧调用方只传前两个参数时行为完全不变。
+     */
+    function addTokens(kind, n, detail) {
         const f = loadFishfood();
         const add = cleanToken(n);
         if (add <= 0)
@@ -88,6 +111,23 @@ export function createTokenRepo(dataDir) {
         f.dayTokens = addToken(f.dayTokens, add);
         f.totalTokens = addToken(f.totalTokens, add);
         f.monthTokens = addToken(f.monthTokens, add);
+        // 拆分与金额：只在真的拿到时累加（拿不到就保持原值，不写 0 冒充「已知为 0」）
+        const d = detail || {};
+        const prompt = cleanToken(d.promptTokens);
+        const completion = cleanToken(d.completionTokens);
+        const hit = cleanToken(d.cacheHitTokens);
+        const cost = cleanCost(d.costCny);
+        if (prompt > 0)
+            f.promptTokens = addToken(f.promptTokens, prompt);
+        if (completion > 0)
+            f.completionTokens = addToken(f.completionTokens, completion);
+        if (hit > 0)
+            f.cacheHitTokens = addToken(f.cacheHitTokens, hit);
+        if (cost > 0) {
+            f.costCny = addCost(f.costCny, cost);
+            f.dayCostCny = addCost(f.dayCostCny, cost);
+            f.monthCostCny = addCost(f.monthCostCny, cost);
+        }
         saveFishfood(f);
         return f;
     }

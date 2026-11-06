@@ -83,7 +83,15 @@ export function createStatsHandler(opts) {
         return {
             ok: true,
             cache: { tts: count(cache.tts), chat: count(cache.chat), asr: count(cache.asr) },
-            fishfood: { chatTokens, storyTokens, total: chatTokens + storyTokens },
+            fishfood: {
+                chatTokens, storyTokens, total: chatTokens + storyTokens,
+                // 鱼账本（2026-11-07）：明细与人民币估算同 /fishfood 口径（金额在记账时算好，这里只读）
+                promptTokens: count(fish.promptTokens),
+                completionTokens: count(fish.completionTokens),
+                cacheHitTokens: count(fish.cacheHitTokens),
+                costCny: Math.max(0, Math.round((Number(fish.costCny) || 0) * 1e6) / 1e6),
+                dayCostCny: Math.max(0, Math.round((Number(fish.dayCostCny) || 0) * 1e6) / 1e6),
+            },
             growth: { exp, stage: stage.name, nextExp: stage.nextExp },
             intimacy: intimacyOf(state.intimacy),
             personality: {
