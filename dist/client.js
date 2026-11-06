@@ -7050,12 +7050,12 @@
       abortStream();
       const d0 = diag();
       if (d0) d0.lastChat = { stage: "entry", busy: host.busy.isBusy(), tts: !!host.ttsPlaying(), at: Date.now() };
-      if (host.busy.isBusy() && host.busy.age() < 35e3) {
+      if (host.busy.isBusy() && host.busy.age() < BUSY_STALE_MS) {
         if (d0) d0.lastChat.stage = "blocked-busy";
         host.bubble("本鲸还在想上一句呢，稍等～", 2500);
         return;
       }
-      if (host.narrating.current || host.ttsPlaying()) {
+      if (host.narrating.current || host.storyBusy.current || host.ttsPlaying()) {
         try {
           host.stopSpeak();
         } catch (e) {
@@ -7083,10 +7083,6 @@
       } catch (e) {
       }
       try {
-        if (await tryStream(text, opts, myEpoch)) return;
-      } catch (e) {
-      }
-      try {
         const hit = host.persona.reactTo(text);
         if (hit) {
           host.say(hit.text, 4e3);
@@ -7094,6 +7090,11 @@
         }
       } catch (e) {
       }
+      try {
+        if (await tryStream(text, opts, myEpoch)) return;
+      } catch (e) {
+      }
+      if (!host.epoch.isCurrent(myEpoch)) return;
       try {
         if (opts && opts.voice && !host.ttsPlaying() && Math.random() < 0.25) host.say(host.persona.line("waiting"), 3e3);
       } catch (e) {
