@@ -3,7 +3,7 @@
  * POST JSON { audio: base64, format: 'webm'|'wav'|'mp3' } → { text }
  * Key 由入口注入（getKey），路由不再自己读 config.json / 环境变量。
  * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB → 同样 413（口径统一，2026-11-07）
- * 外呼超时 60 秒
+ * 外呼超时 60 秒；**客户端断开（30s 硬超时/切页/断网）立刻中止外呼**，不再把付费识别跑满 60s（B93）
  */
 import { hashBytes } from '../../shared/hash.js';
 import { isInterruptWord, isNoiseText } from '../../shared/noise.js';
@@ -20,8 +20,76 @@ const ASR_MAX_BODY = 12 * 1024 * 1024;
 const ASR_MAX_AUDIO = 8 * 1024 * 1024;
 /** 外呼超时：60 秒 */
 const ASR_TIMEOUT = 60 * 1000;
+/**
+ * 客户端已经走了的日志标签：与真正的上游超时/网络错误分开，排障时一眼能分清。
+ * 分两条是因为两种时机差一步：外呼发出后断开（中止外呼）/ 请求体还没读完就断开（根本没发起外呼）。
+ */
+const LOG_CLIENT_ABORT_OUTBOUND = '[asr] ASR-CLIENT-ABORT 客户端已断开，上游外呼已中止（不计入 ASR 失败）';
+const LOG_CLIENT_ABORT_REQUEST = '[asr] ASR-CLIENT-ABORT 客户端已断开，请求中止（未发起外呼，不计入 ASR 失败）';
+/**
+ * 盯住「客户端是不是走了」。返回的 signal 会被合进外呼超时（见 host/http.ts 的 fetchWithTimeout），
+ * 客户端一走，还在等上游的那次付费外呼就立刻中止。
+ *
+ * 为什么不能只听 req 的 close（Node 24 本机实测，时间线见 scripts/test-asr-abort.mjs）：
+ * 请求体读完时 req 就会发 close（此时 req.complete=true、res.writableEnded=false、响应还没写）——
+ * 只看 close 会把**每个正常请求**都误判成断连。真正的断连有三种形状：
+ *   ① req 'aborted'：请求体还没收完客户端就断了（Node 24 实测会发，虽已标记废弃）；
+ *   ② req 'close' 且 req.complete === false：①的兜底（老版本/某些客户端不发 aborted）；
+ *   ③ res 'close' 且响应没写完（writableEnded 与 writableFinished 都为 false）：客户端发完了
+ *      body、等不到结果先走了 —— 客户端 30s 硬超时就是这个形状（宿主还在跑 60s 的那次）。
+ * 正常结束的 res 'close' 里 writableFinished=true，不会命中 ③，所以不会误中止正常请求。
+ */
+function watchClientGone(req, res) {
+    const ctl = new AbortController();
+    let gone = false;
+    const mark = () => {
+        if (gone)
+            return;
+        gone = true;
+        try {
+            ctl.abort();
+        }
+        catch { }
+    };
+    const onReqAborted = () => mark();
+    const onReqClose = () => { if (!req || req.complete === false)
+        mark(); };
+    const onResClose = () => { if (!res || !(res.writableEnded || res.writableFinished))
+        mark(); };
+    const on = (target, ev, fn) => {
+        // 测试里的假 req/res 未必是 EventEmitter：没有 on 就静默跳过（既有用例都是这种形状）
+        if (!target || typeof target.on !== 'function')
+            return;
+        try {
+            target.on(ev, fn);
+        }
+        catch { }
+    };
+    const off = (target, ev, fn) => {
+        if (!target || typeof target.removeListener !== 'function')
+            return;
+        try {
+            target.removeListener(ev, fn);
+        }
+        catch { }
+    };
+    on(req, 'aborted', onReqAborted);
+    on(req, 'close', onReqClose);
+    on(res, 'close', onResClose);
+    return {
+        signal: ctl.signal,
+        gone: () => gone,
+        dispose() {
+            off(req, 'aborted', onReqAborted);
+            off(req, 'close', onReqClose);
+            off(res, 'close', onResClose);
+        },
+    };
+}
 export function createAsrHandler(opts) {
     return async function handleAsr(req, res) {
+        // 先挂上断连观察器：从读 body 到外呼返回的整段都在它的看护下，结束时必须 dispose（finally）
+        const client = watchClientGone(req, res);
         try {
             const parsed = await readJsonBody(req, ASR_MAX_BODY);
             if (!parsed.ok) {
@@ -102,9 +170,18 @@ export function createAsrHandler(opts) {
                         'content-type': 'multipart/form-data; boundary=' + boundary,
                     },
                     body: payload,
-                }, ASR_TIMEOUT);
+                }, ASR_TIMEOUT, client.signal);
             }
             catch (err) {
+                // 客户端已经走了（30s 硬超时/切页面/断网重发）：这次外呼是**我们自己** abort 的，
+                // 不是上游超时、也不是网络故障。处理口径：
+                //   · 不写缓存（没拿到结果，也避免把半截状态记进缓存）；
+                //   · 不记失败（不计入 ASR-TIMEOUT/ASR-NETWORK 的排障口径），只留专用诊断；
+                //   · 不回包（连接已经断了，没人收；写了也只是往死 socket 上叠一次写）。
+                if (client.gone()) {
+                    console.error(LOG_CLIENT_ABORT_OUTBOUND);
+                    return;
+                }
                 // 超时/网络错误：用户看到的仍是 ok:false + 空文本，日志里留标签
                 if (isTimeoutError(err))
                     console.error('[asr] ASR-TIMEOUT ' + ASR_TIMEOUT + 'ms 无响应，已中止');
@@ -135,9 +212,19 @@ export function createAsrHandler(opts) {
         }
         catch (err) {
             try {
+                // 连请求体都没收完客户端就断了（req 'aborted' / ECONNRESET）：同上，不算上游失败、不回包
+                if (client.gone()) {
+                    console.error(LOG_CLIENT_ABORT_REQUEST);
+                    return;
+                }
                 sendError(res, err, { text: '' });
             }
             catch { }
+        }
+        finally {
+            // 结束就摘监听：req/res 是每请求对象，不摘也不会串到下一个请求，但已经结束的 handler
+            // 没必要继续响应 'close'/'aborted'（多做一次无意义的 abort），排障时也容易看花眼
+            client.dispose();
         }
     };
 }

@@ -30,16 +30,106 @@ export function isTimeoutError(err) {
 export function timeoutSignal(ms) {
     return AbortSignal.timeout(ms);
 }
-/** 带超时的 fetch（薄封装：超时拒绝时抛 TimeoutError） */
-export async function fetchWithTimeout(url, init = {}, ms = 30000) {
-    return fetch(url, { ...(init || {}), signal: timeoutSignal(ms) });
+/** 调用方给的 signal 两种写法都认（第 4 个参数 / init.signal）；不是合法 AbortSignal 就当没给 */
+function pickSignal(signal, init) {
+    const cand = signal || (init && init.signal);
+    if (!cand)
+        return undefined;
+    return typeof cand.addEventListener === 'function' && typeof cand.aborted === 'boolean' ? cand : undefined;
+}
+/**
+ * 把「内部超时」和「调用方中止」（客户端断连等外部 signal）合成一个 signal：任一触发都中止外呼。
+ *
+ * 为什么要合：只用内部超时的话，调用方已经放弃了（客户端 30s 硬超时、切页面、断网），
+ * 宿主仍会把付费外呼跑满 ASR_TIMEOUT=60s —— 客户端早就超时重发了一次，等于同一句话付两次钱
+ * （2026-11-07 B93 取证）。
+ *
+ * 两条路：
+ *   · 有 AbortSignal.any（Node ≥20.3）就直接用：内部按弱引用管理源 signal 的监听，不会在
+ *     长期存活的 signal 上留监听；由此派生的 signal 被 fetch 直接使用；
+ *   · 老 Node 没有 any 时手写组合：把**先触发那一方**的 reason 原样转发（超时仍是 TimeoutError、
+ *     外部中止仍是 AbortError，isTimeoutError 的口径不变）。
+ *     监听怎么收尾（防重复监听/泄漏）：外部 signal 上的转发监听在「触发」或「本次外呼结束」时
+ *     立刻摘掉（dispose）；超时 signal 上的监听刻意保留到它到点 —— 那个 signal 是本次调用自己的，
+ *     而且超时必须继续盖住响应体读取（fetch resolve 之后才算开始读 body）。
+ *     代价：老 Node 上「外部中止」只覆盖到响应头返回为止（之后的 body 读取只受内部超时约束）；
+ *     Node ≥20.3 走 any 路径没有这个差别。
+ */
+function combineSignals(timeout, outer) {
+    // 没有外部 signal：原样交回超时 signal —— 与改动前完全一致（错误仍是 TimeoutError）
+    if (!outer)
+        return { signal: timeout, dispose() { } };
+    const AnySig = AbortSignal;
+    if (typeof AnySig.any === 'function') {
+        try {
+            return { signal: AnySig.any([timeout, outer]), dispose() { } };
+        }
+        catch { }
+    }
+    const ctl = new AbortController();
+    let hooked = false;
+    /** 只摘外部 signal 上的转发监听（超时那份要留到到点，body 读取还要靠它兜底） */
+    function unhookOuter() {
+        if (!hooked)
+            return;
+        hooked = false;
+        try {
+            outer.removeEventListener('abort', onAbort);
+        }
+        catch { }
+    }
+    function onAbort(ev) {
+        unhookOuter();
+        const src = ev && (ev.target || ev.currentTarget);
+        try {
+            if (src && src.reason !== undefined)
+                ctl.abort(src.reason);
+            else
+                ctl.abort();
+        }
+        catch { }
+    }
+    // 传进来就已经中止的 signal 不会再发事件：先各自判一次，否则这个请求会一直等超时
+    if (timeout.aborted || outer.aborted) {
+        const src = timeout.aborted ? timeout : outer;
+        try {
+            ctl.abort(src.reason);
+        }
+        catch { }
+        return { signal: ctl.signal, dispose() { } };
+    }
+    hooked = true;
+    try {
+        timeout.addEventListener('abort', onAbort);
+    }
+    catch { }
+    try {
+        outer.addEventListener('abort', onAbort);
+    }
+    catch { }
+    return { signal: ctl.signal, dispose: unhookOuter };
+}
+/**
+ * 带超时的 fetch（薄封装：超时拒绝时抛 TimeoutError）。
+ * 可选第 4 个参数 signal（也认 init.signal）：调用方中止时立刻中断，错误名为 AbortError；
+ * 不传时行为与改动前一致。
+ */
+export async function fetchWithTimeout(url, init = {}, ms = 30000, signal) {
+    const combo = combineSignals(timeoutSignal(ms), pickSignal(signal, init));
+    try {
+        return await fetch(url, { ...(init || {}), signal: combo.signal });
+    }
+    finally {
+        combo.dispose();
+    }
 }
 /**
  * 带超时的 fetch + 一次性读文本（能解析就顺手给 JSON）。
  * 不因 HTTP 非 2xx 抛错——路由要自己拿 status 决定回什么文案。
+ * signal：可选，调用方（如客户端断连）中止时立刻中断外呼。
  */
-export async function fetchJson(url, init = {}, ms = 30000) {
-    const resp = await fetchWithTimeout(url, init, ms);
+export async function fetchJson(url, init = {}, ms = 30000, signal) {
+    const resp = await fetchWithTimeout(url, init, ms, signal);
     const text = await resp.text().catch(() => '');
     let data = null;
     try {

@@ -4,6 +4,32 @@
 
 ## [未发布]
 
+## [1.1.65] - 2026-11-07
+
+### 修复（B93 音色白名单同源分身）
+- **音色白名单只在客户端**：宿主 `/tts` 只做 `^[a-zA-Z0-9-]+# 更新日志
+
+本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
+
+，HTTP 直调 `ja-JP-NanamiNeural` 会原样进引擎（旧测试里甚至写着「现状快照：仍会收到它」）。白名单提到 `shared/voices.ts`（client/host 同一份），名单外**回落默认音色**（不 400，兼容旧调用方）并带 `x-tts-voice: fallback`
+- **路由内自建引擎兜底**：`opts.engine || createEdgeTtsEngine()` 与「引擎必须在装配层构造（否则没句柄 dispose）」冲突；改为 engine 必传，构造时缺即抛（fail-fast）
+- `ports.ts` 死字段 `voice?: string` 删除
+
+### 修复（B93 ASR 断连中止分身）
+- **客户端已放弃，宿主还在跑满 60s**：`/asr` 没有断连监听，客户端 30s 超时并重试后，宿主仍把第一次识别跑完（付费调用）
+- 现在 `watchClientGone` 三条判定（`req aborted` / `req close` 且未收完 / `res close` 且未写完）——**注意不能只看 close**：正常请求 body 读完就发 close，直接判会误伤每一个正常请求
+- 断开即 abort 上游；`AbortError` 按「客户端走了」处理：只留 `[asr] ASR-CLIENT-ABORT` 诊断，**不写缓存、不计失败、不回包**
+- `host/http.ts` 的 `fetchJson/fetchWithTimeout` 支持外部 `signal`（原来会被内部超时**覆盖**掉），与超时用 `AbortSignal.any` 组合
+
+### 修复（主代理）
+- **云端日预算并发超额**：判定与记账之间有 `await fetch`，并发 N 个请求一起通过判定（最多超额 `(N-1)×单次字数`）。改为发请求前**预占**、`finally` 释放，`usage()` 仍只报已用量
+- **朗读队列丢段无人结账**：`capQueue` 只返回数量，被丢段若带 `onDone` 永远没人调（叙述锁只能等时间窗自愈）；新增 `capQueueDetailed` 返回被丢段，`voice.ts` 补 `onDone` 并清预取引用
+- **云端谎报 `x-tts-voice: fallback`**：云端用配置里的 speaker、不接收 `voice`，成功出云端时摘掉该头
+
+### 测试
+- 新增 `test-voices-shared.mjs`(60)、`test-asr-abort.mjs`(46)，接入 `npm test`；`test-persona-cloud` +3、`test-voice-queue` +4、`test-voice-routes` +2
+- 全链 **3914 项 0 失败**（`node tools/test-count.mjs`：54 个套件，失败 0，未识别 0）
+
 ## [1.1.64] - 2026-11-07
 
 ### 修复（B92 客户端朗读播放路径分身）
