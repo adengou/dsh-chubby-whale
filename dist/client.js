@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.58";
+  var VERSION = "1.1.59";
 
   // src/client/styles.ts
   var W = 240;
@@ -1533,6 +1533,25 @@
     let curSegId = 0;
     let tickTimer = null;
     let restartTimer = null;
+    let asrBusy = false;
+    let asrEpoch = 0;
+    const asrAborts = /* @__PURE__ */ new Set();
+    function abortAsrFlight() {
+      try {
+        for (const c of asrAborts) {
+          try {
+            c.abort();
+          } catch (e) {
+          }
+        }
+      } catch (e) {
+      }
+      try {
+        asrAborts.clear();
+      } catch (e) {
+      }
+      asrBusy = false;
+    }
     const echoFilter = createEchoFilter();
     const ttsQ = [];
     let ttsBusy = false;
@@ -1750,10 +1769,21 @@
         scheduleNext(150);
         return;
       }
+      if (asrBusy) {
+        try {
+          opts.onDiag && opts.onDiag({ stage: "asr-busy-drop", hint: "上一段还在识别，这一段丢弃（不排队）" });
+        } catch (e) {
+        }
+        scheduleNext(150);
+        return;
+      }
+      const myEpoch = asrEpoch;
+      asrBusy = true;
       stats.uploaded++;
       setStatus("recognizing");
       try {
         const wire = await prepareAudioForAsr(blob, { actx, recMime, onDiag: opts.onDiag });
+        if (myEpoch !== asrEpoch) return;
         if (!wire || !wire.base64) {
           stats.asrFail++;
           stats.lastError = "b64-empty";
@@ -1778,7 +1808,7 @@
         try {
           res = await uploadOnce();
         } catch (e1) {
-          if (ASR_RETRY_ONCE && e1 && e1.name === "AbortError" && running) {
+          if (ASR_RETRY_ONCE && e1 && e1.name === "AbortError" && running && myEpoch === asrEpoch) {
             stats.asrRetry = (stats.asrRetry || 0) + 1;
             try {
               opts.onDiag && opts.onDiag({ stage: "asr-retry", hint: "识别超时，重试一次" });
@@ -1791,6 +1821,7 @@
         }
         const data = await res.json();
         if (!running) return;
+        if (myEpoch !== asrEpoch) return;
         if (data && data.error === "NO_KEY") {
           stats.asrFail++;
           stats.lastError = "asr: NO_KEY";
@@ -1839,10 +1870,14 @@
           stats.echoDropped++;
         }
       } catch (e) {
+        if (myEpoch !== asrEpoch) return;
         stats.asrFail++;
         stats.lastError = e && e.name === "AbortError" ? "asr-ex: AbortError（超时/已停止）" : "asr-ex: " + String(e && e.name || e);
       } finally {
-        if (statusHolder.get() === "recognizing") setStatus("listening");
+        if (myEpoch === asrEpoch) {
+          asrBusy = false;
+          if (statusHolder.get() === "recognizing") setStatus("listening");
+        }
         if (!rec || rec.state === "inactive") scheduleNext(150);
       }
     }
@@ -1929,7 +1964,6 @@
     }
     const ttsPrefetch = /* @__PURE__ */ new Map();
     const ttsAborts = /* @__PURE__ */ new Set();
-    const asrAborts = /* @__PURE__ */ new Set();
     let ttsInflight = 0;
     let ttsSeq = 0;
     function synth(job) {
@@ -2234,6 +2268,8 @@
       asrNoKey = false;
       if (running) return;
       running = true;
+      asrEpoch++;
+      abortAsrFlight();
       recMime = "";
       recFormat = "webm";
       levelOk = false;
@@ -2329,19 +2365,8 @@
     }
     function stop() {
       running = false;
-      try {
-        for (const c of asrAborts) {
-          try {
-            c.abort();
-          } catch (e) {
-          }
-        }
-      } catch (e) {
-      }
-      try {
-        asrAborts.clear();
-      } catch (e) {
-      }
+      asrEpoch++;
+      abortAsrFlight();
       if (tickTimer) {
         clearTimeout(tickTimer);
         tickTimer = null;
@@ -2399,6 +2424,8 @@
       pumpTts();
     }
     function stopSpeaking() {
+      asrEpoch++;
+      abortAsrFlight();
       ttsSynthAt = 0;
       ttsProgressAt = 0;
       ttsCurJob = null;
@@ -2821,21 +2848,53 @@
   var DEFAULT_MAX_EDGE = 1280;
   var DEFAULT_QUALITY = 0.85;
   var KEEP_RAW_BELOW = 400 * 1024;
+  var READ_TIMEOUT_MS = 3e4;
   function readFileAsDataUrl(file) {
     return new Promise((resolve) => {
+      let done = false;
+      let timer = null;
+      let fr = null;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        if (timer) {
+          try {
+            clearTimeout(timer);
+          } catch (e) {
+          }
+          timer = null;
+        }
+        try {
+          if (fr) {
+            fr.onloadend = null;
+            fr.onerror = null;
+            fr.onabort = null;
+          }
+        } catch (e) {
+        }
+        resolve(value);
+      };
       try {
-        const fr = new FileReader();
+        fr = new FileReader();
         fr.onloadend = () => {
           try {
-            resolve(String(fr.result || ""));
+            finish(String(fr.result || ""));
           } catch (e) {
-            resolve("");
+            finish("");
           }
         };
-        fr.onerror = () => resolve("");
+        fr.onerror = () => finish("");
+        fr.onabort = () => finish("");
+        timer = setTimeout(() => {
+          try {
+            if (fr && typeof fr.abort === "function") fr.abort();
+          } catch (e) {
+          }
+          finish("");
+        }, READ_TIMEOUT_MS);
         fr.readAsDataURL(file);
       } catch (e) {
-        resolve("");
+        finish("");
       }
     });
   }
@@ -5455,10 +5514,15 @@
   }
   function wakeHint(host, want) {
     try {
-      return wakeWordsLive(host, want) ? "" : "（重开语音待命后生效）";
+      if (!wakeWordsLive(host, want)) {
+        try {
+          host.diag({ wakeSyncLag: { want: want.slice(), at: Date.now() } });
+        } catch (e) {
+        }
+      }
     } catch (e) {
-      return "";
     }
+    return "";
   }
   function registerVoiceActions(table) {
     table.define("wake", (host) => {
@@ -5524,8 +5588,8 @@
           try {
             const w = host.wakeInfo ? host.wakeInfo() : null;
             if (!w) return "";
-            const head = w.awake ? "醒着（还剩 " + Math.round((Number(w.remainingMs) || 0) / 1e3) + " 秒）" : "待唤醒（先喊「" + (w.words && w.words[0] || "大肥鱼") + "」）";
-            return "\n唤醒词：" + head + "｜唤醒 " + w.hits + " 次｜放行 " + w.passed + "｜挡下 " + w.dropped;
+            const head = w.awake ? "刚喊过名字（30 秒窗还剩 " + Math.round((Number(w.remainingMs) || 0) / 1e3) + " 秒，只作诊断）" : "这次没喊名字（不影响说话）";
+            return "\n唤醒词：" + head + "｜命中 " + w.hits + " 次｜接话 " + w.passed + "｜语音聊天关着没接 " + w.dropped;
           } catch (e) {
             return "";
           }
@@ -8207,6 +8271,74 @@
         } catch (e) {
         }
       }
+      let narrateOwner = 0;
+      let narrateSeq = 0;
+      const narrateProbes = /* @__PURE__ */ new Map();
+      function dropNarrateProbe(owner) {
+        const t = narrateProbes.get(owner);
+        if (t === void 0) return;
+        narrateProbes.delete(owner);
+        try {
+          clearTimeout(t);
+        } catch (e) {
+        }
+      }
+      function armNarrateProbe(owner, label, ms2, stillStuck) {
+        dropNarrateProbe(owner);
+        const estMs = Math.max(0, Number(ms2) || 0);
+        const afterMs = Math.max(3e4, Math.round(estMs * 1.5));
+        const t = setTimeout(() => {
+          narrateProbes.delete(owner);
+          if (narrateOwner !== owner) return;
+          let stuck = false;
+          try {
+            stuck = !!stillStuck();
+          } catch (e) {
+            stuck = false;
+          }
+          if (!stuck) return;
+          try {
+            bump2("narrateOverdue");
+          } catch (e) {
+          }
+          dg({
+            narrateOverdueInfo: {
+              label,
+              estMs,
+              afterMs,
+              lockLeftMs: narration.remaining(),
+              at: Date.now()
+            }
+          });
+        }, afterMs);
+        try {
+          if (t && typeof t.unref === "function") t.unref();
+        } catch (e) {
+        }
+        narrateProbes.set(owner, t);
+      }
+      function resetNarration() {
+        narrateOwner = 0;
+        const owners = Array.from(narrateProbes.keys());
+        for (const id of owners) dropNarrateProbe(id);
+        clearNarrating();
+      }
+      function makeNarrateHandle(label, stillStuck) {
+        const owner = ++narrateSeq;
+        return {
+          narrate(ms2) {
+            narrateOwner = owner;
+            setNarrating(ms2);
+            armNarrateProbe(owner, label, ms2, stillStuck);
+          },
+          clearNarrate() {
+            dropNarrateProbe(owner);
+            if (narrateOwner !== owner) return;
+            narrateOwner = 0;
+            clearNarrating();
+          }
+        };
+      }
       let greetedOnce = false;
       const lineDeduper = createDeduper({ windowMs: 25e3, onDuplicate: () => bump2("dupLine") });
       const replyDeduper = createDeduper({ windowMs: 3e4, onDuplicate: () => bump2("dupReply") });
@@ -8290,6 +8422,9 @@
         };
         const storyBusyRef = R.useRef(false);
         const storyBookRef = R.useRef("");
+        const storyNarration = hookApi.useLazyRef(() => makeNarrateHandle("story", () => !!storyBusyRef.current));
+        const actionNarration = hookApi.useLazyRef(() => makeNarrateHandle("actions", () => narration.active()));
+        const routeNarration = hookApi.useLazyRef(() => makeNarrateHandle("route", () => narration.active()));
         const storyAutoRef = R.useRef((() => {
           try {
             const s = localStorage.getItem("chubby-story-auto");
@@ -8364,9 +8499,9 @@
           onSpeaking: (playing) => {
             ttsPlaying = playing;
           },
-          // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
+          // 语音聊天关着时"只听不接话"（在唤醒词剥除之前就拦下，不必先考虑喊没喊名字）
           voiceChat: () => voiceChatOnRef.current,
-          // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
+          // 正在朗读时，语音"停"要能直接打断（打断词不受唤醒词与语音聊天开关影响）
           speaking: () => ttsPlaying,
           diag: dg
         }));
@@ -8743,7 +8878,7 @@
             try {
               try {
                 if (narration.expire()) {
-                  clearNarrating();
+                  resetNarration();
                   bump2("narrReset");
                 }
               } catch (e3) {
@@ -8891,8 +9026,10 @@
         const story = createStoryController({
           clientId: CLIENT_ID,
           persona,
-          narrate: setNarrating,
-          clearNarrate: clearNarrating,
+          // 叙述锁走持有者句柄：说书自己的 clearNarrate 只解自己上的锁，
+          // 念诗那段的 onDone 晚到也不会把这一段的锁/叙述标记清掉。
+          narrate: storyNarration.current.narrate,
+          clearNarrate: storyNarration.current.clearNarrate,
           bubble: showBubble,
           speak: speakText,
           talkFor: (ms2) => {
@@ -8917,8 +9054,9 @@
           say: sayLine,
           speak: speakText,
           speakReply: (text) => speakReply(text),
-          narrate: setNarrating,
-          clearNarrate: clearNarrating,
+          // 叙述锁持有者句柄（菜单动作：念诗 / 今日一句 / 简报等共用这一个使用方）
+          narrate: actionNarration.current.narrate,
+          clearNarrate: actionNarration.current.clearNarrate,
           stopSpeak: () => stopTts(),
           stopMelody: () => melody.stop(),
           playMelody: (notes, bpm, onDone) => melody.play(notes, bpm, onDone),
@@ -9039,7 +9177,7 @@
               bridge.start().then((v) => {
                 try {
                   if (v.status() === "idle") showBubble("麦克风没打开：" + String(v.stats && v.stats.lastError || "看看权限？"), 5e3);
-                  else showBubble("语音待命：开（先喊「大肥鱼」，本鲸才答话）", 3500);
+                  else showBubble("语音待命：开（随时可以说，喊不喊名字都行）", 3500);
                 } catch (e) {
                 }
               }).catch((e) => showBubble("麦克风没打开：" + String(e && e.message || e), 5e3));
@@ -9088,8 +9226,9 @@
           bubble: showBubble,
           say: sayLine,
           speak: speakText,
-          narrate: setNarrating,
-          clearNarrate: clearNarrating,
+          // 点播路由用独立句柄：主人这句"念首诗"与菜单动作互不代解对方的锁
+          narrate: routeNarration.current.narrate,
+          clearNarrate: routeNarration.current.clearNarrate,
           talkFor,
           story,
           storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
@@ -9238,7 +9377,7 @@
             chat.abortStream();
           } catch (e) {
           }
-          clearNarrating();
+          resetNarration();
           bridge.stopSpeak();
           try {
             storyBusyRef.current = false;

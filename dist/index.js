@@ -39,7 +39,7 @@ import { createPoemTitlesHandler } from './host/routes/poem-titles.js';
 import { createBriefingHandlers } from './host/routes/briefing.js';
 import { createTtsHandler } from './host/routes/tts.js';
 import { createCloudTts, readCloudVoice } from './host/voice/cloud-tts.js';
-import { getTtsEngineStats } from './host/tts-engine.js';
+import { createEdgeTtsEngine, getTtsEngineStats } from './host/tts-engine.js';
 import { createAsrHandler } from './host/routes/asr.js';
 import { createDailyHandler } from './host/routes/daily.js';
 import { createBackupHandlers } from './host/routes/backup.js';
@@ -120,6 +120,8 @@ export function apply(ctx, rawConfig) {
     const chatCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'chat'), memBytes: 3 * 1024 * 1024 }); // 聊天回复很小
     const asrCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'asr'), memBytes: 3 * 1024 * 1024 }); // 识别结果很小
     const getKey = () => readApiKey(PLUGIN_DIR);
+    /** 硅基流动 Key（ASR 用）：/asr 与配置视图共用这一个读取器，不再各处内联一份 */
+    const getSiliconflowKey = () => readSiliconFlowKey(PLUGIN_DIR);
     // L2 可变人格：核心设定仍锁在 SYSTEM_PROMPT 里（模型无从改写），
     // 这里只维护一小段可回滚的附加人格；学习默认开，config.json 的 personalityLearning:false 可关。
     const personality = createPersonalityRepo(RUNTIME_DIR);
@@ -245,7 +247,7 @@ export function apply(ctx, rawConfig) {
         loadIntimacy: () => { try {
             return Number(store.loadState().intimacy) || 0;
         }
-        catch (e) {
+        catch {
             return 0;
         } },
         bumpIntimacy: (n) => {
@@ -255,7 +257,7 @@ export function apply(ctx, rawConfig) {
                 store.saveState(st);
                 return Number(st.intimacy) || 0;
             }
-            catch (e) {
+            catch {
                 return 0;
             }
         },
@@ -271,7 +273,7 @@ export function apply(ctx, rawConfig) {
         removeReminder: store.removeReminder,
     });
     const culture = createCultureHandlers({ dataDir: DATA_DIR, runtimeDir: RUNTIME_DIR, dataPort });
-    const poem = createPoemHandler({ runtimeDir: RUNTIME_DIR, dataDir: DATA_DIR, dataPort });
+    const poem = createPoemHandler({ runtimeDir: RUNTIME_DIR, dataPort });
     // 诗名索引：客户端点诗识别按需拉取（数据是包内只读文件，读一次后进程内缓存）
     const poemTitles = createPoemTitlesHandler({ dataDir: DATA_DIR });
     const briefing = createBriefingHandlers({
@@ -280,8 +282,28 @@ export function apply(ctx, rawConfig) {
     });
     // 云端 TTS（火山方舟豆包语音 2.0）：config.json 里配 cloudVoice.apiKey 才启用；失败回退 edge-tts
     const cloudTts = createCloudTts({ config: () => readCloudVoice(PLUGIN_DIR), runtimeDir: RUNTIME_DIR });
-    const tts = createTtsHandler({ cache: ttsCache });
-    const asr = createAsrHandler({ getKey: () => readSiliconFlowKey(PLUGIN_DIR), cache: asrCache });
+    /**
+     * TTS 引擎必须在装配层构造，而不是让 createTtsHandler 内部自建：
+     * 它持有一个常驻 python 子进程（edge-tts worker），而路由工厂只交出 handler 函数，
+     * 内部自建的引擎实例句柄谁也拿不到 → 插件卸载/热重载时没有对象可以 dispose()，
+     * 这个子进程只能等 idle 回收（5 分钟，见 host/tts/common.ts 的 IDLE_KILL_MS）。
+     */
+    const ttsEngine = createEdgeTtsEngine();
+    // 卸载/热重载时杀掉常驻 worker：与自动备份同一套 ctx.effect 托管方式（cordis 没有 dispose 事件）。
+    // 登记失败按「加载优先」吞掉：清理器不是功能本体，不能因为它把整个插件挡在加载之外。
+    if (ctx && typeof ctx.effect === 'function') {
+        try {
+            ctx.effect(() => () => { try {
+                ttsEngine.dispose();
+            }
+            catch { } }, 'chubby-whale: tts-engine');
+        }
+        catch { }
+    }
+    // 云端优先、edge-tts 兜底的「三层降级」要两条通路都接上：
+    // cloudTts 此前只构造没注入 → /tts 的 opts.cloudTts 恒为 undefined，云端一直不可达（配置了也不生效）。
+    const tts = createTtsHandler({ cache: ttsCache, engine: ttsEngine, cloudTts });
+    const asr = createAsrHandler({ getKey: getSiliconflowKey, cache: asrCache });
     const personalityRoutes = createPersonalityHandlers({
         repo: personality,
         learningEnabled: () => personalityLearningEnabled,
@@ -347,13 +369,13 @@ export function apply(ctx, rawConfig) {
             return true;
         } },
         hasDeepseekKey: () => { try {
-            return Boolean(readApiKey(PLUGIN_DIR));
+            return Boolean(getKey());
         }
         catch {
             return false;
         } },
         hasSiliconflowKey: () => { try {
-            return Boolean(readSiliconFlowKey(PLUGIN_DIR));
+            return Boolean(getSiliconflowKey());
         }
         catch {
             return false;

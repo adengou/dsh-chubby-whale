@@ -25,18 +25,52 @@ const DEFAULT_QUALITY = 0.85
 /** 原图字节数小于这个就不折腾（本来就不费 token；比较的是解码后的字节，不是 base64 字符数） */
 const KEEP_RAW_BELOW = 400 * 1024
 
-/** 读成完整 data URL；失败返回 ''（FileReader 在个别环境缺失/被禁用时同样走这里） */
+/**
+ * 读文件超时：FileReader 在个别环境（被安全软件拦截、文件被占用、超大文件）会**永远不回调**。
+ * 不设超时的话 handleFileDrop 会一直 pending，气泡卡在「本鲸看看这张图…」，主人以为鱼死了。
+ */
+const READ_TIMEOUT_MS = 30000
+
+/** 读成完整 data URL；失败/超时返回 ''（FileReader 缺失或被禁用同样走这里） */
 function readFileAsDataUrl(file: any): Promise<string> {
   return new Promise((resolve) => {
-    try {
-      const fr = new FileReader()
-      fr.onloadend = () => {
-        try { resolve(String((fr as any).result || '')) } catch (e) { resolve('') }
+    let done = false
+    let timer: any = null
+    let fr: any = null
+    const finish = (value: string): void => {
+      if (done) return
+      done = true
+      if (timer) {
+        try { clearTimeout(timer) } catch (e) { }
+        timer = null
       }
-      fr.onerror = () => resolve('')
+      // 摘掉回调：超时后 abort 触发的 onabort 不能再走到 finish 之外
+      try {
+        if (fr) {
+          fr.onloadend = null
+          fr.onerror = null
+          fr.onabort = null
+        }
+      } catch (e) { }
+      resolve(value)
+    }
+    try {
+      fr = new FileReader()
+      fr.onloadend = () => {
+        try { finish(String(fr.result || '')) } catch (e) { finish('') }
+      }
+      fr.onerror = () => finish('')
+      fr.onabort = () => finish('')
+      timer = setTimeout(() => {
+        // 超时先 abort 释放文件句柄，再按失败处理（调用方会走「读不了」分支）
+        try {
+          if (fr && typeof fr.abort === 'function') fr.abort()
+        } catch (e) { }
+        finish('')
+      }, READ_TIMEOUT_MS)
       fr.readAsDataURL(file)
     } catch (e) {
-      resolve('')
+      finish('')
     }
   })
 }
