@@ -4,6 +4,13 @@
 
 ## [未发布]
 
+## [1.1.43] - 2026-11-06
+
+### 构建（按第一原则收口：只 Gitee）
+- **删除 `tools/gh-sync.mjs` 与 `npm run sync:github`**：该工具走 GitHub Git Data API 逐个文件上传，与「只推 Gitee、不上 GitHub」直接冲突
+- **`tools/version-check.mjs` 改为只读 Gitee**：删掉 GitHub API / npm registry / npm tarball 哈希三段（npm 冻结在 1.0.1、本机 github.com 不可达，留着只会误报）；新增 `--offline` 只读本地；`npm run version:check` 同步改口径
+- 文档结案：《发布规范》里「冻结命令」「版本检查工具仍查 GitHub/npm」两条待办落地
+
 ## [1.1.42] - 2026-11-06
 
 ### 修复
