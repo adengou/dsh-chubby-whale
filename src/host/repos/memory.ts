@@ -39,7 +39,10 @@ export function createMemoryRepo(dataDir: string): MemoryRepo {
   function saveMemoryObj(obj: any): void {
     try {
       writeJsonAtomic(MEMORY, { history: (obj.history || []).slice(-MEMORY_LIMIT), summary: String(obj.summary || ''), savedAt: new Date().toISOString() })
-    } catch { }
+    } catch (err: any) {
+      // 与其它五个仓储同口径：磁盘满/占用时不能静默丢记忆，留 WRITE-FAIL 供排障（2026-11-06 仓储分身取证）
+      console.error('[store] WRITE-FAIL ' + String(MEMORY) + ' err=' + String(err?.message || err))
+    }
   }
   /**
    * 追加一轮对话（主人一句 + 肥鲸一句）。
@@ -60,7 +63,9 @@ export function createMemoryRepo(dataDir: string): MemoryRepo {
   function loadMemorySummary(): string { return loadMemoryObj().summary }
   function saveMemorySummary(s: string): void { const m = loadMemoryObj(); m.summary = String(s || ''); saveMemoryObj(m) }
   function clearMemory(): void {
-    try { writeJsonAtomic(MEMORY, { history: [], summary: '', savedAt: new Date().toISOString() }) } catch { }
+    try { writeJsonAtomic(MEMORY, { history: [], summary: '', savedAt: new Date().toISOString() }) } catch (err: any) {
+      console.error('[store] WRITE-FAIL ' + String(MEMORY) + ' err=' + String(err?.message || err))
+    }
   }
 
   return { loadHistory, saveHistory, appendTurns, clearMemory, loadMemorySummary, saveMemorySummary }

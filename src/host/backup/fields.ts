@@ -200,7 +200,10 @@ export function cleanReminders(value: any): any[] | null {
       id: typeof r.id === 'string' && r.id ? clip(r.id, 64) : Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       text: clip(r.text, BACKUP_LIMITS.reminderTextLen),
       at: clip(r.at, BACKUP_LIMITS.reminderStampLen),
-      repeat: isNum(r.repeat) && r.repeat > 0 ? Math.round(r.repeat) : null,
+      // repeat 与路由同口径：只接受 60s ~ 7 天（routes/reminders.ts:43）。
+      // 导入的是外部 JSON，此前只判 >0：repeat=1e15 这类值会落到仓储，
+      // 算出超出 Date 表示范围的 nextAt（toISOString 抛 RangeError，整份提醒都取不出来）。
+      repeat: isNum(r.repeat) && r.repeat >= 60 && r.repeat <= 86400 * 7 ? Math.round(r.repeat) : null,
       nextAt: typeof r.nextAt === 'string' ? clip(r.nextAt, BACKUP_LIMITS.reminderStampLen) : null,
       fired: r.fired === true,
       done: r.done === true,
