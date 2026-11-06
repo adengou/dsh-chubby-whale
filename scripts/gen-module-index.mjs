@@ -87,8 +87,25 @@ function main() {
     }
     lines.push('')
   }
+  const next = lines.join('\n')
+  const check = process.argv.includes('--check')
+  if (check) {
+    let prev = ''
+    try { prev = fs.readFileSync(OUT, 'utf8') } catch { /* 首次 */ }
+    if (prev !== next) {
+      const prevLines = prev.split('\n')
+      const nextLines = next.split('\n')
+      const same = nextLines.filter((l, i) => prevLines[i] === l).length
+      console.log('模块接口清单已过期：' + OUT)
+      console.log('  现有 ' + prevLines.length + ' 行 / 本次生成 ' + nextLines.length + ' 行（相同 ' + same + ' 行）')
+      console.log('  请运行 node scripts/gen-module-index.mjs 更新后提交')
+      process.exit(1)
+    }
+    console.log('模块接口清单一致：' + totalModules + ' 个模块 / ' + totalExports + ' 项导出 ✅')
+    process.exit(0)
+  }
   fs.mkdirSync(path.dirname(OUT), { recursive: true })
-  fs.writeFileSync(OUT, lines.join('\n'), 'utf8')
+  fs.writeFileSync(OUT, next, 'utf8')
   console.log('已生成 ' + OUT)
   console.log('模块 ' + totalModules + ' 个 / 导出 ' + totalExports + ' 项')
 }
