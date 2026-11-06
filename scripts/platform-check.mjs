@@ -11,10 +11,14 @@
  *   [3] 运行目录：断言 ~/.dsh-chubby-whale 来自 homedir()，并用 path.posix / path.win32
  *       模拟两边 join 结果；
  *   [4] 权限分支：模拟两个平台，断言 chmod 只在非 win32 执行（spy 记录调用与 mode）；
- *   [5] BOM 容错：对 stripBom / readTextNoBom 做纯函数断言（含 U+FEFF 前缀）。
+ *   [5] BOM 容错：对 stripBom / readTextNoBom 做纯函数断言（含 U+FEFF 前缀、纯 BOM 文件）；
+ *   [6] 诗名索引路径：client seedFromDisk 从 cwd 向上找 data/poem-titles.json（最多 4 层，
+ *       用系统临时目录模拟 cwd 在子目录），host 路由缺省 dataDir = join(process.cwd(), 'data')；
+ *   [7] Node 版本：package.json engines.node 必须 >=22.3（seedFromDisk 依赖 process.getBuiltinModule）。
  *
  * 设计约束：
- *   · 只读 src，不写任何文件，不启动 HTTP/子进程（spawn 只是被扫描，不会真执行）；
+ *   · 只读 src；临时目录沙箱建在 os.tmpdir() 下，用完即删，不碰项目文件；
+ *     不启动 HTTP/子进程（spawn 只是被扫描，不会真执行）；
  *   · TS 源码加载走 esbuild transform + new Function 沙箱，不依赖 dist、不依赖当前平台；
  *   · 断言以「源码真实实现」为准：实现与文档矩阵不一致只报 ⚠️ 并打印实际顺序，不判失败。
  *
@@ -22,7 +26,9 @@
  * 退出码：0=通过（允许 ⚠️）；1=有 ❌（违规或断言失败）
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import * as nodeFs from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path, { join, relative, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dirname, '..')
@@ -440,8 +446,10 @@ function loadTs(relFile, stubs, proc) {
     if (Object.prototype.hasOwnProperty.call(stubs, id)) return stubs[id]
     throw new Error('未提供 stub 模块：' + id)
   }
-  const fn = new Function('require', 'module', 'exports', 'process', 'console', code)
-  fn(req, mod, mod.exports, proc, console)
+  // localStorage 显式传 undefined：client 模块里 `typeof localStorage === 'undefined'` 走降级分支，
+  // 不受 Node 22+ 实验性全局 localStorage 影响（本检查不写任何浏览器缓存）
+  const fn = new Function('require', 'module', 'exports', 'process', 'console', 'localStorage', code)
+  fn(req, mod, mod.exports, proc, console, undefined)
   return mod.exports
 }
 
@@ -627,8 +635,14 @@ function checkPython() {
     warn('实现与文档矩阵不一致（以实现为准）', mismatched.map((p) => p + '：' + render(p)).join('；'))
   }
 
+  // 平台矩阵输出自检：三行齐备且每行都有候选（防止 note() 的重排把某平台吞掉）
+  const matrix = platforms.map((p) => ({ p, line: p.padEnd(7) + render(p) }))
+  const missingRows = matrix.filter((r) => !r.line.trimStart().startsWith(r.p) || r.line.trim().length <= r.p.length)
+  if (missingRows.length === 0) ok('平台矩阵三行齐备', 'win32 / linux / darwin 均有非空候选链')
+  else bad('平台矩阵缺行', missingRows.map((r) => r.p).join('、') || '（无）')
+
   note('平台矩阵（从 defaultCandidates() 实测）：')
-  for (const p of platforms) note('  ' + p.padEnd(7) + render(p))
+  for (const r of matrix) note('  ' + r.line)
 }
 
 // ---------------------------------------------------------------------------
@@ -729,6 +743,7 @@ function checkBom() {
 
   const withBom = loadAtomic('linux', '\uFEFF{"a":1}')
   const noBom = loadAtomic('linux', '{"b":2}')
+  const bomOnly = loadAtomic('linux', '\uFEFF')
   const mod = withBom.mod
 
   const cases = [
@@ -737,10 +752,179 @@ function checkBom() {
     ['空串 / 纯 BOM 安全', mod.stripBom('') === '' && mod.stripBom('\uFEFF') === '', '"" / ""'],
     ['readTextNoBom 读带 BOM JSON 可解析', JSON.parse(mod.readTextNoBom('/tmp/x.json')).a === 1, '\\uFEFF{"a":1} → {"a":1}'],
     ['readTextNoBom 读无 BOM 不变', noBom.mod.readTextNoBom('/tmp/y.json') === '{"b":2}', '{"b":2}'],
+    [
+      'readTextNoBom 纯 BOM 文件返回空串',
+      bomOnly.mod.readTextNoBom('/tmp/bom-only.json') === '',
+      '文件内容仅有 \\uFEFF → ""（不是 "\\uFEFF"）',
+    ],
   ]
   for (const [name, cond, detail] of cases) {
     if (cond) ok(name, detail)
     else bad(name, '断言失败')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// [6] 诗名索引路径：client seedFromDisk 向上查找 + host 路由 dataDir 兜底
+// ---------------------------------------------------------------------------
+
+/** 伪造 process 注入 loadTs：让模块加载期的 seedFromDisk() 按指定 cwd 读真实 fs */
+function fakeProcess(cwdDir) {
+  return {
+    platform: 'linux',
+    pid: 4242,
+    env: {},
+    cwd: () => cwdDir,
+    getBuiltinModule: (id) => (id === 'node:fs' ? nodeFs : id === 'node:path' ? path : undefined),
+  }
+}
+
+/** 在指定 cwd 下加载 client/poem-titles.ts（seedFromDisk 未导出，靠模块加载期自动执行） */
+function loadClientPoemTitles(cwdDir) {
+  return loadTs(
+    'src/client/poem-titles.ts',
+    {
+      '../shared/immutable.js': { deepFreeze: (x) => x },
+      './http.js': { getJson: () => Promise.resolve({ ok: false }), timeoutSignal: () => undefined },
+    },
+    fakeProcess(cwdDir),
+  )
+}
+
+async function checkPoemTitles() {
+  section(6, '诗名索引：cwd 向上查找（client）与 dataDir 兜底（host）')
+  if (!transformSync) {
+    bad('加载 TS 源码失败', '需要 devDependency esbuild：' + loadError)
+    return
+  }
+
+  // --- 静态：client seedFromDisk 的向上查找结构（不给导出就能断言的前提）---
+  const clientRel = 'src/client/poem-titles.ts'
+  const clientCode = stripComments(readFileSync(join(ROOT, clientRel), 'utf8'))
+  const probes = [
+    ['从 cwd 起步', /\w+\.cwd\(\)/],
+    ['最多 4 层的向上循环', /for\s*\(\s*let\s+i\s*=\s*0\s*;\s*i\s*<\s*4\s*;\s*i\+\+\s*\)/],
+    ['候选 = join(dir, "data", "poem-titles.json")', /\w+\.join\(\s*dir\s*,\s*['"]data['"]\s*,\s*['"]poem-titles\.json['"]\s*\)/],
+    ['逐级取父目录 dirname(dir)', /\w+\.dirname\(\s*dir\s*\)/],
+    ['到根目录即停止（parent === dir）', /parent\s*===\s*dir/],
+    ['内置模块走 process.getBuiltinModule("node:fs")', /\w+\.getBuiltinModule\(\s*['"]node:fs['"]\s*\)/],
+    ['无 getBuiltinModule 时降级为空表', /getBuiltinModule\s*!==\s*['"]function['"]/],
+  ]
+  const missed = probes.filter(([, re]) => !re.test(clientCode)).map(([name]) => name)
+  if (missed.length === 0) {
+    ok('client seedFromDisk 静态结构', 'cwd 起、最多 4 层、dirname 逐级上溯、到根停止（' + clientRel + '）')
+  } else {
+    bad('client seedFromDisk 静态结构缺失', '未命中：' + missed.join('、'))
+  }
+
+  // --- 运行时：临时目录模拟「cwd 在子目录」---
+  const dataTitles = ['静夜思', '将进酒', '水调歌头']
+  const norm = dataTitles.slice().sort((a, b) => b.length - a.length)
+  let tmpRoot = ''
+  try {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'chubby-platform-poem-'))
+    mkdirSync(join(tmpRoot, 'data'), { recursive: true })
+    writeFileSync(join(tmpRoot, 'data', 'poem-titles.json'), JSON.stringify({ titles: dataTitles }), 'utf8')
+    for (const sub of ['a/b/c', 'deep/x/y/z/w/v']) mkdirSync(join(tmpRoot, ...sub.split('/')), { recursive: true })
+
+    const cases = [
+      { name: 'cwd 即项目根：直接命中 data/poem-titles.json', cwd: tmpRoot, hit: true },
+      { name: 'cwd 在 3 层子目录：第 4 个候选命中（4 层上限内）', cwd: join(tmpRoot, 'a', 'b', 'c'), hit: true },
+      { name: 'cwd 在 6 层子目录：不越过 4 层上限', cwd: join(tmpRoot, 'deep', 'x', 'y', 'z', 'w', 'v'), hit: false },
+    ]
+    for (const c of cases) {
+      let titles = null
+      let err = ''
+      try {
+        titles = Array.from(loadClientPoemTitles(c.cwd).poemTitles())
+      } catch (e) {
+        err = String((e && e.message) || e)
+      }
+      if (c.hit) {
+        const good =
+          Array.isArray(titles) &&
+          titles.length === norm.length &&
+          titles[0] === norm[0] &&
+          norm.every((t) => titles.includes(t))
+        if (good) ok('client seedFromDisk ' + c.name, titles.join(' / '))
+        else bad('client seedFromDisk ' + c.name, err || 'titles=' + JSON.stringify(titles))
+      } else if (Array.isArray(titles) && titles.length === 0) {
+        ok('client seedFromDisk ' + c.name, '返回空表，调用方保持降级')
+      } else {
+        bad('client seedFromDisk ' + c.name, err || 'titles=' + JSON.stringify(titles))
+      }
+    }
+
+    // --- host 路由：静态兜底 + 运行时用缺省 dataDir 从 cwd/data 读 ---
+    const hostRel = 'src/host/routes/poem-titles.ts'
+    const hostCode = stripComments(readFileSync(join(ROOT, hostRel), 'utf8'))
+    if (/join\(\s*process\.cwd\(\)\s*,\s*['"]data['"]\s*\)/.test(hostCode)) {
+      ok('host 路由 dataDir 兜底 = join(process.cwd(), "data")', hostRel + '（静态）')
+    } else {
+      bad('host 路由 dataDir 兜底缺失', '源码未出现 join(process.cwd(), "data")')
+    }
+
+    const res = { body: null }
+    const hostMod = loadTs(
+      hostRel,
+      {
+        '../respond.js': { sendJson: (r, obj) => { r.body = obj } },
+        'node:fs': nodeFs,
+        'node:path': path,
+      },
+      fakeProcess(tmpRoot),
+    )
+    const handler = hostMod.createPoemTitlesHandler({})
+    await handler.handlePoemTitles({}, res)
+    if (res.body && res.body.ok === true && res.body.count === dataTitles.length) {
+      ok('host 路由缺省 dataDir 从 cwd/data 读取', 'ok=true，count=' + res.body.count)
+    } else {
+      bad('host 路由缺省 dataDir 读取失败', JSON.stringify(res.body))
+    }
+  } catch (e) {
+    bad('诗名索引临时目录沙箱', String((e && e.message) || e))
+  } finally {
+    if (tmpRoot) {
+      try { rmSync(tmpRoot, { recursive: true, force: true }) } catch { }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// [7] Node 版本约束（engines.node）
+// ---------------------------------------------------------------------------
+function checkEngines() {
+  section(7, 'Node 版本约束（package.json engines.node）')
+  let pkg = null
+  try {
+    pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+  } catch (e) {
+    bad('读取 package.json 失败', String((e && e.message) || e))
+    return
+  }
+  const why = 'process.getBuiltinModule 自 Node 22.3.0 起提供（client seedFromDisk 依赖它读 data/poem-titles.json）'
+  const spec = pkg && pkg.engines && pkg.engines.node
+  if (typeof spec === 'string' && spec.trim()) {
+    ok('engines.node 已声明', JSON.stringify(spec.trim()))
+  } else {
+    bad('engines.node 未声明', '必须 >=22.3；' + why)
+    return
+  }
+  // 只接受 ">=major.minor"：^ / ~ / 不带下界都不算锁定最低可运行版本
+  const m = /^>=\s*(\d+)\.(\d+)/.exec(spec.trim())
+  const minOk = !!m && Number(m[1]) * 1000 + Number(m[2]) >= 22003
+  if (minOk) ok('engines.node 不低于 22.3', spec.trim() + ' ≥ 22.3；' + why)
+  else bad('engines.node 低于 22.3', spec.trim() + '；' + why)
+
+  const curMajor = Number(process.versions.node.split('.')[0])
+  const curMinor = Number(process.versions.node.split('.')[1])
+  if (curMajor * 1000 + curMinor >= 22003) {
+    ok('当前运行 Node 满足声明', 'node ' + process.version)
+  } else {
+    warn(
+      '当前运行 Node 低于 22.3',
+      'process.getBuiltinModule 不可用 → seedFromDisk 返回空表，诗名识别退化为泛化意图（host 路由不受影响）',
+    )
   }
 }
 
@@ -755,8 +939,10 @@ checkPython()
 checkHome(files)
 checkPermissions()
 checkBom()
+await checkPoemTitles()
+checkEngines()
 
-section(6, '结论')
+section(8, '结论')
 console.log(I + '通过 ' + passed + ' 项 / 警告 ' + warned + ' 项 / 失败 ' + failed + ' 项')
 if (failed === 0) {
   console.log(I + '✅ 三平台静态适配检查通过')
