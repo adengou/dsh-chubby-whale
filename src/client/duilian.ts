@@ -75,7 +75,10 @@ deepFreeze(COUPLET_CATS)
 
 /** 随机取一副：cat 为空则全库随机；excludeUpper 避免连续重复 */
 export function pickCouplet(excludeUpper?: string, cat?: string): Couplet {
-  const byCat = cat ? COUPLETS.filter((c) => c.cat === cat) : COUPLETS
+  // 分类先归一：菜单/调用方偶尔会把带空格的分类名传进来，不 trim 会静默落到「全库随机」，
+  // 气泡上打的分类标签就和实际内容对不上了。
+  const key = cat == null ? '' : String(cat).trim()
+  const byCat = key ? COUPLETS.filter((c) => c.cat === key) : COUPLETS
   const base = byCat.length > 0 ? byCat : COUPLETS
   const pool = base.length > 1 && excludeUpper ? base.filter((c) => c.upper !== excludeUpper) : base
   const src = pool.length > 0 ? pool : base

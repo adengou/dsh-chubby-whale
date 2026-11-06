@@ -544,6 +544,10 @@ import { evPrevent, evStop } from './client/util.js'
           onFile: (file: any): void => {
             try { handleFileDrop(file, { showBubble, speakText }).catch(() => { }) } catch (e2) { }
           },
+          onMany: (n: number): void => {
+            // 说清「只收第一张」，否则其余文件静默消失，主人会以为都发过去了
+            try { showBubble('一次先看一张哦～先看第一张（共 ' + n + ' 个）', 3200) } catch (e2) { }
+          },
         })
       }, [])
 

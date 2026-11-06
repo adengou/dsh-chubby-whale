@@ -142,8 +142,9 @@ export function createStoryHandlers(opts) {
         }
         try {
             const url = new URL(req.url, 'http://x');
-            // 先按 content-length 直接拒：readJsonBody 超限时为保证不把大包收进内存会先断连接，
-            // 断早了客户端就只能看到连接重置；这里先回一个能收到的 413，再交给下面的流式读取兜底。
+            // 先按 content-length 直接拒：能省掉白读一个大包（也避免慢客户端长时间占连接）。
+            // 2026-11-07 起 readBody 对「声明超限」不再断连（不读流、直接抛，由 sendTooLarge 的
+            // connection: close 收尾），所以下面那层流式读取是兜底而不是唯一出路。
             const declared = Number(req?.headers?.['content-length']);
             if (Number.isFinite(declared) && declared > RESET_MAX_BODY) {
                 sendTooLarge(res);

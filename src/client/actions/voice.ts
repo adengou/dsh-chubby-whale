@@ -76,8 +76,10 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
       // 当前模式以语音实例为准（endpointInfo 现在报真实模式）；没实例才退回 localStorage
       const cur = (v && v.endpointInfo) ? v.endpointInfo().mode : readEndpointMode()
       const next = cur === 'ape' ? 'classic' : 'ape'
-      writeEndpointMode(next)
+      // endpoint.ts 是唯一写入口：有实例就交给实例（它归一化后落盘），没实例才自己写。
+      // 原来先自己写一次、再让 setter 写一次：setter 抛错时落盘值与实例值会分叉。
       if (v && v.setEndpointMode) v.setEndpointMode(next)
+      else writeEndpointMode(next)
       // 提示按切换后的真实模式来说，避免"点了没变"的错觉
       const real = (v && v.endpointInfo) ? v.endpointInfo().mode : next
       host.bubble(real === 'ape' ? '端点检测：自适应（试用）' : '端点检测：经典（稳定）', 4000)
