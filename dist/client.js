@@ -1337,7 +1337,7 @@
     }
   }
 
-  // src/client/voice/voices.ts
+  // src/shared/voices.ts
   var TTS_VOICES = [
     "zh-CN-XiaoyiNeural",
     "zh-CN-XiaoxiaoNeural",
@@ -1359,14 +1359,16 @@
   function normalizeVoiceName(name, fallback = DEFAULT_VOICE) {
     let n = "";
     try {
-      n = str(name).trim();
-    } catch (e) {
+      n = (name == null ? "" : String(name)).trim();
+    } catch {
       return fallback;
     }
     if (!n) return fallback;
     const hit = VOICE_BY_KEY.get(n.toLowerCase());
     return hit || fallback;
   }
+
+  // src/client/voice/voices.ts
   function readStoredVoiceName() {
     try {
       return normalizeVoiceName(localStorage.getItem("chubby-tts-voice"));
