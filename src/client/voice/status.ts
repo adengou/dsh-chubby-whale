@@ -26,6 +26,7 @@ export type VoiceStats = {
   ttsFail: number          // 合成/播放失败
   ttsZombie: number
   dupDropped?: number      // 因重复被丢掉的识别结果（防重复回答）
+  qDropped?: number        // 朗读队列超上限被丢弃的最旧段数（防断网时无限堆积）
   lastError: string
 }
 
@@ -40,7 +41,7 @@ export type VoiceStats = {
 export function createVoiceStats(): VoiceStats {
   return {
     windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrRetry: 0, asrTexts: 0, heard: 0,
-    echoDropped: 0, shortDropped: 0, dupDropped: 0, ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
+    echoDropped: 0, shortDropped: 0, dupDropped: 0, qDropped: 0, ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
   }
 }
 

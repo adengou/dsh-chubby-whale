@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.45";
+  var VERSION = "1.1.46";
 
   // src/client/styles.ts
   var W = 240;
@@ -1224,6 +1224,7 @@
       echoDropped: 0,
       shortDropped: 0,
       dupDropped: 0,
+      qDropped: 0,
       ttsRequests: 0,
       ttsPlayed: 0,
       ttsFail: 0,
@@ -1315,6 +1316,14 @@
   }
   function isStaleToken(token, current) {
     return typeof token === "number" && token !== current;
+  }
+  var TTS_QUEUE_MAX = 200;
+  function capQueue(q, max = TTS_QUEUE_MAX) {
+    const limit = Math.max(0, Math.floor(Number(max) || 0));
+    if (!Array.isArray(q) || q.length <= limit) return 0;
+    const drop = q.length - limit;
+    q.splice(0, drop);
+    return drop;
   }
 
   // src/client/voice/recorder.ts
@@ -2346,6 +2355,8 @@
       });
       ttsSeq += segs.length;
       for (let i = 0; i < jobs.length; i++) ttsQ.push(jobs[i]);
+      const droppedQ = capQueue(ttsQ);
+      if (droppedQ > 0) stats.qDropped = (stats.qDropped || 0) + droppedQ;
       prefetchUpcoming(!!(ttsQ[0] && ttsQ[0].narration));
       pumpTts();
     }

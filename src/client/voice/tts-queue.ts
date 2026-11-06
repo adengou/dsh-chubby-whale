@@ -122,3 +122,24 @@ export function buildTtsJobs(
 export function isStaleToken(token: number | undefined, current: number): boolean {
   return typeof token === 'number' && token !== current
 }
+
+/**
+ * 朗读队列上限（段数）。
+ * 长说书/跨书连播一次能切出几十上百段；没有上限时，断网或合成卡死会让队列
+ * 一直堆积（并发纪律自检清单「队列有没有上限？」的落点）。
+ * 200 段 ≈ 半小时朗读量，正常单次朗读远达不到。
+ */
+export const TTS_QUEUE_MAX = 200
+
+/**
+ * 超出上限时丢弃**队首最旧的待播段**（正在播的那段已被 pumpTts 取走，不在数组里）。
+ * 返回丢弃的段数；未超限返回 0。
+ * 用一个纯函数而不是在 voice.ts 里手写 splice：可离线断言，边界（0/负数 max）也只有一处。
+ */
+export function capQueue<T>(q: T[], max: number = TTS_QUEUE_MAX): number {
+  const limit = Math.max(0, Math.floor(Number(max) || 0))
+  if (!Array.isArray(q) || q.length <= limit) return 0
+  const drop = q.length - limit
+  q.splice(0, drop)
+  return drop
+}

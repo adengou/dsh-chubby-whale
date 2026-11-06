@@ -40,7 +40,7 @@ import { normalizeVoiceName, readStoredVoiceName } from './voice/voices.js'
 import { createVoiceStats, createStatusHolder, createDiagSnapshots } from './voice/status.js'
 import {
   ECHO_MUTE_MS, TTS_TIMEOUT_MS, TTS_WATCH_MS, TTS_ZOMBIE_MS, TTS_RETRY_MAX,
-  ttsRetryDelayMs, narrationPauseFor, prefetchTargets, buildTtsJobs, isStaleToken,
+  ttsRetryDelayMs, narrationPauseFor, prefetchTargets, buildTtsJobs, isStaleToken, capQueue,
   type TtsJob,
 } from './voice/tts-queue.js'
 import {
@@ -582,6 +582,9 @@ export function createVoice(opts: VoiceOptions): Voice {
       if (!r.ok) throw new Error('tts-http-' + r.status)
       return r.arrayBuffer()
     }).catch((e: any) => {
+      // 预取与正式合成共用这条计数（2026-11-06 复核：故意不区分）。
+      // 预取失败也意味着"链路此刻不通"，计入连败能让下一段尽快降级到浏览器朗读；
+      // 若把它排除，非 strict 场景要等本段 4 次退避全部失败才会兜底（verify-voice 实测 ~3.5s）。
       stats.lastError = 'tts: ' + String((e && e.name) || e)
       // 主动取消（停止说话 abort）不是"合成失败"：不能因为主人点了停止就推进冷却计数
       if (!(ctl && ctl.signal.aborted)) ttsNoteSynthFail()
@@ -594,8 +597,8 @@ export function createVoice(opts: VoiceOptions): Voice {
 
   /**
    * 预取队列里接下来的块：普通 2 块、叙述 3 块，按在途上限截断（voice/tts-queue.ts）。
-   * 预取失败不阻塞、不告警：synth 自身永远 resolve(null)，播放到那段时 pumpTts 发现
-   * 结果为空会当 miss 重新合成；它只是把"等合成"提前到播放期间，不改变任何播放/重试语义。
+   * 预取失败不阻塞播放：synth 自身永远 resolve(null)，播放到那段时 pumpTts 当 miss 重合成。
+   * 但它**计入**连败闸门（见 synth 的注释）——链路真的不通时，下一段能尽快降级浏览器朗读。
    */
   function prefetchUpcoming(narration: boolean): void {
     // 退避窗口内不预取：正在等重试的那一段不能被"提前合成"绕过 500/1000/2000/4000 的退避
@@ -994,6 +997,10 @@ export function createVoice(opts: VoiceOptions): Voice {
     })
     ttsSeq += segs.length
     for (let i = 0; i < jobs.length; i++) ttsQ.push(jobs[i])
+    // 队列上限：超出就丢最旧的待播段（正在播的那段已被 pumpTts 取走，不在数组里）。
+    // 防断网/合成卡死时无限堆积；丢了多少进 qDropped，排障面板能看到。
+    const droppedQ = capQueue(ttsQ)
+    if (droppedQ > 0) stats.qDropped = (stats.qDropped || 0) + droppedQ
     // 首块优先：入队即把队首（及后一块）压上合成，不等播放循环 —— 旧段还在播时，
     // 新段首块也能在旧段播完前合成好；播放仍交给 pumpTts 串行接管（命中预取直接开播）。
     prefetchUpcoming(!!(ttsQ[0] && ttsQ[0].narration))

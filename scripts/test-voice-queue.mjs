@@ -84,6 +84,7 @@ const ENTRY_SRC = `
 import {
   TTS_TIMEOUT_MS, TTS_WATCH_MS, TTS_ZOMBIE_MS, TTS_RETRY_MAX, TTS_RETRY_BASE_MS, ECHO_MUTE_MS,
   ttsRetryDelayMs, narrationPauseFor, prefetchTargets, buildTtsJobs, isStaleToken,
+  TTS_QUEUE_MAX, capQueue,
 } from './src/client/voice/tts-queue.js'
 import { createEchoFilter } from './src/client/voice/echo-filter.js'
 import {
@@ -102,6 +103,7 @@ import { TTS_VOICES, DEFAULT_VOICE, normalizeVoiceName, readStoredVoiceName } fr
 export {
   TTS_TIMEOUT_MS, TTS_WATCH_MS, TTS_ZOMBIE_MS, TTS_RETRY_MAX, TTS_RETRY_BASE_MS, ECHO_MUTE_MS,
   ttsRetryDelayMs, narrationPauseFor, prefetchTargets, buildTtsJobs, isStaleToken,
+  TTS_QUEUE_MAX, capQueue,
   createEchoFilter,
   WINDOW_MS, EARLY_STOP_QUIET, MIN_SPEECH_MS, SILENT_PEAK_DB, CLASSIC_SPEECH_DB, MUTED_SPEECH_DB,
   TICK_MS, TICK_ERROR_MS, LEVEL_PROBE_MS, MIN_SEGMENT_BYTES, APE_MIN_SPEECH_MS,
@@ -191,6 +193,35 @@ group('tts-queue 任务构造与令牌', () => {
   eq('令牌未设置视为不过期', M.isStaleToken(undefined, 5), false)
   eq('令牌相同 → 不过期', M.isStaleToken(5, 5), false)
   eq('令牌不同 → 过期', M.isStaleToken(4, 5), true)
+})
+
+// ---------- tts-queue：队列上限（2026-11-06 主代理补：防断网无限堆积） ----------
+group('tts-queue 队列上限', () => {
+  eq('默认上限为 200', M.TTS_QUEUE_MAX, 200)
+
+  const q1 = ['a', 'b', 'c']
+  eq('未超限不丢', M.capQueue(q1, 5), 0)
+  eq('未超限队列不变', q1, ['a', 'b', 'c'])
+
+  const q2 = ['a', 'b', 'c', 'd', 'e']
+  eq('超限丢最旧的两段', M.capQueue(q2, 3), 2)
+  eq('留下的是最新的三段', q2, ['c', 'd', 'e'])
+
+  const q3 = ['a', 'b']
+  eq('等于上限不丢', M.capQueue(q3, 2), 0)
+  eq('等于上限队列不变', q3, ['a', 'b'])
+
+  const q4 = ['a', 'b', 'c']
+  eq('max=0 清空并返回全部', M.capQueue(q4, 0), 3)
+  eq('max=0 后队列为空', q4, [])
+
+  const q5 = ['a', 'b']
+  eq('非法 max 按 0 处理（不崩）', M.capQueue(q5, NaN), 2)
+
+  // 默认上限真的生效：塞 205 段，只留最新 200
+  const big = Array.from({ length: 205 }, (_, i) => i)
+  eq('205 段按默认上限丢 5 段', M.capQueue(big), 5)
+  eq('保留的是最后 200 段', [big.length, big[0]], [200, 5])
 })
 
 // ---------- echo-filter：回声 / 碎片 / 重复 / 段级去重 ----------
