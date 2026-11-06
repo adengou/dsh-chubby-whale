@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.49";
+  var VERSION = "1.1.50";
 
   // src/client/styles.ts
   var W = 240;
@@ -6194,7 +6194,8 @@
     return s;
   }
   function isAbortError(err) {
-    return !!err && (err.name === "AbortError" || err.code === 20 || err.code === 2);
+    if (!err) return false;
+    return err.name === "AbortError" || err.name === "TimeoutError" || err.code === 20 || err.code === 23 || err.code === 2;
   }
   function storyErrorText(raw) {
     const e = str(raw).trim();
@@ -6250,7 +6251,7 @@
       clearGuard();
       const token = bumpGen();
       refs.busy.current = true;
-      refs.narrating.current = false;
+      refs.narrating.current = true;
       return token;
     }
     function armDeadline(token, message) {
@@ -6338,7 +6339,11 @@
               }
             } else {
               refs.auto.current = false;
-              host.bubble(host.persona.line("poemDone"), 6e3);
+              try {
+                localStorage.setItem("chubby-story-auto", "0");
+              } catch (e) {
+              }
+              host.bubble(host.persona.line("poemDone") + "（《" + String(d && d.book || refs.book.current || "这本") + "》讲完啦，连播已关；想接着听点「接着说」）", 8e3);
             }
           }
         });
