@@ -22,6 +22,21 @@
  *   · 迁移后不长期留旧键：旧键不带 source，两个数据源都会命中，等于把刚修好的「切源跳段」
  *     放回来；而且 reset 只清新键，旧键残留会让刚重置的书「复活」。
  *
+ * 分段位置（2026-11-07 修）：数据里的段落只有 book/title/section/total/text，**没有 piece 字段**
+ *   （实测 data/story 全部 17 本）。旧实现 `Number(c.piece) || 1` 让 piece 恒为 1，于是
+ *   · `isLast = piece >= total` 只在 total===1 的段为真——而这类段多数在书中间
+ *     （儒林外史第 0 段就中招，共 6 本书 18 段），客户端把 isLast===true 当「整轮讲完」
+ *     （关连播 + 报「讲完了」），于是一本书刚开口就连播停了；
+ *   · 气泡里的「第 x/y 段」永远是「第 1/N 段」。
+ *   现在按数据本身推导：相邻同名的段属于同一个「回/篇」，total 是回内段数就用回内序号，
+ *   total 恰好等于本书段数（聊斋 495、世说新语 1129）就用全书累计序号。见 planSegments()。
+ *
+ * isLast 只收不放：客户端把 isLast===true 当成「整轮都讲完了」（关连播 + 报完），
+ *   而本后端一轮讲完会自动回卷重来（pickNext 清进度），「讲完一本自动换下一本」也是既定行为。
+ *   所以 isLast 只在「本书最后一段 + 数据自己的编号也说到本单元末尾」时才置真——只去掉
+ *   书中间的误判（total===1 的 18 段），不新增任何 true，跨书连播不受影响。
+ *   「这一回，就讲到这里。」改由分段末尾（endsChapter）决定，回末就有，不必等到整本讲完。
+ *
  * 这里不碰 req/res：HTTP 解析与响应在 host/routes/story.ts。
  */
 import { readFileSync } from 'node:fs'
@@ -43,9 +58,16 @@ deepFreeze(STORY_AUTHORS)
 export interface StorySpeech {
   book: string
   title: string
+  /** 这一段在本单元（回/篇）里的序号，1 起；由数据推导，不读 piece 字段（数据里没有） */
   piece: number
+  /** 本单元共几段（回内段数，或全书段数——见 planSegments） */
   total: number
   isFirst: boolean
+  /**
+   * 整本书讲完（本书最后一段 + 数据编号也到本单元末尾）。
+   * 客户端拿到 true 会关掉连播并报「讲完了」，所以只有真正讲完一本才置真：
+   * 书中间的 total===1 段曾经被误判成 true，一本书刚开口连播就停了（见文件头）。
+   */
   isLast: boolean
   text: string
   rate: string
@@ -78,9 +100,26 @@ const QUEUE_MAX_CLIENTS = 16
 /** 客户端超过这么久没再请求，视为标签页已关：队列快照丢掉，免得长期占内存 */
 const QUEUE_TTL_MS = 30 * 60 * 1000
 
+/** 一段在本书里的分段位置，以及「是否讲到了本回/篇的末尾」 */
+interface SegmentPos {
+  /** 这一段在本单元里的序号（1 起） */
+  piece: number
+  /** 本单元共几段 */
+  total: number
+  /** 本回/篇讲完了 → 该说「这一回，就讲到这里。」 */
+  endsChapter: boolean
+  /** 这是本书的最后一段（按数据顺序）——「整本书讲完」的必要条件 */
+  endsBook: boolean
+}
+
+/** 连播队列里的一项：段 + 事先算好的分段位置（出队时不必再扫整本书） */
+interface QueuedPiece extends SegmentPos {
+  chunk: StoryChunk
+}
+
 interface ClientQueue {
   /** 本书剩余未读段（连播顺序） */
-  queue: StoryChunk[]
+  queue: QueuedPiece[]
   /** 队列所属书名 */
   book: string
   /** 最近一次请求时间：TTL 清理与 LRU 驱逐都按它排 */
@@ -214,37 +253,73 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
   }
 
   // 播一段（组装开场白/结尾，照 C# 版 的 Speak-StoryChunk）
-  function buildChunk(c: StoryChunk, isFirst: boolean, isLast: boolean): StorySpeech {
+  function buildChunk(c: StoryChunk, isFirst: boolean, seg: SegmentPos): StorySpeech {
     const bookName = String(c.book || '故事')
     const title = String(c.title || '')
-    const piece = Number(c.piece) || 1
-    const total = Number(c.total) || 1
     const spoken = String(c.text || '')
     const author = STORY_AUTHORS[bookName] || ''
     const cleanTitle = title.replace(/正文\s*/g, '')
     const intro = isFirst ? ('话说，今天给主人讲一段《' + bookName + '》' + (author ? '，' + author + '著' : '') + '，' + cleanTitle + '。') : ''
-    const tail = isLast ? '这一回，就讲到这里。' : ''
+    // 结尾句按「本回/篇讲完」出，不再跟着 isLast（见文件头：isLast 会被客户端当成整轮结束）
+    const tail = seg.endsChapter ? '这一回，就讲到这里。' : ''
     return {
       book: bookName,
       title,
-      piece,
-      total,
+      piece: seg.piece,
+      total: seg.total,
       isFirst,
-      isLast,
+      // 「整本书讲完」= 本书最后一段 + 数据自己的编号也说到本单元末尾（piece >= total）。
+      // 两条必须同时成立：数据里没有 piece 字段（归一化后 piece 恒 1），只看编号的话，
+      // total===1 的中间段会被误判成整轮结束（6 本书 18 段，儒林外史第 0 段就中招），
+      // 客户端会当场关掉连播。这里只收紧不放松——原本为 false 的段永远不会变成 true，
+      // 所以「一本接一本」的跨书连播照旧。
+      isLast: seg.endsBook && Number(c.piece) >= Number(c.total),
       text: intro + spoken + tail,
       rate: '-30%',  // 故事语速：主人反馈 -15% 太快，-30% 听感更稳（念诗是 -25%）
     }
   }
 
-  function isLastPiece(c: StoryChunk): boolean {
-    return Number(c.piece) >= Number(c.total)
+  /**
+   * 一本书每段的分段位置（键 = String(index)）。
+   * 数据里没有 piece 字段，只能从 title 分组推：
+   *   · 相邻且同名的段 = 同一「回/篇」（西游记 4 段一回、三言二拍 10 段一卷、聊斋一篇一段）；
+   *   · total 的语义两种：回内段数（西游记 4 / 三言二拍 10），或全书段数（聊斋 495 / 世说新语 1129）；
+   *   · 判定：total === 本书段数 → 全书累计序号；否则用回内序号；
+   *     两者都对不上（空段被过滤、坏数据）时以实际分组为准——保证「第 x/y 段」的 y 永远等于真实段数。
+   */
+  function planSegments(chunks: StoryChunk[]): Map<string, SegmentPos> {
+    const plan = new Map<string, SegmentPos>()
+    const n = chunks.length
+    let i = 0
+    while (i < n) {
+      const title = String(chunks[i].title || '')
+      let j = i + 1
+      while (j < n && String(chunks[j].title || '') === title) j++
+      for (let k = i; k < j; k++) {
+        const bookWide = Number(chunks[k].total) === n
+        plan.set(String(chunks[k].index), {
+          piece: bookWide ? k + 1 : k - i + 1,
+          total: bookWide ? n : j - i,
+          endsChapter: k === j - 1,
+          endsBook: k === n - 1,
+        })
+      }
+      i = j
+    }
+    return plan
   }
 
-  /** 本回剩余未读段（按数组顺序，供本客户端连播） */
-  function queueAfter(chunks: StoryChunk[], book: string, piece: StoryChunk): StoryChunk[] {
+  /** 取一段的分段位置；plan 里没有（不该发生）时给安全默认值，绝不让响应缺字段 */
+  function positionOf(plan: Map<string, SegmentPos>, c: StoryChunk): SegmentPos {
+    return plan.get(String(c.index)) || { piece: 1, total: 1, endsChapter: false, endsBook: false }
+  }
+
+  /** 本书剩余未读段（按数组顺序，供本客户端连播） */
+  function queueAfter(plan: Map<string, SegmentPos>, chunks: StoryChunk[], book: string, afterIndex: number): QueuedPiece[] {
     return chunks
-      .filter((c: StoryChunk) => Number(c.index) > Number(piece.index) && !getProgress(book, c.index))
+      .filter((c: StoryChunk) => Number(c.index) > afterIndex && !getProgress(book, c.index))
       .sort((a: StoryChunk, b: StoryChunk) => Number(a.index) - Number(b.index))
+      .map((c: StoryChunk) => ({ chunk: c, ...positionOf(plan, c) }))
   }
 
   /** 照 C# Story.Next()：当前书里找第一个未读段；读完换下一本；全读完才清零重来 */
@@ -329,9 +404,10 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
     const picked = await pickNext(list, hint)
     if (!picked) return { ok: false, error: 'no readable book' }
     const st = stateFor(clientId)
+    const plan = planSegments(picked.chunks)
     st.book = picked.book
-    st.queue = queueAfter(picked.chunks, picked.book, picked.piece)
-    const chunk = buildChunk(picked.piece, true, isLastPiece(picked.piece))
+    st.queue = queueAfter(plan, picked.chunks, picked.book, Number(picked.piece.index))
+    const chunk = buildChunk(picked.piece, true, positionOf(plan, picked.piece))
     return { ok: true, chunk, remain: st.queue.length }
   }
 
@@ -340,26 +416,28 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
     if (list.length === 0) return { ok: false, error: 'no books' }
     const st = stateFor(clientId)
     // 队列里若已被别的标签页讲过，就跳过
-    while (st.queue.length > 0 && getProgress(st.book, st.queue[0].index)) st.queue.shift()
-    let piece: StoryChunk | null = null
+    while (st.queue.length > 0 && getProgress(st.book, st.queue[0].chunk.index)) st.queue.shift()
+    let entry: QueuedPiece | null = null
     let isFirst = false
     if (st.queue.length > 0) {
-      piece = st.queue.shift() as StoryChunk
+      entry = st.queue.shift() as QueuedPiece
     } else {
       const picked = await pickNext(list, '')
       if (!picked) return { ok: false, error: 'no readable book' }
       // 队列空后重新挑段：还是同一本书就不重复插开场白，真换书才开口
       const switched = !st.book || picked.book !== st.book
-      piece = picked.piece
+      const plan = planSegments(picked.chunks)
+      entry = { chunk: picked.piece, ...positionOf(plan, picked.piece) }
       st.book = picked.book
-      st.queue = queueAfter(picked.chunks, picked.book, piece)
+      st.queue = queueAfter(plan, picked.chunks, picked.book, Number(picked.piece.index))
       isFirst = switched
     }
+    const piece = entry.chunk
     const bk = st.book || String(piece.book || list[0])
     markRead(bk, piece.index)
     progress['_current'] = bk
     saveProgress()
-    const chunk = buildChunk(piece, isFirst, isLastPiece(piece))
+    const chunk = buildChunk(piece, isFirst, entry)
     return { ok: true, chunk, remain: st.queue.length }
   }
 

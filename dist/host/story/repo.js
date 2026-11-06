@@ -93,9 +93,11 @@ export function createStoryRepo(opts) {
             return Promise.resolve(cached.chunks.slice());
         }
         const running = inflight.get(name);
-        // 文件没被改过才复用；mtime 变了说明数据刚更新，得重新读，不能拿旧书糊弄
+        // 文件没被改过才复用；mtime 变了说明数据刚更新，得重新读，不能拿旧书糊弄。
+        // 复用的是「解析」这一次，数组仍各给一份：多个等待者若拿到同一个数组实例，
+        // 谁在旁边 sort/reverse 一下就会把别人的播放顺序改掉（坑 27 的同款）。
         if (running && running.mtimeMs === mt)
-            return running.promise;
+            return running.promise.then((list) => list.slice());
         const task = readBook(name, file, mt);
         inflight.set(name, { mtimeMs: mt, promise: task });
         const release = () => {
