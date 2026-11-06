@@ -9,7 +9,7 @@
  * chat-core.ts（聊天纯函数）、prefs.ts（偏好）、atomic/body/respond/http（小工具）。
  */
 import { migrateRuntimeData } from './host/migrate.js';
-import { startAutoBackup } from './host/auto-backup.js';
+import { startAutoBackup, autoBackupInfo } from './host/auto-backup.js';
 import { buildSystemPrompt, SYSTEM_PROMPT } from './host/persona.js';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -39,6 +39,7 @@ import { createPoemTitlesHandler } from './host/routes/poem-titles.js';
 import { createBriefingHandlers } from './host/routes/briefing.js';
 import { createTtsHandler } from './host/routes/tts.js';
 import { createCloudTts, readCloudVoice } from './host/voice/cloud-tts.js';
+import { getTtsEngineStats } from './host/tts-engine.js';
 import { createAsrHandler } from './host/routes/asr.js';
 import { createDailyHandler } from './host/routes/daily.js';
 import { createBackupHandlers } from './host/routes/backup.js';
@@ -314,6 +315,8 @@ export function apply(ctx, rawConfig) {
         loadStoryProgress: store.loadStoryProgress,
         saveStoryProgress: store.saveStoryProgress,
         onStoryProgressImported: () => storyPlayer.reloadProgress(),
+        // 导入记忆/人格后作废旧聊天缓存（服务端保证，不依赖客户端补刀）
+        clearChatCache: () => chatCache.clear(),
     });
     // 可视化汇总：全部读现有 store / cache / 人格，不新增持久化
     // 运行数据自动定时备份（每小时一份、保留 7 份；失败静默；插件 dispose 时停）
@@ -352,6 +355,19 @@ export function apply(ctx, rawConfig) {
             return false;
         } },
     });
+    // TTS 自检映射：getTtsEngineStats() 的形状与路由声明的窄形状不同，这里显式转换，
+    // 不把引擎内部字段直接漏给 /stats。probeState==='ok' 才表示「确认可用」
+    // （'none'/'timeout' 属未确认，不臆造成可用）；引擎没有暴露 worker 冷却状态，
+    // cooling 恒 false —— 宁可为空，也不假装知道。
+    function ttsStatOf() {
+        try {
+            const t = getTtsEngineStats();
+            return { available: t.probeState === 'ok', interpreter: t.interpreter || '', cooling: false };
+        }
+        catch {
+            return { available: false, interpreter: '', cooling: false };
+        }
+    }
     const stats = createStatsHandler({
         cacheStats,
         loadState: store.loadState,
@@ -359,6 +375,11 @@ export function apply(ctx, rawConfig) {
         loadFishfood: store.loadFishfood,
         loadPersonality: () => personality.load(),
         startedAt: Date.now(),
+        // 传 getter：统计要反映「现在」的设置与备份份数，而不是插件加载那一刻的快照
+        dataSource: () => dataSource,
+        model: () => chatModel,
+        backup: () => autoBackupInfo(RUNTIME_DIR),
+        tts: () => ttsStatOf(),
     });
     // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
     const routeTable = createRouteTable({

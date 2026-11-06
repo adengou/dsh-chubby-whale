@@ -34,11 +34,30 @@ export interface StatsHandlerDeps {
   /** 插件装配时间（ms）；uptimeMs = now - startedAt */
   startedAt?: number
   /** 自检字段（2026-11-06 补）：数据源 / 模型名 / TTS 引擎状态 / 备份信息 */
-  dataSource?: string
-  model?: string
-  tts?: { available: boolean; interpreter: string; cooling: boolean }
-  backup?: { lastAt: number; count: number }
+  /**
+   * 值或读取器：路由每次出包都重新取值，装配方可以传 getter 让统计保持新鲜
+   * （2026-11-07：此前只能传静态值，备份份数/模型名在插件加载那一刻就固定了）。
+   */
+  dataSource?: Lazy<string>
+  model?: Lazy<string>
+  tts?: Lazy<{ available: boolean; interpreter: string; cooling: boolean }>
+  backup?: Lazy<{ lastAt: number; count: number }>
   now?: () => number
+}
+
+/** 值或读取器（getter 抛错按缺省值处理，绝不把异常抛给 /stats） */
+type Lazy<T> = T | (() => T)
+
+function resolve<T>(v: Lazy<T> | undefined | null, fallback: T): T {
+  if (typeof v === 'function') {
+    try {
+      const got = (v as () => T)()
+      return got === undefined || got === null ? fallback : got
+    } catch {
+      return fallback
+    }
+  }
+  return v === undefined || v === null ? fallback : (v as T)
 }
 
 /** 非负整数（NaN/负数/小数一律归零或取整，展示用不需要负值） */
@@ -89,9 +108,12 @@ export function createStatsHandler(opts: StatsHandlerDeps) {
     // 时钟坏了（now() 非有限数）时 elapsed 是 NaN，JSON 会把它写成 null；这里给 0，保持数字类型
     const uptimeMs = startedAt > 0 && Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : 0
 
-    // 自检字段是"外部注入"的：形状由调用方决定，这里逐项归一再出包
-    const ttsRaw: any = opts.tts || {}
-    const backupRaw: any = opts.backup || {}
+    // 自检字段是"外部注入"的：形状由调用方决定，这里逐项归一再出包；
+    // 支持 getter（备份份数/模型名要反映"现在"，而不是插件加载那一刻）
+    const ttsRaw: any = resolve(opts.tts, {} as any) || {}
+    const backupRaw: any = resolve(opts.backup, {} as any) || {}
+    const dataSource = String(resolve(opts.dataSource, 'local') || 'local')
+    const model = String(resolve(opts.model, '') || '')
 
     return {
       ok: true,
@@ -107,8 +129,8 @@ export function createStatsHandler(opts: StatsHandlerDeps) {
       },
       uptimeMs,
       // 自检：数据源 / 模型 / TTS 引擎 / 备份（缺省不报错；坏值也不许把 null/负数/怪类型漏出去）
-      dataSource: String(opts.dataSource || 'local'),
-      model: String(opts.model || ''),
+      dataSource,
+      model,
       tts: {
         available: ttsRaw.available === true,
         interpreter: typeof ttsRaw.interpreter === 'string' ? ttsRaw.interpreter : '',

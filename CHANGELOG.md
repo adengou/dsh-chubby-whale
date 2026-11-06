@@ -4,6 +4,18 @@
 
 ## [未发布]
 
+## [1.1.57] - 2026-11-07
+
+### 修复（B73 主代理：统计与备份）
+- **`/stats` 四个自检字段从未接线**：`index.ts` 只注入了 `cacheStats/loadState/...`，`dataSource`、`model`、`tts`、`backup` 全缺，而 `autoBackupInfo`、`getTtsEngineStats` 只是死导入 → 统计卡永远显示「本机恒 local、模型空、TTS 不可用、备份 0 份」
+- 现在 `StatsHandlerDeps` 支持传**读取器**（值或 getter），每次出包取当前值（备份份数、模型名不再是插件加载那一刻的快照）；TTS 统计显式映射 `getTtsEngineStats()` 的宽形状——只有 `probeState === 'ok'` 才算可用，引擎未暴露 worker 冷却状态，`cooling` 恒 `false`（宁可为空，不臆造）
+- **备份导入后不清服务端聊天缓存**：导入会整字段覆盖 memory/personality，但旧回复还在缓存里，只靠客户端 `delJson('/cache')` 补刀；非 GUI 调用或那次失败时就命中旧缓存。现在 `BackupDeps` 增加 `clearChatCache`，导入 `memory`/`personality` 成功后由服务端自己清（只导入 `state` 之类不清，避免无谓清空）
+
+### 测试
+- `test.mjs` 补 2 条：导入记忆后作废缓存 / 只导入 state 不清缓存
+- `test-misc-routes.mjs` 补 4 条：getter 首次取值、第二次取到新值、未确认可用、getter 抛错回落缺省
+- 全链 **2409 项 0 失败**（2403 + 2 + 4）
+
 ## [1.1.56] - 2026-11-07
 
 ### 修复（B69 动作剩余分身）

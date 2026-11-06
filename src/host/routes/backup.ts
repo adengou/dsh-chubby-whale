@@ -74,6 +74,13 @@ export interface BackupDeps {
   saveStoryProgress?: (obj: any) => void
   /** 说书进度导入后刷新播放器内存，否则它下一次保存会把旧进度盖回去 */
   onStoryProgressImported?: () => void
+  /**
+   * 导入成功后清服务端聊天缓存（2026-11-07 分身取证）。
+   * 为什么：导入会整字段覆盖 memory/personality，但聊天缓存里还留着按旧内容算出的回复；
+   * 不清就会命中旧缓存（与 /cache 清记忆时"必须清缓存"同一设计目的）。
+   * 客户端那边也有一次 delJson('/cache')，但非 GUI 调用或那次失败时就没有兜底了。
+   */
+  clearChatCache?: () => Promise<number> | number
   now?: () => Date
 }
 
@@ -137,6 +144,12 @@ export function createBackupHandlers(deps: BackupDeps) {
         return
       }
       const report = runImport(deps, judged.body)
+      // 记忆/人格换了内容 → 旧聊天缓存必须作废（失败只记日志，不影响导入结果）
+      if (deps.clearChatCache && (report.imported.indexOf('memory') >= 0 || report.imported.indexOf('personality') >= 0)) {
+        try { await deps.clearChatCache() } catch (e: any) {
+          console.error('[backup] CACHE-CLEAR-FAIL ' + String((e && e.message) || e))
+        }
+      }
       sendJson(res, { ok: true, imported: report.imported, skipped: report.skipped })
     } catch (err: any) {
       sendError(res, err)
