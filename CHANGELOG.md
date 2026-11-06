@@ -3,6 +3,12 @@
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
 ## [未发布]
+## [1.1.17] - 2026-11-06
+
+### 新功能（评估 E：自动定时备份）
+- host 侧每小时自动把 memory/personality/state/growth/fishfood/reminders/story_progress/pet_state/prefs 备份到 `~/.dsh-chubby-whale/backup/`，保留最近 7 份（同秒幂等、失败静默、定时器 unref 不拖住进程）
+- 诊断面板的备份字段改为只统计 `auto-*.json`（更准）
+
 ## [1.1.16] - 2026-11-06
 
 ### 新功能（评估 C：唤醒词可自定义）

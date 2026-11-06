@@ -9,6 +9,7 @@
  * chat-core.ts（聊天纯函数）、prefs.ts（偏好）、atomic/body/respond/http（小工具）。
  */
 import { migrateRuntimeData } from './host/migrate.js'
+import { startAutoBackup, autoBackupInfo } from './host/auto-backup.js'
 import { buildSystemPrompt, SYSTEM_PROMPT } from './host/persona.js'
 import { dirname, join } from 'node:path'
 import { deepFreeze } from './shared/immutable.js'
@@ -312,6 +313,12 @@ export function apply(ctx: any, rawConfig?: any): void {
   })
 
   // 可视化汇总：全部读现有 store / cache / 人格，不新增持久化
+  // 运行数据自动定时备份（每小时一份、保留 7 份；失败静默；插件 dispose 时停）
+  try {
+    const stopAutoBackup = startAutoBackup({ runtimeDir: RUNTIME_DIR })
+    if (ctx && typeof ctx.on === 'function') ctx.on('dispose', () => { try { stopAutoBackup() } catch { } })
+  } catch { }
+
   const stats = createStatsHandler({
     cacheStats,
     loadState: store.loadState,
