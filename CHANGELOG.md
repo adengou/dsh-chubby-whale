@@ -4,6 +4,19 @@
 
 ## [未发布]
 
+## [1.1.49] - 2026-11-07
+
+### 修复（B60 聊天链路分身，4 个有复现证据的缺陷）
+- **流式末帧丢失 → 假回复进长期记忆（P1）**：`parseSseBuffer` 只消费「以换行结尾」的行，流结束后残留缓冲从不 flush；上游最后一帧没有行尾换行时，正文与 usage 一起被丢，整条回复退化成「本鲸刚刚走神了」并写入记忆（实测记忆里出现 `[["主人今天吃白饭了吗","主人……本鲸刚刚走神了。"]]`、token 0 条）。现在把逐帧消费抽成 `consume()`，流结束对残留再消费一次
+- **摘要计数器跨 handler 共享**：`summaryCount` 原在模块级，与 `/chat` 的「每 handler 一份」不一致；同进程两个实例会互相凑数、提前触发摘要。已移进 `createChatStreamHandler`
+- **空白缓存被当命中**：流式只判 `hit.reply` 真值，而 `/chat` 判 `trim().length > 0`；缓存里若是纯空白回复，流式回「   」并跳过亲密度/经验/记忆/token 记账。两路已同口径
+- **`/chat` 状态读写失败会吞掉已付费回复**：`loadState/saveState` 抛错时落进外层 catch，回「本鲸卡住了」，但模型调用与 `appendTurns` 都已完成 → 客户端重发造成记忆重复。现在只让 `intimacy=0`，回复照常返回（日志 `[chat] STATE-ERR`）
+- `appendTurns` 缺失时由静默改为打 `[chat-stream] MEMORY-APPEND-MISSING`（与 `/chat` 同口径）
+
+### 测试
+- 新增 `scripts/test-chat-routes.mjs`（31 条断言：末帧 flush / 计数隔离 / 空白缓存 / 状态失败 / 并发记账），接入 `npm test`
+- 全链 **1788 项 0 失败**（1757 + 31）
+
 ### 渠道（2026-11-07 主人指令：可达即同步）
 - **npm 1.1.48 已发布**：`registry.npmjs.org` 返回 202（异步处理），约 4 分钟后可见；`dist-tags.latest = 1.1.48`，包 128 文件 / 17.1 MB
 - **GitHub 已同步**：`github.com` 的 git 端口被重置，改走 `api.github.com`（Git Data API）上传 → `main = 77d1536`（246 文件），并建 tag `v1.1.48`（版本核对 1.1.48 ✅）
