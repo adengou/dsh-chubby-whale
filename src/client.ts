@@ -4,7 +4,7 @@
  *           client/render.ts（菜单与聊天面板的纯渲染）
  * 其余能力：client/styles.ts（样式）、client/menu.ts（菜单数据）、client/anim.ts（动画）等
  */
-import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, recoverDotStyle } from './client/styles.js'
+import { W, H, CW, CH, SX, SY, VERSION, stageStyle, stageTransform, canvasStyle, recoverDotStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
 import { stopProgress } from './client/narration-progress.js'
 import { narrationRate, chatRate } from './client/rates.js'
@@ -314,16 +314,19 @@ import { evPrevent, evStop } from './client/util.js'
         const p = clampPos(x, y, W * s, H * s, window.innerWidth, window.innerHeight)
         x = p.x
         y = p.y
+        // 视觉缩放用真实 scale（不是钳制用的 1.08 余量）：transform 必须与 stageStyle 同源，
+        // 否则拖动时只写 translate3d 会把 scale 覆盖掉——「先缩放再拖」缩放就丢了
+        const vs = scaleRef.current || 1
         const d = dragRef.current
         if (d && d.dragging) {
           // 拖动中走 transform：合成层位移，不触发布局与整树重绘
           const bx = typeof d.baseX === 'number' ? d.baseX : x
           const by = typeof d.baseY === 'number' ? d.baseY : y
-          el.style.transform = 'translate3d(' + (x - bx) + 'px,' + (y - by) + 'px,0)'
+          el.style.transform = stageTransform(vs, x - bx, y - by)
         } else {
           el.style.left = x + 'px'
           el.style.top = y + 'px'
-          el.style.transform = ''
+          el.style.transform = stageTransform(vs)
         }
         posRef.current = { x, y }
       }

@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.53";
+  var VERSION = "1.1.54";
 
   // src/client/styles.ts
   var W = 240;
@@ -23,6 +23,7 @@
   var CH = 426;
   var SX = CW / 1696;
   var SY = CH / 1504;
+  var stageTransform = (scale, tx = 0, ty = 0) => "translate3d(" + (tx || 0) + "px," + (ty || 0) + "px,0) scale(" + (scale || 1) + ")";
   var stageStyle = (scale, hidden) => ({
     position: "fixed",
     left: 0,
@@ -34,7 +35,7 @@
     zIndex: 9999,
     cursor: "grab",
     touchAction: "none",
-    transform: "scale(" + scale + ")",
+    transform: stageTransform(scale),
     // 缩放原点用左上角：与 stage.ts 的 clampPos（按左上坐标 + W*s 宽高钳制）同口径；
     // 原先 100% 100%（右下）会让缩放后的鱼贴边溢出约 96px。
     transformOrigin: "0 0",
@@ -8204,15 +8205,16 @@
           const p = clampPos(x, y, W * s, H * s, window.innerWidth, window.innerHeight);
           x = p.x;
           y = p.y;
+          const vs = scaleRef.current || 1;
           const d = dragRef.current;
           if (d && d.dragging) {
             const bx = typeof d.baseX === "number" ? d.baseX : x;
             const by = typeof d.baseY === "number" ? d.baseY : y;
-            el.style.transform = "translate3d(" + (x - bx) + "px," + (y - by) + "px,0)";
+            el.style.transform = stageTransform(vs, x - bx, y - by);
           } else {
             el.style.left = x + "px";
             el.style.top = y + "px";
-            el.style.transform = "";
+            el.style.transform = stageTransform(vs);
           }
           posRef.current = { x, y };
         }

@@ -4,6 +4,16 @@
 
 ## [未发布]
 
+## [1.1.54] - 2026-11-07
+
+### 修复（B68 主代理：缩放被拖拽抹掉）
+- **「先缩放再拖」会丢缩放**：`client.ts` 的 `applyPos` 在拖动时直接写 `el.style.transform = translate3d(...)`、松手写 `transform = ''`，把 `stageStyle` 里的 `scale(...)` 整个覆盖；React 认为 style 没变不会写回，于是拖一次缩放就没了
+- 新增 `styles.stageTransform(scale, tx, ty)` 作为**唯一**的 stage transform 构造函数（位移 + 缩放一起给），`stageStyle` 与 `applyPos` 共用；位移按屏幕像素走，不受缩放倍数影响
+
+### 测试
+- `scripts/test-render-layer.mjs` 补 7 条：合成顺序/NaN 位移归零/`stageStyle` 与构造器一致，以及 `client.ts` 三分支静态契约（拖动带 scale、静置保留 scale、不再清空 transform）
+- 全链 **2173 项 0 失败**；接口清单 119 模块 / 717 导出
+
 ## [1.1.53] - 2026-11-07
 
 ### 修复（B66 缓存/存储分身）

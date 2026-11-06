@@ -16,8 +16,13 @@
  */
 
 import { register } from 'node:module'
+import { readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 register(new URL('./ts-resolve.mjs', import.meta.url))
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 let pass = 0
 let fail = 0
@@ -390,9 +395,22 @@ try {
     const c = styles.menuStyle(null)
     ok('菜单关闭时 display:none、left/top 归零', c.display === 'none' && c.left === '0px' && c.top === '0px')
     const st = styles.stageStyle(1.4, true)
-    ok('stageStyle：缩放与隐藏样式', st.transform === 'scale(1.4)' && st.transformOrigin === '0 0' && st.display === 'none')
+    ok('stageStyle：缩放与隐藏样式', st.transform === styles.stageTransform(1.4) && st.transformOrigin === '0 0' && st.display === 'none')
+    ok('stageStyle：缩放没被位移写法吃掉', st.transform.indexOf('scale(1.4)') >= 0, st.transform)
     const st1 = styles.stageStyle(1, false)
     ok('stageStyle：默认尺寸与抓取光标', st1.width === '240px' && st1.height === '213px' && st1.cursor === 'grab' && st1.display === 'block')
+
+    // 位移 + 缩放合成（2026-11-07）：拖动时 applyPos 必须带上 scale，否则「先缩放再拖」会丢缩放
+    ok('stageTransform：无位移时等价 scale', styles.stageTransform(1) === 'translate3d(0px,0px,0) scale(1)', styles.stageTransform(1))
+    ok('stageTransform：位移按屏幕像素', styles.stageTransform(1.3, 12, -8) === 'translate3d(12px,-8px,0) scale(1.3)', styles.stageTransform(1.3, 12, -8))
+    ok('stageTransform：NaN 位移归零不污染样式', styles.stageTransform(1, NaN, undefined) === 'translate3d(0px,0px,0) scale(1)', styles.stageTransform(1, NaN, undefined))
+    {
+      // 静态契约：client.ts 的 applyPos 两分支都必须走 stageTransform，不许再手写 translate3d / 清空 transform
+      const src = readFileSync(join(ROOT, 'src/client.ts'), 'utf8')
+      ok('client.ts 拖动分支用 stageTransform', /el\.style\.transform = stageTransform\(vs,\s*x - bx,\s*y - by\)/.test(src))
+      ok('client.ts 静置分支保留 scale', /el\.style\.transform = stageTransform\(vs\)/.test(src))
+      ok('client.ts 不再清空 transform（那会抹掉 scale）', !/style\.transform = ''/.test(src))
+    }
 
     // 聊天面板：桌面视口保持原值；窄视口必须仍能塞进屏幕
     const desktop = styles.chatPanelStyle(true)
