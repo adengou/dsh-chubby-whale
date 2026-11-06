@@ -5,8 +5,10 @@
  *   · Firefox/Safari 的 getVoices() 是**异步**填的，首次调用常是空数组。
  *     旧写法"空数组=没语音"会让兜底永远不触发（宿主 TTS 一挂就彻底没声）。
  *   · Safari 的 onend 偶发不触发（尤其被 cancel 或切后台之后）→ 必须按文本长度看门狗兜底，
- *     否则 Promise 永不 resolve，上层 ttsBusy / 说书锁会永久卡死。
- *   · Chrome/Safari 在 cancel() 之后立刻 speak() 会被吞 → 隔一拍再开口。
+ *     否则 Promise 永不 resolve，上层 ttsBusy / 说书锁会永久卡死；看门狗判死时顺手 cancel，
+ *     不然引擎还在念而上层已经开播下一段（两路声音叠在一起）。
+ *   · Chrome/Safari 在 cancel() 之后立刻 speak() 会被吞 → 隔一拍（80ms）再开口。
+ *     注意上层（voice.ts）每次兜底前都会先 cancel，所以这"一拍"不能只在 busy 时让。
  *   · Firefox 首批 voices 为空时不能挑 voice，用默认音色先念。
  *
  * 对外只暴露两个函数：能不能用、怎么念（永远 resolve，绝不 reject）。
@@ -52,6 +54,8 @@ export function speakViaBrowser(text: string, opts?: { scope?: any; watchdog?: n
   const ms = (opts && typeof opts.watchdog === 'number' && opts.watchdog > 0) ? opts.watchdog : watchdogMs(src)
   return new Promise((resolve) => {
     let done = false
+    // 看门狗超时（onend 没来/引擎卡住）才需要替上层把扬声器收回，见 finish()
+    let timedOut = false
     let startTimer: any = null
     let voiceTimer: any = null
     let onVoices: any = null
@@ -67,10 +71,16 @@ export function speakViaBrowser(text: string, opts?: { scope?: any; watchdog?: n
         }
       } catch (e) { }
       onVoices = null
+      // 看门狗判死 = 这段已经算"说完了"，上层（voice.ts 的 finishJob）会接着播下一段
+      // （可能是 edge-tts 音频）。引擎要是还在念，两路声音就叠在一起——并发纪律把
+      // 「扬声器同一时刻只播一段」列为硬规则，所以这里必须把排队/在播的掐掉。
+      if (timedOut) {
+        try { if (synthRef && typeof synthRef.cancel === 'function') synthRef.cancel() } catch (e) { }
+      }
       resolve()
     }
     // 看门狗：onend 不触发时也放行（Safari 的老毛病）
-    const watch = setTimeout(finish, ms)
+    const watch = setTimeout(() => { timedOut = true; finish() }, ms)
     const realFinish = (): void => { clearT(watch); finish() }
     try {
       const Synth: any = s && s.speechSynthesis
@@ -107,13 +117,17 @@ export function speakViaBrowser(text: string, opts?: { scope?: any; watchdog?: n
         chooseVoice()
         const busy = (() => { try { return !!(Synth.speaking || Synth.pending) } catch (e) { return false } })()
         if (busy) {
-          // 先取消在播/在排队的，再隔一拍开口：立刻 speak 会被 Chrome/Safari 吞掉
+          // 先取消在播/在排队的：这一段的文本已经换了，不能等旧段念完
           try { if (typeof Synth.cancel === 'function') Synth.cancel() } catch (e) { }
-          startTimer = setTimeout(speak, 80)
-        } else speak()
+        }
+        // 不管 busy 与否都隔一拍再开口：上层（voice.ts 的 ttsBrowserFallback）在调这里之前
+        // 刚 stopBrowserSpeech() → cancel() 过；而 Chrome/Safari 在 cancel 之后立刻 speak
+        // 会把这一句直接吞掉（本模块头注释记的老毛病）。busy 标志在 cancel 后就已经是 false，
+        // 靠它判断"是否刚取消"根本看不出来，只能统一让一拍（80ms，兜底路径上无感）。
+        startTimer = setTimeout(speak, 80)
       }
       // Firefox/Safari 首次 getVoices() 是空的（voiceschanged 之后才有）：
-      // 有事件就等最多 VOICE_WAIT_MS 挑个同语言音色；没有就去用默认音色，立刻开口。
+      // 有事件就等最多 VOICE_WAIT_MS 挑个同语言音色；没有就带着默认音色走 launch（再隔一拍开口）。
       let waiting = false
       try {
         const vs = typeof Synth.getVoices === 'function' ? Synth.getVoices() : null
