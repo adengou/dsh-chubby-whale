@@ -37,6 +37,20 @@
  *   书中间的误判（total===1 的 18 段），不新增任何 true，跨书连播不受影响。
  *   「这一回，就讲到这里。」改由分段末尾（endsChapter）决定，回末就有，不必等到整本讲完。
  *
+ * 进度次序（2026-11-07，B97）：「讲出去」不等于「听进去了」。
+ *   旧实现里 pickNext/next 在**返回响应之前**就 markRead + saveProgress；而客户端单次请求超时 25s、
+ *   服务端冷读一本书最长 30s（host/story/repo.ts），客户端一旦在途被停止/超时就把响应丢掉
+ *   （client/story.ts 的 stillMine），于是「主人没听到的段」被记成已讲，下一段直接被跳过。
+ *   现在拆成两步：
+ *     · start/next 只做**内存预约**（pending）并返回这一段（served: {book,index}），不写盘；
+ *     · 路由在响应真的送出去之后调 confirm(book,index) 才 markRead + 落盘；
+ *       没送出去（res.end 抛错、客户端提前断开）调 discard(book,index)，这一段回到「未讲」，
+ *       下一次请求还会把它讲出来。
+ *   预约只用于「同一段别同时发给两个人」（并发 start 仍不重复），绝不进进度文件：
+ *   只要没确认，它就永远不算讲过；进程重启后预约自然消失，最坏是重听，绝不会漏听。
+ *   兼容窗口：不带 opts 的 start/next 保持旧语义（当场 markRead + 落盘）——离线脚本、
+ *   旧调用方靠它读进度续讲；生产路由（host/routes/story.ts）一律传 { defer: true }。
+ *
  * 这里不碰 req/res：HTTP 解析与响应在 host/routes/story.ts。
  */
 import { readFileSync } from 'node:fs'
@@ -74,17 +88,30 @@ export interface StorySpeech {
 }
 
 export type StoryPick =
-  | { ok: true; chunk: StorySpeech; remain: number }
+  /** served = 这一段是哪本书哪一段：路由在响应送出后拿它去 confirm（见文件头「进度次序」） */
+  | { ok: true; chunk: StorySpeech; remain: number; served: { book: string; index: number } }
   | { ok: false; error: string }
 
 export type StoryReset = { ok: true; book: string } | { ok: false; error: string }
 
 export interface StoryPlayer {
   books(): Promise<string[]>
-  /** 开讲：按 hint 定位书，挑下一个未读段并重建该客户端的连播队列 */
-  start(hint: string, clientId: string): Promise<StoryPick>
-  /** 连播下一段：先取该客户端队列，空了再跨书挑 */
-  next(clientId: string): Promise<StoryPick>
+  /**
+   * 开讲：按 hint 定位书，挑下一个未读段并重建该客户端的连播队列。
+   * opts.defer=true（生产路由用）：只预约、不落盘，等响应送出后由 confirm 记账；
+   * 省略/ false：旧语义，当场记账落盘（离线脚本与旧调用方依赖它）。
+   */
+  start(hint: string, clientId: string, opts?: { defer?: boolean }): Promise<StoryPick>
+  /** 连播下一段：先取该客户端队列，空了再跨书挑（opts 同上） */
+  next(clientId: string, opts?: { defer?: boolean }): Promise<StoryPick>
+  /**
+   * 确认「这一段真的送出去了」：把预约的段记成已讲并落盘。
+   * 只认预约过的段——reset / 导入备份之后迟到的确认，不许把旧段写回来。
+   * @returns 是否确实记了；没有预约（已被撤销/重置）返回 false 且不写盘
+   */
+  confirm(book: string, index: number): boolean
+  /** 撤销预约：响应没送出去（res.end 抛错 / 客户端提前断开）时调用，这一段回到「未讲」 */
+  discard(book: string, index: number): boolean
   /** 从头讲这本书：只清当前数据源下该书的进度，并把「当前书」指过去（别的数据源与旧键都不动） */
   reset(bookHint: string, clientId: string): Promise<StoryReset>
   /** 重新读盘（备份导入说书进度后调用）：不读的话内存里的旧进度会在下一次保存时盖掉导入内容 */
@@ -99,6 +126,12 @@ export interface StoryPlayer {
 const QUEUE_MAX_CLIENTS = 16
 /** 客户端超过这么久没再请求，视为标签页已关：队列快照丢掉，免得长期占内存 */
 const QUEUE_TTL_MS = 30 * 60 * 1000
+/**
+ * 在途预约的兜底寿命：正常路径由路由的 confirm/discard 当场结清，
+ * 这里只防「既没 confirm 也没 discard」（宿主异常、路由没接完）时预约在内存里越积越多。
+ * 过期只是让这一段重新可挑（最坏重听一段），绝不写盘、绝不会把没听的段算成已讲。
+ */
+const PENDING_TTL_MS = 10 * 60 * 1000
 
 /** 一段在本书里的分段位置，以及「是否讲到了本回/篇的末尾」 */
 interface SegmentPos {
@@ -126,6 +159,16 @@ interface ClientQueue {
   lastSeen: number
 }
 
+/** 已送出、等确认的一段：存活时间（TTL）、领走它的客户端、以及从连播队列出队的原始项 */
+interface PendingServe {
+  /** 预约时间（超过 PENDING_TTL_MS 视为作废） */
+  at: number
+  /** 领走这一段的客户端（start 会重建队列，留空；next 记下以便撤销时归队） */
+  client: string
+  /** next 从队列里出队的那一项：响应没送出去时原样塞回队首 */
+  entry?: QueuedPiece
+}
+
 /** 新键前缀：`local:` / `cloud:`。两种前缀都没有的键，就是需要迁移的旧格式键 */
 const NAMESPACED_KEY_RE = /^(?:local|cloud):/
 
@@ -148,6 +191,12 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
   migrateLegacyKeys()
   // 每个客户端一条连播队列；Map 的插入顺序即 LRU 顺序（命中时移到末尾）
   const clientQueues = new Map<string, ClientQueue>()
+  /**
+   * 已送出、还没确认的段（只在内存里，绝不落盘）：键与进度键同口径 `<source>:<book>|<index>`。
+   * 作用有二：① 响应写出期间同一段不会被另一个请求再挑走（并发 start 不重复）；
+   * ② 只要没 confirm，它就仍算未讲——断开/undo 之后下一次请求还能再讲它。
+   */
+  const pending = new Map<string, PendingServe>()
 
   function loadProgress(): Record<string, any> {
     try {
@@ -212,6 +261,71 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
     progress[storyKeyOf(source, book, index)] = true
   }
 
+  /** 这一段是否还在「已送出、等确认」的状态（过期即作废：宁可重听一段，也不能漏讲） */
+  function isPending(book: string, index: number): boolean {
+    const key = storyKeyOf(source, book, index)
+    const rec = pending.get(key)
+    if (rec === undefined) return false
+    if (Date.now() - rec.at > PENDING_TTL_MS) { pending.delete(key); return false }
+    return true
+  }
+
+  /** 这一段现在能不能挑：已讲（落盘了）或在途（等确认）都别动 */
+  function isTaken(book: string, index: number): boolean {
+    return getProgress(book, index) || isPending(book, index)
+  }
+
+  /**
+   * 记账入口：defer=true 只预约（等响应送出后 confirm 才落盘），否则维持旧语义当场记账落盘。
+   * 两套语义共用同一个进度文件格式：确认后才写 `<source>:<book>|<index>: true` + `_current`。
+   * client/entry 只给连播队列用：next 从队列里出队的那一项要记下来，响应没送出去时塞回队首。
+   */
+  function markServed(book: string, index: number, defer: boolean, client: string = '', entry?: QueuedPiece): void {
+    if (defer) { pending.set(storyKeyOf(source, book, index), { at: Date.now(), client, entry }); return }
+    markRead(book, index)
+    progress['_current'] = book
+    saveProgress()
+  }
+
+  /** 只补预约里的「谁领走的、队列项长什么样」，不碰预约时间、更不碰进度文件（pickNext 已预约过） */
+  function tagServed(book: string, index: number, client: string, entry: QueuedPiece): void {
+    const rec = pending.get(storyKeyOf(source, book, index))
+    if (!rec) return
+    rec.client = client
+    rec.entry = entry
+  }
+
+  /**
+   * 确认一段真的送出去了：预约 → 已讲 + 落盘，并把「当前书」指过去。
+   * 只认预约过的段：reset / 导入备份清掉预约之后迟到的确认，不会把旧段写回来。
+   */
+  function confirm(book: string, index: number): boolean {
+    const key = storyKeyOf(source, book, index)
+    if (!pending.has(key)) return false
+    pending.delete(key)
+    markRead(book, index)
+    progress['_current'] = book
+    saveProgress()
+    return true
+  }
+
+  /**
+   * 撤销预约：这一段没送出去，回到「未讲」（不写盘，因为本来就还没写）。
+   * 若它是从某客户端的连播队列里出队的，就原样塞回该队列的队首——不塞回去的话，
+   * 这一段要等整本书念完才可能被 pickNext 重新捡到，用户会以为「跳了一段」。
+   */
+  function discard(book: string, index: number): boolean {
+    const key = storyKeyOf(source, book, index)
+    const rec = pending.get(key)
+    if (!rec) return false
+    pending.delete(key)
+    const st = rec.client ? clientQueues.get(rec.client) : undefined
+    if (rec.entry && st && st.book === book && !st.queue.some((q: QueuedPiece) => Number(q.chunk.index) === index)) {
+      st.queue.unshift(rec.entry)
+    }
+    return true
+  }
+
   /** 写进度：只写当前数据源的新键；read=false 只删新键，旧键与别的数据源都不动 */
   function setProgress(book: string, index: number, read: boolean = true): void {
     if (read) markRead(book, index)
@@ -228,6 +342,8 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
     const next = loadProgress()
     for (const k of Object.keys(progress)) delete progress[k]
     for (const k of Object.keys(next)) progress[k] = next[k]
+    // 导入的备份才是真相：在途预约作废（迟到的 confirm 会因「没预约」被拒绝，不会覆盖导入内容）
+    pending.clear()
     migrateLegacyKeys()
   }
 
@@ -317,13 +433,13 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
   /** 本书剩余未读段（按数组顺序，供本客户端连播） */
   function queueAfter(plan: Map<string, SegmentPos>, chunks: StoryChunk[], book: string, afterIndex: number): QueuedPiece[] {
     return chunks
-      .filter((c: StoryChunk) => Number(c.index) > afterIndex && !getProgress(book, c.index))
+      .filter((c: StoryChunk) => Number(c.index) > afterIndex && !isTaken(book, c.index))
       .sort((a: StoryChunk, b: StoryChunk) => Number(a.index) - Number(b.index))
       .map((c: StoryChunk) => ({ chunk: c, ...positionOf(plan, c) }))
   }
 
   /** 照 C# Story.Next()：当前书里找第一个未读段；读完换下一本；全读完才清零重来 */
-  async function pickNext(books: string[], want: string): Promise<{ piece: StoryChunk; chunks: StoryChunk[]; book: string } | null> {
+  async function pickNext(books: string[], want: string, defer: boolean): Promise<{ piece: StoryChunk; chunks: StoryChunk[]; book: string } | null> {
     if (books.length === 0) return null
     const resolved = resolveBook(books, want)
     let target = resolved || currentBook(books)
@@ -331,11 +447,10 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
     for (let attempt = 0; attempt < books.length; attempt++) {
       const chunks = await repo.loadBook(target)
       if (chunks.length > 0) anyReadable = true
-      const hit = chunks.find((c: StoryChunk) => !getProgress(target, c.index))
+      const hit = chunks.find((c: StoryChunk) => !isTaken(target, c.index))
       if (hit) {
-        markRead(target, hit.index)
-        progress['_current'] = target
-        saveProgress()
+        // 只预约、不落盘：等路由确认「响应真的写出去了」才记账（见文件头「进度次序」）
+        markServed(target, hit.index, defer)
         return { piece: hit, chunks, book: target }
       }
       const idx = books.indexOf(target)
@@ -352,16 +467,16 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
       if (isNamespacedKey(k) && !k.startsWith(ownPrefix)) continue
       delete progress[k]
     }
+    // 新的一轮开始：在途预约也一起作废（否则刚回卷就会被上一轮的预约挡住，挑不出段）
+    pending.clear()
     saveProgress()
     // 从头再来也要跳过坏书：按顺序找第一本能读的
     for (let i = 0; i < books.length; i++) {
       const book = books[i]
       const chunks = await repo.loadBook(book)
-      const hit = chunks.find((c: StoryChunk) => !getProgress(book, c.index))
+      const hit = chunks.find((c: StoryChunk) => !isTaken(book, c.index))
       if (!hit) continue
-      markRead(book, hit.index)
-      progress['_current'] = book
-      saveProgress()
+      markServed(book, hit.index, defer)
       return { piece: hit, chunks, book }
     }
     return null
@@ -398,31 +513,35 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
     return repo.listBooks()
   }
 
-  async function start(hint: string, clientId: string): Promise<StoryPick> {
+  async function start(hint: string, clientId: string, opts?: { defer?: boolean }): Promise<StoryPick> {
+    const defer = !!(opts && opts.defer)
     const list = await repo.listBooks()
     if (list.length === 0) return { ok: false, error: 'no books' }
-    const picked = await pickNext(list, hint)
+    const picked = await pickNext(list, hint, defer)
     if (!picked) return { ok: false, error: 'no readable book' }
     const st = stateFor(clientId)
     const plan = planSegments(picked.chunks)
     st.book = picked.book
     st.queue = queueAfter(plan, picked.chunks, picked.book, Number(picked.piece.index))
     const chunk = buildChunk(picked.piece, true, positionOf(plan, picked.piece))
-    return { ok: true, chunk, remain: st.queue.length }
+    return { ok: true, chunk, remain: st.queue.length, served: { book: picked.book, index: Number(picked.piece.index) } }
   }
 
-  async function next(clientId: string): Promise<StoryPick> {
+  async function next(clientId: string, opts?: { defer?: boolean }): Promise<StoryPick> {
+    const defer = !!(opts && opts.defer)
     const list = await repo.listBooks()
     if (list.length === 0) return { ok: false, error: 'no books' }
     const st = stateFor(clientId)
-    // 队列里若已被别的标签页讲过，就跳过
-    while (st.queue.length > 0 && getProgress(st.book, st.queue[0].chunk.index)) st.queue.shift()
+    // 队列里若已被别的标签页讲过、或正在送出（等确认），就跳过
+    while (st.queue.length > 0 && isTaken(st.book, st.queue[0].chunk.index)) st.queue.shift()
     let entry: QueuedPiece | null = null
     let isFirst = false
+    /** pickNext 已经预约/记账过这一段，别再记第二遍 */
+    let booked = false
     if (st.queue.length > 0) {
       entry = st.queue.shift() as QueuedPiece
     } else {
-      const picked = await pickNext(list, '')
+      const picked = await pickNext(list, '', defer)
       if (!picked) return { ok: false, error: 'no readable book' }
       // 队列空后重新挑段：还是同一本书就不重复插开场白，真换书才开口
       const switched = !st.book || picked.book !== st.book
@@ -431,14 +550,18 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
       st.book = picked.book
       st.queue = queueAfter(plan, picked.chunks, picked.book, Number(picked.piece.index))
       isFirst = switched
+      booked = true
     }
     const piece = entry.chunk
     const bk = st.book || String(piece.book || list[0])
-    markRead(bk, piece.index)
-    progress['_current'] = bk
-    saveProgress()
+    if (booked) {
+      // pickNext 已经预约/记账过这一段：defer 时补上「谁领走的 + 队列项」，撤销时好归队
+      if (defer) tagServed(bk, piece.index, clientId, entry)
+    } else {
+      markServed(bk, piece.index, defer, clientId, entry)
+    }
     const chunk = buildChunk(piece, isFirst, entry)
-    return { ok: true, chunk, remain: st.queue.length }
+    return { ok: true, chunk, remain: st.queue.length, served: { book: bk, index: Number(piece.index) } }
   }
 
   async function reset(bookHint: string, clientId: string): Promise<StoryReset> {
@@ -456,6 +579,10 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
     for (const k of Object.keys(progress)) {
       if (k !== '_current' && k.startsWith(prefix)) delete progress[k]
     }
+    // 在途预约也一起清：reset 之后这一段必须能马上重讲，别让「刚送出还没确认」的旧预约挡住
+    for (const k of Array.from(pending.keys())) {
+      if (k.startsWith(prefix)) pending.delete(k)
+    }
     progress['_current'] = book
     saveProgress()
     // 该客户端的连播队列里若还排着这本书的段，也一起丢掉，免得 reset 后又接着念旧的
@@ -464,5 +591,5 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string;
     return { ok: true, book }
   }
 
-  return { books, start, next, reset, reloadProgress, getProgress, setProgress }
+  return { books, start, next, reset, reloadProgress, getProgress, setProgress, confirm, discard }
 }

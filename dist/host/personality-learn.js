@@ -175,6 +175,21 @@ export function createPersonalityLearner(deps) {
                 console.error('[personality] LEARN-HTTP ' + r.status + ' ' + String(r.text || '').slice(0, 200));
                 return { ok: false, reason: 'HTTP ' + r.status };
             }
+            // 鱼账本（B97）：这次提取确实花掉了 token，拿到 usage 就记账；拿不到不猜（与聊天同一口径）。
+            // 放在解析/写盘之前：后面任何一步失败（解析失败、无变化、写盘失败）都不该把已花的 token 吞掉。
+            try {
+                const led = deps.ledger;
+                const u = r.data && r.data.usage;
+                if (led && typeof led.addTokens === 'function' && typeof led.readUsageSplit === 'function'
+                    && typeof led.estimateCostCny === 'function' && u && typeof u.total_tokens === 'number') {
+                    const split = led.readUsageSplit(u);
+                    const cost = split ? led.estimateCostCny(split, model) : null;
+                    led.addTokens('personality', u.total_tokens, split
+                        ? { promptTokens: split.promptTokens, completionTokens: split.completionTokens, cacheHitTokens: split.cacheHitTokens, costCny: cost ? cost.cny : undefined, source: 'personality' }
+                        : undefined);
+                }
+            }
+            catch { }
             const candidate = parseExtraction(r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message
                 ? r.data.choices[0].message.content : '');
             if (!candidate) {

@@ -513,7 +513,7 @@ export function createChatStreamHandler(opts) {
                         }
                         catch { }
                         saveSummary(s2);
-                    }, model);
+                    }, model, opts.addTokens);
                 }
                 catch { }
             }
