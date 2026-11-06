@@ -160,7 +160,9 @@ export type DragInputHandlers = {
 export function bindDragInput(target: any, win: any, handlers: DragInputHandlers): { mode: 'pointer' | 'touch'; dispose: () => void } {
   const mode = pickInputMode(!!(win && win.PointerEvent))
   const add = (el: any, t: string, fn: any, opts?: any): void => { try { el.addEventListener(t, fn, opts) } catch (e) { } }
-  const del = (el: any, t: string, fn: any): void => { try { el.removeEventListener(t, fn) } catch (e) { } }
+  // removeEventListener 的第三个参数必须与 add 一致：**capture 参与匹配**，
+  // 少传一个 true 就撤不掉捕获阶段监听（旧实现每卸载一次漏 4 个，闭包一直攥着旧元素）。
+  const del = (el: any, t: string, fn: any, opts?: any): void => { try { el.removeEventListener(t, fn, opts) } catch (e) { } }
   const mark = (e: any): void => { try { e.__chubbyDragHandled = true } catch (e2) { } }
   const handled = (e: any): boolean => { try { return !!(e && e.__chubbyDragHandled) } catch (e2) { return false } }
   /** 拦掉「不属于当前拖拽指针」的事件：capture 阶段 stopPropagation 同时挡住元素上的 React 处理器 */
@@ -291,10 +293,11 @@ export function bindDragInput(target: any, win: any, handlers: DragInputHandlers
   const dispose = (): void => {
     if (target && win) {
       if (mode === 'pointer') {
-        del(win, 'pointerdown', onPointerDownCapture)
-        del(win, 'pointermove', onPointerMoveCapture)
-        del(win, 'pointerup', onPointerEndCapture)
-        del(win, 'pointercancel', onPointerEndCapture)
+        // capture 监听必须按 capture=true 撤（见 del 的注释）
+        del(win, 'pointerdown', onPointerDownCapture, true)
+        del(win, 'pointermove', onPointerMoveCapture, true)
+        del(win, 'pointerup', onPointerEndCapture, true)
+        del(win, 'pointercancel', onPointerEndCapture, true)
         del(win, 'pointermove', onMove)
         del(win, 'pointerup', onEnd)
         del(win, 'pointercancel', onEnd)

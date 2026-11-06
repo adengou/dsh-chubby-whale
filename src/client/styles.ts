@@ -56,24 +56,52 @@ export const recoverDotStyle = {
   zIndex: 10003,
 }
 
-export const menuStyle = (menu: any) => ({
-  position: 'fixed' as const,
-  // 窄视口（<220px）时 innerWidth-220 为负会把菜单甩出左边；夹到 8px 保底
-  left: (menu ? Math.max(8, Math.min(menu.x, window.innerWidth - 220)) : 0) + 'px',
-  top: (menu ? Math.max(8, Math.min(menu.y, window.innerHeight - 520)) : 0) + 'px',
-  width: 210,
-  maxHeight: (typeof window !== "undefined" ? Math.max(200, Math.min(480, window.innerHeight - 32)) : 480),
-  overflowY: 'auto' as const,
-  paddingBottom: 10,
-  background: 'rgba(12,28,52,0.98)',
-  border: '1px solid #2E6BB8',
-  borderRadius: 10,
-  boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
-  zIndex: 10001,
-  font: '13px/1.5 "Microsoft YaHei", sans-serif',
-  display: menu ? 'block' : 'none',
-  color: '#cfe9ff',
-})
+/**
+ * 视口尺寸（无 window 的 SSR / 打桩环境返回 0）：
+ * 样式函数里凡是读 window 的地方统一走这里，免得 `menuStyle` 在无 window 环境
+ * 抛 `ReferenceError: window is not defined`，把整个渲染层带崩。
+ */
+function viewportSize(): { w: number; h: number } {
+  try {
+    if (typeof window === 'undefined') return { w: 0, h: 0 }
+    const w = Number(window.innerWidth)
+    const h = Number(window.innerHeight)
+    return { w: isFinite(w) && w > 0 ? w : 0, h: isFinite(h) && h > 0 ? h : 0 }
+  } catch (e) {
+    return { w: 0, h: 0 }
+  }
+}
+
+/** 坐标必须是有限数：JSX style 里的 "NaNpx" 会被浏览器整条忽略，菜单会跑回左上角 */
+function finiteOr(v: any, fallback: number): number {
+  const n = Number(v)
+  return isFinite(n) ? n : fallback
+}
+
+export const menuStyle = (menu: any) => {
+  const vp = viewportSize()
+  const mx = finiteOr(menu && menu.x, 8)
+  const my = finiteOr(menu && menu.y, 8)
+  return {
+    position: 'fixed' as const,
+    // 窄视口（<220px）时 innerWidth-220 为负会把菜单甩出左边；夹到 8px 保底
+    left: (menu ? Math.max(8, Math.min(mx, vp.w > 0 ? vp.w - 220 : 8)) : 0) + 'px',
+    top: (menu ? Math.max(8, Math.min(my, vp.h > 0 ? vp.h - 520 : 8)) : 0) + 'px',
+    width: 210,
+    // 无 window 时用固定上限；有 window 时至少 200，避免窄视口把菜单压没
+    maxHeight: vp.h > 0 ? Math.max(200, Math.min(480, vp.h - 32)) : 480,
+    overflowY: 'auto' as const,
+    paddingBottom: 10,
+    background: 'rgba(12,28,52,0.98)',
+    border: '1px solid #2E6BB8',
+    borderRadius: 10,
+    boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+    zIndex: 10001,
+    font: '13px/1.5 "Microsoft YaHei", sans-serif',
+    display: menu ? 'block' : 'none',
+    color: '#cfe9ff',
+  }
+}
 
 /**
  * 菜单项样式（键盘高亮用）：
@@ -98,21 +126,36 @@ export const menuSubStyle = (active: boolean) => ({
   justifyContent: 'space-between',
 })
 
-export const chatPanelStyle = (open: boolean) => ({
-  position: 'fixed' as const,
-  right: 236,
-  bottom: 146,
-  width: 340,
-  background: 'linear-gradient(180deg, rgba(18,40,74,0.98), rgba(10,24,46,0.98))',
-  border: '1px solid rgba(93,160,240,0.55)',
-  borderRadius: 18,
-  boxShadow: '0 18px 48px rgba(0,0,0,0.55)',
-  font: '14px/1.6 "Microsoft YaHei", sans-serif',
-  color: '#dbeaff',
-  overflow: 'hidden',
-  zIndex: 10000,
-  display: open ? 'block' : 'none',
-})
+/** 聊天面板的固定尺寸（宽度与「头 + 240 消息区 + 输入行 + 边框」的大致总高） */
+const CHAT_PANEL_W = 340
+const CHAT_PANEL_H = 380
+
+/**
+ * 聊天面板：默认在鱼左侧（right 236 / bottom 146）。
+ * 窄窗口下 340 宽 + right 236 需要 576px 视口，手机 / 分屏时会整块甩到屏幕外；
+ * 这里按视口把 right/bottom 收进来（桌面尺寸下取值与原来完全一致）。
+ * 注意：窗口 resize 后要到下一次重渲染才重新计算（菜单同理），不追求逐帧跟手。
+ */
+export const chatPanelStyle = (open: boolean) => {
+  const vp = viewportSize()
+  const right = vp.w > 0 ? Math.min(236, Math.max(8, vp.w - CHAT_PANEL_W - 8)) : 236
+  const bottom = vp.h > 0 ? Math.min(146, Math.max(8, vp.h - CHAT_PANEL_H)) : 146
+  return {
+    position: 'fixed' as const,
+    right,
+    bottom,
+    width: CHAT_PANEL_W,
+    background: 'linear-gradient(180deg, rgba(18,40,74,0.98), rgba(10,24,46,0.98))',
+    border: '1px solid rgba(93,160,240,0.55)',
+    borderRadius: 18,
+    boxShadow: '0 18px 48px rgba(0,0,0,0.55)',
+    font: '14px/1.6 "Microsoft YaHei", sans-serif',
+    color: '#dbeaff',
+    overflow: 'hidden',
+    zIndex: 10000,
+    display: open ? 'block' : 'none',
+  }
+}
 
 export const headStyle = {
   display: 'flex',
