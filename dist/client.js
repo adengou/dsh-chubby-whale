@@ -25,7 +25,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.67";
+  var VERSION = "1.1.68";
 
   // src/client/styles.ts
   var W = 240;
@@ -8273,7 +8273,8 @@
       } catch (e) {
       }
       try {
-        clearBubbleTimer(opts.bubbleEl());
+        const f = opts.clearBubble;
+        if (typeof f === "function") f();
       } catch (e) {
       }
     };
@@ -8834,7 +8835,7 @@
             reminderPoller: () => reminderPollerRef.current,
             stopTts: () => stopTts(),
             stopMelody: () => melody.stop(),
-            bubbleEl: () => bubbleRef.current
+            clearBubble: () => clearBubbleTimer(bubbleRef.current)
           });
         }, []);
         const bubble = createBubble({

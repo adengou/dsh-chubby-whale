@@ -12,7 +12,6 @@
  */
 
 import { clearI, clearT, evPrevent, evStop } from './util.js'
-import { clearBubbleTimer } from './bubble.js'
 
 export type Dispose = () => void
 
@@ -261,8 +260,8 @@ export function createUnmountCleanup(opts: {
   reminderPoller: () => { dispose: () => void } | null | undefined
   stopTts: () => void
   stopMelody: () => void
-  /** 取气泡根元素（计时器挂在 el._t 上） */
-  bubbleEl: () => any
+  /** 清掉气泡的自动收起计时器（由调用方注入 bubble 的公开访问器，别在这里 import bubble） */
+  clearBubble?: () => void
 }): Dispose {
   return (): void => {
     // 顺序固定：提醒链 → 朗读 → 琴声 → 气泡计时器（与 client.ts 的装配顺序一致）。
@@ -270,9 +269,9 @@ export function createUnmountCleanup(opts: {
     try { const p = opts.reminderPoller(); if (p) p.dispose() } catch (e) { }
     try { opts.stopTts() } catch (e) { }
     try { opts.stopMelody() } catch (e) { }
-    try {
-      // 走 bubble 的公开访问器（原来直接读 el._t，属跨模块摸私有槽位）
-      clearBubbleTimer(opts.bubbleEl())
-    } catch (e) { }
+    // 气泡计时器由调用方注入（client.ts 传 bubble 的公开访问器）：
+    // effects 是「副作用编排」层，不该 import 具体 UI 模块 —— 一 import 就把 bubble → persona → data/*.json
+    // 整条链拉进任何引用 effects 的测试里（2026-11-07 B96 就是这么炸的：ts-resolve 不处理 JSON 导入）。
+    try { const f = opts.clearBubble; if (typeof f === 'function') f() } catch (e) { }
   }
 }

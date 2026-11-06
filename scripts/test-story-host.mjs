@@ -21,7 +21,7 @@
  *   H. 真实宿主链路（真实 17 本书 + Worker）：书单、合辑书书名投影、reset、回内分段与回末句、全库冷读；
  *   I. 仓储失败面：越界书名、坏 JSON、Worker 抛错/exit(1) 都要秒级回空（不留 30s 定时器）、日志纪律。
  *
- * 已知缺口只打 `·` 提示、不写成断言（BOM 书文件读不出来，修法在 src/story-worker.ts，超出本批次可改范围）。
+ * BOM 书文件（2026-11-07 修复）：worker 已剥 UTF-8 BOM，断言见 [J] 段；
  * 纯离线：不联网、不起 HTTP、进度文件全在临时目录，跑完清理。
  * 用法：node scripts/test-story-host.mjs
  */
@@ -783,6 +783,35 @@ try {
   }
 } catch (e) {
   ok('仓储失败面断言执行', false, String(e && e.message))
+}
+
+
+// ---------- J. BOM 书文件（2026-11-07 修复：worker 剥 BOM） ----------
+console.log('\n[J] BOM 书文件能被解析（Windows 记事本/PowerShell UTF8 会加 BOM）')
+try {
+  const workerPath = join(ROOT, 'dist', 'story-worker.js')
+  if (!existsSync(workerPath)) {
+    console.log('  · 跳过：dist/story-worker.js 不存在（先 npm run build）')
+  } else {
+    const bomDir = join(TMP, 'bom-story')
+    const bomStoryDir = join(bomDir, 'story')
+    // 仓储按 <dataDir>/story/<书名>.json 查找（与 H 段真实链路同口径）
+    mkdirSync(bomStoryDir, { recursive: true })
+    const bookFile = join(bomStoryDir, 'BOM书.json')
+    writeFileSync(bookFile, '\uFEFF' + JSON.stringify([{ book: 'BOM书', section: '一', total: 1, text: '带 BOM 的第一段' }]), 'utf8')
+    const { createStoryRepo } = await import('../src/host/story/repo.ts')
+    const repo = createStoryRepo({ dataDir: bomDir, workerPath })
+    const chunks = await repo.loadBook('BOM书')
+    ok('BOM 书文件能被解析（不是 0 段）', Array.isArray(chunks) && chunks.length === 1, 'n=' + (chunks ? chunks.length : 'null'))
+    ok('BOM 书的正文正确', chunks && chunks[0] && chunks[0].text === '带 BOM 的第一段', chunks && chunks[0] && chunks[0].text)
+    // 负向提示：同一文件去掉 BOM 也必须能读（证明不是靠副作用）
+    writeFileSync(bookFile, JSON.stringify([{ book: 'BOM书', section: '一', total: 1, text: '无 BOM 的第一段' }]), 'utf8')
+    const repo2 = createStoryRepo({ dataDir: bomDir, workerPath })
+    const plain = await repo2.loadBook('BOM书')
+    ok('无 BOM 的书照常解析（回归不受影响）', Array.isArray(plain) && plain.length === 1 && plain[0].text === '无 BOM 的第一段')
+  }
+} catch (e) {
+  ok('BOM 书断言执行', false, String(e && e.message))
 }
 
 

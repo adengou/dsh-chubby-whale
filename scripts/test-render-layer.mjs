@@ -597,11 +597,12 @@ try {
     const order = []
     let fired = 0
     const el = { _t: setTimeout(() => { fired++ }, 5) }
-    const cleanup = EFF.createUnmountCleanup({
+    const EFF_TEST_CLEAR = () => { if (el && el._t) { clearTimeout(el._t); el._t = null } }
+  const cleanup = EFF.createUnmountCleanup({
       reminderPoller: () => ({ dispose() { order.push('reminder'); throw new Error('提醒链故意抛错') } }),
       stopTts: () => order.push('tts'),
       stopMelody: () => order.push('melody'),
-      bubbleEl: () => el,
+      clearBubble: () => EFF_TEST_CLEAR(),
     })
     cleanup()
     ok('createUnmountCleanup：前一步抛错不跳过后面的清理（顺序固定）', order.join('>') === 'reminder>tts>melody', order.join('>'))

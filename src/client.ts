@@ -21,7 +21,7 @@ import { createPersona, applyServerMood } from './client/persona.js'
 import { createDeduper } from './client/text.js'
 import { getJson } from './client/http.js'
 import { createMelodyPlayer } from './client/melody.js'
-import { createBubble, ensureBubbleStyle } from './client/bubble.js'
+import { createBubble, clearBubbleTimer, ensureBubbleStyle } from './client/bubble.js'
 import { createNarrationLock } from './client/narration.js'
 import { createBusyLock, createEpoch } from './client/busy.js'
 import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag, endDrag, decayVelocity, bindDragInput } from './client/stage.js'
@@ -457,7 +457,7 @@ import { evPrevent, evStop } from './client/util.js'
           reminderPoller: () => reminderPollerRef.current,
           stopTts: () => stopTts(),
           stopMelody: () => melody.stop(),
-          bubbleEl: () => bubbleRef.current,
+          clearBubble: () => clearBubbleTimer(bubbleRef.current),
         })
       }, [])
 
