@@ -46,10 +46,15 @@ const SSE_PING_MS = 12 * 1000; // SSE 心跳间隔
 const CHAT_MAX_BODY = 6 * 1024 * 1024;
 /** 图片超限文案：与 host/routes/chat.ts 的同一句保持一致（路由之间不横向 import，各持一份） */
 const IMAGE_TOO_LARGE_FALLBACK = '主人，这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～';
-let summaryCount = 0;
 export function createChatStreamHandler(opts) {
     // 与普通 /chat 共用同一个装配值（index.ts 的 readChatModel），缓存 key 也带它
     const model = opts.model || DEFAULT_CHAT_MODEL;
+    /**
+     * 「每 10 次聊天压缩一次长期记忆」的计数器：与普通 /chat 一样**每个 handler 一份**。
+     * 原来放在模块级，等于全进程共享——同一个模块建两个 handler（测试、双插件实例）时，
+     * 第二个实例的成功请求会替第一个实例凑数，摘要提前触发（scripts/test-chat-routes.mjs 用例 B 复现）。
+     */
+    let summaryCount = 0;
     return async function handleChatStream(req, res) {
         // SSE 头：立刻发出，避免客户端等到第一个 token 才开始
         const started = Date.now();
@@ -211,7 +216,9 @@ export function createChatStreamHandler(opts) {
             if (opts.cache && cacheOn && cacheUsable) {
                 try {
                     const hit = await opts.cache.getJson(cacheKey, 'json', CHAT_CACHE_TTL);
-                    if (hit && typeof hit.reply === 'string' && hit.reply) {
+                    // 判空口径与 /chat 一致（cached.reply.trim().length > 0）：缓存里若是一条纯空白回复，
+                    // 流式原来会当成命中，回一句「   」并把这一轮的记账全跳过（/chat 会正常走模型）。
+                    if (hit && typeof hit.reply === 'string' && hit.reply.trim().length > 0) {
                         // 缓存命中与 /chat 同口径：只加亲密度，不加经验、不写记忆、不 onReply
                         let cachedIntimacy = 0;
                         try {
@@ -294,6 +301,30 @@ export function createChatStreamHandler(opts) {
             let reply = '';
             let usage = null;
             let firstDeltaAt = 0;
+            /**
+             * 消费一批已解析的 SSE 帧。
+             * 正文优先；choices[0].delta.content 为空时取 reasoning_content 回退（新模型若忽略
+             * thinking:{type:'disabled'} 会只吐 reasoning_content，不补这条用户看到的就是空回复）。
+             * 抽成函数是因为流结束后还要对残留尾巴再消费一次（见下面的收尾 flush）。
+             */
+            const consume = (events) => {
+                for (const j of events) {
+                    const d = j?.choices?.[0]?.delta;
+                    let piece = '';
+                    if (typeof d?.content === 'string' && d.content)
+                        piece = d.content;
+                    else if (typeof d?.reasoning_content === 'string' && d.reasoning_content)
+                        piece = d.reasoning_content;
+                    if (piece) {
+                        if (!firstDeltaAt)
+                            firstDeltaAt = Date.now();
+                        reply += piece;
+                        send({ delta: piece });
+                    }
+                    if (j?.usage)
+                        usage = j.usage;
+                }
+            };
             try {
                 for (;;) {
                     const { value, done } = await reader.read();
@@ -303,25 +334,15 @@ export function createChatStreamHandler(opts) {
                     buf += dec.decode(value, { stream: true });
                     const parsedSse = parseSseBuffer(buf);
                     buf = parsedSse.rest;
-                    for (const j of parsedSse.events) {
-                        // 正文优先；choices[0].delta.content 为空时取 reasoning_content 回退。
-                        // 新模型若忽略 thinking:{type:'disabled'}，会只吐 reasoning_content 而正文为空——
-                        // 不补这条回退，用户看到的就是一条空回复（TTS 也念不出字）。
-                        const d = j?.choices?.[0]?.delta;
-                        let piece = '';
-                        if (typeof d?.content === 'string' && d.content)
-                            piece = d.content;
-                        else if (typeof d?.reasoning_content === 'string' && d.reasoning_content)
-                            piece = d.reasoning_content;
-                        if (piece) {
-                            if (!firstDeltaAt)
-                                firstDeltaAt = Date.now();
-                            reply += piece;
-                            send({ delta: piece });
-                        }
-                        if (j?.usage)
-                            usage = j.usage;
-                    }
+                    consume(parsedSse.events);
+                }
+                // 收尾 flush：parseSseBuffer 只认「以换行结尾」的行，上游若在最后一个 data 行后直接断连接
+                // （没有行尾换行），整帧会原样留在 rest 里。不补这一刀的话，最后一段正文与 usage 帧被静默丢弃，
+                // 半截回复还会被当成完整回复：实测整条回复变成「主人……本鲸刚刚走神了。」并写进长期记忆。
+                buf += dec.decode(); // 冲掉分块边界上残留的多字节字符
+                if (buf.trim()) {
+                    consume(parseSseBuffer(buf + '\n').events);
+                    buf = '';
                 }
             }
             catch (err) {
@@ -359,8 +380,12 @@ export function createChatStreamHandler(opts) {
             try {
                 if (typeof opts.appendTurns === 'function')
                     opts.appendTurns(message, text);
+                else
+                    console.error('[chat-stream] MEMORY-APPEND-MISSING 没有 appendTurns，跳过记忆写入');
             }
-            catch { }
+            catch (err) {
+                console.error('[chat-stream] MEMORY-APPEND-ERR ' + String(err?.message || err));
+            }
             // 亲密度 +1（与 /chat 同口径）
             let intimacy = 0;
             try {
