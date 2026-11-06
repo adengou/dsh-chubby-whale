@@ -84,7 +84,7 @@ const ENTRY_SRC = `
 import {
   TTS_TIMEOUT_MS, TTS_WATCH_MS, TTS_ZOMBIE_MS, TTS_RETRY_MAX, TTS_RETRY_BASE_MS, ECHO_MUTE_MS,
   ttsRetryDelayMs, narrationPauseFor, prefetchTargets, buildTtsJobs, isStaleToken,
-  TTS_QUEUE_MAX, capQueue,
+  TTS_QUEUE_MAX, capQueue, capQueueDetailed,
 } from './src/client/voice/tts-queue.js'
 import { createEchoFilter } from './src/client/voice/echo-filter.js'
 import {
@@ -103,7 +103,7 @@ import { TTS_VOICES, DEFAULT_VOICE, normalizeVoiceName, readStoredVoiceName } fr
 export {
   TTS_TIMEOUT_MS, TTS_WATCH_MS, TTS_ZOMBIE_MS, TTS_RETRY_MAX, TTS_RETRY_BASE_MS, ECHO_MUTE_MS,
   ttsRetryDelayMs, narrationPauseFor, prefetchTargets, buildTtsJobs, isStaleToken,
-  TTS_QUEUE_MAX, capQueue,
+  TTS_QUEUE_MAX, capQueue, capQueueDetailed,
   createEchoFilter,
   WINDOW_MS, EARLY_STOP_QUIET, MIN_SPEECH_MS, SILENT_PEAK_DB, CLASSIC_SPEECH_DB, MUTED_SPEECH_DB,
   TICK_MS, TICK_ERROR_MS, LEVEL_PROBE_MS, MIN_SEGMENT_BYTES, APE_MIN_SPEECH_MS,
@@ -222,6 +222,17 @@ group('tts-queue 队列上限', () => {
   const big = Array.from({ length: 205 }, (_, i) => i)
   eq('205 段按默认上限丢 5 段', M.capQueue(big), 5)
   eq('保留的是最后 200 段', [big.length, big[0]], [200, 5])
+
+  // capQueueDetailed：返回被丢弃的段本身（调用方靠它补 onDone / 清预取，2026-11-07 B93）
+  const q6 = [{ seq: 1 }, { seq: 2 }, { seq: 3 }, { seq: 4 }]
+  const dropped = M.capQueueDetailed(q6, 2)
+  eq('capQueueDetailed 返回被丢的段（不是数量）', dropped.map((d) => d.seq), [1, 2])
+  eq('留下的是最新两段', q6.map((d) => d.seq), [3, 4])
+  eq('未超限返回空数组', M.capQueueDetailed([{ seq: 1 }], 5), [])
+  // 与 capQueue 同口径（同一实现的两个出口，不能各算一套）
+  const q7 = Array.from({ length: 6 }, (_, i) => i)
+  const dropped7 = M.capQueueDetailed(q7, 2)
+  eq('capQueueDetailed 与 capQueue 丢弃数一致', [dropped7.length, q7.length], [4, 2])
 })
 
 // ---------- echo-filter：回声 / 碎片 / 重复 / 段级去重 ----------

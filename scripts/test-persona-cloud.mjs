@@ -524,6 +524,28 @@ async function suite(mods, rec, isMain) {
       rec.eq('[6] 隔天记账从 0 重新起算', readUsageFile(dirE), { day: TODAY, chars: 100 })
     } finally { stubE.restore() }
 
+    // (e) 并发判定：判定与记账之间的 await 期间，别的请求不能再用同一份额度
+    //     （2026-11-07 B93：原来并发 N 个请求可同时通过判定，最多超额 (N-1)×单次字数）
+    {
+      const dirF = tmpDir('ctts-concurrent')
+      seedUsage(dirF, TODAY, 4990)   // 只剩 10 字
+      let release = null
+      const gate = new Promise((r) => { release = r })
+      const stubF = stubFetch(async () => { await gate; return textRes(okLine('x') + endLine) })
+      try {
+        const { tts } = makeTts(C, dirF, makeCfg({ dailyChars: 5000 }))
+        // 两个请求各 10 字：预算只够一个
+        const p1 = catchErr(() => tts.synthesize('甲'.repeat(10)))
+        const p2 = catchErr(() => tts.synthesize('乙'.repeat(10)))
+        release()
+        const [e1, e2] = await Promise.all([p1, p2])
+        const failed = [e1, e2].filter(Boolean).length
+        rec.eq('[6] 并发两请求只放行一个（预占生效）', failed, 1)
+        rec.eq('[6] 并发下不会把额度超发（文件里最多到线）', Math.min(readUsageFile(dirF).chars, 5000), 5000)
+        rec.eq('[6] 预占不影响 usage() 口径（报告已用量，不含预占）', tts.usage().chars, 5000)
+      } finally { stubF.restore() }
+    }
+
     // (e) 记账写盘失败：进程内兜底计数必须继续生效（否则熔断彻底失效）
     const dirF = tmpDir('ctts-usagefail')
     mkdirSync(path.join(dirF, 'cloud-usage.json'))   // 目录占位 → writeJsonAtomic 必然写不进去

@@ -1,15 +1,17 @@
 /**
  * host/routes/tts.ts —— 语音合成路由（可复用模块，带缓存）
- * HTTP/缓存/参数校验在本文件；「怎么合成」交给注入的 TtsEngine（默认 host/tts-engine.ts 的 edge-tts）。
+ * HTTP/缓存/参数校验在本文件；「怎么合成」交给**装配层注入**的 TtsEngine（host/tts-engine.ts 的 edge-tts）。
  * 缓存：文本+音色+语速+音调 hash → 复用 mp3（省时间、省调用）
  * 语速由请求体 rate 决定（说书 -15%，普通聊天 +0%），服务端不再写死。
+ * 音色：先过 `^[a-zA-Z0-9-]+$` 字符集，再用 shared/voices.ts 的白名单（与客户端菜单同一份）；
+ *       白名单外一律回落默认音色（不 400，避免破坏旧调用方），响应头 x-tts-voice: fallback 便于排障。
  */
 import { hashKey } from '../../shared/hash.js'
 import { sendTooLarge } from '../http.js'
 import { readJsonBody } from '../body.js'
 import { sendJson, sendBuffer } from '../respond.js'
 import { normalizeRate, TTS_UNAVAILABLE } from '../../shared/tts.js'
-import { createEdgeTtsEngine } from '../tts-engine.js'
+import { DEFAULT_VOICE, normalizeVoiceName } from '../../shared/voices.js'
 import type { TtsRouteDeps } from '../ports.js'
 
 /** 单次合成的安全上限：客户端已按 80 字分段，这里只防整本大 JSON 被一次送进来 */
@@ -35,8 +37,13 @@ function oneLine(err: any, max = 220): string {
 }
 
 export function createTtsHandler(opts: TtsRouteDeps) {
+  // 引擎必须由装配层构造并注入（src/index.ts），路由内**不再**自建：
+  // createEdgeTtsEngine 持有常驻 python 子进程，而路由工厂只交出 handler 函数，
+  // 自建的实例句柄谁也拿不到 → 插件卸载/热重载时没有对象可以 dispose()（B92 封装债，B93 去兜底）。
+  // 运行时也显式挡一道：JS 调用方漏传时构造即失败，而不是等到合成那一步才 500。
+  if (!opts || !opts.engine) throw new Error('createTtsHandler: engine 必传（由装配层构造并注入，测试注入桩）')
   const cache = opts.cache
-  const engine = opts.engine || createEdgeTtsEngine()
+  const engine = opts.engine
   // 每个 handler 一份闸门状态：测试里多次 createTtsHandler 互不串味
   const failGuard = { streak: 0, until: 0 }
   // 预热常驻 worker（只解析解释器、导入依赖，不合成）：首句不必再等 python 启动。
@@ -67,10 +74,24 @@ export function createTtsHandler(opts: TtsRouteDeps) {
         return
       }
       const msg = rawText
-      const voiceIn = typeof body?.voice === 'string' ? body.voice : ''
+      const voiceIn = typeof body?.voice === 'string' ? body.voice.trim() : ''
       const isZh = /[\u4e00-\u9fa5]/.test(msg)
-      let voice = (voiceIn && /^[a-zA-Z0-9-]+$/.test(voiceIn)) ? voiceIn : ''
-      if (!voice || voice === 'auto' || voice === 'zh-CN-XiaoyiNeural' || voice === 'en-US-AnaNeural') { voice = isZh ? 'zh-CN-XiaoyiNeural' : 'en-US-AnaNeural' }
+      // 默认按文本语言选（中文晓伊 / 英文 Ana）：'auto' 与「显式传这两个默认音色」都走这条，保持旧行为
+      const langDefault = isZh ? DEFAULT_VOICE : 'en-US-AnaNeural'
+      // 第一道：字符集（历史行为，先于白名单）—— 防 CRLF/引号/shell 元字符进日志与参数
+      const charsetOk = !!voiceIn && /^[a-zA-Z0-9-]+$/.test(voiceIn)
+      // 第二道：白名单，与客户端菜单共用 shared/voices.ts；大小写脏值归一成白名单里的规范写法
+      // fallback 传 '' 表示「没命中就交回给我」，便于下面区分「没传音色」与「传了但不在名单」
+      const known = charsetOk ? normalizeVoiceName(voiceIn, '') : ''
+      // 白名单外（含字符合法但不认识的音色，如 ja-JP-NanamiNeural）→ 回落默认，**不回 400**：
+      // 旧调用方传坏值仍要能出声（B92 的「HTTP 直调绕过白名单」在此收口，成本/策略缺口关闭）。
+      const voiceFallback = voiceIn !== '' && !known
+      const voice = (!known || known === 'auto' || known === DEFAULT_VOICE || known === 'en-US-AnaNeural')
+        ? langDefault
+        : known
+      // 音频响应头：排障用；只在请求的音色确实被替换时带 x-tts-voice: fallback（正常请求与 auto 不带）
+      const audioHeaders: Record<string, string> = { 'cache-control': 'no-store' }
+      if (voiceFallback) audioHeaders['x-tts-voice'] = 'fallback'
       // 请求体里带了合法 rate 就用它（说书 -15%），没带默认 +0%
       const rate = normalizeRate(body?.rate, '+0%')
       // 音高：允许请求体指定（带情绪的语气），非法值回落到默认
@@ -85,7 +106,7 @@ export function createTtsHandler(opts: TtsRouteDeps) {
       if (cache) {
         const hit = await cache.getJson(ck, 'mp3')
         if (hit) {
-          sendBuffer(res, hit, 'audio/mpeg', { 'cache-control': 'no-store' })
+          sendBuffer(res, hit, 'audio/mpeg', audioHeaders)
           return
         }
       }
@@ -100,6 +121,9 @@ export function createTtsHandler(opts: TtsRouteDeps) {
       if (cloud && cloud.enabled()) {
         try {
           buf = await cloud.synthesize(msg)
+          // 云端不接收 voice（用配置里的 speaker），所以「音色被替换」在云端路径上不成立：
+          // 成功出云端时把 fallback 头摘掉，别让排障的人以为客户端音色真的生效了（2026-11-07 B93）。
+          if (voiceFallback) delete audioHeaders['x-tts-voice']
         } catch (ce: any) {
           console.warn('[tts] CLOUD-FAIL 回退 edge-tts：' + String(ce?.message || ce).slice(0, 200))
           buf = await engine.synthesize({ text: msg, voice, rate, pitch })
@@ -111,7 +135,7 @@ export function createTtsHandler(opts: TtsRouteDeps) {
       failGuard.streak = 0
       failGuard.until = 0
       if (cache) { try { await cache.setJson(ck, buf, 'mp3') } catch { } }
-      sendBuffer(res, buf, 'audio/mpeg', { 'cache-control': 'no-store' })
+      sendBuffer(res, buf, 'audio/mpeg', audioHeaders)
     } catch (err: any) {
       try {
         // 合成不可用（没装 python/edge-tts）→ 501，客户端据此改用浏览器 speechSynthesis；其余 → 500。
