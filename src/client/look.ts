@@ -79,7 +79,10 @@ deepFreeze(DEFAULT_GROWTH)
 
 /** 解析 GET /growth 响应；ok 不为 true 或经验值非法时返回 null（调用方按初识处理） */
 export function parseGrowth(d: any): GrowthInfo | null {
-  if (!d || typeof d !== 'object' || !d.ok) return null
+  // ok 必须**严格**是 true：`{ok:'false'}`、`{ok:1}` 这类真值以前会被当成成功
+  if (!d || typeof d !== 'object' || d.ok !== true) return null
+  // exp 只认数字或非空数字串：`{exp:null}` 会被 Number 成 0、`{exp:true}` 成 1（假数据当 0 经验）
+  if (typeof d.exp !== 'number' && !(typeof d.exp === 'string' && d.exp.trim() !== '')) return null
   const raw = Number(d.exp)
   if (!isFinite(raw)) return null
   const exp = Math.max(0, Math.floor(raw))

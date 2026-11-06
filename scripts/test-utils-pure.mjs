@@ -553,6 +553,12 @@ try {
     look.parseGrowth({ ok: false, exp: 350 }) === null && look.parseGrowth({ ok: true, exp: 'abc' }) === null &&
     look.parseGrowth({ ok: true }) === null && look.parseGrowth(null) === null && look.parseGrowth('x') === null && look.parseGrowth([]) === null)
   ok('parseGrowth：nextExp 非法时回落 host 值', (() => { const g = look.parseGrowth({ ok: true, exp: 350, nextExp: -3 }); return g && g.nextExp === 800 })())
+  // 2026-11-07：ok 必须严格 true；exp 只认数字/非空数字串（假值不再被 Number 成 0/1）
+  ok('parseGrowth：ok 用严格判定（"false"/1 不算成功）',
+    look.parseGrowth({ ok: 'false', exp: 350 }) === null && look.parseGrowth({ ok: 1, exp: 350 }) === null)
+  ok('parseGrowth：exp 为 null/true 时拒绝（不当成 0 或 1）',
+    look.parseGrowth({ ok: true, exp: null }) === null && look.parseGrowth({ ok: true, exp: true }) === null)
+  ok('parseGrowth：exp 数字串仍接受（兼容旧宿主）', (() => { const g = look.parseGrowth({ ok: true, exp: '350' }); return g && g.exp === 350 })())
 
   const fetched = await look.fetchGrowth(async () => ({ ok: true, exp: 900 }))
   ok('fetchGrowth：正常回包解析为最高档', fetched && fetched.tier === 2 && fetched.exp === 900, show(fetched))

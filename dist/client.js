@@ -3246,7 +3246,8 @@
   var DEFAULT_GROWTH = { exp: 0, stage: "初识", nextExp: 200, tier: 0 };
   deepFreeze(DEFAULT_GROWTH);
   function parseGrowth(d) {
-    if (!d || typeof d !== "object" || !d.ok) return null;
+    if (!d || typeof d !== "object" || d.ok !== true) return null;
+    if (typeof d.exp !== "number" && !(typeof d.exp === "string" && d.exp.trim() !== "")) return null;
     const raw = Number(d.exp);
     if (!isFinite(raw)) return null;
     const exp = Math.max(0, Math.floor(raw));
@@ -6817,6 +6818,10 @@
   var FETCH_TIMEOUT_MS = 8e3;
   var cache = deepFreeze([]);
   var started = false;
+  var RETRY_DELAY_MS = 60 * 1e3;
+  var MAX_ATTEMPTS = 3;
+  var attempts = 0;
+  var nextTryAt = 0;
   function normalize(list) {
     const out = [];
     if (!Array.isArray(list)) return out;
@@ -6880,11 +6885,22 @@
     return cache;
   }
   function ensurePoemTitles() {
-    if (started || cache.length > 0) return;
+    if (cache.length > 0) return;
+    if (attempts >= MAX_ATTEMPTS) return;
+    if (Date.now() < nextTryAt) return;
     started = true;
+    attempts++;
+    const failed = () => {
+      nextTryAt = Date.now() + RETRY_DELAY_MS;
+    };
     getJson(API_PATH, { signal: timeoutSignal(FETCH_TIMEOUT_MS) }).then((data) => {
-      if (data && data.ok === true) apply(data.titles, true);
+      if (data && data.ok === true && Array.isArray(data.titles) && data.titles.length > 0) {
+        apply(data.titles, true);
+        return;
+      }
+      failed();
     }).catch(() => {
+      failed();
     });
   }
   {
