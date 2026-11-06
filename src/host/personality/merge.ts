@@ -187,6 +187,10 @@ export function emptyPersonality(): PersonalityData {
  *
  * 审计修复 F5（2026-11-06）：历史条目的 at 与其他元数据字段一样截到 40 字符，
  * 防止坏文件里塞超长字符串把历史列表撑爆（updatedAt 原本就是 40）。
+ *
+ * 审计修复 F8（2026-11-07）：F5 只截了长度，at 仍走 String() 强转——坏文件里写成对象时
+ * 会变成 "[object Object]"、写成数组时变成 "[a]" 这种假时间，与同函数里 updatedAt /
+ * selfNarrativeAt 的「只接受字符串」口径不一致。现在 at 也只认字符串，其余类型按空串处理。
  */
 export function sanitizePersonality(raw: any): PersonalityData {
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
@@ -204,7 +208,7 @@ export function sanitizePersonality(raw: any): PersonalityData {
         field === 'catchphrases' ? PERSONALITY_LIMITS.catchphraseLen : PERSONALITY_LIMITS.preferenceLen,
       )
     }
-    history.push({ at: String(entry.at || '').slice(0, 40), field, old: clean(entry.old), new: clean(entry.new) })
+    history.push({ at: typeof entry.at === 'string' ? entry.at.slice(0, 40) : '', field, old: clean(entry.old), new: clean(entry.new) })
   }
   const versionRaw = Number(src.version)
   const selfNarrative = cleanSelfNarrative(src.selfNarrative)
