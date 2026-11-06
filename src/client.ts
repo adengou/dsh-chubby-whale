@@ -1149,6 +1149,9 @@ import { evPrevent, evStop } from './client/util.js'
         try { melody.stop() } catch (e) { }
         // 说书锁也一起放：stopSpeaking 作废了当前段，它原本的 onDone 不会再来，
         // storyBusy 卡在 true 的话「接着说 / 说书」会永远回"正讲着呢"。
+        // 先把在途的说书请求真正掐断（B98）：只清 busy 的话，响应仍会送达，
+        // 服务端按「响应送出」把这没被听到的一段记成已讲。
+        try { story.abort() } catch (e) { }
         try { storyBusyRef.current = false } catch (e) { }
         try { storyNarratingRef.current = false } catch (e) { }
       }

@@ -20,7 +20,8 @@
  *     叙述锁过期）时立刻 abort；新一轮请求开始也先 abort 上一条。AbortError 按「用户主动停」处理：
  *     静默、不算失败、不改状态；abort 之后迟到的结果仍由 stillMine 兜底丢弃。
  *     请求在途时 busy 由本模块持有，所以停止方唯一的把手就是 busy 这把锁；停止钩子用
- *     Object.defineProperty 包住 busy.current 的写，不额外要求 client.ts 改接线。
+ *     由 client.ts 的 stopTts() 显式调用 controller.abort()（B98 原先用 Object.defineProperty
+ *     包 busy.current 的写，属权宜手法；2026-11-07 B98 收尾改成显式调用，去掉这层魔法）。
  *   · 请求在途也算「在讲」（2026-11-07）：narrating 从发请求那一刻就立起来。P0 打断只认
  *     `narrating || ttsPlaying`（client/chat.ts），请求在途期间标记为假的话，主人这时提问打不断
  *     这一轮，响应回来会把说书接在回答后面（违反并发纪律规则 4）。
@@ -77,6 +78,11 @@ export type StoryController = {
   next: () => void
   /** 按最近的书名重置进度 */
   reset: () => void
+  /**
+   * 中止在途说书请求（B98）：停止说话 / 歇会儿 时必须调用，否则服务端仍会把这段记成「已讲」。
+   * 语义：只中止「在网络里的那次请求」，不改进度、不弹错；没有在途请求时是空操作。
+   */
+  abort: () => void
 }
 
 /** 单次说书请求的超时：超时必须释放占线，否则「接着说」永远回「正讲着呢」 */
@@ -142,27 +148,6 @@ function abortInflightOf(shared: SharedState, reason: string): void {
  * 包一层 busy.current 的写，外部把它从 true 写成 false 的瞬间就 abort 在途请求；
  * 自家收尾写的 false 不会有事（那时 inflight 已经结算为空）。
  */
-const stopHooks = new WeakSet<object>()
-function installStopHook(refs: StoryRefs, shared: SharedState): void {
-  const busy: any = refs ? refs.busy : null
-  if (!busy || stopHooks.has(busy)) return
-  try {
-    let on = !!busy.current
-    Object.defineProperty(busy, 'current', {
-      configurable: true,
-      enumerable: true,
-      get: () => on,
-      set: (v: any) => {
-        const next = !!v
-        const was = on
-        on = next
-        if (was && !next) abortInflightOf(shared, 'stop')
-      },
-    })
-    stopHooks.add(busy)
-  } catch (e) { }
-}
-
 /** fetch 被 abort 时不同运行时的错误形状不一样，统一认一下 */
 function isAbortError(err: any): boolean {
   if (!err) return false
@@ -187,8 +172,7 @@ function storyErrorText(raw: any): string {
 export function createStoryController(host: StoryHost): StoryController {
   const refs = host.refs
   const shared = sharedStateOf(refs)
-  // 停止说话 / 歇会儿 把 busy 清掉的那一下要能 abort 在途请求（每次渲染重建控制器也只需装一次）
-  installStopHook(refs, shared)
+  // 停止说话 / 歇会儿 由 client.ts 的 stopTts() 显式调 abort()（不再靠包 busy.current 的写）
 
   /** 作废旧代际（旧请求/旧 onDone 拿到它就不再往下走） */
   function bumpGen(): number {
@@ -482,5 +466,9 @@ export function createStoryController(host: StoryHost): StoryController {
     })
   }
 
-  return { playPiece, start, next, reset }
+  return {
+    playPiece, start, next, reset,
+    // 显式中止：由 stopTts() 调用；迟到结果仍由 stillMine 丢弃（双保险）
+    abort: () => abortInflightOf(shared, 'stop'),
+  }
 }

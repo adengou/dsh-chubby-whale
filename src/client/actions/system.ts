@@ -151,7 +151,8 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
       // 老账本没有 byKind → kindBucketText 返回空串，这一行连标题都不加（不显示 0 桶）。
       const text = parts.join('，')
       const buckets = kindBucketText(d.byKind)
-      host.bubble(buckets ? text + '\n分桶：' + buckets : text, 6000)
+      // 「本版起」：分桶只记新发生的用量，历史账不回填（拆不出来就不编）
+      host.bubble(buckets ? text + '\n分桶（本版起）：' + buckets : text, 6000)
     }).catch(() => host.bubble('鱼粮查不到'))
   })
   table.define('growth', (host) => {
