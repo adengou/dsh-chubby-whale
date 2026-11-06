@@ -357,7 +357,7 @@ try {
       String(it))
   }
 
-  // C7：曲库（melodies.json 是路由直接读的只读数据文件，既有实现，未改）
+  // C7：曲库（2026-11-07 B87 起走 DataPort；端口缺方法时才回退读 melodies.json）
   {
     const dataDir = mkTmp('whale-culture-c7-')
     writeFileSync(join(dataDir, 'melodies.json'), JSON.stringify({ songs: [{ name: '小星星', bpm: 120, notes: [1, 2, 3], lyrics: '一闪一闪' }] }))
@@ -573,9 +573,9 @@ try {
     ok('daily.ts 不 import node:fs（内容数据只走 DataPort）', !/from 'node:fs'/.test(dailySrc) && /dataPort\.readDaily/.test(dailySrc))
   }
 
-  // F3：已知封装缺口（本次不修，需 DataPort 扩口；仅提示，不计失败）
-  console.log('  ℹ 已知缺口（未改，需 ports.ts 增方法）：poem-titles.ts 直接 readFileSync data/poem-titles.json；' +
-    'culture.ts 的 handleMelodies/handleMelody 直接 readFile data/melodies.json')
+  // F3：封装缺口**已收口**（2026-11-07 B87）：DataPort 增 readPoemTitles/readMelodies，
+  // 路由端口优先，只有端口缺方法时才回退读文件（回退条件写在各路由注释里）
+  console.log('  ℹ 已收口：poem-titles / melodies 走 DataPort（端口缺方法才回退读 data/）')
 } catch (e) {
   ok('F 组可执行', false, String(e && e.stack || e))
 }

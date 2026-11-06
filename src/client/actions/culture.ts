@@ -89,7 +89,10 @@ export function recitePoem(host: ReciteHost, poem: any): void {
       rate: poemRate(host.narrationRate()),
       onDone: release,
     })
-  } catch (e) { }
+  } catch (e) {
+    // 朗读起不来（TTS 抛错）也要收尾：否则叙述锁要等 5 分钟自愈，期间麦克风不拾音（与 content.ts 同口径）
+    release()
+  }
 }
 
 import { pickCouplet } from '../duilian.js'

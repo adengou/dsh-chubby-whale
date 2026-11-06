@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.59";
+  var VERSION = "1.1.60";
 
   // src/client/styles.ts
   var W = 240;
@@ -4478,6 +4478,7 @@
         onDone: release
       });
     } catch (e) {
+      release();
     }
   }
   function finishSpeech(host, doneText) {
@@ -9364,11 +9365,17 @@
           return reminderPoller.start();
         }, []);
         R.useEffect(() => {
-          if (!earOnRef.current) return;
-          void bridge.start();
-          return () => {
-            bridge.dispose();
+          const cleanup = () => {
+            try {
+              bridge.dispose();
+            } catch (e) {
+            }
           };
+          if (earOnRef.current) {
+            void bridge.start();
+            return cleanup;
+          }
+          return cleanup;
         }, []);
         function speakText(text, o) {
           try {

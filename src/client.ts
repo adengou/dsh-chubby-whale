@@ -1101,9 +1101,14 @@ import { evPrevent, evStop } from './client/util.js'
       // ===== 语音模块（client/voice.ts + client/voice-bridge.ts）=====
       // 回调与生命周期只在 voice-bridge 里建一份（见组件顶部），这里只负责启动/收尾。
       R.useEffect(() => {
-        if (!earOnRef.current) return
-        void bridge.start()
-        return () => { bridge.dispose() }
+        // 清理器**始终**注册：sayLine 现在走 bridge.ensure()，待命关着也会建实例（只朗读不开麦）；
+        // 若只在 earOn 时注册 dispose，这类实例在 SPA 卸载时不会被回收（2026-11-07 B88 审计建议）。
+        const cleanup = (): void => { try { bridge.dispose() } catch (e) { } }
+        if (earOnRef.current) {
+          void bridge.start()
+          return cleanup
+        }
+        return cleanup
       }, [])
 
       // ---- 旧调用点兼容层：全部转到新模块 ----

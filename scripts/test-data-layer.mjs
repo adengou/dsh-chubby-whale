@@ -508,8 +508,8 @@ try {
   const dir = mkTmp('whale-data-face-')
   const local = createLocalDataPort({ dataDir: dir, story: { listBooks: async () => [], loadBook: async () => [] } })
   const cloud = createCloudDataPort({ local, fetchImpl: async () => ({ ok: false, status: 500, text: async () => '' }) })
-  ok('本地端口只暴露 DataPort 的 6 个方法（不泄漏缓存/inflight/路径）', Object.keys(local).sort().join(',') === want.join(','), Object.keys(local).join(','))
-  ok('云端端口只暴露 DataPort 的 6 个方法', Object.keys(cloud).sort().join(',') === want.join(','))
+  ok('本地端口只暴露 DataPort 的 8 个方法（不泄漏缓存/inflight/路径）', Object.keys(local).sort().join(',') === want.join(','), Object.keys(local).join(','))
+  ok('云端端口只暴露 DataPort 的 8 个方法', Object.keys(cloud).sort().join(',') === want.join(','))
 
   // 数据层不该 import 说书实现：StoryChunk 由 ports.ts 定义；
   // 只有「本地实现注入仓储」「适配层产出仓储」这两处需要 StoryRepo 这个接口类型。

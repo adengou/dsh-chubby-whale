@@ -30,7 +30,7 @@
  */
 
 import { build } from 'esbuild'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -373,6 +373,17 @@ try {
   }
 } catch (e) {
   ok('sayLine 朗读入口可验证', false, String((e && e.message) || e))
+}
+
+console.log('\n[E] 收尾契约（源码静态：抛错也收尾 / 实例卸载始终回收）')
+try {
+  const cultureSrc = readFileSync(join(ROOT, 'src/client/actions/culture.ts'), 'utf8')
+  ok('念诗 speak 同步抛错时也走 release()', /catch \(e\) \{\s*\n\s*\/\/[^\n]*\n\s*release\(\)/.test(cultureSrc), cultureSrc.includes('release()') ? '有 release 调用' : '缺')
+  const clientSrc = readFileSync(join(ROOT, 'src/client.ts'), 'utf8')
+  ok('语音清理器不依赖 earOn（cleanup 先定义后分支返回）', /const cleanup = \(\): void => \{ try \{ bridge\.dispose\(\) \} catch \(e\) \{ \} \}/.test(clientSrc))
+  ok('开待命与不开待命都返回同一个 cleanup', (clientSrc.match(/return cleanup/g) || []).length >= 2, '出现 ' + (clientSrc.match(/return cleanup/g) || []).length + ' 次')
+} catch (e) {
+  ok('收尾契约可读源码', false, String(e.message))
 }
 
 // ---------- 汇总 ----------

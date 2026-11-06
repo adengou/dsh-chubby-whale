@@ -4,6 +4,28 @@
 
 ## [未发布]
 
+## [1.1.60] - 2026-11-07
+
+### 修复（B87 数据端口收口：路由不再直读 data/）
+- **`/poem-titles` 与 `/melodies`、`/melody` 直读 `data/`**：违反 ADR 0002「路由只经端口取数据」，且 `poem-titles` 的 handler 连 `dataPort` 参数都没有。现在 `DataPort` 增**可选**方法 `readPoemTitles()` / `readMelodies()`：本地带 mtime 缓存 + BOM 容错 + 坏 JSON 返回 null 并留痕；云端声明就拉、未声明/网络坏时回退本地
+- 路由口径：**端口存在即权威**（返回 null 也不回读文件），只有端口缺方法时才走文件回退（回退分支注释写明移除条件）；`/melody` 响应字段完全未变
+- 装配漏注入：`index.ts` 给 `poem-titles` 补上 `dataPort`（此前不注入等于永远走回退）
+- 过时文案：`test-data-layer` 端口面断言 6 项→8 项；`test-content-routes` 的「已知缺口」改为「已收口」
+
+### 修复（B88 念诗回调与待命出声）
+- **同一使用方连念两首，旧诗的 onDone 会清新诗的锁**：`client.ts` 的 `narrateOwner` 是**按使用方**分的，菜单「念首诗」两次共用同一句柄、ownerId 不变，挡不住。现在 `culture.ts` 加 per-call 令牌 `poemGen`：只有最新一首的 onDone 能停进度、清锁、说「念完啦」，且同一次收尾只放行一次
+- **`sayLine` 用 `bridge.get()`**：待命关着刷新后 `get()` 为 null，开场问候/情绪台词只有气泡没声（而念诗/说书/提醒走 `ensure()` 一直有声）。改为 `ensure()`，与其它朗读路径一致；真正管静音的是「语音朗读」开关（关掉后 ensure/spoken 都不动）
+- 念诗 `speak` 同步抛错时补 `release()`（与 `actions/content.ts` 同口径），不再等 5 分钟叙述锁自愈
+- 语音实例的卸载回收不再依赖 `earOn`：`ensure()` 可能在待命关着时建实例，原来那种情况 SPA 卸载不会 dispose
+
+### 变更（B86 主代理）
+- `VoiceStats.asrBusyDropped`：ASR「忙则丢」的丢段次数计入统计（原来只在 diag 流里可见）
+- 文档：《坑》补坑 47（叙述锁只有一份 / 持有者令牌 / `narrateOverdue` 读法）、坑 48（ASR 无单飞无纪元与取舍）；《并发纪律》更正「纪元只覆盖对话」→ 覆盖对话与 ASR，规则 5 补 `clearNarrate` 只认持有者
+
+### 测试
+- 新增 `test-dataport-poem.mjs`(56)、`test-poem-narration.mjs`(34)，均接入 `npm test`
+- 全链 **2936 项 0 失败**（`node tools/test-count.mjs`：41 个套件，失败 0，未识别 0）
+
 ## [1.1.59] - 2026-11-07
 
 ### 修复（B82 装配层分身：云端 TTS 从未接线）

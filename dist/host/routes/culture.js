@@ -6,7 +6,8 @@
  *   读到旧格式 {"chengyu:名称": true} 时自动迁移成新结构。
  * 一轮讲完只清空同一类别的记录，别的类别进度保留；一轮重来时先排除上一则，
  * 避免「刚讲完又立刻同一则」（与念诗同口径，见 poem.ts 的同名处理）。
- * 数据经 DataPort 取（本地/云端由 index.ts 注入）；数据源读不到只记 CULTURE-LOAD-FAIL，按空池处理，绝不整类报错。
+ * 数据经 DataPort 取（本地/云端由 index.ts 注入；曲库走 readMelodies，见下方回退注释）；
+ * 数据源读不到只记 CULTURE-LOAD-FAIL，按空池处理，绝不整类报错。
  * 原子写/坏文件隔离走 host/atomic.ts，JSON 响应走 host/respond.ts。
  */
 import { readFile } from 'node:fs/promises';
@@ -29,6 +30,26 @@ export function createCultureHandlers(opts) {
             console.error('CULTURE-LOAD-FAIL kind=' + kind + ' err=' + String(err?.message || err));
             return [];
         }
+    }
+    /**
+     * 曲库数据：优先经 DataPort.readMelodies（ADR 0002「路由只经端口取数据」）。
+     * 端口存在该方法就只认端口：返回 null 由调用方按既有 ok:false 语义兜底，不再回读文件。
+     */
+    async function loadMelodies() {
+        const port = opts.dataPort;
+        if (port && typeof port.readMelodies === 'function') {
+            return await port.readMelodies();
+        }
+        /**
+         * 过渡回退（2026-11-07，B86 数据端口收口）：`DataPort.readMelodies` 是本次新增的
+         * 可选方法。离线单测、旧宿主、以及还没升级装配层的假端口可能没有它；直接删掉
+         * 文件读取会让这些环境的曲库整体消失。端口实现存在时本分支不会执行。
+         *
+         * 移除条件：`readMelodies` 改为必选、且所有装配都注入实现后，删掉本分支、
+         * 以及本文件顶部 `readFile`（node:fs/promises）这个 import。
+         * 注意 `join` 仍被 SEEN_FILE 使用，不能一起删。
+         */
+        return JSON.parse(await readFile(join(opts.dataDir, 'melodies.json'), 'utf8'));
     }
     // 新格式字段 ← 内部前缀；民间故事写 tales + minsu 两份，让 C# 也能读
     function splitKey(k) {
@@ -199,8 +220,10 @@ export function createCultureHandlers(opts) {
     }
     async function handleMelodies(_req, res) {
         try {
-            const txt = await readFile(join(opts.dataDir, 'melodies.json'), 'utf8');
-            const data = JSON.parse(txt);
+            const data = await loadMelodies();
+            // 端口/文件都给不出数据（null）时沿用既有失败语义：ok:false + songs:[]
+            if (data == null)
+                throw new Error('melodies unavailable');
             const songs = (data?.songs || []).map((s) => ({ name: s.name, bpm: s.bpm }));
             sendJson(res, { ok: true, songs });
         }
@@ -212,8 +235,9 @@ export function createCultureHandlers(opts) {
         try {
             const url = new URL(req.url, 'http://x');
             const name = url.searchParams.get('name') || '';
-            const txt = await readFile(join(opts.dataDir, 'melodies.json'), 'utf8');
-            const data = JSON.parse(txt);
+            const data = await loadMelodies();
+            if (data == null)
+                throw new Error('melodies unavailable');
             const song = (data?.songs || []).find((s) => s.name === name);
             if (!song) {
                 sendJson(res, { ok: false, error: 'song not found' });
