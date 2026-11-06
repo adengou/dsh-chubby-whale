@@ -170,8 +170,8 @@ try {
   ok('播放器只以 type 形式引入（不拿实现）', /import\s+type\s+\{[^}]*StoryPlayer[^}]*\}\s+from\s+['"]\.\.\/story\/player\.js['"]/.test(route))
   ok('无 readFileSync/readdir/JSON.parse 之类直读', !/\breadFileSync\b|\breaddir\b|\breadFile\b/.test(route))
   const src = readFileSync(join(ROOT, 'src/host/routes/story.ts'), 'utf8')
-  // 兼容旧导出的 STORY_AUTHORS 是值级 re-export（会让路由模块携带播放器实现资料）
-  info('routes/story.ts 仍保留兼容值导出 STORY_AUTHORS：' + /export\s*\{\s*STORY_AUTHORS\s*\}/.test(src))
+  // 2026-11-07 B97：值级兼容导出已删（薄路由不该携带播放器业务数据）
+  ok('routes/story.ts 不再值级导出 STORY_AUTHORS', !/export\s*\{\s*STORY_AUTHORS\s*\}/.test(src))
 } catch (e) {
   ok('封装治理静态检查执行', false, String(e && e.message))
 }

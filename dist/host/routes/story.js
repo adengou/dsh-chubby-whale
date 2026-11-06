@@ -12,8 +12,9 @@
 import { readJsonBody } from '../body.js';
 import { sendTooLarge } from '../http.js';
 import { sendJson, sendError } from '../respond.js';
-/** 兼容旧导出：作者表已随业务移到 host/story/player.ts */
-export { STORY_AUTHORS } from '../story/player.js';
+// 2026-11-07 B97：删掉原来那行**值级兼容导出**（把播放器的作者表挂在薄路由上）。
+// 它让**薄 HTTP 路由**携带播放器的业务数据（全仓零引用），与 ADR 0002「路由只经端口」相悖；
+// 作者表本身仍由 host/story/player.ts 导出，需要的人直接 import 那里。
 /** 书名/提示词上限：最长书名 4 字，64 已留足余量；超长一律拒，不拿超长串做模糊匹配 */
 const MAX_BOOK_LEN = 64;
 /** POST /reset 请求体上限：只有一个 book 字段，4KB 足够 */
