@@ -352,10 +352,14 @@
   var DEFAULT_CHAT_RATE = "-20%";
   var DEFAULT_STORY_RATE = "-35%";
   var DEFAULT_POEM_RATE = "-25%";
+  function validPercent(v) {
+    const s = String(v == null ? "" : v).trim();
+    return /^-(?:[1-9]\d?)%$/.test(s) ? s : "";
+  }
   function readPercentRate(key, fallback) {
     try {
-      const s = String(localStorage.getItem(key) || "").trim();
-      if (/^-(?:[1-9]\d?)%$/.test(s)) return s;
+      const s = validPercent(localStorage.getItem(key));
+      if (s) return s;
     } catch (e) {
     }
     return fallback;
@@ -364,7 +368,7 @@
     return readPercentRate("chubby-story-rate", DEFAULT_STORY_RATE);
   }
   function poemRate(fallback = DEFAULT_POEM_RATE) {
-    return readPercentRate("chubby-poem-rate", fallback);
+    return readPercentRate("chubby-poem-rate", validPercent(fallback) || DEFAULT_POEM_RATE);
   }
   function chatRate() {
     try {
@@ -603,6 +607,7 @@
   function createSentenceBuffer(maxLen = 40) {
     const limit = Math.max(2, Number(maxLen) || 40);
     let tail = "";
+    let lead = "";
     function take(force) {
       const out = [];
       for (; ; ) {
@@ -611,17 +616,24 @@
         if (!tail) break;
         const m = tail.match(/[\s\S]*?[。！？!?；;\n]/);
         if (m && m[0].length >= 2) {
-          const seg = m[0].trim();
+          const seg = (lead + m[0]).trim();
+          lead = "";
           tail = tail.slice(m[0].length);
           if (seg) out.push(seg);
           continue;
         }
-        if (force || tail.length >= limit) {
-          const seg = tail.trim();
-          tail = "";
-          if (seg) out.push(seg);
+        if (m) {
+          lead += m[0];
+          tail = tail.slice(m[0].length);
+          continue;
         }
         break;
+      }
+      if (force || tail.length + lead.length >= limit) {
+        const seg = (lead + tail).trim();
+        lead = "";
+        tail = "";
+        if (seg) out.push(seg);
       }
       return out;
     }
@@ -4423,7 +4435,8 @@
   var COUPLET_CATS = ["书院", "格言", "谐趣", "名胜", "书房", "春联", "寿联", "景观", "中药", "叠字", "数字"];
   deepFreeze(COUPLET_CATS);
   function pickCouplet(excludeUpper, cat) {
-    const byCat = cat ? COUPLETS.filter((c) => c.cat === cat) : COUPLETS;
+    const key = cat == null ? "" : String(cat).trim();
+    const byCat = key ? COUPLETS.filter((c) => c.cat === key) : COUPLETS;
     const base = byCat.length > 0 ? byCat : COUPLETS;
     const pool = base.length > 1 && excludeUpper ? base.filter((c) => c.upper !== excludeUpper) : base;
     const src = pool.length > 0 ? pool : base;
@@ -6175,7 +6188,8 @@
     let until = 0;
     return {
       lock(ms2) {
-        const dur = Math.max(NARRATE_MIN_MS, Math.min(Number(ms2) || 6e4, NARRATE_MAX_MS));
+        const n = ms2 == null ? NaN : Number(ms2);
+        const dur = Math.max(NARRATE_MIN_MS, Math.min(Number.isNaN(n) ? 6e4 : n, NARRATE_MAX_MS));
         until = Date.now() + dur;
       },
       clear() {
@@ -6191,7 +6205,7 @@
       },
       expire(now) {
         const t = typeof now === "number" ? now : Date.now();
-        if (!until || t <= until) return false;
+        if (!until || t < until) return false;
         until = 0;
         return true;
       }
@@ -6871,6 +6885,16 @@
   ];
   deepFreeze(BOOK_ALIAS);
   var BARE_STRIP = /[\s。，！？、,.!?…~～]/g;
+  var BARE_TAIL_PARTICLES = "吧啊呀呢么嘛哈哦嗯啦";
+  function isBareBookName(bare, book, alias) {
+    if (!bare) return false;
+    if (bare === book) return true;
+    const core = BARE_TAIL_PARTICLES.indexOf(bare.slice(-1)) >= 0 ? bare.slice(0, -1) : bare;
+    if (core === book) return true;
+    const m = alias.exec(core);
+    return !!m && m.index === 0 && core.length <= m[0].length + 1;
+  }
+  var NEGATED_ASK = /(不|别|甭|勿|无需)(要|用|想|再|许|必)?\s*(讲|说|念|背|来|放|听|唱)/;
   function matchPoemTitle(text) {
     const t = String(text || "");
     if (!t) return "";
@@ -6880,12 +6904,13 @@
     return "";
   }
   function isQuestion(text) {
-    return /[?？]|为什么|怎么|如何|什么|谁|哪[儿里]?|多少|几点|几号|是不是|能不能|要不要|吗\s*$|呢\s*$/.test(String(text || ""));
+    return /[?？]|为什么|怎么|如何|什么|谁|哪[儿里]?|多少|几点|几号|是不是|能不能|要不要|吗[。．.!！…~～]*\s*$|呢[。．.!！…~～]*\s*$/.test(String(text || ""));
   }
   function detectIntent(rawText) {
     const t = String(rawText || "").trim();
     if (!t || t.length > 30) return null;
     if (isQuestion(t)) return null;
+    if (NEGATED_ASK.test(t)) return null;
     if (poemTitles().length === 0) ensurePoemTitles();
     const byTitle = matchPoemTitle(t);
     if (byTitle) {
@@ -6898,17 +6923,17 @@
       const asksCulture = /讲|说|来|听|教|学|点|考/.test(t);
       if (asksCulture) return { kind: "culture", sub: /成语/.test(t) ? "idiom" : "chengyu" };
     }
-    let book = "";
-    for (const [re, name] of BOOK_ALIAS) {
-      if (re.test(t)) {
-        book = name;
+    let hit = null;
+    for (const pair of BOOK_ALIAS) {
+      if (pair[0].test(t)) {
+        hit = pair;
         break;
       }
     }
-    if (book) {
+    if (hit) {
       const bare = t.replace(BARE_STRIP, "");
-      const asksBook = /讲|说书|听|来(一)?段|来(一)?回/.test(t) || bare.length <= book.length + 1;
-      if (asksBook) return { kind: "story", book };
+      const asksBook = /讲|说书|听|来(一)?段|来(一)?回/.test(t) || isBareBookName(bare, hit[1], hit[0]);
+      if (asksBook) return { kind: "story", book: hit[1] };
     }
     if (/讲故事|讲个故事|说书|来段|讲一段/.test(t)) return { kind: "story", book: "" };
     return null;

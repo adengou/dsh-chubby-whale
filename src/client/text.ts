@@ -245,10 +245,19 @@ export type SentenceBuffer = {
  * 流式切句器：句末标点（。！？!?；;换行）处切开；没标点就攒到 maxLen 字。
  * 与原来 tryStreamChat 里的 flush 正文逐字等价（空白本就 trim 掉）：每段 trim 后非空才返回，
  * 顺序保持原文顺序。
+ *
+ * 两个边界（2026-11-07 补）：
+ *   · 句首孤立标点（增量以「。」开头）并到下一句开头，不再把后续切句整段卡住；
+ *   · 切点只落在标点之后、续段只按整段切，单条 delta 内不会切在 emoji 代理对中间。
  */
 export function createSentenceBuffer(maxLen = 40): SentenceBuffer {
   const limit = Math.max(2, Number(maxLen) || 40)
   let tail = ''
+  // 句首就是「。」「！」这类单字标点时不能单独成句（TTS 念一个标点没意义），
+  // 但也**不能让它把后面整段卡住**：旧实现把它留在 tail 里，正则每次都只匹配到它自己
+  // （长度 1，不满足 >= 2），于是后续句子一句也吐不出来，要一直攒到 maxLen 才整段吐。
+  // 现在先收进 lead，等下一句成句时并到它开头 —— 字符一个不丢，切句也不再卡。
+  let lead = ''
   function take(force: boolean): string[] {
     const out: string[] = []
     for (;;) {
@@ -260,17 +269,25 @@ export function createSentenceBuffer(maxLen = 40): SentenceBuffer {
       if (!tail) break
       const m = tail.match(/[\s\S]*?[。！？!?；;\n]/)
       if (m && m[0].length >= 2) {
-        const seg = m[0].trim()
+        const seg = (lead + m[0]).trim()
+        lead = ''
         tail = tail.slice(m[0].length)
         if (seg) out.push(seg)
         continue
       }
-      if (force || tail.length >= limit) {
-        const seg = tail.trim()
-        tail = ''
-        if (seg) out.push(seg)
+      if (m) {
+        // 只匹配到一个孤立句末标点：收进 lead 接着找下一句，不在这里原地打转
+        lead += m[0]
+        tail = tail.slice(m[0].length)
+        continue
       }
       break
+    }
+    if (force || tail.length + lead.length >= limit) {
+      const seg = (lead + tail).trim()
+      lead = ''
+      tail = ''
+      if (seg) out.push(seg)
     }
     return out
   }
