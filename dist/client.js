@@ -1157,6 +1157,31 @@
   }
 
   // src/client/voice/echo-filter.ts
+  var SINGLE_INTERRUPT = /^[停别不]$/;
+  var INTERRUPT_PHRASES = [
+    "停下",
+    "停下来",
+    "停下来吧",
+    "停一下",
+    "停一停",
+    "停吧",
+    "别说了",
+    "别讲了",
+    "别念了",
+    "别吵",
+    "别说下去了",
+    "不要说了",
+    "不用说了",
+    "闭嘴",
+    "安静",
+    "打住",
+    "够了",
+    "暂停",
+    "算了"
+  ];
+  function isInterruptCommand(plain) {
+    return SINGLE_INTERRUPT.test(plain) || INTERRUPT_PHRASES.indexOf(plain) >= 0;
+  }
   function createEchoFilter() {
     const spokenRecent = [];
     const recentHeard = [];
@@ -1178,7 +1203,8 @@
       }
       const plain = normalizePlain(text).toLowerCase();
       const plainKey = echoKey(text).toLowerCase();
-      const interrupt = /^[停别不]$/.test(plain);
+      const interrupt = SINGLE_INTERRUPT.test(plain);
+      const stopCmd = isInterruptCommand(plain);
       if (plain.length < 2 && !interrupt) return { ok: false, reason: "trivial" };
       if (!interrupt && isNoiseText(plain)) return { ok: false, reason: "noise" };
       if (/^本鱼在听/.test(plain)) return { ok: false, reason: "self" };
@@ -1198,8 +1224,8 @@
         if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return { ok: false, reason: "echo" };
         if (plain.length >= 3 && now - s.at < 6e3 && target.indexOf(plain) >= 0) return { ok: false, reason: "echo" };
       }
-      if (isShortEchoFragment(plain, hadRecentSpeech)) return { ok: false, reason: "short" };
-      if (isRepeat(plain, { recent: recentHeard, windowMs: 8e3, threshold: 0.9, minLen: 4, now })) {
+      if (!stopCmd && isShortEchoFragment(plain, hadRecentSpeech)) return { ok: false, reason: "short" };
+      if (!stopCmd && isRepeat(plain, { recent: recentHeard, windowMs: 8e3, threshold: 0.9, minLen: 4, now })) {
         return { ok: false, reason: "dup" };
       }
       recentHeard.push({ text, at: now });
@@ -1414,11 +1440,13 @@
   }
   function buildTtsJobs(segs, opts) {
     const out = [];
+    const pitch = opts.pitch ? String(opts.pitch) : void 0;
     for (let i = 0; i < segs.length; i++) {
       out.push({
         seq: opts.nextSeq + i,
         text: segs[i],
         rate: opts.rate,
+        pitch,
         narration: opts.narration,
         attempts: 0,
         strict: opts.strict,
@@ -1992,6 +2020,10 @@
       } catch (e) {
       }
     }
+    function ensureTtsWatch() {
+      if (ttsWatch) return;
+      ttsWatch = setInterval(ttsWatchdog, TTS_WATCH_MS);
+    }
     function ttsWatchdog() {
       try {
         const audioPlaying = !!(ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0);
@@ -2147,6 +2179,7 @@
       }
     }
     function pumpTts(force) {
+      ensureTtsWatch();
       if (ttsBusy) return;
       if (ttsNextRetryAt > 0) {
         if (!force && Date.now() < ttsNextRetryAt) return;
@@ -2154,7 +2187,7 @@
       }
       const job = ttsQ.shift();
       if (!job) {
-        setStatus("listening");
+        setStatus(running ? "listening" : "idle");
         return;
       }
       ttsBusy = true;
@@ -2164,7 +2197,6 @@
       const myToken = ++speakToken;
       job.token = myToken;
       setStatus("speaking");
-      stats.ttsRequests++;
       if (ttsInCooldown() && job.attempts <= 0) {
         ttsSynthAt = 0;
         ttsDiag(job, true, "cooldown");
@@ -2175,6 +2207,7 @@
         ttsBrowserFallback(job, myToken);
         return;
       }
+      stats.ttsRequests++;
       const cached = ttsPrefetch.get(job.seq);
       const cur = cached || synth(job);
       if (cached) {
@@ -2490,6 +2523,8 @@
       echoFilter.noteSpoken(raw);
       const jobs = buildTtsJobs(segs, {
         rate,
+        // 音高一路传到 /tts 的请求体：不在这里交给队列任务，宿主永远只收到空串（B92 修）
+        pitch: o && o.pitch,
         narration,
         strict,
         nextSeq: ttsSeq + 1,

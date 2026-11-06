@@ -559,6 +559,19 @@ export function createVoice(opts: VoiceOptions): Voice {
     try { diag.setTts({ failed, reason, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
   }
 
+  /**
+   * 朗读看门狗：只要开始处理朗读段就必须有。
+   * 为什么不能只在 start() 里装（B92 修）：菜单试听 / 说书走 voice-bridge 的 ensure()，
+   * 只建朗读对象、不开麦（见 bridge 注释「只创建朗读对象、不开麦克风」），这种实例从不调 start()，
+   * 旧实现于是**完全没有看门狗** —— 音频元素既不播也不报错的场景下 ttsBusy 永久为真，
+   * 之后每句都排队等它，表现就是「朗读全哑，只能刷新页面」。
+   * 幂等：已在跑就直接返回；stop() 会 clearInterval 并置 null，之后再朗读重新装上。
+   */
+  function ensureTtsWatch(): void {
+    if (ttsWatch) return
+    ttsWatch = setInterval(ttsWatchdog, TTS_WATCH_MS)
+  }
+
   function ttsWatchdog(): void {
     try {
       const audioPlaying = !!(ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0)
@@ -741,6 +754,8 @@ export function createVoice(opts: VoiceOptions): Voice {
 
   /** force=true：退避定时器到点后的自唤醒，不再做一次毫秒级窗口比较（否则偶发提前 1ms 就永久卡住） */
   function pumpTts(force?: boolean): void {
+    // 只要开始处理朗读段就要有看门狗：试听 / 说书不开麦（不走 start()），也不能因此没有自愈能力
+    ensureTtsWatch()
     if (ttsBusy) return
     // 退避窗口内不取任务：新 speak 不能把「重试等待」挤掉（否则退避形同虚设、请求更密）
     if (ttsNextRetryAt > 0) {
@@ -748,7 +763,8 @@ export function createVoice(opts: VoiceOptions): Voice {
       ttsNextRetryAt = 0
     }
     const job = ttsQ.shift()
-    if (!job) { setStatus('listening'); return }
+    // 队列空：没开麦就不能报「在听」（与 stopSpeaking 同一口径；试听/说书时麦克风是关的）
+    if (!job) { setStatus(running ? 'listening' : 'idle'); return }
     ttsBusy = true
     ttsBusySince = Date.now()
     ttsProgressAt = Date.now()
@@ -759,7 +775,6 @@ export function createVoice(opts: VoiceOptions): Voice {
     // 不在合成开始时就闭麦：合成要 3~4 秒，提前闭麦会让主人这几秒说的话全丢；
     // 真正闭麦放到「开播前」（见下面 a.play() 之前），重试等待期间也保持开麦
     // （自身回声由 acceptText 的 spokenRecent 比对 + 说完后的静音窗兜住）。
-    stats.ttsRequests++
 
     // 冷却期（连续合成失败达到阈值）：暂时不打 /tts，直接把这一段交给系统语音。
     // 正在退避重试中的段（attempts > 0）例外：让它按 4 次上限走完（冷却只拦"下一段"，
@@ -774,6 +789,9 @@ export function createVoice(opts: VoiceOptions): Voice {
       return
     }
 
+    // 真正要打 /tts 了才记一次请求：冷却期直接用系统语音的段不该算（否则自检面板「朗读：请求 N」
+    // 会比实际请求数多，排障时误以为限流没生效）。
+    stats.ttsRequests++
     const cached = ttsPrefetch.get(job.seq)
     const cur = cached || synth(job)
     // 预取命中/未命中：只做诊断计数（__chubbyWhale 里看），不参与任何播放/重试判定
@@ -1048,6 +1066,8 @@ export function createVoice(opts: VoiceOptions): Voice {
     // 队列任务由 voice/tts-queue.ts 构造（只有最后一段挂 onDone，seq 连续递增）
     const jobs = buildTtsJobs(segs, {
       rate,
+      // 音高一路传到 /tts 的请求体：不在这里交给队列任务，宿主永远只收到空串（B92 修）
+      pitch: o && o.pitch,
       narration,
       strict,
       nextSeq: ttsSeq + 1,

@@ -7,12 +7,14 @@
  *   · recentHeard —— 已放行的主人发言（交给 sim.ts 的 bigram Jaccard 去重）
  *   · acceptedSeg —— 已处理过的录音段号（同一段只处理一次；段号倒退 = ASR 结果乱序）
  *
- * 两处与字面规则不同的细节（都是实际会踩到的）：
+ * 三处与字面规则不同的细节（都是实际会踩到的）：
  *   · 比对前统一小写：英文回复首字母大写、ASR 回声常见全小写，不归一就永远对不上
  *     （normalizePlain/echoKey 在 text.ts，被多处共用，不能动，所以在这里归一）；
  *   · 录音段号必须单调：正常流程段号递增；ASR 没有显式单飞护栏，onerror 重开窗口、
  *     关了再开等路径都可能让两段上传在途，旧段结果晚到时段号更小 —— 直接作废，
- *     绝不能当成主人的新发言（否则旧答案会盖住新问题）。
+ *     绝不能当成主人的新发言（否则旧答案会盖住新问题）；
+ *   · 打断指令（停/别/不 + 多字整句）跳过短碎片与去重闸门（B92）：打断是 P0，
+ *     连说两遍也得生效；回声比对（自己刚念过的话）仍然照拦，不放宽。
  *
  * 统计不在这里记：原来同一事件在过滤内部与调用点各记一次（echoDropped 双计），
  * 现在统一由调用方按返回的 reason 记一次。
@@ -25,6 +27,32 @@ export type EchoVerdict = {
   ok: boolean
   /** ok=false 时的丢弃类别：调用方据此分桶计数 */
   reason?: 'trivial' | 'noise' | 'self' | 'echo' | 'short' | 'dup'
+}
+
+/**
+ * 整句「让本鱼停下」的指令（B92）：
+ *   · 单字 停/别/不 —— 与 voice-bridge 的 shared/noise.ts INTERRUPT_WORDS 同一口径；
+ *   · 多字整句 —— 与 voice-bridge 的 STOP_PHRASES、叙述期 NARR_STOP_RE 对齐。
+ * 这些整句一律**跳过去重闸门**：打断是 P0，主人连说两遍「停下来吧」必须还能停。
+ *
+ * 为什么不是去放宽 sim.ts 的 isRepeat（B91 分身的提醒）：minLen=4 的全局放宽只能救 1~3 字命令，
+ * 4 字以上的整句打断（停下来吧 / 不要说了）仍会被 8 秒窗判成 dup 吞掉；而且放宽 isRepeat
+ * 是拿"所有短句都不去重"换"打断有效"，把回声防线一起削弱了。这里只列出真正的指令整句，
+ * 普通短句（如「别人家的孩子」）照旧走去重。
+ */
+const SINGLE_INTERRUPT = /^[停别不]$/
+const INTERRUPT_PHRASES: string[] = [
+  '停下', '停下来', '停下来吧', '停一下', '停一停', '停吧',
+  '别说了', '别讲了', '别念了', '别吵', '别说下去了',
+  '不要说了', '不用说了', '闭嘴', '安静', '打住', '够了', '暂停', '算了',
+]
+
+/**
+ * 是不是「让本鱼停下」的整句指令（输入已是 normalizePlain + 小写后的文本）。
+ * 刻意不导出：模块对外的接口只有 createEchoFilter，判定细节不外泄（docs/模块接口清单.md 不变）。
+ */
+function isInterruptCommand(plain: string): boolean {
+  return SINGLE_INTERRUPT.test(plain) || INTERRUPT_PHRASES.indexOf(plain) >= 0
 }
 
 export type EchoFilter = {
@@ -76,7 +104,9 @@ export function createEchoFilter(): EchoFilter {
     // 单字放行白名单：主人喊「停！」也要能打断说书/朗读。
     // 必须在噪声判定之前放行 —— isNoiseText() 会把所有单字判成噪声（"嗯/啊"那类气口），
     // 直接丢掉的话「停/别/不」这条打断路径就永远走不到。
-    const interrupt = /^[停别不]$/.test(plain)
+    const interrupt = SINGLE_INTERRUPT.test(plain)
+    // 整句打断指令（含 4 字以上那些）：与单字同样放行，并且稍后跳过去重闸门。
+    const stopCmd = isInterruptCommand(plain)
     if (plain.length < 2 && !interrupt) return { ok: false, reason: 'trivial' }
     if (!interrupt && isNoiseText(plain)) return { ok: false, reason: 'noise' }
     if (/^本鱼在听/.test(plain)) return { ok: false, reason: 'self' }
@@ -100,10 +130,11 @@ export function createEchoFilter(): EchoFilter {
       if (plain.length >= 3 && now - s.at < 6000 && target.indexOf(plain) >= 0) return { ok: false, reason: 'echo' }
     }
     // 刚朗读过又只听到 1~2 字 → 大概率是自己的回声碎片（实测「的歪」这类会被当成主人发言）
-    if (isShortEchoFragment(plain, hadRecentSpeech)) return { ok: false, reason: 'short' }
+    if (!stopCmd && isShortEchoFragment(plain, hadRecentSpeech)) return { ok: false, reason: 'short' }
     // 去重统一走 client/sim.ts 的相似度算法（bigram Jaccard）：
     // 窗口 8 秒、阈值 0.90 —— 只挡"刚说过的同一句被切成两段"，主人隔一会儿再说不会被吞。
-    if (isRepeat(plain, { recent: recentHeard, windowMs: 8000, threshold: 0.9, minLen: 4, now })) {
+    // 打断指令跳过这道闸门（B92）：说书/念诗期间连说两遍「停下来吧」，第二声不能被当重复吞掉。
+    if (!stopCmd && isRepeat(plain, { recent: recentHeard, windowMs: 8000, threshold: 0.9, minLen: 4, now })) {
       return { ok: false, reason: 'dup' }
     }
     recentHeard.push({ text, at: now })
