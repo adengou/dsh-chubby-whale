@@ -227,6 +227,37 @@ export function createVoice(opts: VoiceOptions): Voice {
   let tickTimer: any = null
   let restartTimer: any = null
 
+  // ---- ASR 并发治理（2026-11-07 B78）----
+  // ① 单飞：同一时刻最多一个识别请求在途（docs/并发纪律.md 规则 2）。
+  //    触发源不止「主人连说两句」：麦克风窗口收尾时 onstop 可能连着触发两次（旧段残响 +
+  //    新段刚停）、关掉再重新待命、beginWindow 与 scheduleNext 交错 —— 两条识别链一起跑时，
+  //    后到的结果会盖住先到的，或者旧响应回来把新的话顶掉（串线）。
+  // ② 策略：**忙则丢（drop-new），不排队**。为什么丢而不是排队：
+  //    · 识别是「说完马上就要回话」的交互，排队意味着主人说完第二句还在等第一句、
+  //      第三句再等两段，表现为「鱼卡住了」；而排队的每一段都还要烧一次识别额度；
+  //    · 录音窗口是固定切片（6 秒 / 提前收尾），丢一段只是丢半句，远小于「旧话顶新话」的代价
+  //      （并发纪律规则 2：宁可丢一段音频，也不能让两段音频的结果乱序返回）；
+  //    · 排队没有天然上限（断网时每段 30 秒超时），自检清单明确要求队列有界；
+  //      与其引一个无界队列，不如按规则 2 直接丢。
+  //    丢的时候不改状态、不算识别失败，只发一条诊断（stage: asr-busy-drop）供排障。
+  // ③ 纪元：开始待命 / 停止 / 打断（停止说话）各让 asrEpoch +1。请求回来先比纪元，
+  //    过期一律丢弃 —— 不送聊天（onHeard）、不写诊断缓存（diag.setSegment）、不改状态、
+  //    不写 NO_KEY 标记。旧请求的 finally 也不能回收新一轮的单飞锁（见 finally 里的纪元判断）。
+  let asrBusy = false
+  let asrEpoch = 0
+  /** 在途识别请求的控制器（单飞 → 通常 1 个；超时重试会换新的，旧的已在 uploadOnce 的 finally 里摘掉） */
+  const asrAborts = new Set<AbortController>()
+
+  /**
+   * 作废在途识别：abort + 清单飞标志。只负责「收干净」，纪元由调用方推进。
+   * 单飞标志不能等旧请求的 finally 才放：stop() 之后立刻 start()，下一句必须马上能识别。
+   */
+  function abortAsrFlight(): void {
+    try { for (const c of asrAborts) { try { c.abort() } catch (e) { } } } catch (e) { }
+    try { asrAborts.clear() } catch (e) { }
+    asrBusy = false
+  }
+
   // ---- 过滤状态（回声/短碎片/重复都收在 voice/echo-filter.ts，这里只留一个实例） ----
   const echoFilter = createEchoFilter()
 
@@ -390,11 +421,22 @@ export function createVoice(opts: VoiceOptions): Voice {
     if (Date.now() < mutedUntil) { stats.skippedSilent++; scheduleNext(150); return }
     if (isTooSmallSegment(blob.size)) { stats.skippedSilent++; scheduleNext(150); return }
 
+    // 单飞闸门：上一段还没识别完，这一段直接丢（忙则丢，不排队 —— 理由见本文件「ASR 并发治理」段）
+    if (asrBusy) {
+      try { opts.onDiag && opts.onDiag({ stage: 'asr-busy-drop', hint: '上一段还在识别，这一段丢弃（不排队）' }) } catch (e) { }
+      scheduleNext(150)
+      return
+    }
+    // 纪元在我这一轮开始时定死：之后每个 await 回来都要比一次（停止/重新待命/打断都会 +1）
+    const myEpoch = asrEpoch
+    asrBusy = true
     stats.uploaded++
     setStatus('recognizing')
     try {
       // 编码协商 + Safari 的 mp4→WAV：上传前的容器转换都在这里（client/audio-codec.ts 提供纯函数）
       const wire = await prepareAudioForAsr(blob, { actx, recMime, onDiag: opts.onDiag })
+      // await 之后第一件事：我还是当前那一轮吗？不是就静默收尾（不写缓存/状态/统计）
+      if (myEpoch !== asrEpoch) return
       if (!wire || !wire.base64) { stats.asrFail++; stats.lastError = 'b64-empty'; return }
       // 单次上传（带独立 AbortController，超时/停止都会中止）
       const uploadOnce = async (): Promise<Response> => {
@@ -417,7 +459,8 @@ export function createVoice(opts: VoiceOptions): Voice {
         res = await uploadOnce()
       } catch (e1: any) {
         // 超时/网络抖动：自动重试一次（识别失败 3/4 的根因是 15s 硬超时）
-        if (ASR_RETRY_ONCE && e1 && e1.name === 'AbortError' && running) {
+        // 纪元变了（停止/打断）就不重试：那是主动作废，不是接口慢，重试只会白烧额度。
+        if (ASR_RETRY_ONCE && e1 && e1.name === 'AbortError' && running && myEpoch === asrEpoch) {
           stats.asrRetry = (stats.asrRetry || 0) + 1
           try { opts.onDiag && opts.onDiag({ stage: 'asr-retry', hint: '识别超时，重试一次' }) } catch (e) { }
           res = await uploadOnce()
@@ -428,6 +471,9 @@ export function createVoice(opts: VoiceOptions): Voice {
       const data = await res.json()
       // 请求期间可能已经关掉语音待命/卸载：这时候不能再把结果当主人说话
       if (!running) return
+      // 纪元对不上（停止/重新待命/打断）：这条结果属于上一轮，一律作废 ——
+      // 不送聊天（onHeard）、不写诊断缓存（diag.setSegment）、不改状态、不写 NO_KEY 标记。
+      if (myEpoch !== asrEpoch) return
       // 没配识别 Key：记一次、通知上层给一句提示，本次会话内不再重试
       if (data && data.error === 'NO_KEY') {
         stats.asrFail++
@@ -467,10 +513,16 @@ export function createVoice(opts: VoiceOptions): Voice {
         stats.echoDropped++
       }
     } catch (e: any) {
+      // 早退（Stop/打断）导致的 abort 不是识别失败：纪元过期就静默收尾，别污染统计/诊断
+      if (myEpoch !== asrEpoch) return
       stats.asrFail++
       stats.lastError = (e && e.name === 'AbortError' ? 'asr-ex: AbortError（超时/已停止）' : 'asr-ex: ' + String((e && e.name) || e))
     } finally {
-      if (statusHolder.get() === 'recognizing') setStatus('listening')
+      // 旧请求的 finally 不能回收新一轮的锁：只有纪元没变时才复位单飞标志与「在听」状态
+      if (myEpoch === asrEpoch) {
+        asrBusy = false
+        if (statusHolder.get() === 'recognizing') setStatus('listening')
+      }
       // 只有录音器空闲时才排下一段：否则会打断正在录的段（会丢开头几个字）
       if (!rec || rec.state === "inactive") scheduleNext(150)
     }
@@ -562,8 +614,8 @@ export function createVoice(opts: VoiceOptions): Voice {
     const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
   /** 在途的合成请求：停止说话时一起 abort（服务器那边也会跟着断，不再白算一整段） */
   const ttsAborts = new Set<AbortController>()
-  /** 在途的识别请求：关语音待命/卸载时取消（否则关了还会"听到"并回话） */
-  const asrAborts = new Set<AbortController>()
+  // 在途识别控制器（asrAborts）与单飞/纪元状态在文件上部「ASR 并发治理」段统一声明：
+  // 识别链与朗读链是两条资源通道，状态别混在一起，免得又被当成一把大锁。
   /** 在途合成数（当前段 + 预取）：预取按它截断到 TTS_MAX_INFLIGHT，避免把 worker 队列塞满 */
   let ttsInflight = 0
   let ttsSeq = 0
@@ -880,6 +932,9 @@ export function createVoice(opts: VoiceOptions): Voice {
     asrNoKey = false   // 重新开语音会话就再试一次（主人可能刚配好 Key）
     if (running) return
     running = true
+    // 新一轮待命：ASR 纪元 +1，上一轮残留的请求（异常停掉没走 stop 的）一律作废
+    asrEpoch++
+    abortAsrFlight()
     recMime = ''
     recFormat = 'webm'
     levelOk = false
@@ -956,9 +1011,10 @@ export function createVoice(opts: VoiceOptions): Voice {
 
   function stop(): void {
     running = false
-    // 在途识别请求一并取消：关掉之后不能再"听到"并回话
-    try { for (const c of asrAborts) { try { c.abort() } catch (e) { } } } catch (e) { }
-    try { asrAborts.clear() } catch (e) { }
+    // 停止待命：ASR 纪元 +1，在途识别一并取消。关掉之后不能再"听到"并回话；
+    // 重新待命后，旧请求回来的结果也会被纪元拦下，不能当成主人新说的这一句。
+    asrEpoch++
+    abortAsrFlight()
     if (tickTimer) { clearTimeout(tickTimer); tickTimer = null }
     if (restartTimer) { clearTimeout(restartTimer); restartTimer = null }
     if (ttsWatch) { clearInterval(ttsWatch); ttsWatch = null }
@@ -1008,6 +1064,11 @@ export function createVoice(opts: VoiceOptions): Voice {
   }
 
   function stopSpeaking(): void {
+    // 打断也算「这一轮结束」：ASR 纪元 +1，正在识别的那句作废。
+    // 否则它回来时会当成主人刚刚说的新话送进聊天（P0 打断后旧话顶新话）。
+    // stop() 里已经 +1 过也没关系：纪元只用来判断「还是不是同一轮」，多 +1 无害。
+    asrEpoch++
+    abortAsrFlight()
     ttsSynthAt = 0
     ttsProgressAt = 0
     ttsCurJob = null
