@@ -50,18 +50,20 @@
  *   - 合成超时 / 进程非 0 退出 / 网络失败 → 普通 Error（路由 500）
  *   - 调用方中止（req.signal，客户端断连）→ Error 且 name='AbortError'（没有 code，路由按断连处理）
  *
- * ── 断连中止（2026-11-07 B94）──────────────────────────────────────────────
- *   路由把「客户端走了」变成 req.signal 传进来。本层只做三件事，且刻意**不杀**常驻 worker：
+ * ── 断连中止（2026-11-07 B94，B95 补上跨进程取消）─────────────────────────
+ *   路由把「客户端走了」变成 req.signal 传进来。本层只做四件事，且刻意**不杀**常驻 worker：
  *     ① 立刻放弃等待：探测 / 等 worker / 等回包三段都被 signal 打断（raceAbort、tts/worker.ts 的
  *        pending 摘除），不再干等到 20s 预算耗尽；
  *     ② 清理并作废本次产物：临时 mp3 照旧在 finally 删；worker 那条路如果 python 还在往里写
  *        （Windows 句柄没放开、unlink 报 EBUSY），再排一次延迟清理，绝不复用这份文件；
  *     ③ 不回退重跑：worker 因 abort 返回 false 时不再走单次 spawn，避免同一段文本合成两遍。
+ *     ④ 向共享 worker 发一条跨进程取消指令（B95）：{"cancel": <id>}。python 侧命中在跑的合成
+ *        就在下一个分块边界停写、没轮到就标记作废，两种情况都立刻回一条取消回执；worker 仍然不杀。
+ *        协议格式与「回执即时 ≠ 停写即时」的能力边界写在 tts/worker.ts 文件头。
  *   取舍（为什么"不等待"而不是"连 python 一起停"）：常驻 worker 是**跨请求共享**的（并发的另几段
  *   还在排队），为一次断连杀掉它，会连带失败掉别人的合成、还要重付一次启动 + import 开销
- *   （实测冷启动约 2.5s）。所以宁可让 worker 把已排队的这一段跑完、回包因 pending 已摘除而被丢弃
- *   （结果不写缓存、不回包），代价是一段文本的 CPU/网络白跑，但省掉杀进程与重启的连锁反应。
- *   真要「连 python 都立刻停」得给 worker 协议加跨进程取消指令，超出本批范围。
+ *   （实测冷启动约 2.5s）。B94 的做法是让 worker 把这一段跑完、回包被丢弃；B95 进一步让它
+ *   「停写 + 回执」，实测省掉这段网络与磁盘上的白跑，但取消本身仍受分块边界限制（不是 SIGKILL）。
  *   单次 spawn 回退路径不受此限：那个 python 是**本请求独占**的，abort 时直接 kill（tts/spawn.ts）。
  */
 import { readdir, readFile, stat, unlink } from 'node:fs/promises';
@@ -73,6 +75,12 @@ import { createWorkerRunner } from './tts/worker.js';
 import { synthViaCli } from './tts/spawn.js';
 // 探测缓存清理：排障/测试用，旧导入路径（tts-engine）继续可用
 export { resetTtsInterpreterProbe } from './tts/python.js';
+/**
+ * 取消指令成功写出的计数（B95）。刻意放在模块级而不是 engine 实例里：与 tts/common.ts 的其它
+ * 统计同口径（跨实例累计），排障时不会因为换了个 engine 实例就归零。
+ * 只由 createWorkerRunner 的 onCancelSent 回调自增 —— 那里已经保证了「真的写出去了」。
+ */
+let abortedSends = 0;
 /** 只读统计快照：给测试和排障用，调用方改不到内部状态 */
 export function getTtsEngineStats() {
     const outcome = peekProbeOutcome();
@@ -89,12 +97,14 @@ export function getTtsEngineStats() {
         workerKills: stats.workerKills,
         cliKills: stats.cliKills,
         timeouts: stats.timeouts,
+        aborted: abortedSends,
     };
 }
 export function createEdgeTtsEngine(opts = {}) {
     // 合成总预算：默认 20s，允许测试传更小值，但绝不放大到 20s 以上
     const timeoutMs = Math.min(Math.max(1, Number(opts.timeoutMs) || DEFAULT_TIMEOUT_MS), MAX_TIMEOUT_MS);
-    const worker = createWorkerRunner();
+    // 取消指令写成功一次就 +1（B95）；写不进去时 runner 不回调，所以这里不用再判一次
+    const worker = createWorkerRunner({ onCancelSent: () => { abortedSends++; } });
     // 进程崩溃/句柄没放开会留下 chubby-tts-*.mp3：启动时顺手扫一次过期残留
     void sweepStaleTmp();
     function remaining(startedAt) {
