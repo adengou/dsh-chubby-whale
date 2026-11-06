@@ -24,6 +24,8 @@ export type DataHost = {
   delJson?: (path: string, init?: any) => Promise<any>
   /** 测试注入：文件选择器（默认用 <input type="file" accept=".json">） */
   pickFile?: (cb: (file: any) => void) => void
+  /** 二次确认（默认用浏览器的 window.confirm；拿不到确认框的环境不拦，见 askImportConfirm） */
+  confirm?: (msg: string) => boolean
   /** 测试注入：下载依赖（默认取全局 document / URL / Blob） */
   env?: { document?: any; url?: any; BlobCtor?: any }
   /** 测试注入时钟（默认当前时间） */
@@ -187,10 +189,21 @@ export function downloadJson(data: any, filename: string, env?: any): boolean {
   }
 }
 
+/**
+ * 体积超限错误码要认两种写法：
+ *   · 导出路由自己回 `TOO_LARGE`（src/host/routes/backup.ts 的 handleExport）；
+ *   · 请求体超限走公共通道 src/host/http.ts 的 sendTooLarge → `'too large'`（导入就是这条）。
+ * 旧实现只比 `err === 'TOO_LARGE'`，导入撞体积上限时会落到「备份文件读不了」——
+ * 主人以为文件坏了，其实是太大，该换个小点的包。
+ */
+function isTooLargeError(err: any): boolean {
+  return str(err).replace(/[^A-Za-z]/g, '').toUpperCase() === 'TOOLARGE'
+}
+
 /** 导出接口失败文案：413 是体积超限，和网络失败分开说（否则主人不知道换个小点的包） */
 function exportFailText(d: any): string {
-  const err = d && typeof d === 'object' ? String((d as any).error || '') : ''
-  return err === 'TOO_LARGE' ? '备份太大（超过 2MB），导出没成功' : '导出没成功'
+  const err = d && typeof d === 'object' ? (d as any).error : ''
+  return isTooLargeError(err) ? '备份太大（超过 2MB），导出没成功' : '导出没成功'
 }
 
 /** 导出：GET /data/export → 本地下载 JSON；失败只轻提示 */
@@ -290,10 +303,34 @@ export function pickJsonFile(cb: (file: any) => void): void {
  * 否则「备份太大」和「文件坏了」都显示同一句，主人不知道该怎么处理。
  */
 function importFailText(d: any): string {
-  const err = d && typeof d === 'object' ? String((d as any).error || '') : ''
-  if (err === 'TOO_LARGE') return '备份太大（超过 2MB），没导入'
-  if (err === 'BAD_BODY') return '备份文件格式不对，没导入'
+  const err = (d && typeof d === 'object') ? str((d as any).error).trim() : ''
+  if (isTooLargeError(err)) return '备份太大（超过 2MB），没导入'
+  if (err.toUpperCase() === 'BAD_BODY') return '备份文件格式不对，没导入'
   return '备份文件读不了'
+}
+
+/**
+ * 导入前的二次确认。导入是**整字段覆盖**（src/host/backup/import.ts：同名字段后到者整字段替换，
+ * 覆盖的是记忆/人格/状态/成长/鱼粮/宠物/提醒/说书进度），选错文件的代价不可撤销，
+ * 所以落盘前必须先问一句（与 system.ts「清除记忆」同一约定）。
+ *
+ * 宿主可注入 confirm（测试用）；不注入就用浏览器 window.confirm。
+ * 拿不到确认框的环境（Node 单测 / 无 UI 宿主）**不拦**：那种环境没有可问的人，
+ * 拦下来只会让调用方在无 UI 环境里永远导不进去。
+ * 确认框本身抛错（被浏览器禁用）按「没确认」处理，绝不静默执行。
+ */
+const IMPORT_CONFIRM_TEXT = '导入会按备份整字段覆盖本机的记忆/人格/成长/鱼粮/提醒，确定吗？'
+
+function askImportConfirm(host: DataHost): boolean {
+  const injected = host && typeof host.confirm === 'function' ? host.confirm : null
+  if (injected) {
+    try { return !!injected(IMPORT_CONFIRM_TEXT) } catch (e) { return false }
+  }
+  try {
+    const w: any = (typeof window !== 'undefined') ? window : null
+    if (w && typeof w.confirm === 'function') return !!w.confirm(IMPORT_CONFIRM_TEXT)
+  } catch (e) { return false }
+  return true
 }
 
 /** 导入后清宿主聊天缓存：旧回复不能继续套在新数据上（失败静默） */
@@ -325,6 +362,11 @@ export function importBackup(host: DataHost): void {
         const body = parseImportText(text)
         if (!body) {
           host.bubble('备份文件读不了', 6000)
+          return
+        }
+        // 二次确认（只对已解析成对象的备份问；取消选择/读不了/太大这些早退路径不问）
+        if (!askImportConfirm(host)) {
+          host.bubble('没确认，导入取消', 4000)
           return
         }
         let p: Promise<any>
