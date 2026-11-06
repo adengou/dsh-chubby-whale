@@ -125,7 +125,11 @@ export function createStoryHandlers(opts: { player: StoryPlayer }) {
     if (methodOf(req) !== 'POST') { rejectMethod(res, 'POST'); return }
     try {
       const url = new URL(req.url, 'http://x')
-      // 先读体（带上限）：不读就没法回 413，客户端还在发的 body 会一直占着连接
+      // 先按 content-length 直接拒：readJsonBody 超限时为保证不把大包收进内存会先断连接，
+      // 断早了客户端就只能看到连接重置；这里先回一个能收到的 413，再交给下面的流式读取兜底。
+      const declared = Number(req?.headers?.['content-length'])
+      if (Number.isFinite(declared) && declared > RESET_MAX_BODY) { sendTooLarge(res); return }
+      // 再读体（流式累计超限同样中止）：不读就没法兜底 413，客户端还在发的 body 会一直占着连接
       const body = await readJsonBody(req, RESET_MAX_BODY)
       if (!body.ok) { sendTooLarge(res); return }
       const fromQuery = url.searchParams.get('book')
