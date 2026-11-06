@@ -117,10 +117,29 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
   table.define('culture-story', (host) => { host.story.start('') })
   table.define('culture-story-next', (host) => { host.story.next() })
   table.define('story-reset', (host) => { host.story.reset() })
+  /**
+   * 连播开关的当前值：与菜单标签读同一个源。
+   *
+   * 菜单「连播：开/关」由 client/render.ts 的 readMenuRuntime() 决定，读的是
+   * localStorage 的 `chubby-story-auto`（键不存在=开，'0'=关）；旧实现这里却按
+   * storyState.auto（内存里的一次性开关）取反。而 client/story.ts 讲完最后一回时
+   * 会把 auto 清成 false 且不动 localStorage —— 于是菜单显示「开」，点一下却先把
+   * 它设成 true：看着像点了没反应，关掉得点两下。
+   *
+   * 读同一个源之后：菜单显示什么，点下去就关什么。localStorage 读不到（禁存储）时
+   * 退回内存值 —— 那种环境本来就没有持久化，至少让开关改得动，气泡按实际值说。
+   */
+  function storyAutoPref(host: ActionHost): boolean {
+    try {
+      const s = localStorage.getItem('chubby-story-auto')
+      return s === null ? true : s !== '0'
+    } catch (e) {
+      return host && host.storyState && host.storyState.auto ? !!host.storyState.auto.current : true
+    }
+  }
   // 连播开关：默认开（主人要求）；关掉后一段讲完就停，状态记在 localStorage
-  table.define('story-auto', (host: any) => {
-    const cur = host && host.storyState && host.storyState.auto ? !!host.storyState.auto.current : true
-    const next = !cur
+  table.define('story-auto', (host: ActionHost) => {
+    const next = !storyAutoPref(host)
     try { if (host.storyState && host.storyState.auto) host.storyState.auto.current = next } catch (e) { }
     try { localStorage.setItem('chubby-story-auto', next ? '1' : '0') } catch (e) { }
     host.bubble(next ? '连播：开——讲完这段自动接下一段' : '连播：关——讲完这段就停', 4000)

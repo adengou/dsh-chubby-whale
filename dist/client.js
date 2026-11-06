@@ -2605,8 +2605,11 @@
     const voiceOn = state.voiceOn ? true : false;
     const earOn = state.earOn ? true : false;
     const voiceChatOn = state.voiceChatOn ? true : false;
-    const chatLang = state.chatLang ? String(state.chatLang) : "auto";
-    const ttsVoice = state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
+    const chatLang = (() => {
+      const v = state.chatLang ? String(state.chatLang) : "";
+      return v === "zh" || v === "en" ? v : "auto";
+    })();
+    const ttsVoice = normalizeVoiceName(state.ttsVoice);
     const chatCacheOn = !(state.chatCacheOn === false);
     const voiceTick = (voice) => ttsVoice === voice ? "✓ " : "";
     const growthText = state && state.growth ? state.growth : "--";
@@ -4252,9 +4255,16 @@
     table.define("story-reset", (host) => {
       host.story.reset();
     });
+    function storyAutoPref(host) {
+      try {
+        const s = localStorage.getItem("chubby-story-auto");
+        return s === null ? true : s !== "0";
+      } catch (e) {
+        return host && host.storyState && host.storyState.auto ? !!host.storyState.auto.current : true;
+      }
+    }
     table.define("story-auto", (host) => {
-      const cur = host && host.storyState && host.storyState.auto ? !!host.storyState.auto.current : true;
-      const next = !cur;
+      const next = !storyAutoPref(host);
       try {
         if (host.storyState && host.storyState.auto) host.storyState.auto.current = next;
       } catch (e) {
@@ -4857,6 +4867,8 @@
 
   // src/client/actions/system.ts
   function registerSystemActions(table) {
+    let cacheToggleBusy = false;
+    let cacheToggleSeq = 0;
     function syncFeed(host) {
       try {
         getJson("/pet?action=feed").then(() => {
@@ -4997,21 +5009,40 @@
       delJson("/cache").then((d) => host.bubble(d && d.ok ? "聊天缓存清空啦（" + (d.cleared || 0) + " 条）" : "缓存清空失败", 5e3)).catch(() => host.bubble("缓存清空失败", 4e3));
     });
     table.define("cache-toggle", (host) => {
+      if (cacheToggleBusy) {
+        host.bubble("正在切换聊天缓存，稍等～", 2500);
+        return;
+      }
       const nowOn = !host.chatCacheOn();
       host.setChatCacheOn(nowOn);
-      postJson("/cache-toggle", { enabled: nowOn }).then((d) => {
-        if (!d || !d.ok) {
-          host.setChatCacheOn(!nowOn);
-          host.bubble("切换失败", 4e3);
-          return;
+      cacheToggleBusy = true;
+      const my = ++cacheToggleSeq;
+      let guard = null;
+      let settled = false;
+      const finish = (real, text) => {
+        if (settled || my !== cacheToggleSeq) return;
+        settled = true;
+        if (guard) {
+          clearT(guard);
+          guard = null;
         }
-        const real = typeof d.enabled === "boolean" ? d.enabled : nowOn;
+        cacheToggleBusy = false;
         host.setChatCacheOn(real);
-        host.bubble("聊天缓存：" + (real ? "开（省 token）" : "关（每次重新回答）"), 5e3);
-      }).catch(() => {
-        host.setChatCacheOn(!nowOn);
-        host.bubble("切换失败", 4e3);
-      });
+        host.bubble(text, 5e3);
+      };
+      try {
+        guard = setTimeout(() => finish(!nowOn, "切换失败"), 8e3);
+        Promise.resolve(postJson("/cache-toggle", { enabled: nowOn })).then((d) => {
+          if (!d || !d.ok) {
+            finish(!nowOn, "切换失败");
+            return;
+          }
+          const real = typeof d.enabled === "boolean" ? d.enabled : nowOn;
+          finish(real, "聊天缓存：" + (real ? "开（省 token）" : "关（每次重新回答）"));
+        }).catch(() => finish(!nowOn, "切换失败"));
+      } catch (e) {
+        finish(!nowOn, "切换失败");
+      }
     });
     table.define("clear-memory", (host) => {
       let go = false;
