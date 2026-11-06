@@ -16,7 +16,7 @@ import { createVoice, normalizeVoiceName, readStoredVoiceName } from './voice.js
 import type { Voice } from './voice.js'
 import type { NarrationLock } from './narration.js'
 import { bumpProgress } from './narration-progress.js'
-import { createWakeGate, normalizeWakeText, loadCustomWakeWords } from './wake.js'
+import { createWakeGate, normalizeWakeText, loadCustomWakeWords, WAKE_WORDS } from './wake.js'
 
 export type VoiceBridgeHost = {
   /** 叙述锁：念诗/说书期间拾到的话不当作新发言（只放行明确的"停"） */
@@ -83,11 +83,33 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
   let pendingVoice = readStoredVoiceName()
   // 唤醒门：命中唤醒词刷新 30 秒有效窗
   const gate = createWakeGate({ words: loadCustomWakeWords() })
+
+// 唤醒词表按需同步（2026-11-07）：主人换词后不必重开语音待命/刷新页面。
+// loadCustomWakeWords() 返回 undefined 表示「用默认表」；gate 内部持有同一个数组引用，
+// 原地替换元素即可生效，且不会丢掉「30 秒有效窗」的状态（重建 gate 会丢）。
+let wakeWordsSig = ''
+function syncWakeWords(): void {
+  let next: string[]
+  try {
+    const custom = loadCustomWakeWords()
+    next = (custom && custom.length ? custom : WAKE_WORDS).slice()
+  } catch (e) {
+    return
+  }
+  const sig = next.join('|')
+  if (sig === wakeWordsSig) return
+  wakeWordsSig = sig
+  try {
+    gate.words.length = 0
+    for (const w of next) gate.words.push(w)
+  } catch (e) { }
+}
   const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 }
   // 识别没配 Key 的提示只弹一次（每次重开语音待命可以再弹一次）
   let asrNoKeyNotified = false
 
   function wakeInfo(): any {
+  syncWakeWords()
     const now = Date.now()
     const remainingMs = gate.remainingMs(now)
     return {
@@ -152,6 +174,7 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
 
         // 唤醒词不再当门槛：主人 2026-11-06 定的是"随时可以说"。
         // 唤醒词只剩两个用途：① 只喊名字时应一声；② 唤醒词出现在句首时从正文里剥掉。
+        syncWakeWords()
         const r = gate.check(text)
         if (r.hit) { wakeStats.hits++; wakeStats.lastHitAt = Date.now() }
         const said = r.hit ? r.text : String(text || '').trim()

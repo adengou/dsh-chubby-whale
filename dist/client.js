@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.54";
+  var VERSION = "1.1.56";
 
   // src/client/styles.ts
   var W = 240;
@@ -3655,9 +3655,28 @@
     let voice = null;
     let pendingVoice = readStoredVoiceName();
     const gate = createWakeGate({ words: loadCustomWakeWords() });
+    let wakeWordsSig = "";
+    function syncWakeWords() {
+      let next;
+      try {
+        const custom = loadCustomWakeWords();
+        next = (custom && custom.length ? custom : WAKE_WORDS).slice();
+      } catch (e) {
+        return;
+      }
+      const sig = next.join("|");
+      if (sig === wakeWordsSig) return;
+      wakeWordsSig = sig;
+      try {
+        gate.words.length = 0;
+        for (const w of next) gate.words.push(w);
+      } catch (e) {
+      }
+    }
     const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 };
     let asrNoKeyNotified = false;
     function wakeInfo() {
+      syncWakeWords();
       const now = Date.now();
       const remainingMs = gate.remainingMs(now);
       return {
@@ -3729,6 +3748,7 @@
             }
           } catch (e) {
           }
+          syncWakeWords();
           const r = gate.check(text);
           if (r.hit) {
             wakeStats.hits++;

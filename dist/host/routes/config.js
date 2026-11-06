@@ -10,6 +10,8 @@
  *         hasDeepseekKey, hasSiliconflowKey }   // 只报"有没有"，绝不回 Key 内容
  *
  * 约定：不因读取失败而 500——各字段各自兜底，读不到就给缺省值。
+ * 布尔字段统一经 safeBool 出口：即使注入方误把「读 Key」的函数直接接进来（返回 Key 原文），
+ * 也只会变成 true/false，配置视图没有任何回显 Key 内容的通路。
  */
 import { sendJson } from '../respond.js';
 export function createConfigViewHandler(opts) {
@@ -25,6 +27,24 @@ export function createConfigViewHandler(opts) {
             return fallback;
         }
     }
+    /**
+     * 布尔字段的唯一出口：非布尔一律 Boolean 化，绝不把原值原样塞进响应。
+     * 这道闸门的意义是「接口契约不许回显 Key 内容」不依赖注入方自觉——即使 hasDeepseekKey
+     * 被误接成 readApiKey（返回 "sk-..."），这里也只产出 true；异常/空值按缺省值。
+     */
+    function safeBool(fn, fallback) {
+        try {
+            if (typeof fn !== 'function')
+                return fallback;
+            const v = fn();
+            if (v === true || v === false)
+                return v;
+            return v == null ? fallback : Boolean(v);
+        }
+        catch {
+            return fallback;
+        }
+    }
     async function handleConfig(req, res) {
         try {
             const method = req && req.method ? String(req.method).toUpperCase() : 'GET';
@@ -34,15 +54,15 @@ export function createConfigViewHandler(opts) {
             }
             sendJson(res, {
                 ok: true,
-                enabled: safe(opts.enabled, true),
+                enabled: safeBool(opts.enabled, true),
                 dataSource: String(safe(opts.dataSource, 'local')),
                 model: String(safe(opts.model, '')),
-                personalityLearning: safe(opts.personalityLearning, true),
-                personalityWriting: safe(opts.personalityWriting, true),
-                cacheEnabled: safe(opts.cacheEnabled, true),
-                // 只报有没有 Key，绝不回内容
-                hasDeepseekKey: safe(opts.hasDeepseekKey, false),
-                hasSiliconflowKey: safe(opts.hasSiliconflowKey, false),
+                personalityLearning: safeBool(opts.personalityLearning, true),
+                personalityWriting: safeBool(opts.personalityWriting, true),
+                cacheEnabled: safeBool(opts.cacheEnabled, true),
+                // 只报有没有 Key，绝不回内容（safeBool 兜最后一道）
+                hasDeepseekKey: safeBool(opts.hasDeepseekKey, false),
+                hasSiliconflowKey: safeBool(opts.hasSiliconflowKey, false),
             });
         }
         catch {
