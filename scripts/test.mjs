@@ -709,6 +709,9 @@ try {
 // ---------- ㉑ TTS 路由：入参校验 / 缓存 / Buffer / 失败码 ----------
 console.log('\n[21] TTS 路由 host/routes/tts.ts（假 req/res + 假引擎）')
 try {
+  // 连败闸门的阈值是模块级常量（import 时读取），测试前先用短窗口覆盖
+  process.env.CHUBBY_TTS_DEGRADE_AFTER = '2'
+  process.env.CHUBBY_TTS_DEGRADE_MS = '200'
   const { mkdtempSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
@@ -787,6 +790,53 @@ try {
   res = mkRes()
   await handle(mkReq({ text: 'x' }, { 'content-length': String(10 * 1024 * 1024) }), res)
   ok('超大请求体 → 413', res.code === 413, 'code=' + res.code)
+
+  // ⑦ 连败闸门（2026-11-06）：连续失败收口成一行日志 + 静默窗口，恢复后自动清零
+  const errLogs = []
+  const origErr = console.error
+  console.error = (...a) => { errLogs.push(a.join(' ')) }
+  let failMode2 = 'error'
+  const calls2 = []
+  const engine2 = {
+    async synthesize(o) {
+      calls2.push(o)
+      if (failMode2 === 'error') {
+        const e = new Error("NoAudioReceived('no audio')\nTraceback (most recent call last):\n  File \"x.py\", line 1")
+        throw e
+      }
+      return Buffer.from('OK2:' + o.text)
+    },
+  }
+  const handle2 = createTtsHandler({ engine: engine2 })
+
+  res = mkRes()
+  await handle2(mkReq({ text: '连败一' }), res)
+  ok('闸门①：首次失败 → 500', res.code === 500, 'code=' + res.code)
+
+  res = mkRes()
+  await handle2(mkReq({ text: '连败二' }), res)
+  const guardBody = JSON.parse(res.bodyText())
+  ok('闸门②：第二次失败 → 501 降级', res.code === 501 && guardBody.code === 'TTS_UNAVAILABLE', 'code=' + res.code + ' body=' + res.bodyText())
+
+  const callsAtDegrade = calls2.length
+  res = mkRes()
+  await handle2(mkReq({ text: '降级期内' }), res)
+  ok('闸门③：降级期内不再调引擎', calls2.length === callsAtDegrade, 'engine 调用 ' + (calls2.length - callsAtDegrade) + ' 次')
+  ok('闸门④：降级期回 501 且文案是 tts degraded', JSON.parse(res.bodyText()).error === 'tts degraded')
+
+  ok('闸门⑤：日志压成一行不刷屏', errLogs.length <= 2 && !errLogs.some((l) => /[\r\n]/.test(l)), '行数 ' + errLogs.length)
+
+  await new Promise((r) => setTimeout(r, 260))
+  failMode2 = 'ok'
+  res = mkRes()
+  await handle2(mkReq({ text: '恢复' }), res)
+  ok('闸门⑥：窗口过后自动恢复 200', res.code === 200, 'code=' + res.code)
+
+  failMode2 = 'error'
+  res = mkRes()
+  await handle2(mkReq({ text: '恢复后又失败' }), res)
+  ok('闸门⑦：成功已清零，再失败是 500 而不是 501', res.code === 500, 'code=' + res.code)
+  console.error = origErr
 
   rmSync(dir, { recursive: true, force: true })
 } catch (e) {

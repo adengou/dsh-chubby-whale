@@ -3,6 +3,18 @@
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
 ## [未发布]
+
+## [1.1.42] - 2026-11-06
+
+### 修复
+- **TTS 连续失败刷屏**：`/tts` 路由加「连败闸门」——连续 2 次合成失败（或 python/edge-tts 确定不可用）即静默 60 秒：期间直接回 `501 TTS_UNAVAILABLE`，客户端据此改走浏览器朗读，**不再逐段调用引擎、不再逐段打 traceback**；任意一次合成成功立即清零恢复。阈值可用 `CHUBBY_TTS_DEGRADE_AFTER` / `CHUBBY_TTS_DEGRADE_MS` 覆盖
+- **错误日志压成一行**：python traceback 是多行的，逐段打全栈正是刷屏本体；现在统一把空白压成空格后再截断
+- 闸门状态按 handler 实例隔离（多次 `createTtsHandler` 互不串味，测试可注入）
+
+### 构建
+- `package.json` 增加 `peerDependenciesMeta`（`@deepseek-ai/cordis` 标记 optional）：npm 12 会自动安装 peer，与旧 lock 不同步导致 `npm ci` 报 EUSAGE；标记 optional 后 Windows/Linux/macOS 都能正常 `npm ci`
+- `scripts/test.mjs` 新增 7 项闸门回归断言（首次失败 500 / 二次降级 501 / 降级期不调引擎 / 文案有据 / 日志单行 / 窗口过后自动恢复 / 成功后清零）
+
 ## [1.1.41] - 2026-11-06
 
 ### 数据对齐（本地=云端=dlg 版）
