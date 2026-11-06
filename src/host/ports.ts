@@ -144,6 +144,11 @@ export interface ChatStreamRouteDeps {
   model?: string
   /** 模型真实成功回复后回调（L2 可变人格计数用）；不 await、不阻塞流 */
   onReply?: () => void
+  /** 亲密度/成长/长期摘要：与普通 /chat 同口径（2026-11-06 补齐，客户端优先走流式） */
+  loadState?: () => any
+  saveState?: (s: any) => void
+  addExp?: (n: number, kind: string) => any
+  saveMemorySummary?: (s: string) => void
 }
 
 /** /tts 的依赖：合成引擎可替换，缓存走缓存端口 */
