@@ -4,6 +4,22 @@
 
 ## [未发布]
 
+## [1.1.67] - 2026-11-07
+
+### 新增
+- **资源通道基础件 `client/channel.ts`**（`docs/并发纪律.md` §七 一直缺的那一块）：通道内串行、优先级（数字小先跑，与 P0>P1>P2 同口径）、conflate（同 key 只留最新，被丢的旧调用方以 rejected 收口）、冻结统计快照与 `idle()`。**三条资源（mic/asr/speak）尚未接入**，`channels` 诊断仍为空 —— 文档口径已同步改准
+
+### 修复
+- **流式记账看错了对象**：`/chat-stream` 原来用 `aborted || client.gone()` 决定是否记账，于是「完整回复只是回不去」也被丢掉，与 `/chat` 不一致。现在只看 `sawDone`（上游 `read()` 是否读到 done）：半截照旧不落盘，完整则照常记账、只跳过 done 帧并留 `CHAT-CLIENT-ABORT-DELIVERED` 诊断
+- **edge-tts worker 收到取消能立刻停写**：原来 python 侧合成期间根本不读 stdin（`for line in sys.stdin` 读完才跑），发取消也要等整段跑完。重写为「读线程 + 队列」：取消行立即回执（实测 15–16ms），合成改用 `stream()` 分块写盘、每块写前查停止标记；主进程 abort 时先发 `{"cancel":id}` 再收尾，新增 `aborted` 统计。**边界**：停写粒度是分块边界而非 SIGKILL，且仍不杀跨请求共享的 worker（注释写明）
+
+### 文档
+- **安装说明补两个来源**：README 安装节从「两种来源」改为 npm 包 / Gitee / GitHub 镜像 / 本地 link 四种，渠道表补镜像与 npm 包地址；`docs/发布规范.md` 的安装冒烟同步补三条命令与「可达性前提」
+
+### 测试
+- 新增 `test-channel.mjs`(22)、`test-tts-cancel.mjs`(49)，接入 `npm test`；`test-stream-ledger` / `test-chat-limits` 情形 B 断言按新口径更新
+- 全链 **4106 项 0 失败**（`node tools/test-count.mjs`：58 个套件，失败 0，未识别 0）
+
 ## [1.1.66] - 2026-11-07
 
 ### 修复（B94 HTTP 错误分类与聊天断连分身）
