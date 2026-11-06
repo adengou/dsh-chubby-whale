@@ -10,6 +10,19 @@ export const SX = CW / 1696
 export const SY = CH / 1504
 export { VERSION } from './version.js'
 
+/**
+ * stage 的 transform 合成：位移（拖动时用）+ 缩放（主人调的大小）。
+ *
+ * 为什么要收成函数（2026-11-07）：`client.ts` 的 applyPos 在拖动时直接写
+ * `el.style.transform = 'translate3d(...)'`，把 `stageStyle` 里的 `scale(...)` 覆盖掉；
+ * 拖动结束再把 transform 清空——于是「先缩放再拖」，缩放就丢了（React 认为 style 没变、
+ * 不会重新写回 scale）。两边共用同一个构造函数，谁也不会漏掉另一半。
+ *
+ * 顺序固定为「先 translate 后 scale」：位移按屏幕像素走，不受缩放倍数影响。
+ */
+export const stageTransform = (scale: number, tx = 0, ty = 0): string =>
+  'translate3d(' + (tx || 0) + 'px,' + (ty || 0) + 'px,0) scale(' + (scale || 1) + ')'
+
 export const stageStyle = (scale: number, hidden: boolean) => ({
   position: 'fixed' as const,
   left: 0,
@@ -21,7 +34,7 @@ export const stageStyle = (scale: number, hidden: boolean) => ({
   zIndex: 9999,
   cursor: 'grab',
   touchAction: 'none' as const,
-  transform: 'scale(' + scale + ')',
+  transform: stageTransform(scale),
   // 缩放原点用左上角：与 stage.ts 的 clampPos（按左上坐标 + W*s 宽高钳制）同口径；
   // 原先 100% 100%（右下）会让缩放后的鱼贴边溢出约 96px。
   transformOrigin: '0 0',
