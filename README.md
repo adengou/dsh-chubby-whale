@@ -1,6 +1,6 @@
 # dsh-chubby-whale（肥鲸）
 
-[![license](https://img.shields.io/npm/l/dsh-chubby-whale.svg)](LICENSE)
+[LICENSE](LICENSE)
 [![Gitee](https://gitee.com/adengou/dsh-chubby-whale/badge/star.svg?theme=dark)](https://gitee.com/adengou/dsh-chubby-whale)
 
 DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下角。可拖拽（带惯性、位置记忆）、会眨眼、能说话、能说书念诗弹琴，也能听懂你说话。
