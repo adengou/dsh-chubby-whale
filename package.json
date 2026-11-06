@@ -82,7 +82,8 @@
     "smoke:host": "node scripts/smoke-host.mjs",
     "bench:tts": "node tools/tts-bench.mjs",
     "bench:voice": "node tools/voice-bench.mjs",
-    "check:installed": "node tools/check-installed.mjs"
+    "check:installed": "node tools/check-installed.mjs",
+    "sync:github": "node tools/gh-sync.mjs"
   },
   "repository": {
     "type": "git",
