@@ -6557,7 +6557,12 @@
     };
     let activeId = null;
     const release = () => {
+      if (activeId === null) return;
       activeId = null;
+      try {
+        handlers.onEnd();
+      } catch (e) {
+      }
     };
     const pointerIdOf = (e) => e && typeof e.pointerId === "number" ? e.pointerId : null;
     const touchOf = (e, id) => {
@@ -6623,15 +6628,16 @@
     };
     const onMove = (e) => {
       if (handled(e)) return;
-      if (mode === "touch") {
-        if (activeId !== null) {
-          const t = touchOf(e, activeId);
-          if (!t) return;
-          handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0);
-          return;
-        }
+      if (mode === "pointer") {
+        if (inside(e)) return;
         const p2 = pointOf(e);
         handlers.onMove(p2.x, p2.y);
+        return;
+      }
+      if (activeId !== null) {
+        const t = touchOf(e, activeId);
+        if (!t) return;
+        handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0);
         return;
       }
       const p = pointOf(e);
@@ -6639,6 +6645,7 @@
     };
     const onEnd = (e) => {
       if (handled(e)) return;
+      if (mode === "pointer" && inside(e)) return;
       handlers.onEnd();
     };
     if (target && win) {
