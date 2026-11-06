@@ -20,6 +20,32 @@ export interface ReminderRepo {
 export function createReminderRepo(dataDir: string): ReminderRepo {
   const REMINDERS = join(dataDir, 'reminders.json')
 
+  /** JS Date 能表示的最大毫秒数（±8.64e15，约 ±275760 年）；超过它 toISOString() 直接抛 RangeError */
+  const MAX_DATE_MS = 8.64e15
+
+  /**
+   * 重复提醒的下一次触发时刻，保证**严格晚于 now**。
+   *
+   * 旧实现是 `while (nextMs <= now) nextMs += step`，最多 1 万次：
+   *   · 间隔小、逾期久时（例如 route 允许的 60 秒间隔 + 逾期 8 天 = 11520 个周期），
+   *     循环在仍早于 now 的地方停下，nextAt 留在过去 → 下一次轮询立刻再触发一遍，
+   *     同一条提醒会连着响好几遍（实测第二次轮询仍返回该条）；
+   *   · 间隔大到超出 Date 可表示范围时 new Date(nextMs).toISOString() 抛 RangeError，
+   *     dueReminders 整份列表都取不出来（一条坏数据废掉全部提醒）。
+   * 现在直接算「已经错过了几个间隔」（O(1)），再补一次兜住浮点误差。
+   *
+   * @returns 下一次触发的毫秒时间；无法落到合法时间（超大/非有限间隔）返回 null
+   */
+  function nextRepeatMs(when: number, repeatSec: number, now: number): number | null {
+    const step = repeatSec * 1000
+    if (!Number.isFinite(step) || step <= 0) return null
+    const periods = Math.floor((now - when) / step) + 1   // 至少跨过 now 一个周期
+    let nextMs = when + periods * step
+    if (nextMs <= now) nextMs = when + (periods + 1) * step // 浮点误差兜底
+    if (!Number.isFinite(nextMs) || nextMs <= now || nextMs > MAX_DATE_MS) return null
+    return nextMs
+  }
+
   function loadReminders(): any[] {
     try {
       const arr = JSON.parse(readTextNoBom(REMINDERS))
@@ -34,7 +60,9 @@ export function createReminderRepo(dataDir: string): ReminderRepo {
   }
   function addReminder(text: string, at: string, repeat?: number): any {
     const arr = loadReminders()
-    const rep = Math.round(Number(repeat) || 0)
+    // repeat 只接受「有限正整数秒」：Infinity/NaN 落成 Infinity 会让 dueReminders 算出非法时间
+    const repIn = Math.round(Number(repeat) || 0)
+    const rep = Number.isFinite(repIn) && repIn > 0 ? repIn : 0
     const item = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       text,
@@ -70,12 +98,16 @@ export function createReminderRepo(dataDir: string): ReminderRepo {
       if (rep > 0) {
         // 每天（或自定义间隔）的提醒：不标 done，只把下一次时间往后推
         // 从「原定时间」往后推，不用「触发时刻」——否则每天 9 点的提醒会一天比一天晚
-        let nextMs = when + rep * 1000
-        let guard = 0
-        while (nextMs <= now && guard++ < 10000) nextMs += rep * 1000
-        r.nextAt = new Date(nextMs).toISOString()
-        r.at = r.nextAt
-        r.fired = false
+        const nextMs = nextRepeatMs(when, rep, now)
+        if (nextMs === null) {
+          // 间隔落不到合法时间（超大/非有限）：退化成一次性，别让一条坏数据拖垮整份到点列表
+          console.error('[store] REMINDER-REPEAT-OVERFLOW repeat=' + rep + ' at=' + String(stamp))
+          r.done = true
+        } else {
+          r.nextAt = new Date(nextMs).toISOString()
+          r.at = r.nextAt
+          r.fired = false
+        }
       } else {
         r.done = true
       }
