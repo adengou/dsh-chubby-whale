@@ -3,6 +3,28 @@
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
 ## [未发布]
+## [1.1.9] - 2026-11-06
+
+### 安全修复（说书接口，需重启生效）
+- **路径穿越**：云端清单里的书名未清洗，`../secret` 能读到 `data/story` 之外的 JSON → 路由/数据源/仓储三层清洗（trim/长度/路径字符/`..`）
+- **方法校验缺失**：dsh webserver 只按 pathname 派发，`GET /story/reset` 会直接清进度 → 四个接口方法白名单（reset 只 POST，405+Allow）
+- `reset` 请求体无上限（10MB 照常 200）→ content-length 预拒 + 4KB 兜底
+- `/story/start` 只认 `hint` 不认 `book`（客户端注解用 book）→ 接受 book 别名
+- `/story/*` 写进度的 GET 未带缓存头 → 统一 `no-store`
+- 仓储冷读返回缓存内部数组（调用方 push 会污染缓存）→ 统一返回切片
+- 新增 17 项说书安全回归测试（`scripts/test-story-security.mjs`）并入 npm test
+
+### 修复（纯函数）
+- 句子缓冲遇到前导换行会卡住整段（TTS 迟迟不开口）
+- `taleParts` 前后导 `·` 边界（缺字段时气泡显示「··标题」）
+- `timeoutSignal(0)` 被当成「立即超时」（本意是无超时）
+- `busy.begin(Infinity)` 让加锁永不超时（永久占线）
+- 语速 `-0%/-00%` 校验漏洞与 trim
+- `delJson` 的 method 可被覆盖
+
+### 发布完整性
+- `npm pack --dry-run`：116 文件 / 16.6 MB，关键文件全在；`data/cache`、运行数据、`config.json`、`src/`、`scripts/` 均不进包
+
 ## [1.1.8] - 2026-11-06
 
 ### 清理与修复
