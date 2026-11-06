@@ -9,7 +9,31 @@ import { str } from '../util.js'
 import { readEndpointMode, writeEndpointMode } from '../endpoint.js'
 import type { ActionHost, ActionTable } from '../actions.js'
 import { normalizeVoiceName } from '../voice.js'
-import { setCustomWakeWord } from '../wake.js'
+import { setCustomWakeWord, WAKE_WORDS } from '../wake.js'
+
+/**
+ * 唤醒门里的词表是否已经是这次设置的结果。
+ *
+ * 门在 client/voice-bridge.ts 建实例时读一次 localStorage（createWakeGate({words: loadCustomWakeWords()})），
+ * 之后不再重读；所以换完唤醒词、当前实例还活着时，门用的仍是旧词表
+ * （结果：「只说新唤醒词」不会被应一声，句首的新词也不会被剥掉）。
+ * 这里只比对 host.wakeInfo().words（client/wake.ts 注明该表就是给提示文案用的）；
+ * 拿不到门状态时返回 true —— 不猜、不乱加提示。
+ */
+function wakeWordsLive(host: ActionHost, want: string[]): boolean {
+  let info: any = null
+  try { info = host.wakeInfo ? host.wakeInfo() : null } catch (e) { info = null }
+  const live: string[] | null = (info && Array.isArray(info.words)) ? info.words.map((x: any) => str(x)) : null
+  if (!live || !live.length) return true
+  if (live.length !== want.length) return false
+  for (let i = 0; i < want.length; i++) { if (live[i] !== want[i]) return false }
+  return true
+}
+
+/** 唤醒词气泡后缀：门还没换成新词表时，说清「什么时候生效」，别让主人以为换了没反应 */
+function wakeHint(host: ActionHost, want: string[]): string {
+  try { return wakeWordsLive(host, want) ? '' : '（重开语音待命后生效）' } catch (e) { return '' }
+}
 
 export function registerVoiceActions(table: ActionTable<ActionHost>): void {
   // —— 语音待命：开=建/启语音模块；关=停录音（实例留着复用）——
@@ -95,7 +119,7 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
     try { host.previewVoice('主人，这个声音好听吗？') } catch (e) { }
   })
 
-  // —— 唤醒词：默认 / 候选 / 自定义（存 localStorage，即时生效；语音随时可说，唤醒词只用来剥句子开头）——
+  // —— 唤醒词：默认 / 候选 / 自定义（存 localStorage；语音随时可说，唤醒词只用来剥句子开头）——
   table.definePrefix('wake-word:', (host, val) => {
     const word = str(val).trim()
     if (word === 'custom') {
@@ -103,9 +127,17 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
       try { input = typeof window !== 'undefined' && typeof (window as any).prompt === 'function' ? (window as any).prompt('唤醒词（1–12 字）', '大肥鱼') : null } catch (e) { }
       if (input == null) { host.bubble('没改唤醒词'); return }
       const on = setCustomWakeWord(String(input))
-      host.bubble(on ? '唤醒词：' + String(input).trim().slice(0, 12) : '唤醒词：默认（大肥鱼/肥鲸等）')
+      // 存储值 = trim 后截 12 字（client/wake.ts 的 setCustomWakeWord 口径），气泡照抄它
+      const stored = String(input).trim().slice(0, 12)
+      // 当前实例里的唤醒门没重建就不算真生效：气泡补一句生效时机（见 wakeWordsLive）
+      host.bubble(on
+        ? '唤醒词：' + stored + wakeHint(host, [stored])
+        : '唤醒词：默认（大肥鱼/肥鲸等）' + wakeHint(host, WAKE_WORDS))
       return
     }
     const on = setCustomWakeWord(word)
-    host.bubble(on ? '唤醒词：' + word : '唤醒词：默认（大肥鱼/肥鲸等）')
+    const stored = word.slice(0, 12)
+    host.bubble(on
+      ? '唤醒词：' + stored + wakeHint(host, [stored])
+      : '唤醒词：默认（大肥鱼/肥鲸等）' + wakeHint(host, WAKE_WORDS))
   })}

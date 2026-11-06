@@ -4537,15 +4537,31 @@
     if (!first.length && !second.length) return null;
     return { first: first.join("\n"), second: second.join("\n") };
   }
+  var narrateGen = 0;
   function showAndSpeak(host, shown, speech, ms2) {
     host.bubble(shown, ms2);
     host.talkFor(5e3);
     if (!host.voiceOn()) return;
+    const my = ++narrateGen;
     host.narrate(estimateSpeakMs(speech));
-    host.speak(speech, { rate: host.narrationRate(), onDone: () => host.clearNarrate() });
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      if (my === narrateGen) host.clearNarrate();
+    };
+    try {
+      host.speak(speech, { rate: host.narrationRate(), onDone: release });
+    } catch (e) {
+      release();
+    }
   }
   function registerContentActions(table) {
     table.define("story-books", (host) => {
+      if (!beginOnce("story-books")) {
+        host.bubble("正在翻书单，稍等～", 2e3);
+        return;
+      }
       getJson("/story/books", { cache: "no-store" }).then((d) => {
         const books = parseBookList(d);
         if (!books.length) {
@@ -4770,9 +4786,12 @@
       return false;
     }
   }
+  function isTooLargeError(err) {
+    return str(err).replace(/[^A-Za-z]/g, "").toUpperCase() === "TOOLARGE";
+  }
   function exportFailText(d) {
-    const err = d && typeof d === "object" ? String(d.error || "") : "";
-    return err === "TOO_LARGE" ? "备份太大（超过 2MB），导出没成功" : "导出没成功";
+    const err = d && typeof d === "object" ? d.error : "";
+    return isTooLargeError(err) ? "备份太大（超过 2MB），导出没成功" : "导出没成功";
   }
   function exportBackup(host) {
     const fetchJson = host.getJson || getJson;
@@ -4887,10 +4906,28 @@
     }
   }
   function importFailText(d) {
-    const err = d && typeof d === "object" ? String(d.error || "") : "";
-    if (err === "TOO_LARGE") return "备份太大（超过 2MB），没导入";
-    if (err === "BAD_BODY") return "备份文件格式不对，没导入";
+    const err = d && typeof d === "object" ? str(d.error).trim() : "";
+    if (isTooLargeError(err)) return "备份太大（超过 2MB），没导入";
+    if (err.toUpperCase() === "BAD_BODY") return "备份文件格式不对，没导入";
     return "备份文件读不了";
+  }
+  var IMPORT_CONFIRM_TEXT = "导入会按备份整字段覆盖本机的记忆/人格/成长/鱼粮/提醒，确定吗？";
+  function askImportConfirm(host) {
+    const injected = host && typeof host.confirm === "function" ? host.confirm : null;
+    if (injected) {
+      try {
+        return !!injected(IMPORT_CONFIRM_TEXT);
+      } catch (e) {
+        return false;
+      }
+    }
+    try {
+      const w = typeof window !== "undefined" ? window : null;
+      if (w && typeof w.confirm === "function") return !!w.confirm(IMPORT_CONFIRM_TEXT);
+    } catch (e) {
+      return false;
+    }
+    return true;
   }
   function clearChatCache(host) {
     try {
@@ -4921,6 +4958,10 @@
           const body = parseImportText(text);
           if (!body) {
             host.bubble("备份文件读不了", 6e3);
+            return;
+          }
+          if (!askImportConfirm(host)) {
+            host.bubble("没确认，导入取消", 4e3);
             return;
           }
           let p;
@@ -5292,6 +5333,28 @@
   }
 
   // src/client/actions/voice.ts
+  function wakeWordsLive(host, want) {
+    let info = null;
+    try {
+      info = host.wakeInfo ? host.wakeInfo() : null;
+    } catch (e) {
+      info = null;
+    }
+    const live = info && Array.isArray(info.words) ? info.words.map((x) => str(x)) : null;
+    if (!live || !live.length) return true;
+    if (live.length !== want.length) return false;
+    for (let i = 0; i < want.length; i++) {
+      if (live[i] !== want[i]) return false;
+    }
+    return true;
+  }
+  function wakeHint(host, want) {
+    try {
+      return wakeWordsLive(host, want) ? "" : "（重开语音待命后生效）";
+    } catch (e) {
+      return "";
+    }
+  }
   function registerVoiceActions(table) {
     table.define("wake", (host) => {
       host.toggleStandby();
@@ -5396,11 +5459,13 @@
           return;
         }
         const on2 = setCustomWakeWord(String(input));
-        host.bubble(on2 ? "唤醒词：" + String(input).trim().slice(0, 12) : "唤醒词：默认（大肥鱼/肥鲸等）");
+        const stored2 = String(input).trim().slice(0, 12);
+        host.bubble(on2 ? "唤醒词：" + stored2 + wakeHint(host, [stored2]) : "唤醒词：默认（大肥鱼/肥鲸等）" + wakeHint(host, WAKE_WORDS));
         return;
       }
       const on = setCustomWakeWord(word);
-      host.bubble(on ? "唤醒词：" + word : "唤醒词：默认（大肥鱼/肥鲸等）");
+      const stored = word.slice(0, 12);
+      host.bubble(on ? "唤醒词：" + stored + wakeHint(host, [stored]) : "唤醒词：默认（大肥鱼/肥鲸等）" + wakeHint(host, WAKE_WORDS));
     });
   }
 
