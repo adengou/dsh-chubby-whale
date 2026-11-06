@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.9";
+  var VERSION = "1.1.10";
 
   // src/client/styles.ts
   var W = 240;
@@ -79,6 +79,21 @@
     font: '13px/1.5 "Microsoft YaHei", sans-serif',
     display: menu ? "block" : "none",
     color: "#cfe9ff"
+  });
+  var menuItemStyle = (active) => ({
+    padding: "6px 14px",
+    cursor: "pointer",
+    color: active ? "#ffffff" : "#cfe9ff",
+    fontSize: 13,
+    whiteSpace: "nowrap",
+    background: active ? "linear-gradient(90deg, rgba(46,107,184,0.95), rgba(34,78,140,0.55))" : "transparent",
+    borderRadius: active ? 6 : 0,
+    boxShadow: active ? "inset 0 0 0 1px rgba(159,216,255,0.8)" : "none"
+  });
+  var menuSubStyle = (active) => ({
+    ...menuItemStyle(active),
+    display: "flex",
+    justifyContent: "space-between"
   });
   var chatPanelStyle = (open) => ({
     position: "fixed",
@@ -1424,7 +1439,63 @@
     return String(text == null ? "" : text).replace(/[\s。，！？,.!?、…~～]/g, "");
   }
   function estimateSpeakMs(text) {
-    return Math.round(String(text || "").length * 260) + 3e3;
+    const s = String(text == null ? "" : text);
+    if (!s.trim()) return 0;
+    let cjk = 0;
+    let cjkPuncts = 0;
+    let cjkScript = false;
+    let words = 0;
+    let digits = 0;
+    let halfPuncts = 0;
+    let inWord = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (isSpeakDigit(c)) {
+        digits++;
+        inWord = false;
+        continue;
+      }
+      if (isSpeakWordLetter(c)) {
+        if (!inWord) {
+          words++;
+          inWord = true;
+        }
+        continue;
+      }
+      if (inWord && isSpeakWordJoiner(c)) continue;
+      inWord = false;
+      if (isCjkSpeakChar(c)) {
+        cjk++;
+        cjkScript = true;
+        continue;
+      }
+      if (isCjkSpeakPunct(c)) {
+        cjkPuncts++;
+        continue;
+      }
+      if (isHalfSpeakPunct(c)) halfPuncts++;
+    }
+    const base = cjkScript ? 3e3 : 600;
+    const ms2 = base + (cjk + cjkPuncts) * 260 + words * 300 + digits * 200 + halfPuncts * 100;
+    return Math.round(Math.min(ms2, Number.MAX_SAFE_INTEGER));
+  }
+  function isSpeakWordLetter(c) {
+    return c >= 65 && c <= 90 || c >= 97 && c <= 122 || c >= 192 && c <= 591;
+  }
+  function isSpeakWordJoiner(c) {
+    return c === 39 || c === 45;
+  }
+  function isCjkSpeakChar(c) {
+    return c >= 19968 && c <= 40959 || c >= 13312 && c <= 19903 || c >= 63744 && c <= 64255 || c >= 12288 && c <= 12351 || c >= 65280 && c <= 65519;
+  }
+  function isHalfSpeakPunct(c) {
+    return c === 44 || c === 46 || c === 33 || c === 63 || c === 59 || c === 58;
+  }
+  function isCjkSpeakPunct(c) {
+    return c >= 8208 && c <= 8231 || c === 183;
+  }
+  function isSpeakDigit(c) {
+    return c >= 48 && c <= 57;
   }
   function echoKey(s) {
     return String(s == null ? "" : s).replace(/星号|米字号/g, "*").replace(/\*[^*]{1,60}\*/g, "").replace(/[\s。，！？,.!?、…~～]/g, "");
@@ -7202,6 +7273,156 @@
       }
     };
   }
+  function bindChatFocus(opts) {
+    if (!opts.open) {
+      try {
+        const el2 = opts.input();
+        if (el2 && typeof el2.blur === "function") el2.blur();
+      } catch (e) {
+      }
+      return () => {
+      };
+    }
+    const el = opts.input();
+    if (!el || typeof el.focus !== "function") return () => {
+    };
+    let done = false;
+    let timer = null;
+    let panelEl = null;
+    const fire = () => {
+      if (done) return;
+      done = true;
+      if (timer !== null) {
+        try {
+          clearTimeout(timer);
+        } catch (e) {
+        }
+        ;
+        timer = null;
+      }
+      try {
+        if (panelEl && typeof panelEl.removeEventListener === "function") panelEl.removeEventListener("animationend", fire);
+      } catch (e) {
+      }
+      try {
+        el.focus();
+      } catch (e) {
+      }
+    };
+    const reduced = (() => {
+      try {
+        const win = opts.win;
+        if (!win || typeof win.matchMedia !== "function") return false;
+        const m = win.matchMedia("(prefers-reduced-motion: reduce)");
+        return !!(m && m.matches);
+      } catch (e) {
+        return false;
+      }
+    })();
+    if (reduced) {
+      fire();
+      return () => {
+        done = true;
+      };
+    }
+    try {
+      panelEl = opts.panel ? opts.panel() : null;
+      const anims = panelEl && typeof panelEl.getAnimations === "function" ? panelEl.getAnimations() : null;
+      if (anims && anims.length && typeof panelEl.addEventListener === "function") {
+        panelEl.addEventListener("animationend", fire);
+        timer = setTimeout(fire, opts.maxWaitMs ?? 400);
+        return () => {
+          done = true;
+          if (timer !== null) {
+            try {
+              clearTimeout(timer);
+            } catch (e) {
+            }
+            ;
+            timer = null;
+          }
+          try {
+            panelEl.removeEventListener("animationend", fire);
+          } catch (e) {
+          }
+        };
+      }
+    } catch (e) {
+    }
+    fire();
+    return () => {
+      done = true;
+    };
+  }
+  function bindMenuKeys(opts) {
+    const win = opts.win;
+    if (!win || !win.addEventListener) return () => {
+    };
+    const onKeyDown = (e) => {
+      try {
+        if (!e) return;
+        if (e.ctrlKey || e.altKey || e.metaKey) return;
+        if (typeof opts.isTyping === "function" && opts.isTyping(e.target)) return;
+        const n = opts.count();
+        if (n <= 0) return;
+        const key = String(e.key || "");
+        const raw = opts.index();
+        const cur = raw >= 0 && raw < n ? raw : -1;
+        if (key === "ArrowDown" || key === "ArrowUp") {
+          const step = key === "ArrowDown" ? 1 : -1;
+          const next = cur < 0 ? step > 0 ? 0 : n - 1 : (cur + step + n) % n;
+          try {
+            e.preventDefault();
+          } catch (e2) {
+          }
+          try {
+            e.stopPropagation();
+          } catch (e2) {
+          }
+          opts.setIndex(next);
+          return;
+        }
+        if (key === "Enter") {
+          if (e.repeat || cur < 0) return;
+          if (!opts.activate(cur)) return;
+          try {
+            e.preventDefault();
+          } catch (e2) {
+          }
+          try {
+            e.stopPropagation();
+          } catch (e2) {
+          }
+          return;
+        }
+        if (key === "Escape" || key === "Esc") {
+          if (e.repeat) return;
+          try {
+            e.preventDefault();
+          } catch (e2) {
+          }
+          try {
+            e.stopPropagation();
+          } catch (e2) {
+          }
+          opts.close();
+        }
+      } catch (e2) {
+      }
+    };
+    try {
+      win.addEventListener("keydown", onKeyDown, true);
+    } catch (e) {
+      return () => {
+      };
+    }
+    return () => {
+      try {
+        win.removeEventListener("keydown", onKeyDown, true);
+      } catch (e) {
+      }
+    };
+  }
   function startWatchdog(tick, intervalMs = 2e3) {
     const t = setInterval(tick, intervalMs);
     return () => {
@@ -7238,35 +7459,78 @@
   }
 
   // src/client/render.ts
-  var SUB_PATH_SEP = "\0";
-  function renderMenuItems(items, ctx, parentPath = "") {
+  function listMenuEntries(items, ctx, parentPath = "") {
     const out = [];
     if (!Array.isArray(items)) return out;
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
+    for (const it of items) {
       if (!it || typeof it !== "object") continue;
-      if (it.type === "sep") {
-        out.push(ctx.h("div", { key: "sep" + i, style: { height: 1, background: "#1f4a85", margin: "4px 0" } }));
-        continue;
-      }
       if (it.type === "sub") {
         if (typeof it.label !== "string") continue;
         const path = parentPath ? parentPath + SUB_PATH_SEP + it.label : it.label;
         const open = ctx.subOpen === path || ctx.subOpen.indexOf(path + SUB_PATH_SEP) === 0;
-        out.push(ctx.h("div", {
-          key: "sub" + i,
-          style: { padding: "6px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", color: "#cfe9ff", fontSize: 13 },
-          onClick: () => ctx.onToggleSub(open ? parentPath : path)
-        }, ctx.h("span", null, ctx.tr(it.label, ctx.lang)), ctx.h("span", null, open ? "▾" : "▸")));
-        if (open) out.push(ctx.h("div", { key: "subitems" + i, style: { paddingLeft: 14, borderLeft: "1px solid #1f4a85", marginLeft: 8 } }, renderMenuItems(it.items, ctx, path)));
+        out.push({ kind: "sub", action: "", path, parentPath, label: ctx.tr(it.label, ctx.lang), open, index: out.length });
+        if (open) out.push(...listMenuEntries(it.items, ctx, path));
         continue;
       }
       if (it.type !== "item" || typeof it.label !== "string") continue;
+      out.push({ kind: "item", action: String(it.action || ""), path: "", parentPath, label: ctx.tr(it.label, ctx.lang), open: false, index: out.length });
+    }
+    return out;
+  }
+  function menuRootProps(ctx) {
+    return {
+      style: menuStyle(ctx.menu),
+      "data-menu-root": "1",
+      role: "menu",
+      tabIndex: -1,
+      "aria-label": ctx.lang === "en" ? "Fat Whale menu" : "肥鲸菜单"
+    };
+  }
+  var SUB_PATH_SEP = "\0";
+  function renderMenuItems(items, ctx, parentPath = "") {
+    const entries = listMenuEntries(items, ctx, parentPath);
+    return renderMenuList(items, ctx, parentPath, entries, { i: 0 });
+  }
+  function renderMenuList(items, ctx, parentPath, entries, cursor) {
+    const out = [];
+    if (!Array.isArray(items)) return out;
+    const focus = typeof ctx.focusIndex === "number" ? ctx.focusIndex : -1;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it || typeof it !== "object") continue;
+      if (it.type === "sep") {
+        out.push(ctx.h("div", { key: "sep" + i, role: "separator", style: { height: 1, background: "#1f4a85", margin: "4px 0" } }));
+        continue;
+      }
+      if (it.type === "sub") {
+        if (typeof it.label !== "string") continue;
+        const entry2 = entries[cursor.i++];
+        const path = entry2 ? entry2.path : parentPath ? parentPath + SUB_PATH_SEP + it.label : it.label;
+        const open = entry2 ? entry2.open : false;
+        const label = entry2 ? entry2.label : ctx.tr(it.label, ctx.lang);
+        out.push(ctx.h("div", {
+          key: "sub" + i,
+          role: "menuitem",
+          "aria-haspopup": "menu",
+          "aria-expanded": open,
+          "aria-label": label,
+          tabIndex: -1,
+          style: menuSubStyle(!!entry2 && entry2.index === focus),
+          onClick: () => ctx.onToggleSub(open ? entry2 ? entry2.parentPath : parentPath : path)
+        }, ctx.h("span", null, label), ctx.h("span", null, open ? "▾" : "▸")));
+        if (open) out.push(ctx.h("div", { key: "subitems" + i, role: "group", style: { paddingLeft: 14, borderLeft: "1px solid #1f4a85", marginLeft: 8 } }, renderMenuList(it.items, ctx, path, entries, cursor)));
+        continue;
+      }
+      if (it.type !== "item" || typeof it.label !== "string") continue;
+      const entry = entries[cursor.i++];
       out.push(ctx.h("div", {
         key: "item" + i,
-        style: { padding: "6px 14px", cursor: "pointer", color: "#cfe9ff", fontSize: 13, whiteSpace: "nowrap" },
-        onClick: () => ctx.onAction(it.action)
-      }, ctx.tr(it.label, ctx.lang)));
+        role: "menuitem",
+        "aria-label": entry ? entry.label : ctx.tr(it.label, ctx.lang),
+        tabIndex: -1,
+        style: menuItemStyle(!!entry && entry.index === focus),
+        onClick: () => ctx.onAction(entry ? entry.action : String(it.action || ""))
+      }, entry ? entry.label : ctx.tr(it.label, ctx.lang)));
     }
     return out;
   }
@@ -7308,7 +7572,7 @@
     const { h, lang } = ctx;
     return h(
       "div",
-      { style: chatPanelStyle(ctx.open) },
+      { ref: ctx.panelRef, style: chatPanelStyle(ctx.open) },
       h(
         "div",
         { style: headStyle },
@@ -7324,8 +7588,10 @@
         "div",
         { style: inputRowStyle },
         h("input", {
+          ref: ctx.inputRef,
           style: inputStyle,
           placeholder: lang === "en" ? "Say something…" : "跟肥鲸说两句…",
+          "aria-label": lang === "en" ? "Chat input" : "聊天输入框",
           value: ctx.input,
           onChange: (e) => ctx.onInputChange(e.target.value),
           onKeyDown: (e) => ctx.onKeyDown(e)
@@ -7551,6 +7817,10 @@
         const chatRootRef = R.useRef(null);
         const [menu, setMenu] = R.useState(null);
         const [subOpen, setSubOpen] = R.useState("");
+        const [menuFocus, setMenuFocus] = R.useState(-1);
+        const menuFocusRef = R.useRef(-1);
+        menuFocusRef.current = menuFocus;
+        const menuEntriesRef = R.useRef([]);
         const [storyBooks, setStoryBooks] = R.useState([]);
         const [storyBooksTried, setStoryBooksTried] = R.useState(false);
         const [balanceText, setBalanceText] = R.useState("");
@@ -7570,6 +7840,8 @@
         const busyLockRef = hookApi.useLazyRef(createBusyLock);
         const busyLock = busyLockRef.current;
         const bodyRef = R.useRef(null);
+        const inputRef = R.useRef(null);
+        const chatPanelRef = R.useRef(null);
         const bubbleRef = R.useRef(null);
         const bubbleTextRef = R.useRef(null);
         const bridgeRef = hookApi.useLazyRef(() => createVoiceBridge({
@@ -8013,6 +8285,7 @@
           e.preventDefault();
           setMenu({ x: e.clientX, y: e.clientY });
           setSubOpen("");
+          setMenuFocus(-1);
           refreshMenuStats();
           refreshStoryBooks();
         }
@@ -8108,6 +8381,31 @@
             } catch (e) {
             }
           };
+        }, [menu]);
+        R.useEffect(() => {
+          if (!menu) return;
+          return bindMenuKeys({
+            win: window,
+            isTyping: (t) => isTypingTarget(t),
+            count: () => menuEntriesRef.current.length,
+            index: () => menuFocusRef.current,
+            setIndex: (i) => setMenuFocus(i),
+            activate: (i) => {
+              const entry = menuEntriesRef.current[i];
+              if (!entry) return false;
+              if (entry.kind === "sub") {
+                setSubOpen(entry.open ? entry.parentPath : entry.path);
+                return true;
+              }
+              void runAction(entry.action);
+              return true;
+            },
+            close: () => {
+              setMenu(null);
+              setSubOpen("");
+              setMenuFocus(-1);
+            }
+          });
         }, [menu]);
         const story = createStoryController({
           clientId: CLIENT_ID,
@@ -8300,6 +8598,14 @@
           if (!chatOpen) return;
           scrollBody();
         }, [chatOpen, messages]);
+        R.useEffect(() => {
+          return bindChatFocus({
+            win: window,
+            open: chatOpen,
+            input: () => inputRef.current,
+            panel: () => chatPanelRef.current
+          });
+        }, [chatOpen]);
         const localRouter = createLocalRouter({
           persona,
           narrationRate,
@@ -8495,12 +8801,16 @@
           return () => animRef.current?.stop();
         }, []);
         const recoverProps = recover.dot(hidden);
+        const menuItems = menu ? buildMenu(VERSION, Object.assign({ voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())) : [];
+        const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : [];
+        menuEntriesRef.current = menuEntries;
         function renderItems(items) {
           return renderMenuItems(items, {
             h,
             tr,
             lang,
             subOpen,
+            focusIndex: menuFocus,
             onToggleSub: (next) => setSubOpen(next),
             onAction: (action) => runAction(action)
           });
@@ -8540,7 +8850,7 @@
           recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "○") : null,
           menu ? h(
             "div",
-            { style: menuStyle(menu), "data-menu-root": "1" },
+            menuRootProps({ menu, lang }),
             // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
             renderMenuHeader({ h, lang, balanceText, onRefresh: () => {
               try {
@@ -8548,7 +8858,7 @@
               } catch (e) {
               }
             } }),
-            renderItems(buildMenu(VERSION, Object.assign({ voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())))
+            renderItems(menuItems)
           ) : null,
           // 聊天面板：结构与事件接线都在 client/render.ts，发送/输入法判断留在闭包里。
           // 外面包一层 display:contents 的根节点：粘贴处理要靠它判断事件是否发生在面板内，
@@ -8564,6 +8874,8 @@
               input,
               busy,
               bodyRef,
+              inputRef,
+              panelRef: chatPanelRef,
               onClose: () => setChatOpen(false),
               onInputChange: (v) => setInput(v),
               onKeyDown: (e) => {

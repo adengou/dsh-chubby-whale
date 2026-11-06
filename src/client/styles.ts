@@ -75,6 +75,29 @@ export const menuStyle = (menu: any) => ({
   color: '#cfe9ff',
 })
 
+/**
+ * 菜单项样式（键盘高亮用）：
+ *   active=false 时与原内联样式完全一致（透明底、无描边），鼠标交互观感不变；
+ *   active=true 时给一层淡蓝底 + 内描边，保证方向键选中的项看得见。
+ */
+export const menuItemStyle = (active: boolean) => ({
+  padding: '6px 14px',
+  cursor: 'pointer',
+  color: active ? '#ffffff' : '#cfe9ff',
+  fontSize: 13,
+  whiteSpace: 'nowrap' as const,
+  background: active ? 'linear-gradient(90deg, rgba(46,107,184,0.95), rgba(34,78,140,0.55))' : 'transparent',
+  borderRadius: active ? 6 : 0,
+  boxShadow: active ? 'inset 0 0 0 1px rgba(159,216,255,0.8)' : 'none',
+})
+
+/** 子菜单父项：在菜单项样式上补「▸/▾」的左右分栏 */
+export const menuSubStyle = (active: boolean) => ({
+  ...menuItemStyle(active),
+  display: 'flex',
+  justifyContent: 'space-between',
+})
+
 export const chatPanelStyle = (open: boolean) => ({
   position: 'fixed' as const,
   right: 236,

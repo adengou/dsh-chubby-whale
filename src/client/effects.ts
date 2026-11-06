@@ -104,6 +104,134 @@ export function startGreeting(opts: {
   }
 }
 
+/**
+ * 聊天面板聚焦：打开时聚焦输入框，关闭时失焦。
+ *   · 已开启「减少动效」→ 立即聚焦（没有动画可等，不为动效再拖一拍）；
+ *   · 面板上还有入场动画 → 等 animationend 再聚焦（maxWaitMs 兜底，动画被取消/不触发也不会永远不聚焦）；
+ *   · 其余情况立即聚焦。
+ * 返回 cleanup：撤销定时器与 animationend 监听（close 分支由调用方在 open=false 时触发 blur）。
+ */
+export function bindChatFocus(opts: {
+  win?: any
+  open: boolean
+  input: () => any
+  /** 面板根元素（判断有没有入场动画；缺省/取不到按无动画处理） */
+  panel?: () => any
+  /** 等动画的上限（毫秒），缺省 400 */
+  maxWaitMs?: number
+}): Dispose {
+  if (!opts.open) {
+    try {
+      const el = opts.input()
+      if (el && typeof el.blur === 'function') el.blur()
+    } catch (e) { }
+    return () => { }
+  }
+  const el = opts.input()
+  if (!el || typeof el.focus !== 'function') return () => { }
+
+  let done = false
+  let timer: any = null
+  let panelEl: any = null
+  const fire = (): void => {
+    if (done) return
+    done = true
+    if (timer !== null) { try { clearTimeout(timer) } catch (e) { } ; timer = null }
+    try { if (panelEl && typeof panelEl.removeEventListener === 'function') panelEl.removeEventListener('animationend', fire) } catch (e) { }
+    try {
+      // 只聚焦、不改滚动/选中；输入框可能已被宿主移走，focus 抛错就静默
+      el.focus()
+    } catch (e) { }
+  }
+
+  const reduced = (() => {
+    try {
+      const win = opts.win
+      if (!win || typeof win.matchMedia !== 'function') return false
+      const m = win.matchMedia('(prefers-reduced-motion: reduce)')
+      return !!(m && m.matches)
+    } catch (e) { return false }
+  })()
+  if (reduced) { fire(); return () => { done = true } }
+
+  try {
+    panelEl = opts.panel ? opts.panel() : null
+    const anims = panelEl && typeof panelEl.getAnimations === 'function' ? panelEl.getAnimations() : null
+    if (anims && anims.length && typeof panelEl.addEventListener === 'function') {
+      panelEl.addEventListener('animationend', fire)
+      timer = setTimeout(fire, opts.maxWaitMs ?? 400)
+      return () => {
+        done = true
+        if (timer !== null) { try { clearTimeout(timer) } catch (e) { } ; timer = null }
+        try { panelEl.removeEventListener('animationend', fire) } catch (e) { }
+      }
+    }
+  } catch (e) { }
+  fire()
+  return () => { done = true }
+}
+
+/**
+ * 菜单键盘导航（不抢焦点）：只挂 window 捕获阶段的 keydown，菜单容器不聚焦。
+ *   ArrowUp / ArrowDown → 在「当前可见项」间移动高亮（循环，子菜单展开后进入其子项，收起时不越级）
+ *   Enter → 触发高亮项（子菜单父项 = 展开/收起）；没有高亮时放行，不抢宿主的回车
+ *   Escape → 关闭（与 client.ts 原有 Esc effect 收敛到同一个关闭动作，重复调用幂等）
+ * 输入框/可编辑区里打字时整键放行；Ctrl/Alt/Meta 组合键一律放行（不抢浏览器与宿主快捷键）。
+ */
+export function bindMenuKeys(opts: {
+  win: any
+  /** 当前按键目标是不是输入框/可编辑区（true = 让路） */
+  isTyping: (target: any) => boolean
+  /** 可见项数量（每次按键现读，子菜单展开/收起后自动对齐） */
+  count: () => number
+  /** 当前高亮序号（-1 = 还没高亮） */
+  index: () => number
+  /** 移动/设置高亮序号 */
+  setIndex: (i: number) => void
+  /** 触发第 i 项；返回 true 表示这次按键已消费 */
+  activate: (i: number) => boolean
+  /** 关闭菜单（与原有 Esc effect 同一个收敛口） */
+  close: () => void
+}): Dispose {
+  const win = opts.win
+  if (!win || !win.addEventListener) return () => { }
+  const onKeyDown = (e: any): void => {
+    try {
+      if (!e) return
+      if (e.ctrlKey || e.altKey || e.metaKey) return
+      if (typeof opts.isTyping === 'function' && opts.isTyping(e.target)) return
+      const n = opts.count()
+      if (n <= 0) return
+      const key = String(e.key || '')
+      const raw = opts.index()
+      const cur = raw >= 0 && raw < n ? raw : -1
+      if (key === 'ArrowDown' || key === 'ArrowUp') {
+        const step = key === 'ArrowDown' ? 1 : -1
+        const next = cur < 0 ? (step > 0 ? 0 : n - 1) : (cur + step + n) % n
+        try { e.preventDefault() } catch (e2) { }
+        try { e.stopPropagation() } catch (e2) { }
+        opts.setIndex(next)
+        return
+      }
+      if (key === 'Enter') {
+        if (e.repeat || cur < 0) return
+        if (!opts.activate(cur)) return
+        try { e.preventDefault() } catch (e2) { }
+        try { e.stopPropagation() } catch (e2) { }
+        return
+      }
+      if (key === 'Escape' || key === 'Esc') {
+        if (e.repeat) return
+        try { e.preventDefault() } catch (e2) { }
+        try { e.stopPropagation() } catch (e2) { }
+        opts.close()
+      }
+    } catch (e2) { }
+  }
+  try { win.addEventListener('keydown', onKeyDown, true) } catch (e) { return () => { } }
+  return () => { try { win.removeEventListener('keydown', onKeyDown, true) } catch (e) { } }
+}
+
 /** 周期自愈心跳（繁忙锁 / 叙述锁）：返回停表函数 */
 export function startWatchdog(tick: () => void, intervalMs = 2000): Dispose {
   const t = setInterval(tick, intervalMs)

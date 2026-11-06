@@ -4,7 +4,7 @@
  *           client/render.ts（菜单与聊天面板的纯渲染）
  * 其余能力：client/styles.ts（样式）、client/menu.ts（菜单数据）、client/anim.ts（动画）等
  */
-import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, recoverDotStyle } from './client/styles.js'
+import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, recoverDotStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
 import { stopProgress } from './client/narration-progress.js'
 import { narrationRate, chatRate } from './client/rates.js'
@@ -32,8 +32,8 @@ import { createReminderPoller } from './client/reminders.js'
 import { createReminderManager } from './client/reminder-manage.js'
 import { createRecover } from './client/recover.js'
 import { createHooks } from './client/hooks.js'
-import { bindFileDropCapture, bindOutsideClose, bindResize, createUnmountCleanup, startGreeting, startWatchdog } from './client/effects.js'
-import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } from './client/render.js'
+import { bindFileDropCapture, bindOutsideClose, bindResize, bindChatFocus, bindMenuKeys, createUnmountCleanup, startGreeting, startWatchdog } from './client/effects.js'
+import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, listMenuEntries, menuRootProps } from './client/render.js'
 ;(window as any).__ModuleLoader__.load({
   id: 'dsh-chubby-whale',
   factory: (require: any) => {
@@ -238,6 +238,12 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
       const chatRootRef = R.useRef(null)
       const [menu, setMenu] = R.useState(null as any)
       const [subOpen, setSubOpen] = R.useState('')
+      // 菜单键盘高亮（-1 = 没有高亮）；ref 给 window keydown 读最新值，state 驱动高亮样式
+      const [menuFocus, setMenuFocus] = R.useState(-1)
+      const menuFocusRef = R.useRef(-1)
+      menuFocusRef.current = menuFocus
+      // 当前可见菜单项（渲染时同步算好；keydown 只认这一份，口径与屏幕逐项对齐）
+      const menuEntriesRef = R.useRef([] as any[])
       // 说书书单（菜单「选本书 ▸」用）：tried 区分「还没拉」与「拉过但为空/失败」
       const [storyBooks, setStoryBooks] = R.useState([] as string[])
       const [storyBooksTried, setStoryBooksTried] = R.useState(false)
@@ -254,6 +260,9 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
       const busyLockRef = hookApi.useLazyRef(createBusyLock)
       const busyLock = busyLockRef.current
       const bodyRef = R.useRef(null)
+      // 聊天输入框与面板根节点：面板打开时自动聚焦输入框（有入场动画则等 animationend）
+      const inputRef = R.useRef(null)
+      const chatPanelRef = R.useRef(null)
       const bubbleRef = R.useRef(null)
       const bubbleTextRef = R.useRef(null)
 
@@ -597,6 +606,8 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
         // 先出菜单（余额/成长用旧值或占位），数值异步回来再更新，绝不阻塞菜单显示
         setMenu({ x: e.clientX, y: e.clientY })
         setSubOpen('')
+        // 每次打开菜单都从「没有高亮」开始：第一次按方向键再落到首/末项
+        setMenuFocus(-1)
         // 只在「菜单打开」这个时机拉一次；10 秒节流，连点右键不会狂打接口
         refreshMenuStats()
         // 书单不进节流：本地接口、数据量小，每次打开菜单都拉一遍，书单换了立刻能看到
@@ -706,6 +717,34 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
         try { window.addEventListener('keydown', onKeyDown, true) } catch (e) { }
         return () => { try { window.removeEventListener('keydown', onKeyDown, true) } catch (e) { } }
       }, [menu])
+
+      // 菜单键盘导航（不抢焦点）：窗口捕获阶段处理方向键 / Enter / Esc，菜单容器本身不 focus。
+      // 高亮顺序只认渲染时算好的 listMenuEntries（menuEntriesRef），子菜单展开/收起自动对齐。
+      // Esc 与上面已有的 Esc effect 收敛到同一个关闭动作（setMenu(null)+setSubOpen('')）：
+      // 两个监听重复触发也只是同一次幂等关闭，不会互相冲突。
+      R.useEffect(() => {
+        if (!menu) return
+        return bindMenuKeys({
+          win: window,
+          isTyping: (t: any) => isTypingTarget(t),
+          count: () => menuEntriesRef.current.length,
+          index: () => menuFocusRef.current,
+          setIndex: (i: number) => setMenuFocus(i),
+          activate: (i: number) => {
+            const entry = menuEntriesRef.current[i]
+            if (!entry) return false
+            if (entry.kind === 'sub') {
+              // 子菜单父项：只在当前层展开/收起（收起回到 parentPath，不越级）
+              setSubOpen(entry.open ? entry.parentPath : entry.path)
+              return true
+            }
+            void runAction(entry.action)
+            return true
+          },
+          close: () => { setMenu(null); setSubOpen(''); setMenuFocus(-1) },
+        })
+      }, [menu])
+
 
       // ===== 说书（连载）：拉段、气泡、朗读、自动连播全在 client/story.ts =====
       const story = createStoryController({
@@ -831,6 +870,15 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
         if (!chatOpen) return
         scrollBody()
       }, [chatOpen, messages])
+      // 聊天面板打开时自动聚焦输入框，关闭时失焦；有入场动画就等 animationend（时机判断在 client/effects.ts）
+      R.useEffect(() => {
+        return bindChatFocus({
+          win: window,
+          open: chatOpen,
+          input: () => inputRef.current,
+          panel: () => chatPanelRef.current,
+        })
+      }, [chatOpen])
       // ===== 点播本地路由：关键词识别与念诗/讲典故的本地处理在 client/chat-route.ts =====
       const localRouter = createLocalRouter({
         persona,
@@ -1004,10 +1052,16 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
       // ===== 渲染 =====
       // 隐藏时右下角留一个极小的「○」恢复点（点一下回来，不刷新页面）
       const recoverProps = recover.dot(hidden)
-      // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去
+      // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去。
+      // 可见项清单在渲染时同步算一次（键盘高亮与屏幕顺序共用这一份，不各算一套）。
+      const menuItems = menu
+        ? buildMenu(VERSION, Object.assign({ voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
+        : []
+      const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : []
+      menuEntriesRef.current = menuEntries
       function renderItems(items: any[]): any[] {
         return renderMenuItems(items, {
-          h, tr, lang, subOpen,
+          h, tr, lang, subOpen, focusIndex: menuFocus,
           onToggleSub: (next: string) => setSubOpen(next),
           onAction: (action: string) => runAction(action),
         })
@@ -1032,10 +1086,10 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
         ),
         h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         recoverProps ? h('div', Object.assign({}, recoverProps, { style: recoverDotStyle }), '○') : null,
-        menu ? h('div', { style: menuStyle(menu), 'data-menu-root': '1' },
+        menu ? h('div', menuRootProps({ menu, lang }),
           // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
           renderMenuHeader({ h, lang, balanceText, onRefresh: () => { try { refreshMenuStats(true) } catch (e) { } } }),
-          renderItems(buildMenu(VERSION, Object.assign({ voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))),
+          renderItems(menuItems),
         ) : null,
         // 聊天面板：结构与事件接线都在 client/render.ts，发送/输入法判断留在闭包里。
         // 外面包一层 display:contents 的根节点：粘贴处理要靠它判断事件是否发生在面板内，
@@ -1043,6 +1097,7 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
         h('div', { ref: chatRootRef, style: { display: 'contents' } },
           renderChatPanel({
             h, lang, open: chatOpen, messages, input, busy, bodyRef,
+            inputRef, panelRef: chatPanelRef,
             onClose: () => setChatOpen(false),
             onInputChange: (v: string) => setInput(v),
             onKeyDown: (e: any) => {

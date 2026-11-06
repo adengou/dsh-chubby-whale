@@ -68,9 +68,13 @@ export function createStore(dataDir: string) {
   const reminderRepo = createReminderRepo(dataDir)
   const petRepo = createPetRepo(dataDir)
 
-  // ===== 说书进度（遗留） =====
-  // 说书路由已改由 host/story/player.ts 管理同一文件，本组方法目前无调用者；
-  // 保留是为了不破坏可能存在的旧调用方，后续确认无引用后可删除。
+  // ===== 说书进度：整文件原始读写（备份导出/导入用） =====
+  // 文件的进度键自 2026-11-06 起带数据源命名空间：`"<source>:<书名>|<序号>": true`
+  // （source = local / cloud，由 index.ts 按 readDataSource() 注入给 player）；
+  // `_current` 仍是「讲到哪本」的指针，不分数据源。
+  // 命名空间规则、旧键迁移与只读兼容都在 host/story/player.ts：那里知道当前数据源，
+  // 且迁移必须与启动/重新读盘的时机绑定。这里只负责原样搬运整份 JSON，备份包里的键不在此改写；
+  // 旧格式（无 source: 前缀）的 `书名|序号` 键由 player 在启动/重读时归一到当前数据源。
   function loadStoryProgress(): any {
     try {
       return JSON.parse(readTextNoBom(STORY_PROGRESS))

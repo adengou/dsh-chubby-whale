@@ -2,16 +2,32 @@
  * host/story/player.ts —— 说书业务（选段算法 + 进度 + 每客户端连播队列）
  *
  * 对齐 C# 版 Story.cs 的 Next() 算法：
- *   按数组顺序找第一个未读段（key = book|index）；一本读完自动下一本；17 本全读完才清空进度重来。
- *   进度文件：{"book|index": true, "_current": "书名"}
+ *   按数组顺序找第一个未读段（key = <source>:<book>|index）；一本读完自动下一本；17 本全读完才清空进度重来。
+ *   进度文件：{"<source>:<book>|index": true, "_current": "书名"}
  *   单本坏文件/超时不拖垮全局：repo.loadBook 返回空数组，pickNext 继续试下一本。
  *   连播：每个客户端（x-client-id）一条队列，多标签页互不抢段；拿不到 id 时共用单队列。
+ *
+ * 进度键的数据源命名空间（2026-11-06）：
+ *   云端与本地同名书的回目/分段不同，同一个 `book|index` 键若被两个数据源共用，
+ *   切数据源后段号就会串位（跳段）或从头重念（重听）。所以进度键统一写成
+ *   `<source>:<book>|index`，source 由 index.ts 装配时按 readDataSource() 注入。
+ *
+ * 旧键迁移（兼容窗口 = 本版本）：
+ *   · 启动创建播放器、以及每次 reloadProgress()（备份导入后）各跑一次：扫描无 `local:` / `cloud:`
+ *     前缀的旧键 `book|index`，复制为 `<当前 source>:book|index`，随后删除旧键；
+ *   · 整个迁移在内存里做完，一次 writeJsonAtomic 落盘：中途崩溃只会留下迁移前或迁移后的完整文件；
+ *   · 幂等：迁移完旧键即不存在，再跑没有可迁移的键、不写盘，文件字节不变，可重复执行；
+ *   · 读兼容保留一个版本：读取先查新键、查不到再回退旧键（只读），写入一律只写新键；
+ *     正常路径下旧键在加载时已被搬走，回退分支是防御性的（迁移失败/旧数据绕过加载），下个版本随迁移代码一起删；
+ *   · 迁移后不长期留旧键：旧键不带 source，两个数据源都会命中，等于把刚修好的「切源跳段」
+ *     放回来；而且 reset 只清新键，旧键残留会让刚重置的书「复活」。
  *
  * 这里不碰 req/res：HTTP 解析与响应在 host/routes/story.ts。
  */
 import { readFileSync } from 'node:fs'
 import { deepFreeze } from '../../shared/immutable.js'
 import { writeJsonAtomic } from '../atomic.js'
+import type { DataSourceKind } from '../ports.js'
 import type { StoryChunk, StoryRepo } from './repo.js'
 
 export const STORY_AUTHORS: Record<string, string> = {
@@ -47,10 +63,14 @@ export interface StoryPlayer {
   start(hint: string, clientId: string): Promise<StoryPick>
   /** 连播下一段：先取该客户端队列，空了再跨书挑 */
   next(clientId: string): Promise<StoryPick>
-  /** 从头讲这本书：清该书全部进度并把「当前书」指过去 */
+  /** 从头讲这本书：只清当前数据源下该书的进度，并把「当前书」指过去（别的数据源与旧键都不动） */
   reset(bookHint: string, clientId: string): Promise<StoryReset>
   /** 重新读盘（备份导入说书进度后调用）：不读的话内存里的旧进度会在下一次保存时盖掉导入内容 */
   reloadProgress(): void
+  /** 读某书某段是否已讲：先查当前数据源的新键，查不到再回退旧键（一个版本的只读兼容） */
+  getProgress(book: string, index: number): boolean
+  /** 写进度：一律写当前数据源的新键；read=false 只删新键（旧键归迁移清理，别的数据源不动） */
+  setProgress(book: string, index: number, read?: boolean): void
 }
 
 /** 连播队列最多留几个客户端：一本 30MB 书的段引用不算大，但标签页数量不该无上限 */
@@ -67,9 +87,26 @@ interface ClientQueue {
   lastSeen: number
 }
 
-export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string }): StoryPlayer {
+/** 新键前缀：`local:` / `cloud:`。两种前缀都没有的键，就是需要迁移的旧格式键 */
+const NAMESPACED_KEY_RE = /^(?:local|cloud):/
+
+/** 新键：`<source>:<book>|<index>`（进度写入只走这个格式） */
+function storyKeyOf(source: DataSourceKind, book: string, index: number): string {
+  return source + ':' + String(book || '') + '|' + String(index)
+}
+
+/** 旧键（无数据源命名空间）：`<book>|<index>`，只用于迁移与读取兼容，不再写入 */
+function legacyStoryKey(book: string, index: number): string {
+  return String(book || '') + '|' + String(index)
+}
+
+export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string; source?: DataSourceKind }): StoryPlayer {
   const repo = opts.repo
+  // 数据源命名空间：index.ts 装配时注入 readDataSource() 的结果；缺省 local（旧调用方/离线测试）
+  const source: DataSourceKind = opts.source === 'cloud' ? 'cloud' : 'local'
   const progress = loadProgress()
+  // 启动即迁移旧键（一次性、幂等，见文件头「旧键迁移」）；函数声明会提升，读起来仍是线性顺序
+  migrateLegacyKeys()
   // 每个客户端一条连播队列；Map 的插入顺序即 LRU 顺序（命中时移到末尾）
   const clientQueues = new Map<string, ClientQueue>()
 
@@ -95,18 +132,64 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
       writeJsonAtomic(opts.progressFile, progress)
     } catch (e: any) { console.error('STORY-PROGRESS-SAVE-FAIL ' + String(e?.message || e)) }
   }
-  function storyKey(book: string, index: number): string {
-    return String(book || '') + '|' + String(index)
+  /** 键是否已带数据源命名空间（`local:` / `cloud:`）；不带的是旧格式键 */
+  function isNamespacedKey(key: string): boolean {
+    return NAMESPACED_KEY_RE.test(key)
+  }
+
+  /**
+   * 旧键 → 当前数据源命名空间：复制后删除旧键，最后整份原子落盘一次。
+   *   幂等：第二次跑已经没有旧键，直接跳过、不写盘（文件字节不变）；
+   *   不丢数据：先把新键放好再删旧键，落盘一次完成（writeJsonAtomic 要么旧文件、要么新文件）；
+   *   新键已存在时以新键为准，旧键只做清理（对应“新键已存在 → 删除旧键”）。
+   * @returns 本次搬动的旧键数（只用于日志/自测）
+   */
+  function migrateLegacyKeys(): number {
+    let moved = 0
+    for (const key of Object.keys(progress)) {
+      // `_current` 是「讲到哪本」的指针，不属于任何数据源，不参与迁移
+      if (key === '_current' || isNamespacedKey(key)) continue
+      const target = source + ':' + key
+      if (progress[target] !== true) progress[target] = true
+      delete progress[key]
+      moved++
+    }
+    if (moved > 0) {
+      saveProgress()
+      // 只报数量：书名来自云端清单等外部输入，不往日志里抄
+      console.log('STORY-PROGRESS-MIGRATED source=' + source + ' keys=' + moved)
+    }
+    return moved
+  }
+
+  /** 读进度：先查新键，查不到再回退旧键（兼容窗口只读，绝不把旧键写回去） */
+  function getProgress(book: string, index: number): boolean {
+    if (progress[storyKeyOf(source, book, index)] === true) return true
+    return progress[legacyStoryKey(book, index)] === true
+  }
+
+  /** 只改内存的「已讲」标记；落盘由调用方统一 saveProgress（一次播放只写一次盘） */
+  function markRead(book: string, index: number): void {
+    progress[storyKeyOf(source, book, index)] = true
+  }
+
+  /** 写进度：只写当前数据源的新键；read=false 只删新键，旧键与别的数据源都不动 */
+  function setProgress(book: string, index: number, read: boolean = true): void {
+    if (read) markRead(book, index)
+    else delete progress[storyKeyOf(source, book, index)]
+    saveProgress()
   }
 
   /**
    * 重新读盘：清空内存进度后按文件内容重填（保持 progress 引用不变，闭包里的其它函数继续共用同一份）。
    * 备份导入说书进度后必须调用；否则 player 手里还是启动时的旧进度，下一次 pickNext 保存会把它写回去。
+   * 重读后同样跑一次迁移：导入的旧格式备份当场归一到当前数据源（幂等；没有旧键就不写盘）。
    */
   function reloadProgress(): void {
     const next = loadProgress()
     for (const k of Object.keys(progress)) delete progress[k]
     for (const k of Object.keys(next)) progress[k] = next[k]
+    migrateLegacyKeys()
   }
 
   function resolveBook(books: string[], want: string): string {
@@ -160,7 +243,7 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
   /** 本回剩余未读段（按数组顺序，供本客户端连播） */
   function queueAfter(chunks: StoryChunk[], book: string, piece: StoryChunk): StoryChunk[] {
     return chunks
-      .filter((c: StoryChunk) => Number(c.index) > Number(piece.index) && !progress[storyKey(book, c.index)])
+      .filter((c: StoryChunk) => Number(c.index) > Number(piece.index) && !getProgress(book, c.index))
       .sort((a: StoryChunk, b: StoryChunk) => Number(a.index) - Number(b.index))
   }
 
@@ -173,9 +256,9 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
     for (let attempt = 0; attempt < books.length; attempt++) {
       const chunks = await repo.loadBook(target)
       if (chunks.length > 0) anyReadable = true
-      const hit = chunks.find((c: StoryChunk) => !progress[storyKey(target, c.index)])
+      const hit = chunks.find((c: StoryChunk) => !getProgress(target, c.index))
       if (hit) {
-        progress[storyKey(target, hit.index)] = true
+        markRead(target, hit.index)
         progress['_current'] = target
         saveProgress()
         return { piece: hit, chunks, book: target }
@@ -185,18 +268,23 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
     }
     // 一本书都读不出来：上层据此返回 no readable book，别再假装「讲完了」
     if (!anyReadable) return null
-    // 整整一轮都没找到未读：都讲完了，清空进度从头再来
+    // 整整一轮都没找到未读：把本数据源的进度清零从头再来。
+    // 只清当前数据源的键：别的数据源的进度不该被这次连播连带清空；
+    // 旧格式键理论上已被迁移清掉，这里兜底一并清，免得读兼容把它们当成“已讲”卡死重播。
+    const ownPrefix = source + ':'
     for (const k of Object.keys(progress)) {
-      if (k !== '_current') delete progress[k]
+      if (k === '_current') continue
+      if (isNamespacedKey(k) && !k.startsWith(ownPrefix)) continue
+      delete progress[k]
     }
     saveProgress()
     // 从头再来也要跳过坏书：按顺序找第一本能读的
     for (let i = 0; i < books.length; i++) {
       const book = books[i]
       const chunks = await repo.loadBook(book)
-      const hit = chunks.find((c: StoryChunk) => !progress[storyKey(book, c.index)])
+      const hit = chunks.find((c: StoryChunk) => !getProgress(book, c.index))
       if (!hit) continue
-      progress[storyKey(book, hit.index)] = true
+      markRead(book, hit.index)
       progress['_current'] = book
       saveProgress()
       return { piece: hit, chunks, book }
@@ -252,7 +340,7 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
     if (list.length === 0) return { ok: false, error: 'no books' }
     const st = stateFor(clientId)
     // 队列里若已被别的标签页讲过，就跳过
-    while (st.queue.length > 0 && progress[storyKey(st.book, st.queue[0].index)]) st.queue.shift()
+    while (st.queue.length > 0 && getProgress(st.book, st.queue[0].index)) st.queue.shift()
     let piece: StoryChunk | null = null
     let isFirst = false
     if (st.queue.length > 0) {
@@ -268,7 +356,7 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
       isFirst = switched
     }
     const bk = st.book || String(piece.book || list[0])
-    progress[storyKey(bk, piece.index)] = true
+    markRead(bk, piece.index)
     progress['_current'] = bk
     saveProgress()
     const chunk = buildChunk(piece, isFirst, isLastPiece(piece))
@@ -284,8 +372,11 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
     // （下一次 next 只能回退到书单第一本，进度指针等于被静默重置）。
     const book = resolveBook(list, want)
     if (!book) return { ok: false, error: 'unknown book' }
+    // 只清本数据源下这本书的新键：别的数据源的同书进度键与旧键都不动。
+    // 旧键由迁移清理；迁移后还残留旧键说明是迟到的旧格式数据，下一次重读/重启会归一到当时的数据源。
+    const prefix = source + ':' + book + '|'
     for (const k of Object.keys(progress)) {
-      if (k !== '_current' && k.startsWith(book + '|')) delete progress[k]
+      if (k !== '_current' && k.startsWith(prefix)) delete progress[k]
     }
     progress['_current'] = book
     saveProgress()
@@ -295,5 +386,5 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
     return { ok: true, book }
   }
 
-  return { books, start, next, reset, reloadProgress }
+  return { books, start, next, reset, reloadProgress, getProgress, setProgress }
 }

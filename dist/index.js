@@ -220,6 +220,9 @@ export function apply(ctx, rawConfig) {
         // 说书播放器只认 listBooks/loadBook；数据源（本地/云端）由 DataPort 投影进来
         repo: createStorySource(dataPort),
         progressFile: join(RUNTIME_DIR, 'story_progress.json'),
+        // 说书进度按数据源分键：本地/云端同名书的分段不同，共用一个进度键会在切源后跳段或重听。
+        // 这里注入装配时算出的数据源标识，写入落成 `<source>:<书名>|<序号>`；启动时把旧格式键迁到本数据源。
+        source: dataSource,
     });
     const story = createStoryHandlers({ player: storyPlayer });
     /** 三个缓存目录的条目数（菜单与可视化汇总共用同一口径） */
