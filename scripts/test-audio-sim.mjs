@@ -281,6 +281,23 @@ async function main() {
     ok('采样率 200000 → 夹到 96000（头与字节率一致）', dv(c2).getUint32(24, true) === 96000 && dv(c2).getUint32(28, true) === 192000)
     ok('采样率 NaN / 0 → 默认 48000', dv(codec.encodeWavPcm16([0], Number.NaN)).getUint32(24, true) === 48000 && dv(codec.encodeWavPcm16([0], 0)).getUint32(24, true) === 48000)
 
+    // --- capSampleRate：设备 192kHz 时先降采样，避免「头 96k、数据 192k」的半速音频 ---
+    {
+      const hi = new Float32Array([0.5, 0.5, -0.5, -0.5, 1, 1, 0, 0])
+      const capped = codec.capSampleRate(hi, 192000)
+      ok('192k → 96k（2 倍抽取）', capped.sampleRate === 96000 && capped.samples.length === 4, capped.sampleRate + '/' + capped.samples.length)
+      ok('块内平均：成对采样取均值', Math.abs(capped.samples[0] - 0.5) < 1e-6 && Math.abs(capped.samples[1] - (-0.5)) < 1e-6 && Math.abs(capped.samples[2] - 1) < 1e-6, Array.from(capped.samples).join(','))
+      const keep = codec.capSampleRate(hi, 48000)
+      ok('≤96k 原样返回（不改内容）', keep.sampleRate === 48000 && keep.samples.length === 8)
+      const weird = codec.capSampleRate([1, 2, NaN, 4], 192000)
+      ok('非有限值按 0（不污染平均值）', Math.abs(weird.samples[1] - 2) < 1e-6, Array.from(weird.samples).join(','))
+      const empty2 = codec.capSampleRate([], 192000)
+      ok('空输入不炸、保持原采样率', empty2.samples.length === 0 && empty2.sampleRate === 192000)
+      // 头与数据必须同采样率：cap 后的结果再写 WAV，头里的采样率应等于 cap 后的值
+      const w = codec.encodeWavPcm16(capped.samples, capped.sampleRate)
+      ok('cap 后写头：头采样率 = 数据采样率（不再半速）', dv(w).getUint32(24, true) === 96000)
+    }
+
     // --- 空输入不产出坏头 ---
     const empty = codec.encodeWavPcm16([], 44100)
     ok('空采样：44 字节纯头 / data=0 / RIFF size=36',

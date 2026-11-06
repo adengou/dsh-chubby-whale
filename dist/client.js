@@ -799,6 +799,29 @@
     }
     return buf;
   }
+  function capSampleRate(samples, sampleRate, maxRate = 96e3) {
+    const src = samples || [];
+    const n = Math.max(0, src.length >>> 0);
+    const rate = Math.round(Number(sampleRate) || 48e3);
+    const cap = Math.max(8e3, Math.round(Number(maxRate) || 96e3));
+    if (rate <= cap || n === 0) {
+      const same = src instanceof Float32Array ? src : Float32Array.from(src);
+      return { samples: same, sampleRate: rate };
+    }
+    const factor = Math.max(2, Math.ceil(rate / cap));
+    const outLen = Math.floor(n / factor);
+    const out = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      let sum = 0;
+      const base = i * factor;
+      for (let k = 0; k < factor; k++) {
+        const v = Number(src[base + k]);
+        sum += isFinite(v) ? v : 0;
+      }
+      out[i] = sum / factor;
+    }
+    return { samples: out, sampleRate: Math.round(rate / factor) };
+  }
   function wavBytes(seconds, sampleRate) {
     const sec = Math.max(0, Number(seconds) || 0);
     const sr = Math.max(8e3, Math.min(96e3, Math.round(Number(sampleRate) || 48e3)));
@@ -1007,11 +1030,14 @@
           const n = Math.min(2, Number(buf.numberOfChannels) || 1);
           for (let i = 0; i < n; i++) chans.push(buf.getChannelData(i));
           const mono = downmixToMono(chans);
-          if (wavBytes(mono.length / (Number(buf.sampleRate) || 48e3), buf.sampleRate) > maxWavBytes) {
+          const capped = capSampleRate(mono, buf.sampleRate);
+          const samples = capped.samples;
+          const rate = capped.sampleRate;
+          if (wavBytes(samples.length / rate, rate) > maxWavBytes) {
             done(null);
             return;
           }
-          done(new Blob([encodeWavPcm16(mono, buf.sampleRate)], { type: "audio/wav" }));
+          done(new Blob([encodeWavPcm16(samples, rate)], { type: "audio/wav" }));
         } catch (e) {
           done(null);
         }
