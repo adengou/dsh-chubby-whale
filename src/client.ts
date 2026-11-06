@@ -962,6 +962,14 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
         } catch (e) { }
         // 输入框清空交给 chat.send 在「真的发出去了」之后自己做：
         // 发送被占线挡下时不能清空（原来调用方无条件清空，主人的话会直接丢）。
+        // 点播指令（背诗/念诗/讲故事/讲典故/报书名）先走本地路由，不进聊天频道。
+        // 2026-11-06 修：B9 重构把 localRouter 的调用点弄丢了，导致「背首诗」被当成聊天发给模型。
+        try {
+          if (localRouter.route(String(rawText == null ? '' : rawText))) {
+            try { setInput('') } catch (e2) { }
+            return Promise.resolve(true)
+          }
+        } catch (e) { }
         try { skipInputClearRef.current = !!(opts && opts.voice) } catch (e) { }
         return chat.send(rawText, opts).then((ok: any) => ok !== false)
       }

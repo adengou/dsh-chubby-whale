@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.27";
+  var VERSION = "1.1.28";
 
   // src/client/styles.ts
   var W = 240;
@@ -8726,6 +8726,16 @@
         function sendText(rawText, opts) {
           try {
             if (reminderManager.intercept(String(rawText == null ? "" : rawText))) {
+              try {
+                setInput("");
+              } catch (e2) {
+              }
+              return Promise.resolve(true);
+            }
+          } catch (e) {
+          }
+          try {
+            if (localRouter.route(String(rawText == null ? "" : rawText))) {
               try {
                 setInput("");
               } catch (e2) {
