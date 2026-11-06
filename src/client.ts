@@ -180,6 +180,8 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
       // 原来这里定义了一份却从没被读过，属于"接线缺口"，已移除。
       const dragRef = R.useRef(createDragState())
       const scaleRef = R.useRef(1)
+      // 惯性动画帧句柄：卸载时取消，避免组件销毁后还在写位置
+      const inertiaRafRef = R.useRef(0)
       const animRef = R.useRef(null as any)
       /** 动画口型：动画器还没建好时静默（宿主回调里多处共用这一份，别各写一遍 try/catch） */
       const talkFor = (ms: number): void => { try { animRef.current?.talkFor(ms) } catch (e) { } }
@@ -265,8 +267,9 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
       function applyPos(x: number, y: number): void {
         const el = stageRef.current
         if (!el) return
-        // 缩放后实际占位是 W*scale / H*scale：窗口缩小时也要把整只鱼留在可视区里
-        const s = scaleRef.current || 1
+        // 缩放后实际占位是 W*scale / H*scale：窗口缩小时也要把整只鱼留在可视区里。
+        // 再乘成长外观最大缩放 1.08（look.scale 上限），否则升级到「家人」档时鱼身会溢出边缘约 19px
+        const s = (scaleRef.current || 1) * 1.08
         const p = clampPos(x, y, W * s, H * s, window.innerWidth, window.innerHeight)
         x = p.x
         y = p.y
@@ -292,13 +295,19 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
         savePos()
       }
 
-      // 窗口尺寸变化：按当前缩放重新钳制位置，别让鱼停在可视区外
+      // 窗口尺寸变化：按当前缩放重新钳制位置，别让鱼停在可视区外；
+      // 拖窗口时 resize 会连续触发，savePos 走 200ms 节流（位置本身仍逐次钳制）
       R.useEffect(() => {
+        let saveTimer: any = null
         return bindResize(window, () => {
           applyPos(posRef.current.x, posRef.current.y)
-          savePos()
+          if (saveTimer) return
+          saveTimer = setTimeout(() => { saveTimer = null; savePos() }, 200)
         })
       }, [])
+
+      // 卸载：取消惯性动画帧（否则组件销毁后最多还会写位置 ~0.7 秒）
+      R.useEffect(() => () => { try { if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current) } catch (e) { } }, [])
 
       // 卸载收尾：提醒链 / 朗读音频 / 琴声 AudioContext / 气泡定时器都别留着
       // （SpeechRecognition 当前没用到；VAD 的 MediaRecorder 由下面语音待命的 effect 自己 stopEar）
@@ -392,15 +401,19 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
         savePos()
         let vx = v.x
         let vy = v.y
-        const step = () => {
+        // 惯性按真实帧时长归一化（60Hz 基准）：高刷屏上物理时长与 60Hz 一致，不再短一半
+        let lastTs = 0
+        const step = (ts: number) => {
           if (dragRef.current.dragging) return
-          const dv = decayVelocity(vx, vy)
+          const dtScale = lastTs ? Math.min(4, Math.max(0.25, (ts - lastTs) / 16.67)) : 1
+          lastTs = ts
+          const dv = decayVelocity(vx, vy, dtScale)
           vx = dv.vx; vy = dv.vy
           applyPos(posRef.current.x + vx, posRef.current.y + vy)
           if (dv.done) { savePos(); return }
-          requestAnimationFrame(step)
+          inertiaRafRef.current = requestAnimationFrame(step)
         }
-        requestAnimationFrame(step)
+        inertiaRafRef.current = requestAnimationFrame(step)
       }
       function onPointerDown(e: any): void {
         // 触摸事件的 button 是 0；右键是 2。没有 button 字段的合成事件按左键处理

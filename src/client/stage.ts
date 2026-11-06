@@ -102,9 +102,16 @@ export function clampVelocity(v: number): number {
 }
 
 /** 一帧衰减：返回下一帧速度与是否该停 */
-export function decayVelocity(vx: number, vy: number): { vx: number; vy: number; done: boolean } {
-  const nx = vx * INERTIA_DECAY
-  const ny = vy * INERTIA_DECAY
+/**
+ * 惯性衰减。dtScale = 实际帧时长 / 16.67ms（60Hz 基准）：
+ * 按帧衰减会让 120Hz 屏的惯性物理时长只有 60Hz 的一半（位移一样、时间不对）；
+ * 传入 dtScale 后按时间衰减，各刷新率下物理时长一致。
+ */
+export function decayVelocity(vx: number, vy: number, dtScale = 1): { vx: number; vy: number; done: boolean } {
+  const k = Math.min(4, Math.max(0.25, Number.isFinite(dtScale) ? dtScale : 1))
+  const f = Math.pow(INERTIA_DECAY, k)
+  const nx = vx * f
+  const ny = vy * f
   return { vx: nx, vy: ny, done: Math.abs(nx) < INERTIA_STOP && Math.abs(ny) < INERTIA_STOP }
 }
 

@@ -5608,9 +5608,11 @@
     if (!isFinite(n)) return n > 0 ? INERTIA_MAX : n < 0 ? -INERTIA_MAX : 0;
     return Math.max(-INERTIA_MAX, Math.min(INERTIA_MAX, n));
   }
-  function decayVelocity(vx, vy) {
-    const nx = vx * INERTIA_DECAY;
-    const ny = vy * INERTIA_DECAY;
+  function decayVelocity(vx, vy, dtScale = 1) {
+    const k = Math.min(4, Math.max(0.25, Number.isFinite(dtScale) ? dtScale : 1));
+    const f = Math.pow(INERTIA_DECAY, k);
+    const nx = vx * f;
+    const ny = vy * f;
     return { vx: nx, vy: ny, done: Math.abs(nx) < INERTIA_STOP && Math.abs(ny) < INERTIA_STOP };
   }
   function pickInputMode(hasPointerEvent) {
@@ -7468,6 +7470,7 @@
         const menuStatsAtRef = R.useRef(0);
         const dragRef = R.useRef(createDragState());
         const scaleRef = R.useRef(1);
+        const inertiaRafRef = R.useRef(0);
         const animRef = R.useRef(null);
         const talkFor = (ms2) => {
           try {
@@ -7577,7 +7580,7 @@
         function applyPos(x, y) {
           const el = stageRef.current;
           if (!el) return;
-          const s = scaleRef.current || 1;
+          const s = (scaleRef.current || 1) * 1.08;
           const p = clampPos(x, y, W * s, H * s, window.innerWidth, window.innerHeight);
           x = p.x;
           y = p.y;
@@ -7605,10 +7608,21 @@
           savePos();
         }
         R.useEffect(() => {
+          let saveTimer = null;
           return bindResize(window, () => {
             applyPos(posRef.current.x, posRef.current.y);
-            savePos();
+            if (saveTimer) return;
+            saveTimer = setTimeout(() => {
+              saveTimer = null;
+              savePos();
+            }, 200);
           });
+        }, []);
+        R.useEffect(() => () => {
+          try {
+            if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current);
+          } catch (e) {
+          }
         }, []);
         R.useEffect(() => {
           return createUnmountCleanup({
@@ -7713,9 +7727,12 @@
           savePos();
           let vx = v.x;
           let vy = v.y;
-          const step = () => {
+          let lastTs = 0;
+          const step = (ts) => {
             if (dragRef.current.dragging) return;
-            const dv = decayVelocity(vx, vy);
+            const dtScale = lastTs ? Math.min(4, Math.max(0.25, (ts - lastTs) / 16.67)) : 1;
+            lastTs = ts;
+            const dv = decayVelocity(vx, vy, dtScale);
             vx = dv.vx;
             vy = dv.vy;
             applyPos(posRef.current.x + vx, posRef.current.y + vy);
@@ -7723,9 +7740,9 @@
               savePos();
               return;
             }
-            requestAnimationFrame(step);
+            inertiaRafRef.current = requestAnimationFrame(step);
           };
-          requestAnimationFrame(step);
+          inertiaRafRef.current = requestAnimationFrame(step);
         }
         function onPointerDown(e) {
           if (typeof e.button === "number" && e.button !== 0) return;
