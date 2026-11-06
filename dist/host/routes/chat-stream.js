@@ -318,6 +318,8 @@ export function createChatStreamHandler(opts) {
             // 响应头已到：接下来按「两段数据之间的间隔」算空闲
             touchIdle();
             let aborted = false;
+            /** 上游是否已经读到 done（= 这份回复是完整的）。半截与完整的判定只看它，不看客户端在不在。 */
+            let sawDone = false;
             const reader = upstream.body.getReader();
             const dec = new TextDecoder();
             let buf = '';
@@ -351,8 +353,10 @@ export function createChatStreamHandler(opts) {
             try {
                 for (;;) {
                     const { value, done } = await reader.read();
-                    if (done)
+                    if (done) {
+                        sawDone = true;
                         break;
+                    }
                     touchIdle(); // 每收到一段就重置空闲计时：又慢又长的回复不会再被 30s 硬切
                     buf += dec.decode(value, { stream: true });
                     const parsedSse = parseSseBuffer(buf);
@@ -382,18 +386,21 @@ export function createChatStreamHandler(opts) {
             }
             // 上游已读完：后面的收尾与客户端断开无关，close 事件不再 abort
             finished = true;
-            // 流中断或客户端已断开：这段回复是半截的，绝不能写进缓存和记忆（否则被永久命中）。
-            // 注意这里保持保守口径：客户端在流读取途中断开一律不落盘 —— 既有用例
-            // （test-stream-ledger ③B / test-chat-limits ⑦B）钉的就是这一条；「完整回复只是回不去」
-            // 的记账口径属于普通 /chat 那条同步路径（它没有半截概念），两边不混用。
-            if (aborted || client.gone()) {
+            // 半截 = 上游没读完（read 抛错、空闲/总时长超时、被我们 abort 都落在这里）：
+            // 半截回复绝不能写进缓存和记忆（否则被永久命中），也不记 token —— 没有最终 usage，估算只会虚记。
+            if (!sawDone) {
                 if (client.gone())
-                    console.error('[chat-stream] CHAT-CLIENT-ABORT 客户端已断开：本轮不写缓存/记忆、不记 token、不加经验');
+                    console.error('[chat-stream] CHAT-CLIENT-ABORT 客户端已断开且上游未读完：本轮不写缓存/记忆、不记 token、不加经验');
                 try {
                     res.end();
                 }
                 catch { }
                 return;
+            }
+            // 走到这里说明**上游已经读完**（这份回复是完整的）。客户端可能在最后几帧才走 —— 那和 /chat 的
+            // 「完整回复照常记账」同一口径（已付费的回复不该因为回不去就丢掉）；只留一条诊断便于排障。
+            if (aborted || client.gone()) {
+                console.error('[chat-stream] CHAT-CLIENT-ABORT-DELIVERED 客户端已断开但上游已读完：照常记账（不写 done 帧）');
             }
             const text = reply.trim() || '主人……本鲸刚刚走神了。';
             // 收尾：token / 记忆 / done（与普通 /chat 同口径）
@@ -451,8 +458,11 @@ export function createChatStreamHandler(opts) {
                 }
                 catch { }
             }
-            send({ done: true, reply: text, cached: false, intimacy, upgraded, firstDeltaMs: firstDeltaAt ? firstDeltaAt - started : 0, ms: Date.now() - started });
-            res.end();
+            // 客户端已走就别再往死 socket 写 done 帧（记账照做，回包跳过）
+            if (!client.gone()) {
+                send({ done: true, reply: text, cached: false, intimacy, upgraded, firstDeltaMs: firstDeltaAt ? firstDeltaAt - started : 0, ms: Date.now() - started });
+                res.end();
+            }
             // 缓存落盘放在 done/res.end 之后：cache.setJson 内部要 await 磁盘写 + prune 扫描，
             // 放在收尾前会把客户端看到的「说完」推迟。内存条目在 setJson 开头就同步写入，命中率不受影响。
             if (opts.cache && cacheOn && cacheUsable && reply.trim()) {
