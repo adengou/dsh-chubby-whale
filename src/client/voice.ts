@@ -158,6 +158,9 @@ export function createVoice(opts: VoiceOptions): Voice {
   const ttsQ: TtsJob[] = []
   let ttsBusy = false
   let ttsAudio: HTMLAudioElement | null = null
+  // 当前音频的 objectURL：正常播完由 finish() 释放，停止/看门狗复位也必须一并 revoke，
+  // 否则每次中途停止都会把一整段音频 Blob 留在内存里（页面不刷新就不回收）
+  let ttsUrl = ''
   let ttsBusySince = 0
   let ttsSynthAt = 0   // 本段开始合成的时刻（0 = 未在合成）；看门狗据此区分"合成中"与"僵死"
   let ttsProgressAt = 0  // 本段最近一次"有进展"的时刻（开播/播放进度/收到新 chunk）；看门狗按它判停滞
@@ -377,6 +380,29 @@ export function createVoice(opts: VoiceOptions): Voice {
   }
 
   // ---- 朗读 ----
+  /** revoke 一个音频 objectURL（旧环境可能没有该方法，失败绝不能影响朗读流程） */
+  function revokeUrl(u: string): void {
+    try { URL.revokeObjectURL(u) } catch (e) { }
+    if (ttsUrl === u) ttsUrl = ''
+  }
+
+  /** 释放当前朗读音频：pause + 摘回调 + revoke objectURL（停止 / 看门狗复位 / 异常兜底共用） */
+  function disposeTtsAudio(): void {
+    try {
+      if (ttsAudio) {
+        ttsAudio.pause()
+        ttsAudio.onended = null
+        ttsAudio.onerror = null
+      }
+    } catch (e) { }
+    ttsAudio = null
+    if (ttsUrl) {
+      const u = ttsUrl
+      ttsUrl = ''
+      try { URL.revokeObjectURL(u) } catch (e) { }
+    }
+  }
+
   function ttsWatchdog(): void {
     try {
       const audioPlaying = !!(ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0)
@@ -407,8 +433,7 @@ export function createVoice(opts: VoiceOptions): Voice {
       speakToken++
       // 看门狗自己是"结账方"：把这段的令牌同步到新纪元，finishJob 才能在结账后继续 pump
       if (dead) dead.token = speakToken
-      try { if (ttsAudio) { ttsAudio.pause(); ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }
-      ttsAudio = null
+      disposeTtsAudio()
       ttsSynthAt = 0
       ttsProgressAt = 0
       ttsBusy = false
@@ -550,6 +575,8 @@ const asrAborts = new Set<AbortController>()
       }
       try { opts.onSegment && opts.onSegment(job.text) } catch (e) { }
       const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
+      // 先登记再建元素：new Audio 若抛错，下面 catch 里的 disposeTtsAudio 也能收回这个 URL
+      ttsUrl = url
       const a = new Audio(url)
       ttsAudio = a
       ttsProgressAt = Date.now()
@@ -559,9 +586,10 @@ const asrAborts = new Set<AbortController>()
       try { a.onplaying = bump; a.ontimeupdate = bump; a.onprogress = bump; a.onloadeddata = bump } catch (e) { }
       // played 区分 onended（真播完）与 onerror（解码/播放出错）：原来两者都记"已开播"，统计虚高
       const finish = (played: boolean) => {
-        if (myToken !== speakToken) { try { URL.revokeObjectURL(url) } catch (e) { } return }
+        // 过期段只收回自己的 objectURL，绝不能清掉新段的 ttsAudio
+        if (myToken !== speakToken) { revokeUrl(url); return }
         try { a.onended = null; a.onerror = null } catch (e) { }
-        try { URL.revokeObjectURL(url) } catch (e) { }
+        revokeUrl(url)
         ttsAudio = null
         if (played) {
           stats.ttsPlayed++
@@ -579,12 +607,13 @@ const asrAborts = new Set<AbortController>()
       a.play().catch(() => {
         // 令牌校验：过期段只收回自己的 objectURL，绝不能清掉新段的 ttsAudio，
         // 也不能把旧 job unshift 回去（那会变成"新段播一半被旧段顶掉重播"）
-        if (myToken !== speakToken) { try { URL.revokeObjectURL(url) } catch (e) { } ; return }
+        if (myToken !== speakToken) { revokeUrl(url); return }
         // 播放没起来：先恢复麦克风再重试，别让麦一直关着（重试等待期间要能听见主人）
         if (!muted) micOn(true)
         stats.ttsFail++
         try { diag.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
-        try { a.onended = null; a.onerror = null; URL.revokeObjectURL(url) } catch (e) { }
+        try { a.onended = null; a.onerror = null } catch (e) { }
+        revokeUrl(url)
         ttsAudio = null
         // 播放被拒绝：先重试一次（换新音频元素），仍不行才用系统语音；没语音说明当场静音，记为丢失
         if (job.attempts < 1) {
@@ -601,6 +630,16 @@ const asrAborts = new Set<AbortController>()
         })
         else finishJob(job)
       })
+    }).catch((e: any) => {
+      // 兜底：建 Blob / objectURL / 音频元素或启动播放时的未预料异常不能把 ttsBusy 卡住
+      // （卡住后要等看门狗 20 秒合成超时才复位），也不能把这一段的 onDone 吞掉。
+      try { stats.lastError = 'tts-play: ' + String((e && e.name) || e) } catch (e2) { }
+      if (myToken !== speakToken) return
+      ttsSynthAt = 0
+      disposeTtsAudio()
+      stats.ttsFail++
+      try { diag.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() }) } catch (e2) { }
+      finishJob(job)
     })
   }
 
@@ -782,8 +821,8 @@ const asrAborts = new Set<AbortController>()
     // 在途的合成请求也取消：否则停止后服务器还在算，结果也没人要
     try { for (const c of ttsAborts) { try { c.abort() } catch (e) { } } } catch (e) { }
     try { ttsAborts.clear() } catch (e) { }
-    try { if (ttsAudio) { ttsAudio.pause(); ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }
-    ttsAudio = null
+    // 停止也要释放 objectURL：否则每次「停止说话」都白留一段音频 Blob，直到刷新页面
+    disposeTtsAudio()
     ttsBusy = false
     // 系统语音兜底可能还在念：一起取消（Safari/Firefox 都支持 cancel）
     try { const s: any = (window as any).speechSynthesis; if (s && typeof s.cancel === 'function') s.cancel() } catch (e) { }

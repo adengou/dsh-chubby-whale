@@ -46,6 +46,12 @@ export function recitePoem(host: ReciteHost, poem: any): void {
 
 import { pickCouplet } from '../duilian.js'
 
+/** 叙述收尾：气泡 + 一句「讲完啦～」（民间故事 / 典故 / 成语三处共用） */
+function finishSpeech(host: ActionHost, doneText: string): void {
+  host.bubble(doneText, 5000)
+  try { host.speak('讲完啦～') } catch (e) { }
+}
+
 export function registerCultureActions(table: ActionTable<ActionHost>): void {
   // 上一副对联放在闭包里：模块级单例会在"重复注册/测试多实例"之间串味
   let lastCouplet = ''
@@ -107,7 +113,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
       host.talkFor(5000)
       host.speak('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body.slice(0, 6000), {
         rate: host.narrationRate(),
-        onDone: () => { host.bubble('故事讲完啦～', 5000); try { host.speak('讲完啦～') } catch (e) { } },
+        onDone: () => finishSpeech(host, '故事讲完啦～'),
       })
     }).catch(() => host.bubble('故事没讲成'))
   })
@@ -121,7 +127,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
       host.talkFor(5000)
       host.speak('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + body, {
         rate: host.narrationRate(),
-        onDone: () => { host.bubble('典故讲完啦～', 5000); try { host.speak('讲完啦～') } catch (e) { } },
+        onDone: () => finishSpeech(host, '典故讲完啦～'),
       })
     }).catch(() => host.bubble('典故没讲成'))
   })
@@ -134,7 +140,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
       const sp = String(d.item.title || '') + '：' + String(d.item.text || '')
       host.speak(sp, {
         rate: host.narrationRate(),
-        onDone: () => { host.bubble('这个成语讲完啦～', 5000); try { host.speak('讲完啦～') } catch (e) { } },
+        onDone: () => finishSpeech(host, '这个成语讲完啦～'),
       })
     }).catch(() => host.bubble('没查到'))
   })

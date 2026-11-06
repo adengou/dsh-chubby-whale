@@ -2100,6 +2100,7 @@
     const ttsQ = [];
     let ttsBusy = false;
     let ttsAudio = null;
+    let ttsUrl = "";
     let ttsBusySince = 0;
     let ttsSynthAt = 0;
     let ttsProgressAt = 0;
@@ -2388,6 +2389,32 @@
         if (!rec || rec.state === "inactive") scheduleNext(150);
       }
     }
+    function revokeUrl(u) {
+      try {
+        URL.revokeObjectURL(u);
+      } catch (e) {
+      }
+      if (ttsUrl === u) ttsUrl = "";
+    }
+    function disposeTtsAudio() {
+      try {
+        if (ttsAudio) {
+          ttsAudio.pause();
+          ttsAudio.onended = null;
+          ttsAudio.onerror = null;
+        }
+      } catch (e) {
+      }
+      ttsAudio = null;
+      if (ttsUrl) {
+        const u = ttsUrl;
+        ttsUrl = "";
+        try {
+          URL.revokeObjectURL(u);
+        } catch (e) {
+        }
+      }
+    }
     function ttsWatchdog() {
       try {
         const audioPlaying = !!(ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0);
@@ -2410,15 +2437,7 @@
         ttsCurJob = null;
         speakToken++;
         if (dead) dead.token = speakToken;
-        try {
-          if (ttsAudio) {
-            ttsAudio.pause();
-            ttsAudio.onended = null;
-            ttsAudio.onerror = null;
-          }
-        } catch (e) {
-        }
-        ttsAudio = null;
+        disposeTtsAudio();
         ttsSynthAt = 0;
         ttsProgressAt = 0;
         ttsBusy = false;
@@ -2559,6 +2578,7 @@
         } catch (e) {
         }
         const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+        ttsUrl = url;
         const a = new Audio(url);
         ttsAudio = a;
         ttsProgressAt = Date.now();
@@ -2574,10 +2594,7 @@
         }
         const finish = (played) => {
           if (myToken !== speakToken) {
-            try {
-              URL.revokeObjectURL(url);
-            } catch (e) {
-            }
+            revokeUrl(url);
             return;
           }
           try {
@@ -2585,10 +2602,7 @@
             a.onerror = null;
           } catch (e) {
           }
-          try {
-            URL.revokeObjectURL(url);
-          } catch (e) {
-          }
+          revokeUrl(url);
           ttsAudio = null;
           if (played) {
             stats.ttsPlayed++;
@@ -2610,11 +2624,7 @@
         micOn(false);
         a.play().catch(() => {
           if (myToken !== speakToken) {
-            try {
-              URL.revokeObjectURL(url);
-            } catch (e) {
-            }
-            ;
+            revokeUrl(url);
             return;
           }
           if (!muted) micOn(true);
@@ -2626,9 +2636,9 @@
           try {
             a.onended = null;
             a.onerror = null;
-            URL.revokeObjectURL(url);
           } catch (e) {
           }
+          revokeUrl(url);
           ttsAudio = null;
           if (job.attempts < 1) {
             job.attempts++;
@@ -2650,6 +2660,20 @@
           });
           else finishJob(job);
         });
+      }).catch((e) => {
+        try {
+          stats.lastError = "tts-play: " + String(e && e.name || e);
+        } catch (e2) {
+        }
+        if (myToken !== speakToken) return;
+        ttsSynthAt = 0;
+        disposeTtsAudio();
+        stats.ttsFail++;
+        try {
+          diag2.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() });
+        } catch (e2) {
+        }
+        finishJob(job);
       });
     }
     function splitForTts(text, maxLen = 56) {
@@ -2870,15 +2894,7 @@
         ttsAborts.clear();
       } catch (e) {
       }
-      try {
-        if (ttsAudio) {
-          ttsAudio.pause();
-          ttsAudio.onended = null;
-          ttsAudio.onerror = null;
-        }
-      } catch (e) {
-      }
-      ttsAudio = null;
+      disposeTtsAudio();
       ttsBusy = false;
       try {
         const s = window.speechSynthesis;
@@ -3583,6 +3599,13 @@
       }
     }, 600);
   }
+  function finishSpeech(host, doneText) {
+    host.bubble(doneText, 5e3);
+    try {
+      host.speak("讲完啦～");
+    } catch (e) {
+    }
+  }
   function registerCultureActions(table) {
     let lastCouplet = "";
     table.define("poem", (host) => {
@@ -3666,13 +3689,7 @@
         host.talkFor(5e3);
         host.speak("讲个民间故事——" + tp.title + (tp.book ? "，出自《" + tp.book + "》" : "") + "。" + body.slice(0, 6e3), {
           rate: host.narrationRate(),
-          onDone: () => {
-            host.bubble("故事讲完啦～", 5e3);
-            try {
-              host.speak("讲完啦～");
-            } catch (e) {
-            }
-          }
+          onDone: () => finishSpeech(host, "故事讲完啦～")
         });
       }).catch(() => host.bubble("故事没讲成"));
     });
@@ -3687,13 +3704,7 @@
         host.talkFor(5e3);
         host.speak("讲个典故——" + String(d.item.title || "") + "，出自" + String(d.item.src || "") + "。" + body, {
           rate: host.narrationRate(),
-          onDone: () => {
-            host.bubble("典故讲完啦～", 5e3);
-            try {
-              host.speak("讲完啦～");
-            } catch (e) {
-            }
-          }
+          onDone: () => finishSpeech(host, "典故讲完啦～")
         });
       }).catch(() => host.bubble("典故没讲成"));
     });
@@ -3707,13 +3718,7 @@
         const sp = String(d.item.title || "") + "：" + String(d.item.text || "");
         host.speak(sp, {
           rate: host.narrationRate(),
-          onDone: () => {
-            host.bubble("这个成语讲完啦～", 5e3);
-            try {
-              host.speak("讲完啦～");
-            } catch (e) {
-            }
-          }
+          onDone: () => finishSpeech(host, "这个成语讲完啦～")
         });
       }).catch(() => host.bubble("没查到"));
     });
@@ -4212,24 +4217,7 @@
 
   // src/client/actions/system.ts
   function registerSystemActions(table) {
-    table.define("feed", (host) => {
-      const r = host.persona.feed();
-      if (r.bowls % 8 === 0) {
-        host.say(host.persona.line("riceAccount"), 5e3);
-        try {
-          getJson("/pet?action=feed").then(() => {
-            try {
-              host.syncGrowth();
-            } catch (e) {
-            }
-          }).catch(() => {
-          });
-        } catch (e) {
-        }
-        return;
-      }
-      host.say(r.text + (r.stageUp ? "（" + r.stage + "）" : ""), r.stageUp ? 6e3 : 3500);
-      host.heart();
+    function syncFeed(host) {
       try {
         getJson("/pet?action=feed").then(() => {
           try {
@@ -4240,6 +4228,17 @@
         });
       } catch (e) {
       }
+    }
+    table.define("feed", (host) => {
+      const r = host.persona.feed();
+      if (r.bowls % 8 === 0) {
+        host.say(host.persona.line("riceAccount"), 5e3);
+        syncFeed(host);
+        return;
+      }
+      host.say(r.text + (r.stageUp ? "（" + r.stage + "）" : ""), r.stageUp ? 6e3 : 3500);
+      host.heart();
+      syncFeed(host);
     });
     table.define("home", (host) => {
       host.homePos();
@@ -4306,7 +4305,7 @@
       }).catch(() => host.bubble("鱼粮查不到"));
     });
     table.define("growth", (host) => {
-      Promise.all([getJson("/growth"), getJson("/state")]).then(([g, s]) => {
+      Promise.all([getJson("/growth"), getJson("/state").catch(() => null)]).then(([g, s]) => {
         if (g && g.ok) {
           const nx = g.nextExp > 0 ? "（经验 " + g.exp + "/" + g.nextExp + "）" : "（满级）";
           const it = s && s.intimacy || 0;
@@ -4337,7 +4336,7 @@
         localStorage.setItem("chubby-chatlang", cl);
       } catch (e) {
       }
-      host.bubble(cl === "en" ? "聊天语言：English" : "聊天语言：中文");
+      host.bubble(cl === "en" ? "聊天语言：English" : cl === "zh" ? "聊天语言：中文" : "聊天语言：自动（跟着主人说）");
     });
     table.definePrefix("lang:", (host, v) => {
       const l = v === "en" ? "en" : "zh";
@@ -4355,8 +4354,18 @@
       const nowOn = !host.chatCacheOn();
       host.setChatCacheOn(nowOn);
       postJson("/cache-toggle", { enabled: nowOn }).then((d) => {
-        host.bubble(d && d.ok ? "聊天缓存：" + (d.enabled ? "开（省 token）" : "关（每次重新回答）") : "切换失败", 5e3);
-      }).catch(() => host.bubble("切换失败", 4e3));
+        if (!d || !d.ok) {
+          host.setChatCacheOn(!nowOn);
+          host.bubble("切换失败", 4e3);
+          return;
+        }
+        const real = typeof d.enabled === "boolean" ? d.enabled : nowOn;
+        host.setChatCacheOn(real);
+        host.bubble("聊天缓存：" + (real ? "开（省 token）" : "关（每次重新回答）"), 5e3);
+      }).catch(() => {
+        host.setChatCacheOn(!nowOn);
+        host.bubble("切换失败", 4e3);
+      });
     });
     table.define("clear-memory", (host) => {
       try {

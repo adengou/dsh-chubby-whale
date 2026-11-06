@@ -13,30 +13,42 @@ import { parseDue, cleanReminderText } from '../../shared/time.js'
 import { exportBackup, importBackup, formatStats } from './data.js'
 
 export function registerSystemActions(table: ActionTable<ActionHost>): void {
+  /**
+   * 投喂上报：宿主记账后刷新成长外观。
+   * 投喂已在本地生效，上报失败只静默（不弹错、不回滚碗数）。
+   */
+  function syncFeed(host: ActionHost): void {
+    try {
+      getJson('/pet?action=feed')
+        .then(() => { try { host.syncGrowth() } catch (e) { } })
+        .catch(() => { })
+    } catch (e) { }
+  }
+
   // —— 投喂 ——
   table.define('feed', (host) => {
     const r = host.persona.feed()
     // 每 8 碗说一次「饭碗账本」；平时说投喂台词
     if (r.bowls % 8 === 0) {
       host.say(host.persona.line('riceAccount'), 5000)
-      try { getJson('/pet?action=feed').then(() => { try { host.syncGrowth() } catch (e) { } }).catch(() => { }) } catch (e) { }
+      syncFeed(host)
       return
     }
     host.say(r.text + (r.stageUp ? '（' + r.stage + '）' : ''), r.stageUp ? 6000 : 3500)
     host.heart()
-    try { getJson('/pet?action=feed').then(() => { try { host.syncGrowth() } catch (e) { } }).catch(() => { }) } catch (e) { }
+    syncFeed(host)
   })
 
   // —— 位置与大小 ——
   table.define('home', (host) => { host.homePos(); host.bubble('回到角落啦') })
-// 流式回复开关：chubby-stream 以前只有人读、没人写（死键）
-table.define('stream-toggle', (host) => {
-  try {
-    const off = localStorage.getItem('chubby-stream') === 'off'
-    localStorage.setItem('chubby-stream', off ? 'on' : 'off')
-    host.bubble(off ? '流式回复：开（边生成边说）' : '流式回复：关（等整段再开口）', 4000)
-  } catch (e) { host.bubble('改不了（浏览器禁止存储）', 3000) }
-})
+  // 流式回复开关：chubby-stream 以前只有人读、没人写（死键）
+  table.define('stream-toggle', (host) => {
+    try {
+      const off = localStorage.getItem('chubby-stream') === 'off'
+      localStorage.setItem('chubby-stream', off ? 'on' : 'off')
+      host.bubble(off ? '流式回复：开（边生成边说）' : '流式回复：关（等整段再开口）', 4000)
+    } catch (e) { host.bubble('改不了（浏览器禁止存储）', 3000) }
+  })
   table.define('bigger', (host) => { host.nudgeScale(0.1) })
   table.define('smaller', (host) => { host.nudgeScale(-0.1) })
   // —— 让它游走：隐藏后仍可恢复（恢复点 / Ctrl+Shift+W / 菜单项都走 host.recover）——
@@ -78,7 +90,8 @@ table.define('stream-toggle', (host) => {
     }).catch(() => host.bubble('鱼粮查不到'))
   })
   table.define('growth', (host) => {
-    Promise.all([getJson('/growth'), getJson('/state')]).then(([g, s]: any[]) => {
+    // /state 只是补充亲密度：它挂了不能把已经拿到的成长数据一起拖成「查不到」
+    Promise.all([getJson('/growth'), getJson('/state').catch(() => null)]).then(([g, s]: any[]) => {
       if (g && g.ok) {
         const nx = g.nextExp > 0 ? ('（经验 ' + g.exp + '/' + g.nextExp + '）') : '（满级）'
         const it = (s && s.intimacy) || 0
@@ -104,7 +117,8 @@ table.define('stream-toggle', (host) => {
   table.definePrefix('chat-lang:', (host, v) => {
     const cl = v === 'en' ? 'en' : (v === 'zh' ? 'zh' : 'auto')
     try { localStorage.setItem('chubby-chatlang', cl) } catch (e) { }
-    host.bubble(cl === 'en' ? '聊天语言：English' : '聊天语言：中文')
+    // auto 是合法值：以前落进 else 却显示「中文」，选「自动」看着像没生效
+    host.bubble(cl === 'en' ? '聊天语言：English' : (cl === 'zh' ? '聊天语言：中文' : '聊天语言：自动（跟着主人说）'))
   })
   table.definePrefix('lang:', (host, v) => {
     const l = v === 'en' ? 'en' : 'zh'
@@ -123,8 +137,20 @@ table.define('stream-toggle', (host) => {
     const nowOn = !host.chatCacheOn()
     host.setChatCacheOn(nowOn)
     postJson('/cache-toggle', { enabled: nowOn }).then((d: any) => {
-      host.bubble(d && d.ok ? ('聊天缓存：' + (d.enabled ? '开（省 token）' : '关（每次重新回答）')) : '切换失败', 5000)
-    }).catch(() => host.bubble('切换失败', 4000))
+      if (!d || !d.ok) {
+        // 宿主没切成功就回滚勾选：否则菜单显示与后端实际状态相反，下次点按还会切错方向
+        host.setChatCacheOn(!nowOn)
+        host.bubble('切换失败', 4000)
+        return
+      }
+      // 以宿主回报的实际值为准（策略可能强制某一侧）
+      const real = typeof d.enabled === 'boolean' ? d.enabled : nowOn
+      host.setChatCacheOn(real)
+      host.bubble('聊天缓存：' + (real ? '开（省 token）' : '关（每次重新回答）'), 5000)
+    }).catch(() => {
+      host.setChatCacheOn(!nowOn)
+      host.bubble('切换失败', 4000)
+    })
   })
   table.define('clear-memory', (host) => {
     try {
