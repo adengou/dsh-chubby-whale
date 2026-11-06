@@ -35,7 +35,9 @@
     cursor: "grab",
     touchAction: "none",
     transform: "scale(" + scale + ")",
-    transformOrigin: "100% 100%",
+    // 缩放原点用左上角：与 stage.ts 的 clampPos（按左上坐标 + W*s 宽高钳制）同口径；
+    // 原先 100% 100%（右下）会让缩放后的鱼贴边溢出约 96px。
+    transformOrigin: "0 0",
     display: hidden ? "none" : "block"
   });
   var canvasStyle = { width: "100%", height: "100%", display: "block" };
