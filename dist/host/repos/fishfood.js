@@ -7,11 +7,20 @@
  * 跨天/跨月判断在读取时也做一次（只改内存返回值、不写盘）：否则新的一天在
  * 「第一条新消息到来之前」读到的今日/本月计数仍是昨天的，面板与统计会显示旧值。
  * 所有 token 字段按非负整数累加，并在 Number.MAX_SAFE_INTEGER 封顶，防脏值/溢出。
+ *
+ * 分桶（2026-11-07 B98）：内部模型用量（kind='summary'/'personality'）与聊天共用 chatTokens 时
+ * 账本分不出「聊天 / 摘要 / 人格」各花了多少。这里额外按 kind 累计 byKind，四个桶各带
+ * 总量 / 当日 / 当月的 tokens 与金额。**顶层字段语义一个都不改**（老面板、老客户端、
+ * 备份导入还在读 chatTokens/storyTokens/totalTokens/dayTokens/monthTokens/costCny/...）。
+ * byKind 是「新账」：老 fishfood.json 没有它就按 0 处理，不回溯拆分历史（历史内部用量
+ * 早已并进 chatTokens，拆不出来，硬拆等于编数字）。
  */
 import { join } from 'node:path';
 import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } from '../atomic.js';
 /** JS 安全整数上限：超过后 +1 不再改变数值（显示与统计都失真），到这里就封顶 */
 const MAX_TOKEN = Number.MAX_SAFE_INTEGER;
+/** 分桶顺序固定：写盘、出接口、展示都按这个来，别依赖对象键序 */
+const TOKEN_KINDS = ['chat', 'story', 'summary', 'personality'];
 /** 非负整数（NaN/Infinity/负数/小数一律清洗，避免一条脏 usage 把整份鱼粮写成 null） */
 function cleanToken(value) {
     const n = Number(value);
@@ -35,6 +44,61 @@ function cleanCost(value) {
 function addCost(current, add) {
     const base = cleanCost(current);
     return Math.round(Math.min(1e9, base + add) * 1e6) / 1e6;
+}
+/** 空桶（四个桶的形状一致，缺数据就用它） */
+function emptyBucket() {
+    return { tokens: 0, costCny: 0, dayTokens: 0, dayCostCny: 0, monthTokens: 0, monthCostCny: 0 };
+}
+/**
+ * kind → 桶名。老口径是「kind === 'story' 单独计，其余全进 chat」，分桶沿用**同一条判断**
+ * （不做 trim/小写化，刻意与顶层分支保持逐字一致）：只有 story/summary/personality 单列，
+ * 其它（含脏值/空值/未知 kind）都算 chat —— 这样 byKind.chat + byKind.story 恰好等于
+ * 新记账的 chatTokens + storyTokens，不会出现「桶里有一笔、顶层没有」的错位。
+ */
+function bucketKindOf(kind) {
+    return kind === 'story' || kind === 'summary' || kind === 'personality' ? kind : 'chat';
+}
+/** 读一个桶并清洗：缺字段/脏值/老文件没有 byKind 一律给 0 桶，绝不返回 undefined */
+function readBucket(f, kind) {
+    const b = emptyBucket();
+    const all = f && typeof f === 'object' && f.byKind && typeof f.byKind === 'object' && !Array.isArray(f.byKind) ? f.byKind : null;
+    const raw = all && all[kind] && typeof all[kind] === 'object' && !Array.isArray(all[kind]) ? all[kind] : null;
+    if (!raw)
+        return b;
+    b.tokens = cleanToken(raw.tokens);
+    b.costCny = cleanCost(raw.costCny);
+    b.dayTokens = cleanToken(raw.dayTokens);
+    b.dayCostCny = cleanCost(raw.dayCostCny);
+    b.monthTokens = cleanToken(raw.monthTokens);
+    b.monthCostCny = cleanCost(raw.monthCostCny);
+    return b;
+}
+/** 取（必要时创建）分桶容器，并把四个桶补齐成规范形状（脏桶就地清洗，不留下怪形状） */
+function ensureBuckets(f) {
+    if (!f.byKind || typeof f.byKind !== 'object' || Array.isArray(f.byKind))
+        f.byKind = {};
+    for (const kind of TOKEN_KINDS)
+        f.byKind[kind] = readBucket(f, kind);
+    return f.byKind;
+}
+/** 跨天/跨月：各桶的当日/当月计数随顶层一起归零（桶的总量与累计金额不动） */
+function rollBuckets(f, scope) {
+    const all = f && typeof f === 'object' && f.byKind && typeof f.byKind === 'object' && !Array.isArray(f.byKind) ? f.byKind : null;
+    if (!all)
+        return;
+    for (const kind of TOKEN_KINDS) {
+        const raw = all[kind];
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+            continue;
+        if (scope === 'day') {
+            raw.dayTokens = 0;
+            raw.dayCostCny = 0;
+        }
+        else {
+            raw.monthTokens = 0;
+            raw.monthCostCny = 0;
+        }
+    }
 }
 export function createTokenRepo(dataDir) {
     const FISHFOOD = join(dataDir, 'fishfood.json');
@@ -82,12 +146,14 @@ export function createTokenRepo(dataDir) {
             f.storyTokens = 0;
             f.dayTokens = 0;
             f.dayCostCny = 0;
+            rollBuckets(f, 'day');
         }
         f.day = day;
         const hadMonth = typeof f.month === 'string' && f.month.length > 0;
         if (hadMonth && f.month !== month) {
             f.monthTokens = 0;
             f.monthCostCny = 0;
+            rollBuckets(f, 'month');
         }
         f.month = month;
     }
@@ -104,7 +170,8 @@ export function createTokenRepo(dataDir) {
         const add = cleanToken(n);
         if (add <= 0)
             return f; // 没有可信用量：不写盘、不改计数（也不把 NaN 写进文件）
-        if (kind === 'story')
+        const kindOf = bucketKindOf(kind);
+        if (kindOf === 'story')
             f.storyTokens = addToken(f.storyTokens, add);
         else
             f.chatTokens = addToken(f.chatTokens, add);
@@ -127,6 +194,17 @@ export function createTokenRepo(dataDir) {
             f.costCny = addCost(f.costCny, cost);
             f.dayCostCny = addCost(f.dayCostCny, cost);
             f.monthCostCny = addCost(f.monthCostCny, cost);
+        }
+        // 分桶（B98）：按 kind 累加，桶内总量/当日/当月与顶层同步走；顶层字段保持原样。
+        // 先 ensureBuckets 再取本桶：老文件没有 byKind 时在这一步补齐四个 0 桶（只补形状，不补历史数字）。
+        const bucket = ensureBuckets(f)[kindOf];
+        bucket.tokens = addToken(bucket.tokens, add);
+        bucket.dayTokens = addToken(bucket.dayTokens, add);
+        bucket.monthTokens = addToken(bucket.monthTokens, add);
+        if (cost > 0) {
+            bucket.costCny = addCost(bucket.costCny, cost);
+            bucket.dayCostCny = addCost(bucket.dayCostCny, cost);
+            bucket.monthCostCny = addCost(bucket.monthCostCny, cost);
         }
         saveFishfood(f);
         return f;

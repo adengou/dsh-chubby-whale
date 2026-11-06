@@ -84,6 +84,49 @@ function shortText(v: any, max = 16): string {
   return t.length > max ? t.slice(0, max) + '…' : t
 }
 
+/**
+ * 鱼账本分桶的展示顺序与中文名（host /fishfood、/stats 的 byKind）。
+ *
+ * 为什么写死顺序：JSON 对象键序不保证，按 Object.keys 遍历可能把「人格」排到「聊天」
+ * 前面，同一份数据两次刷新顺序还不一样。宿主侧也按 chat→story→summary→personality
+ * 的顺序输出，两边一致。
+ */
+const KIND_BUCKETS: Array<{ key: string; label: string }> = [
+  { key: 'chat', label: '聊天' },
+  { key: 'story', label: '说书' },
+  { key: 'summary', label: '摘要' },
+  { key: 'personality', label: '人格' },
+]
+
+/**
+ * 分桶概况（纯文本，一行）：`聊天 120（￥0.0001） · 说书 30；￥0.0001`
+ *
+ * 口径（2026-11-07 B98）：
+ *   · 只显示**有数据**的桶——0 桶不显示（没花过和不知道都不该占位，更不该显示「聊天 0」）；
+ *   · 单个桶只有金额才标 ￥，末尾合计也只在真有金额时出现；
+ *   · byKind 缺失/形状不对（老账本、老备份、旧宿主）→ 返回空串，调用方连「分桶：」都不显示。
+ *
+ * 只在本模块内部给 formatStats 用，**刻意不 export**：本批不允许新增模块导出
+ * （docs/模块接口清单.md 会对不上）。system.ts 的鱼粮指令里有一份同口径的本地实现，
+ * 改口径时两处一起改。
+ */
+function formatKindBuckets(byKind: any): string {
+  const src = (byKind && typeof byKind === 'object' && !Array.isArray(byKind)) ? byKind : null
+  if (!src) return ''
+  const parts: string[] = []
+  let costSum = 0
+  for (const { key, label } of KIND_BUCKETS) {
+    const b = (src[key] && typeof src[key] === 'object' && !Array.isArray(src[key])) ? src[key] : null
+    const tokens = numOf(b && b.tokens)
+    const cost = numOf(b && b.costCny)
+    if (tokens <= 0 && cost <= 0) continue
+    parts.push(label + ' ' + tokens + (cost > 0 ? '（￥' + cost.toFixed(4) + '）' : ''))
+    if (cost > 0) costSum += cost
+  }
+  if (parts.length === 0) return ''
+  return parts.join(' · ') + (costSum > 0 ? '；￥' + costSum.toFixed(4) : '')
+}
+
 /** 数组、普通对象、单值都收成数组（人格字段可能是其中任一种） */
 function asList(v: any): any[] {
   if (v == null) return []
@@ -114,6 +157,8 @@ export function formatStats(payload: any): string {
   const tokens = numOf(ff.total, ff.totalTokens, s.totalTokens, (s.tokens && typeof s.tokens === 'object') ? s.tokens.total : s.tokens, s.fishfoodTotal)
     // 鱼账本（2026-11-07）：金额与 token 同源，没有就是 0（不显示，不冒充「花了 0 元」）
     const costCny = Number(ff.costCny) || 0
+    // 分桶（B98）：聊天 / 说书 / 摘要 / 人格；老账本（无 byKind）返回空串，连标题都不显示
+    const bucketLine = formatKindBuckets(ff.byKind)
 
   // —— 成长 / 亲密度 ——
   const g = (s.growth && typeof s.growth === 'object') ? s.growth : {}
@@ -137,6 +182,7 @@ export function formatStats(payload: any): string {
 
   return '统计卡\n缓存：tts ' + tts + ' 条｜chat ' + chat + ' 条｜asr ' + asr + ' 条'
     + '\n鱼粮：' + tokens + ' tokens' + (costCny > 0 ? ' · ≈ ¥' + costCny.toFixed(4) : '')
+    + (bucketLine ? '\n分桶：' + bucketLine : '')
     + '\n成长：' + stage + '｜亲密度 ' + intimacy + '/100'
     + '\n人格要点：' + points
 }

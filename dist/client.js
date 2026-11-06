@@ -25,7 +25,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.69";
+  var VERSION = "1.1.70";
 
   // src/client/styles.ts
   var W = 240;
@@ -5337,6 +5337,32 @@
   }
 
   // src/client/actions/system.ts
+  var KIND_BUCKETS = [
+    { key: "chat", label: "聊天" },
+    { key: "story", label: "说书" },
+    { key: "summary", label: "摘要" },
+    { key: "personality", label: "人格" }
+  ];
+  function bucketNum(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  function kindBucketText(byKind) {
+    const src = byKind && typeof byKind === "object" && !Array.isArray(byKind) ? byKind : null;
+    if (!src) return "";
+    const parts = [];
+    let costSum = 0;
+    for (const { key, label } of KIND_BUCKETS) {
+      const b = src[key] && typeof src[key] === "object" && !Array.isArray(src[key]) ? src[key] : null;
+      const tokens = bucketNum(b && b.tokens);
+      const cost = bucketNum(b && b.costCny);
+      if (tokens <= 0 && cost <= 0) continue;
+      parts.push(label + " " + tokens + (cost > 0 ? "（￥" + cost.toFixed(4) + "）" : ""));
+      if (cost > 0) costSum += cost;
+    }
+    if (parts.length === 0) return "";
+    return parts.join(" · ") + (costSum > 0 ? "；￥" + costSum.toFixed(4) : "");
+  }
   function registerSystemActions(table) {
     let cacheToggleBusy = false;
     let cacheToggleSeq = 0;
@@ -5437,7 +5463,9 @@
           cny > 0 ? "≈ ¥" + cny.toFixed(4) + "（今日 ¥" + dayCny.toFixed(4) + "）" : "金额：暂无可拆分用量",
           cny > 0 ? "按官方价目（" + String(d.priceCheckedAt || "") + " 核对）估算" : ""
         ].filter(Boolean);
-        host.bubble(parts.join("，"), 6e3);
+        const text = parts.join("，");
+        const buckets = kindBucketText(d.byKind);
+        host.bubble(buckets ? text + "\n分桶：" + buckets : text, 6e3);
       }).catch(() => host.bubble("鱼粮查不到"));
     });
     table.define("growth", (host) => {
@@ -6716,13 +6744,52 @@
   var sharedStates = /* @__PURE__ */ new WeakMap();
   function sharedStateOf(refs) {
     const key = refs && refs.busy ? refs.busy : null;
-    if (!key) return { gen: 0, guard: null };
+    if (!key) return { gen: 0, guard: null, inflight: null };
     let s = sharedStates.get(key);
     if (!s) {
-      s = { gen: 0, guard: null };
+      s = { gen: 0, guard: null, inflight: null };
       sharedStates.set(key, s);
     }
     return s;
+  }
+  function makeAbortController() {
+    try {
+      const AC = typeof AbortController !== "undefined" ? AbortController : null;
+      if (AC) return new AC();
+    } catch (e) {
+    }
+    return null;
+  }
+  function abortInflightOf(shared, reason) {
+    const round = shared.inflight;
+    if (!round) return;
+    shared.inflight = null;
+    round.reason = reason;
+    try {
+      round.ctrl.abort();
+    } catch (e) {
+    }
+  }
+  var stopHooks = /* @__PURE__ */ new WeakSet();
+  function installStopHook(refs, shared) {
+    const busy = refs ? refs.busy : null;
+    if (!busy || stopHooks.has(busy)) return;
+    try {
+      let on = !!busy.current;
+      Object.defineProperty(busy, "current", {
+        configurable: true,
+        enumerable: true,
+        get: () => on,
+        set: (v) => {
+          const next = !!v;
+          const was = on;
+          on = next;
+          if (was && !next) abortInflightOf(shared, "stop");
+        }
+      });
+      stopHooks.add(busy);
+    } catch (e) {
+    }
   }
   function isAbortError(err) {
     if (!err) return false;
@@ -6740,6 +6807,7 @@
   function createStoryController(host) {
     const refs = host.refs;
     const shared = sharedStateOf(refs);
+    installStopHook(refs, shared);
     function bumpGen() {
       shared.gen += 1;
       return shared.gen;
@@ -6794,17 +6862,64 @@
         host.bubble(message, 5e3);
       }, REQUEST_DEADLINE_MS);
     }
+    function settleInflight(round) {
+      if (!round) return;
+      if (shared.inflight === round) shared.inflight = null;
+    }
     function requestStory(path, post, texts, onData) {
+      abortInflightOf(shared, "superseded");
       const token = beginRound();
       const deadline = armDeadline(token, texts.slow);
-      const init = { headers: clientHeaders(host.clientId), signal: timeoutSignal(REQUEST_TIMEOUT_MS) };
+      const ctrl = makeAbortController();
+      const timeoutSig = timeoutSignal(REQUEST_TIMEOUT_MS);
+      const round = ctrl ? { ctrl, reason: "" } : null;
+      let detachTimeout = null;
+      if (round) {
+        shared.inflight = round;
+        if (timeoutSig) {
+          const onTimeout = () => {
+            if (round.reason) return;
+            round.reason = "timeout";
+            try {
+              ctrl.abort();
+            } catch (e) {
+            }
+          };
+          try {
+            if (typeof timeoutSig.addEventListener === "function") {
+              timeoutSig.addEventListener("abort", onTimeout);
+              detachTimeout = () => {
+                try {
+                  timeoutSig.removeEventListener("abort", onTimeout);
+                } catch (e) {
+                }
+              };
+            }
+          } catch (e) {
+          }
+        }
+      }
+      const init = { headers: clientHeaders(host.clientId), signal: ctrl ? ctrl.signal : timeoutSig };
+      const finish = () => {
+        clearTimeout(deadline);
+        if (detachTimeout) {
+          detachTimeout();
+          detachTimeout = null;
+        }
+        settleInflight(round);
+      };
       const p = post ? postJson(path, void 0, init) : getJson(path, init);
       p.then((d) => {
-        clearTimeout(deadline);
+        finish();
         if (!stillMine(token)) return;
         onData(d, token);
       }).catch((err) => {
-        clearTimeout(deadline);
+        const reason = round ? round.reason : "";
+        finish();
+        if (reason === "stop" || reason === "superseded") {
+          if (stillMine(token)) release(token);
+          return;
+        }
         if (!stillMine(token)) return;
         release(token);
         host.bubble(isAbortError(err) ? texts.slow : texts.fail, 5e3);

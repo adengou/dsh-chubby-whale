@@ -16,8 +16,13 @@ export type { StoryChunk }
 
 /** 内存里最多留几本书：一本 JSON 可能几 MB，无限缓存会一直涨 */
 const BOOK_CACHE_MAX = 2
-/** 单本书解析超时：30 秒 */
-const READ_TIMEOUT_MS = 30000
+/**
+ * 单本书解析超时：20 秒。
+ * 为什么从 30s 调下来（2026-11-07 B98）：客户端说书请求的硬超时是 25s（client/story.ts），
+ * 服务端 30s 意味着「客户端先放弃、宿主还在读」，用户看到的是一次莫名失败、日志里却还在等；
+ * 20s 让服务端先收口，路由能如实回「这本书读不出来」，客户端也能立刻降级/提示。
+ */
+const READ_TIMEOUT_MS = 20000
 /** 书名上限：与路由/数据源投影一致（最长书名 4 字，64 已留余量） */
 const BOOK_NAME_MAX = 64
 /** 书名里不允许出现：路径分隔符、控制字符、上跳片段（`..`）——book 最终要拼进 join()，不能当路径用 */
@@ -139,7 +144,7 @@ export function createStoryRepo(opts: { dataDir: string; workerPath: string }): 
       try {
         const w = new Worker(opts.workerPath)
         worker = w
-        timer = setTimeout(() => { fail('timeout 30s') }, READ_TIMEOUT_MS)
+        timer = setTimeout(() => { fail('timeout 20s') }, READ_TIMEOUT_MS)
         w.once('message', (msg: any) => {
           clearTimeout(timer)
           timer = null

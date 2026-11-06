@@ -13,6 +13,50 @@ import { parseDue, cleanReminderText } from '../../shared/time.js'
 import { clearT } from '../util.js'
 import { exportBackup, importBackup } from './data.js'
 
+/**
+ * 鱼账本分桶（2026-11-07 B98）：展示顺序与中文名。
+ * 宿主 /fishfood 与 /stats 的 byKind 键名就是这四个；顺序写死，不依赖对象键序。
+ */
+const KIND_BUCKETS: Array<{ key: string; label: string }> = [
+  { key: 'chat', label: '聊天' },
+  { key: 'story', label: '说书' },
+  { key: 'summary', label: '摘要' },
+  { key: 'personality', label: '人格' },
+]
+
+/** 取有限数字（缺字段/脏值按 0，不把 NaN 拼进气泡） */
+function bucketNum(v: any): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+/**
+ * 分桶概况（一行纯文本）：`聊天 120（￥0.0001） · 说书 30；￥0.0001`
+ *
+ * 与 client/actions/data.ts 里的 formatKindBuckets **同口径**（那边给统计卡用）：
+ *   · 只显示有数据的桶，0 桶不显示；
+ *   · 桶里有金额才标 ￥，末尾合计只在真有金额时出现；
+ *   · 没有 byKind / 全 0 → 返回空串，调用方连「分桶：」都不加。
+ * 为什么不在 data.ts 导出共用：本批不允许新增模块导出（docs/模块接口清单.md 会过期）。
+ * 改口径时两处一起改。
+ */
+function kindBucketText(byKind: any): string {
+  const src = (byKind && typeof byKind === 'object' && !Array.isArray(byKind)) ? byKind : null
+  if (!src) return ''
+  const parts: string[] = []
+  let costSum = 0
+  for (const { key, label } of KIND_BUCKETS) {
+    const b = (src[key] && typeof src[key] === 'object' && !Array.isArray(src[key])) ? src[key] : null
+    const tokens = bucketNum(b && b.tokens)
+    const cost = bucketNum(b && b.costCny)
+    if (tokens <= 0 && cost <= 0) continue
+    parts.push(label + ' ' + tokens + (cost > 0 ? '（￥' + cost.toFixed(4) + '）' : ''))
+    if (cost > 0) costSum += cost
+  }
+  if (parts.length === 0) return ''
+  return parts.join(' · ') + (costSum > 0 ? '；￥' + costSum.toFixed(4) : '')
+}
+
 export function registerSystemActions(table: ActionTable<ActionHost>): void {
   // 聊天缓存开关的在途状态：注册只发生一次（client.ts 建动作表时），闭包即单例
   let cacheToggleBusy = false
@@ -103,7 +147,11 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
         cny > 0 ? '≈ ¥' + cny.toFixed(4) + '（今日 ¥' + dayCny.toFixed(4) + '）' : '金额：暂无可拆分用量',
         cny > 0 ? '按官方价目（' + String(d.priceCheckedAt || '') + ' 核对）估算' : ''
       ].filter(Boolean)
-      host.bubble(parts.join('，'), 6000)
+      // 分桶（2026-11-07 B98）：聊天 / 说书 / 摘要 / 人格各花了多少。
+      // 老账本没有 byKind → kindBucketText 返回空串，这一行连标题都不加（不显示 0 桶）。
+      const text = parts.join('，')
+      const buckets = kindBucketText(d.byKind)
+      host.bubble(buckets ? text + '\n分桶：' + buckets : text, 6000)
     }).catch(() => host.bubble('鱼粮查不到'))
   })
   table.define('growth', (host) => {

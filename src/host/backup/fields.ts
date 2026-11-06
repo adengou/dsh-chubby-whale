@@ -158,11 +158,57 @@ export function cleanGrowth(value: any): any | null {
 }
 
 /** 鱼粮：token 计数与日/月滚动标记 */
+/** 金额清洗：非负有限，保留 6 位小数（与 fishfood 记账精度一致），上限 1e9 防脏值 */
+function cleanCost(value: any): number | null {
+  if (!isNum(value)) return null
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0) return null
+  return Math.round(Math.min(1e9, n) * 1e6) / 1e6
+}
+
+/** 鱼账本分桶的固定四个来源（多出来的键一律丢弃，避免备份包夹带未知结构） */
+const FISHFOOD_KINDS = ['chat', 'story', 'summary', 'personality']
+/** 每个桶的六个数值字段 */
+const BUCKET_NUM_FIELDS = ['tokens', 'costCny', 'dayTokens', 'dayCostCny', 'monthTokens', 'monthCostCny']
+
 export function cleanFishfood(value: any): any | null {
   if (!isPlainObject(value)) return null
   const out: any = {}
   for (const k of ['chatTokens', 'storyTokens', 'totalTokens', 'monthTokens', 'dayTokens']) {
     if (isNum(value[k])) out[k] = Math.max(0, Math.floor(value[k]))
+  }
+  // 鱼账本（2026-11-07 B98）：输入/输出拆分、缓存命中、人民币与分桶以前会被这份白名单过滤掉，
+  // 于是「备份 — 导入」一轮后金额和分桶归零（token 总量还在，钱不见了）。这里补齐 round-trip；
+  // 字段形状与 src/host/repos/fishfood.ts 的同名清洗函数保持一致。
+  for (const k of ['promptTokens', 'completionTokens', 'cacheHitTokens']) {
+    if (isNum(value[k])) out[k] = Math.max(0, Math.floor(value[k]))
+  }
+  for (const k of ['costCny', 'dayCostCny', 'monthCostCny']) {
+    const v = cleanCost(value[k])
+    if (v !== null) out[k] = v
+  }
+  if (isPlainObject(value.byKind)) {
+    const buckets: any = {}
+    for (const kind of FISHFOOD_KINDS) {
+      const src = value.byKind[kind]
+      if (!isPlainObject(src)) continue
+      const b: any = {}
+      for (const f of BUCKET_NUM_FIELDS) {
+        const raw = src[f]
+        if (!isNum(raw)) continue
+        // 注意大小写：字段是 dayCostCny / monthCostCny（大写 C），用正则不能用 indexOf('cost')
+        if (/cost/i.test(f)) {
+          const v = cleanCost(raw)
+          if (v !== null) b[f] = v
+        } else {
+          // 负数直接丢弃（不夹成 0：写个 0 等于声称「这一桶确实是 0」，与「数据脏」不是一件事）
+          const n = Math.floor(raw)
+          if (n >= 0) b[f] = n
+        }
+      }
+      if (Object.keys(b).length) buckets[kind] = b
+    }
+    if (Object.keys(buckets).length) out.byKind = buckets
   }
   if (typeof value.day === 'string') out.day = clip(value.day, 20)
   if (typeof value.month === 'string') out.month = clip(value.month, 20)

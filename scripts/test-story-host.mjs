@@ -19,7 +19,7 @@
  *   G. 播放器状态机：并发 start 不重复选段、并发多客户端各拿一段、reset 后重播、单章书/空书边界、
  *      进度文件坏/缺、队列上限、index 不连续；
  *   H. 真实宿主链路（真实 17 本书 + Worker）：书单、合辑书书名投影、reset、回内分段与回末句、全库冷读；
- *   I. 仓储失败面：越界书名、坏 JSON、Worker 抛错/exit(1) 都要秒级回空（不留 30s 定时器）、日志纪律。
+ *   I. 仓储失败面：越界书名、坏 JSON、Worker 抛错/exit(1) 都要秒级回空（不留 20s 定时器）、日志纪律。
  *   K. 进度次序（B97）：只认「响应真的送出去」——finish 才确认，断开/res.end 抛错则撤销，断开后重讲还是这一段。
  *
  * BOM 书文件（2026-11-07 修复）：worker 已剥 UTF-8 BOM，断言见 [J] 段；
@@ -795,7 +795,7 @@ try {
     ok('坏 JSON 书 → 空数组（不抛、不假装有内容）', bad1.length === 0 && bad2.length === 0,
       'first=' + (tBad2 - tBad1) + 'ms')
 
-    // Worker 崩溃：未捕获异常 → error 事件 → 空数组，且必须在秒级返回（30s 定时器要被清掉）
+    // Worker 崩溃：未捕获异常 → error 事件 → 空数组，且必须在秒级返回（20s 定时器要被清掉）
     const throwWorker = join(TMP, 'throw-worker.mjs')
     writeFileSync(throwWorker, 'throw new Error("boom-in-worker")\n')
     const repoThrow = createStoryRepo({ dataDir, workerPath: throwWorker })
@@ -811,7 +811,7 @@ try {
     const t1 = Date.now()
     const gotExit = await repoExit.loadBook('好书')
     const dtExit = Date.now() - t1
-    ok('Worker 直接 exit(1) → 空数组且秒级返回（不悬到 30s 超时）', gotExit.length === 0 && dtExit < 8000, dtExit + 'ms')
+    ok('Worker 直接 exit(1) → 空数组且秒级返回（不悬到 20s 超时）', gotExit.length === 0 && dtExit < 8000, dtExit + 'ms')
 
     // 已知缺口：BOM 开头的书文件读不出来（修法在 src/story-worker.ts，超出本批次可改范围）
     const gotBom = await repo.loadBook('BOM书')
