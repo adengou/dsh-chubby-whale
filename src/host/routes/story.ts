@@ -8,11 +8,18 @@
  *   · reset 只接受 POST —— 它清进度、改「当前书」，属于状态变更，不能被 GET/预取/爬虫顺手触发。
  * 参数校验（2026-11-06 审计补）：书名/提示词 trim 后限长，并挡掉路径分隔符、控制字符与 `..`；
  *   云端清单里的书名是外部数据，不能原样透传给按文件名读盘的实现。
+ *
+ * 进度次序（2026-11-07，B97）：播放器只**预约**要讲的那一段，不落盘；这里等响应真的写出去
+ *   才调 player.confirm 记账（见 sendPick）。客户端超时/被停止导致连接提前断开时调 player.discard，
+ *   这一段回到「未讲」——「没听到的段被记成已讲」正是靠这一步修掉的。
  */
 import { readJsonBody } from '../body.js'
 import { sendTooLarge } from '../http.js'
 import { sendJson, sendError } from '../respond.js'
-import type { StoryPlayer } from '../story/player.js'
+import type { StoryPick, StoryPlayer } from '../story/player.js'
+
+/** /start /next 成功分支：chunk 平铺进响应体，served 只给路由自己确认进度用（不出现在响应里） */
+type ServedPick = Extract<StoryPick, { ok: true }>
 
 /** 兼容旧导出：作者表已随业务移到 host/story/player.ts */
 export { STORY_AUTHORS } from '../story/player.js'
@@ -78,6 +85,75 @@ export function createStoryHandlers(opts: { player: StoryPlayer }) {
     }
   }
 
+  /**
+   * 说书段送出后记账（B97）—— 这是「进度次序」的唯一落点：
+   *   · 'finish'（数据已全部交给系统）= 送出 → confirm，这一段才被记成已讲；
+   *   · 'close' 时还没写完（客户端超时/被停止，fetch 被 abort 直接断连）= 没送出 → discard，
+   *     这一段回到「未讲」，下一次请求还会再讲它；
+   *   · sendJson 自己抛错（res.end 抛错）→ 同样 discard，并把错照旧交给外层 catch；
+   *   · 没有事件面的响应（离线假件/内存实现）监听不了：sendJson 正常返回即视为送出。
+   * finish 只代表数据交到了内核，客户端拿到之后自己丢弃（比如朗读中途「停止说话」）服务端看不见，
+   * 那条路要客户端回执才能闭合，不在本批次范围内。
+   */
+  function sendPick(res: any, player: StoryPlayer, picked: ServedPick): void {
+    const served = picked && picked.served
+    const book = served && typeof served.book === 'string' ? served.book : ''
+    const index = served ? Number(served.index) : NaN
+    const canSettle = book !== '' && Number.isInteger(index) && index >= 0
+      && typeof player.confirm === 'function' && typeof player.discard === 'function'
+    /** 能不能监听响应事件：假 res（测试）与内存实现不一定有 EventEmitter 的 removeListener */
+    const listening = canSettle && !!(res && typeof res.on === 'function' && typeof res.removeListener === 'function')
+    let settled = false
+    function detach(): void {
+      if (!listening) return
+      try {
+        res.removeListener('finish', onFinish)
+        res.removeListener('close', onClose)
+        res.removeListener('error', onError)
+      } catch (e: any) { }
+    }
+    function confirm(): void {
+      if (settled) return
+      settled = true
+      detach()
+      try { player.confirm(book, index) } catch (e: any) { }
+    }
+    function drop(): void {
+      if (settled) return
+      settled = true
+      detach()
+      try { player.discard(book, index) } catch (e: any) { }
+    }
+    function onFinish(): void { confirm() }
+    // close 先于 finish = 响应没写完（客户端超时/被停止、连接被重置）→ 撤销，这一段回到未讲。
+    // 正常写完时 finish 先到，随后到达的 close 只是 settled 之后的空操作。
+    function onClose(): void { drop() }
+    function onError(): void { drop() }
+    // 连接在写之前就已经断了：实测 Node 里客户端先行断开时 'close' 早已发过（监听不到），
+    // 而且 destroyed 之后再 end()，writableFinished 照样会变成 true——只能认 destroyed。
+    if (res && res.destroyed === true) { drop(); return }
+    // 响应已经被别处写过：这份 JSON 到不了客户端，别把这一段记成已讲
+    if (res && res.headersSent === true) { drop(); return }
+    if (listening) {
+      try {
+        res.on('finish', onFinish)
+        res.on('close', onClose)
+        res.on('error', onError)
+      } catch (e: any) { }
+    }
+    try {
+      sendJson(res, { ok: true, ...picked.chunk, remain: picked.remain })
+    } catch (err: any) {
+      drop()
+      throw err
+    }
+    if (!canSettle) return
+    // 没有事件面的响应（离线假件/内存实现）监听不到 finish：sendJson 正常返回即视为送出。
+    if (!listening) { confirm(); return }
+    // 写到一半连接没了（end() 不抛、也不再来 finish）：同样撤销
+    if (res && res.destroyed === true) drop()
+  }
+
   async function handleStoryStart(req: any, res: any): Promise<void> {
     noStore(res)
     if (methodOf(req) !== 'GET') { rejectMethod(res, 'GET'); return }
@@ -93,12 +169,12 @@ export function createStoryHandlers(opts: { player: StoryPlayer }) {
         if (parsed.error) { sendBadRequest(res, parsed.error); return }
         hint = parsed.value
       }
-      const picked = await opts.player.start(hint, clientId(req))
+      const picked = await opts.player.start(hint, clientId(req), { defer: true })
       if ('error' in picked) {
         sendJson(res, { ok: false, error: picked.error })
         return
       }
-      sendJson(res, { ok: true, ...picked.chunk, remain: picked.remain })
+      sendPick(res, opts.player, picked)
     } catch (err: any) {
       sendError(res, err)
     }
@@ -108,12 +184,12 @@ export function createStoryHandlers(opts: { player: StoryPlayer }) {
     noStore(res)
     if (methodOf(req) !== 'GET') { rejectMethod(res, 'GET'); return }
     try {
-      const picked = await opts.player.next(clientId(req))
+      const picked = await opts.player.next(clientId(req), { defer: true })
       if ('error' in picked) {
         sendJson(res, { ok: false, error: picked.error })
         return
       }
-      sendJson(res, { ok: true, ...picked.chunk, remain: picked.remain })
+      sendPick(res, opts.player, picked)
     } catch (err: any) {
       sendError(res, err)
     }

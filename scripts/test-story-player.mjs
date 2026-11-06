@@ -17,6 +17,7 @@
  *   E. 跨书连播：一本讲完自动换下一本、remain 递减、换书才重开放场白；
  *   F. 坏书/缺书的降级（跳坏书、全坏回 no readable book、空书单回 no books）；
  *   G. 文件系统边界与缓存隔离（真实 repo + 临时目录 + Worker）。
+ *   H. 进度次序（B97）：defer 只预约不落盘、confirm 才记、discard 撤销、reset 清预约、旧调用兼容。
  *
  * 纯离线：不联网、不起 HTTP、不碰运行目录（全部走临时目录），跑完清理。
  * 用法：node scripts/test-story-player.mjs（不在 npm test 的脚本表里，单独跑）
@@ -342,6 +343,124 @@ try {
   }
 } catch (e) {
   ok('文件系统边界断言执行', false, String(e && e.message))
+}
+
+
+// ---------- H. 进度次序：先预约、确认后才记账（B97） ----------
+console.log('\n[H] 进度次序：defer 只预约、confirm 才落盘')
+try {
+  const book = mkChunks('甲书', [['甲一', 2, '一正文'], ['甲一', 2, '二正文'], ['甲二', 2, '三正文'], ['甲二', 2, '四正文']])
+  const makePlayer = (pf) => createStoryPlayer({ repo: repoOf({ '甲书': book }), progressFile: pf, source: 'local' })
+  // 旧实现没有 confirm/discard：返回 null 让断言直接红，而不是整段抛异常（保证后续用例还能跑）
+  const confirmOf = (p, b, i) => (typeof p.confirm === 'function' ? p.confirm(b, i) : null)
+  const discardOf = (p, b, i) => (typeof p.discard === 'function' ? p.discard(b, i) : null)
+  const servedIndex = (r) => (r && r.ok && r.served ? Number(r.served.index) : -1)
+  const keysOf = (pf) => (existsSync(pf) ? readProgress(pf) : {})
+
+  // H1 defer：start 只预约不落盘；confirm 之后才记，文件格式不变
+  {
+    const pf = progressFile()
+    const p = makePlayer(pf)
+    const r = await p.start('甲书', 'h1', { defer: true })
+    const before = existsSync(pf)
+    const c = confirmOf(p, '甲书', 0)
+    const saved = keysOf(pf)
+    ok('defer：start 返回时一段都没落盘；confirm 之后才记成已讲并写 _current（格式不变：除 _current 外全是 true）',
+      r.ok === true && !before && c === true && saved['local:甲书|0'] === true && saved._current === '甲书' &&
+      Object.keys(saved).every((k) => k === '_current' || saved[k] === true),
+      'before=' + before + ' confirm=' + String(c) + ' file=' + JSON.stringify(saved))
+    ok('defer：响应里带着「要确认的那一段」served（路由据此 confirm）',
+      r.ok === true && !!r.served && r.served.book === '甲书' && r.served.index === 0,
+      r.ok ? JSON.stringify(r.served) : String(r.error))
+  }
+
+  // H2 defer 下并发/连点：仍不重复选段（在途预约占位），但确认前一条都不落盘
+  {
+    const pf = progressFile()
+    const p = makePlayer(pf)
+    const [a, b] = await Promise.all([p.start('甲书', 'h2', { defer: true }), p.start('甲书', 'h2', { defer: true })])
+    const idx = [servedIndex(a), servedIndex(b)].sort((x, y) => x - y)
+    const beforeKeys = Object.keys(keysOf(pf)).filter((k) => k !== '_current')
+    ok('defer 并发 start：两段不重复（在途预约占位），且确认前一条都不落盘',
+      a.ok && b.ok && idx.join(',') === '0,1' && beforeKeys.length === 0,
+      'idx=' + idx.join(',') + ' keys=' + beforeKeys.join(','))
+    const c1 = confirmOf(p, '甲书', 0)
+    const c2 = confirmOf(p, '甲书', 1)
+    const saved = keysOf(pf)
+    ok('defer 并发 start：两段都确认后进度里两条都在',
+      c1 === true && c2 === true && saved['local:甲书|0'] === true && saved['local:甲书|1'] === true,
+      JSON.stringify(saved))
+  }
+
+  // H3 discard（客户端断开）：这一段回到未讲，下一次 start 还是它
+  {
+    const pf = progressFile()
+    const p = makePlayer(pf)
+    const a = await p.start('甲书', 'h3', { defer: true })
+    const d = discardOf(p, '甲书', 0)
+    const b = await p.start('甲书', 'h3', { defer: true })
+    ok('discard：断开撤销后这一段仍是未讲，下一次 start 还是它，且不写盘',
+      a.ok && d === true && b.ok && servedIndex(b) === 0 && !existsSync(pf),
+      'discard=' + String(d) + ' next=' + servedIndex(b) + ' file=' + existsSync(pf))
+  }
+
+  // H4 reset：在途预约一起清；迟到的 confirm 不许把刚重置的书写回已讲
+  {
+    const pf = progressFile()
+    const p = makePlayer(pf)
+    const first = await p.start('甲书', 'h4', { defer: true })
+    await p.reset('甲书', 'h4')
+    const late = confirmOf(p, '甲书', 0)
+    const after = await p.start('甲书', 'h4', { defer: true })
+    const saved = keysOf(pf)
+    ok('reset：迟到的 confirm 不记账，重讲还是第 1 段（预约已随 reset 清掉）',
+      first.ok && late === false && after.ok && servedIndex(after) === 0 &&
+      saved['local:甲书|0'] !== true && saved._current === '甲书',
+      'late=' + String(late) + ' next=' + servedIndex(after) + ' file=' + JSON.stringify(saved))
+  }
+
+  // H5 兼容：不带 opts 的旧调用仍当场落盘（离线脚本/旧调用方靠它续讲），defer 的不落盘
+  {
+    const pfA = progressFile()
+    const old = await makePlayer(pfA).start('甲书', 'h5')
+    const oldWrote = existsSync(pfA) && readProgress(pfA)['local:甲书|0'] === true
+    const pfB = progressFile()
+    await makePlayer(pfB).start('甲书', 'h5', { defer: true })
+    const deferWrote = existsSync(pfB)
+    ok('两种模式并存：旧调用当场落盘、defer 调用不落盘',
+      old.ok === true && oldWrote && deferWrote === false, 'old=' + oldWrote + ' defer=' + deferWrote)
+  }
+
+  // H6 格式兼容：旧键与 _current 不丢，confirm 之后新旧键并存
+  {
+    const pf = progressFile({ 'local:甲书|0': true, _current: '甲书' })
+    const p = makePlayer(pf)
+    const r = await p.start('甲书', 'h6', { defer: true })   // 第 0 段已讲 → 第 1 段
+    const before = keysOf(pf)
+    const c = confirmOf(p, '甲书', 1)
+    const saved = keysOf(pf)
+    ok('旧键/_current 不丢：选到第 2 段，confirm 之后新旧键并存且格式不变',
+      r.ok && servedIndex(r) === 1 && before['local:甲书|0'] === true && c === true &&
+      saved['local:甲书|0'] === true && saved['local:甲书|1'] === true && saved._current === '甲书' &&
+      Object.keys(saved).every((k) => k === '_current' || saved[k] === true),
+      JSON.stringify(saved))
+  }
+
+  // H7 next 出队的那一段：响应没送出（discard）要归队，不能顺着队列跳过去
+  {
+    const pf = progressFile()
+    const p = makePlayer(pf)
+    const a = await p.start('甲书', 'h7', { defer: true })   // 第 0 段
+    confirmOf(p, '甲书', 0)                                   // 第 1 段确实听到了，队列从第 1 段起
+    const n1 = await p.next('h7', { defer: true })
+    const d = discardOf(p, '甲书', 1)                         // 模拟 next 的响应没送出去
+    const n2 = await p.next('h7', { defer: true })
+    ok('next：响应没送出 → discard 把这一段塞回队首，下一次 next 还是它（不跳过）',
+      a.ok && servedIndex(n1) === 1 && d === true && servedIndex(n2) === 1,
+      'n1=' + servedIndex(n1) + ' discard=' + String(d) + ' n2=' + servedIndex(n2))
+  }
+} catch (e) {
+  ok('进度次序断言执行', false, String(e && e.message))
 }
 
 

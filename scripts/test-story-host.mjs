@@ -20,6 +20,7 @@
  *      进度文件坏/缺、队列上限、index 不连续；
  *   H. 真实宿主链路（真实 17 本书 + Worker）：书单、合辑书书名投影、reset、回内分段与回末句、全库冷读；
  *   I. 仓储失败面：越界书名、坏 JSON、Worker 抛错/exit(1) 都要秒级回空（不留 30s 定时器）、日志纪律。
+ *   K. 进度次序（B97）：只认「响应真的送出去」——finish 才确认，断开/res.end 抛错则撤销，断开后重讲还是这一段。
  *
  * BOM 书文件（2026-11-07 修复）：worker 已剥 UTF-8 BOM，断言见 [J] 段；
  * 纯离线：不联网、不起 HTTP、进度文件全在临时目录，跑完清理。
@@ -77,17 +78,41 @@ const readProgress = (p) => JSON.parse(readFileSync(p, 'utf8'))
 
 // ───────────────────────── 请求/响应假件 ─────────────────────────
 /**
- * 假响应：只实现 sendJson / sendTooLarge 用到的面（setHeader / writeHead / end / headersSent / writableEnded）。
+ * 假响应：只实现 sendJson / sendTooLarge 用到的面（setHeader / writeHead / end / headersSent / writableEnded），
+ * 外加进度次序用到的 finish/close/error 事件面（B97：路由要等「响应真的送出去」才 confirm 进度）。
+ *   · 默认 end() 时立刻 finish（writableFinished=true）：等价于真实响应正常写完；
+ *   · opts.autoFinish=false：end() 只把 writableEnded 置真，finish/close 由用例自己 emit；
+ *   · opts.throwOnEnd：end() 直接抛错（模拟 res.end 抛错/连接已断）。
  * 记录状态码、响应头（小写键）与响应体字符串。
  */
-function makeRes() {
-  return {
+function makeRes(opts = {}) {
+  const listeners = new Map()
+  const res = {
     status: 0,
     headers: {},
     body: '',
     headersSent: false,
     writableEnded: false,
-    on() { },
+    writableFinished: false,
+    destroyed: false,
+    on(ev, fn) {
+      if (typeof fn === 'function') {
+        if (!listeners.has(ev)) listeners.set(ev, [])
+        listeners.get(ev).push(fn)
+      }
+      return this
+    },
+    removeListener(ev, fn) {
+      const arr = listeners.get(ev)
+      if (!arr) return this
+      const i = arr.indexOf(fn)
+      if (i >= 0) arr.splice(i, 1)
+      return this
+    },
+    emit(ev) {
+      for (const fn of (listeners.get(ev) || []).slice()) fn()
+      return this
+    },
     setHeader(k, v) { this.headers[String(k).toLowerCase()] = v },
     writeHead(status, headers) {
       this.status = status
@@ -95,11 +120,17 @@ function makeRes() {
       for (const k of Object.keys(headers || {})) this.headers[k.toLowerCase()] = headers[k]
     },
     end(body) {
+      if (opts.throwOnEnd) throw new Error('client-gone')
       this.body = body == null ? '' : String(body)
       this.writableEnded = true
+      if (opts.autoFinish !== false) {
+        this.writableFinished = true
+        this.emit('finish')
+      }
     },
     json() { try { return JSON.parse(this.body) } catch { return null } },
   }
+  return res
 }
 
 /**
@@ -129,11 +160,12 @@ async function call(handler, req, res) {
 
 /** 端口替身：记录调用，可注入返回值/抛错 */
 function fakePlayer(over = {}) {
-  const calls = { books: 0, start: [], next: [], reset: [] }
+  const calls = { books: 0, start: [], next: [], reset: [], confirm: [], discard: [] }
   const chunk = (i) => ({
     book: '甲书', title: '第一回', piece: 1, total: 4, isFirst: true, isLast: false,
     text: '话说……', rate: '-30%', index: i,
   })
+  const served = (i) => ({ book: '甲书', index: i })
   return {
     calls,
     books: async () => { calls.books++; if (over.booksThrow) throw new Error('boom-books'); return over.books || ['甲书', '乙书'] },
@@ -141,19 +173,29 @@ function fakePlayer(over = {}) {
       calls.start.push({ hint, id })
       if (over.startThrow) throw new Error('boom-start')
       if (over.start) return over.start(hint, id)
-      return { ok: true, chunk: chunk(0), remain: 3 }
+      return { ok: true, chunk: chunk(0), remain: 3, served: served(0) }
     },
     next: async (id) => {
       calls.next.push({ id })
       if (over.nextThrow) throw new Error('boom-next')
       if (over.next) return over.next(id)
-      return { ok: true, chunk: chunk(1), remain: 2 }
+      return { ok: true, chunk: chunk(1), remain: 2, served: served(1) }
     },
     reset: async (book, id) => {
       calls.reset.push({ book, id })
       if (over.resetThrow) throw new Error('boom-reset')
       if (over.reset) return over.reset(book, id)
       return { ok: true, book }
+    },
+    // B97：路由在响应送出后 confirm / 没送出时 discard
+    confirm: (book, index) => {
+      calls.confirm.push({ book, index })
+      if (over.confirmThrow) throw new Error('boom-confirm')
+      return over.confirm ? over.confirm(book, index) : true
+    },
+    discard: (book, index) => {
+      calls.discard.push({ book, index })
+      return over.discard ? over.discard(book, index) : true
     },
   }
 }
@@ -491,7 +533,9 @@ try {
     ok('并发 start 不重复选段（两段不同）', a.ok && b.ok && a.chunk.text !== b.chunk.text &&
       pieces.join(',') === '1,2', pieces.join(','))
     const prog = readProgress(pf)
-    ok('并发 start 两段都写进进度', prog['local:甲书|0'] === true && prog['local:甲书|1'] === true,
+    // 这是**旧调用**（不带 opts）的即时落盘语义：离线脚本/旧调用方靠它续讲，必须保住。
+    // 生产路由走的是 defer + 送出后 confirm，见 [K] 段。
+    ok('并发 start 两段都写进进度（旧调用不带 opts：当场落盘，兼容语义）', prog['local:甲书|0'] === true && prog['local:甲书|1'] === true,
       Object.keys(prog).join(','))
     const c = await player.next('c1')
     ok('并发 start 后 next 不错位（第 3 段）', c.ok && c.chunk.text.indexOf('三') >= 0, c.ok ? c.chunk.text : String(c.error))
@@ -812,6 +856,108 @@ try {
   }
 } catch (e) {
   ok('BOM 书断言执行', false, String(e && e.message))
+}
+
+
+// ---------- K. 进度次序：响应真的送出去了才记账（B97） ----------
+console.log('\n[K] 进度次序：finish 才确认；断开 / end 抛错撤销')
+try {
+  // K1 响应还没写完 → 不确认；finish 之后才确认一次，书/段与响应里那一段一致
+  {
+    const p = fakePlayer()
+    const res = makeRes({ autoFinish: false })
+    await call(handlersOf(p).handleStoryStart, makeReq({ url: '/story/start' }), res)
+    const before = p.calls.confirm.length
+    res.writableFinished = true
+    res.emit('finish')
+    ok('响应还没写完不确认；finish 之后才确认一次，书/段与响应里那一段一致',
+      before === 0 && p.calls.confirm.length === 1 && p.calls.confirm[0].book === '甲书' && p.calls.confirm[0].index === 0,
+      'before=' + before + ' after=' + JSON.stringify(p.calls.confirm))
+    res.emit('close')   // 真实 Node 里 finish 之后还会 close：不许重复确认
+    ok('finish 之后再 close 不重复确认、也不撤销',
+      p.calls.confirm.length === 1 && p.calls.discard.length === 0, JSON.stringify(p.calls))
+  }
+
+  // K2 客户端在写完之前断开（fetch 被 abort）→ 撤销预约，这一段回到未讲
+  {
+    const p = fakePlayer()
+    const res = makeRes({ autoFinish: false })
+    await call(handlersOf(p).handleStoryNext, makeReq({ url: '/story/next' }), res)
+    res.destroyed = true
+    res.emit('close')
+    ok('客户端在响应写完前断开 → 不确认、改为撤销（下一次还能讲这一段）',
+      p.calls.confirm.length === 0 && p.calls.discard.length === 1 && p.calls.discard[0].index === 1,
+      JSON.stringify(p.calls))
+  }
+
+  // K3 res.end 抛错（连接已断）→ 撤销，且不把异常漏给调用方
+  {
+    const p = fakePlayer()
+    const res = makeRes({ throwOnEnd: true })
+    await call(handlersOf(p).handleStoryStart, makeReq({ url: '/story/start' }), res)
+    ok('res.end 抛错 → 不确认、改为撤销，路由不向外抛异常',
+      !res.threw && p.calls.confirm.length === 0 && p.calls.discard.length === 1, JSON.stringify(p.calls))
+  }
+
+  // K4 端到端（真实播放器 + 真实进度文件）：写响应前没有记录；断开后重讲还是这一段
+  {
+    const book = chunkOf('甲书', [['甲一', 1, '第一段正文'], ['甲二', 1, '第二段正文']])
+    const pf = progressFile()
+    const player = createStoryPlayer({ repo: repoOf({ 甲书: book }), progressFile: pf, source: 'local' })
+    const h = handlersOf(player)
+    const url = '/story/start?book=' + encodeURIComponent('甲书')
+    const headers = { 'x-client-id': 'k4' }
+
+    const r1 = makeRes({ autoFinish: false })
+    await call(h.handleStoryStart, makeReq({ url, headers }), r1)
+    ok('真实链路：响应写出前进度文件里没有这一段（旧实现此刻已经有记录）',
+      r1.json().ok === true && !existsSync(pf), existsSync(pf) ? JSON.stringify(readProgress(pf)) : '未创建')
+
+    // 客户端超时/被停止 → fetch 被 abort → 连接断开：这一段不算讲过
+    r1.destroyed = true
+    r1.emit('close')
+    const aborted = existsSync(pf) ? readProgress(pf) : {}
+    ok('真实链路：断开之后这一段仍未讲（进度文件里没有它）',
+      !('local:甲书|0' in aborted), JSON.stringify(aborted))
+
+    // 下次点播：仍从第 1 段讲（没被跳过）
+    const r2 = makeRes()
+    await call(h.handleStoryStart, makeReq({ url, headers }), r2)
+    ok('真实链路：断开后重新点播，还是第 1 段（没被跳过）',
+      r2.json().ok === true && String(r2.json().text).indexOf('第一段正文') >= 0, String(r2.json().text).slice(0, 40))
+    ok('真实链路：这次真的送出去之后才记进进度，且只记了送出去的那一段（没顺手记下一段）',
+      readProgress(pf)['local:甲书|0'] === true && !('local:甲书|1' in readProgress(pf)) &&
+      readProgress(pf)._current === '甲书', JSON.stringify(readProgress(pf)))
+  }
+
+  // K5 next 路径：那一段已经出队了，响应没送出必须塞回队首，不许顺着队列跳过去
+  {
+    const book = chunkOf('甲书', [['甲一', 1, '第一段'], ['甲二', 1, '第二段'], ['甲三', 1, '第三段']])
+    const pf = progressFile()
+    const player = createStoryPlayer({ repo: repoOf({ 甲书: book }), progressFile: pf, source: 'local' })
+    const h = handlersOf(player)
+    const headers = { 'x-client-id': 'k5' }
+    const r0 = makeRes()
+    await call(h.handleStoryStart, makeReq({ url: '/story/start?book=' + encodeURIComponent('甲书'), headers }), r0)
+
+    const r1 = makeRes({ autoFinish: false })
+    await call(h.handleStoryNext, makeReq({ url: '/story/next', headers }), r1)
+    const seg1 = String(r1.json().text)
+    r1.destroyed = true
+    r1.emit('close')
+    const afterAbort = readProgress(pf)
+
+    const r2 = makeRes()
+    await call(h.handleStoryNext, makeReq({ url: '/story/next', headers }), r2)
+    const seg2 = String(r2.json().text)
+    const saved = readProgress(pf)
+    ok('next 断连：那一次不记账、这一段回到队首重讲，重讲送出去之后才记（不跳过）',
+      r0.json().ok === true && seg1.indexOf('第二段') >= 0 && !('local:甲书|1' in afterAbort) &&
+      seg2.indexOf('第二段') >= 0 && saved['local:甲书|1'] === true,
+      'seg1=' + seg1.slice(-9) + ' seg2=' + seg2.slice(-9) + ' abortFile=' + JSON.stringify(afterAbort))
+  }
+} catch (e) {
+  ok('进度次序断言执行', false, String(e && e.message))
 }
 
 
