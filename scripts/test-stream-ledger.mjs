@@ -387,9 +387,15 @@ export async function runStreamLedger(emit, options = {}) {
       const eventsB = resB.events()
       ok('客户端断开：已注册 close 监听', hasClose)
       ok('客户端断开：已推送 delta、无 done', served && eventsB.some((e) => e.delta === '你好') && !eventsB.some((e) => e.done === true))
-      ok('客户端断开：不读不写 state、不加经验', L2.loads === 0 && L2.saves.length === 0 && L2.exp.length === 0)
-      ok('客户端断开：不 appendTurns、不记 token、不 onReply', L2.turns.length === 0 && L2.tokens.length === 0 && L2.replies === 0)
-      ok('客户端断开：不写缓存', L2.cache.writes.length === 0)
+      // 2026-11-07 B95：口径与 /chat 对齐 —— 这份回复**上游已读完**（第二次 read 在 close 之后才返回 done），
+      // 是「完整回复只是回不去」，照常记账；半截（上游没读完）才不落盘。
+      ok('客户端断开但上游已读完：照常记账（state/exp/turns/cache/onReply 各 1 次）',
+        L2.saves.length === 1 && L2.exp.length === 1 && L2.turns.length === 1 && L2.cache.writes.length === 1 && L2.replies === 1,
+        JSON.stringify({ saves: L2.saves.length, exp: L2.exp.length, turns: L2.turns.length, cache: L2.cache.writes.length, replies: L2.replies }))
+      ok('客户端断开但上游已读完：token 按 usage 记', L2.tokens.length === 1 && L2.tokens[0][1] === USAGE_TOKENS, JSON.stringify(L2.tokens))
+      ok('客户端断开但上游已读完：不写 done 帧（socket 已死）', !eventsB.some((e) => e.done === true))
+      // 记忆里留下的是完整正文，不是半截
+      ok('记账的正文完整', L2.turns.length === 1 && L2.turns[0][1] === '你好呀', JSON.stringify(L2.turns))
     })
 
     // ⑤ 代际校验：写回前历史变短 / 摘要被改写都不写回

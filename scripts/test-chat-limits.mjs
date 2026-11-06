@@ -424,9 +424,11 @@ export async function runChatLimits(emit, options = {}) {
       const eventsB = resB.events()
       ok('客户端断开：已注册 close 监听', hasClose)
       ok('客户端断开：delta 已推送、无 done', eventsB.some((e) => e.delta === '你好') && !eventsB.some((e) => e.done === true))
-      ok('客户端断开：不写缓存', cacheB.writes.length === 0)
-      ok('客户端断开：不 appendTurns', appendedB.length === 0)
-      ok('客户端断开：不记 token', tokensB.length === 0)
+      // 2026-11-07 B95：上游已读完（close 之后第二次 read 才返回 done）→ 完整回复照常落盘，
+      // 与 /chat 同口径；只有半截（上游没读完）才不落盘。
+      ok('客户端断开但上游已读完：写缓存', cacheB.writes.length === 1)
+      ok('客户端断开但上游已读完：appendTurns 记完整正文', appendedB.length === 1 && appendedB[0][1] === '你好呀', JSON.stringify(appendedB))
+      ok('客户端断开但上游已读完：不记 token（该上游没给 usage）', tokensB.length === 0)
 
       // 对照：正常读完必须落盘，否则上面的"不落盘"只是路径本来就不写。
       // 上游按 stream_options.include_usage 的约定在 [DONE] 前给一帧 usage，token 断言才成立。
