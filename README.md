@@ -15,7 +15,7 @@ DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下�
 
 ## 安装（两种来源任选）
 
-```powershell
+```bash
 # ① 从 Gitee 装（推荐）
 dsh plugin --profile web add "git+https://gitee.com/adengou/dsh-chubby-whale.git"
 
