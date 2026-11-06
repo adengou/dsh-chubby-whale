@@ -12,7 +12,11 @@
  * 并发语义（与拆分前一致）：
  *   · 同一 engine 实例内 startWorker 是单飞：ready 前到达的请求共享同一个启动 Promise，
  *     不会重复 spawn；队列本身没有长度上限，由各请求自己的合成预算兜底。
- *   · ready 成功后运行期崩溃/退出：立刻 reject 所有排队请求，不必等 20s 超时。
+ *   · 预算口径：每个请求的 budgetMs 覆盖「等 ready / 等别人启动 + 本段等待」全过程，
+ *     不是每段各给一份（否则 20s 预算会拖成 30s）。
+ *   · ready 成功后运行期崩溃/退出：立刻用返回值失败掉所有排队请求，不必等 20s 超时。
+ *   · 只有「进程不可信」（超时 / stdin 写失败）才 kill；某一段合成返回 ok:false 时
+ *     保留健康 worker，避免连带拖垮同一时刻的其它请求。
  */
 import { spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -21,7 +25,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
-import { IDLE_KILL_MS, READY_TIMEOUT_MS, WORKER_RETRY_MS, bumpStat, killChild, logWarn, pythonEnv, shortError, tailText, } from './common.js';
+import { IDLE_KILL_MS, READY_TIMEOUT_MS, WORKER_RETRY_MS, bumpStat, killChild, logWarn, pythonEnv, tailText, } from './common.js';
 /** 常驻 worker 的 python 源码：导入一次 edge_tts，之后逐行收 JSON、合成、回写文件 */
 const WORKER_SOURCE = `
 import sys, json, asyncio
@@ -114,8 +118,9 @@ export function createWorkerRunner() {
                 clearTimeout(p.timer);
             }
             catch { }
+            // 用返回值而不是异常告诉调用方「这个 worker 没了，去走单次 spawn」
             try {
-                p.reject(new Error('tts worker stopped'));
+                p.resolve(false);
             }
             catch { }
         }
@@ -238,6 +243,11 @@ export function createWorkerRunner() {
                 };
                 child.stdout?.on('data', onData);
                 child.stderr?.on('data', (c) => { w.err = (w.err + w.errDecoder.write(c)).slice(-2000); });
+                // 管道自身的 error（EPIPE / 被子进程关掉）必须有人接：流上未处理的 'error'
+                // 会变成未捕获异常，直接带走宿主进程。真正的失败由 pending 的预算兜底。
+                child.stdout?.on('error', () => { });
+                child.stderr?.on('error', () => { });
+                child.stdin?.on('error', () => { });
                 child.on('error', () => finish(false));
                 child.on('exit', () => finish(false));
             });
@@ -256,14 +266,15 @@ export function createWorkerRunner() {
                 w.dead = true;
                 if (worker === w)
                     worker = null;
-                const errs = w.err ? '：' + tailText(w.err) : '';
+                if (w.err)
+                    console.warn('[tts] worker 退出（' + code + '）：' + tailText(w.err));
                 for (const [, p] of w.pending) {
                     try {
                         clearTimeout(p.timer);
                     }
                     catch { }
                     try {
-                        p.reject(new Error('tts worker exited (' + code + ')' + errs));
+                        p.resolve(false);
                     }
                     catch { }
                 }
@@ -281,15 +292,52 @@ export function createWorkerRunner() {
         void p.then(clear, clear);
         return p;
     }
+    /**
+     * 在预算内等一个 Promise 落地：超时返回 null（不取消原 Promise——startWorker 是单飞共享的，
+     * 别的请求还要用它）。用在这里是为了让「等 ready / 等别的请求启动 worker」也算进本次预算。
+     */
+    function settleWithin(p, ms) {
+        return new Promise((resolve) => {
+            let done = false;
+            let timer = null;
+            const finish = (v) => {
+                if (done)
+                    return;
+                done = true;
+                if (timer)
+                    clearTimeout(timer);
+                resolve(v);
+            };
+            timer = setTimeout(() => finish(null), Math.max(1, ms));
+            p.then((v) => finish(v), () => finish(null));
+        });
+    }
+    /**
+     * 让 worker 合成到 outFile。true=成功；false=本次不可用（调用方回退单次 spawn）。
+     * budgetMs 是**这次调用**的总预算（含等待 ready、含等别人正在启动的 worker），
+     * 不是「启动等一份、合成再等一份」——否则默认 20s 预算实际会拖到 30s。
+     * 失败一律用返回值表达，不抛异常：抛异常会让上层多一条与回退路径并行的错误分支。
+     */
     async function synth(interp, req, outFile, budgetMs) {
-        const w = await startWorker(interp, Math.min(READY_TIMEOUT_MS, budgetMs));
+        const deadline = Date.now() + Math.max(1, budgetMs);
+        const w = await settleWithin(startWorker(interp, deadline - Date.now()), deadline - Date.now());
+        // 启动失败 / 冷却中 / 预算在启动阶段就用完了 → 交给上层单次 spawn
         if (!w)
             return false;
         const id = ++seq;
         const payload = JSON.stringify({ id, text: req.text, voice: req.voice, rate: req.rate, pitch: req.pitch, out: outFile });
-        const ok = await new Promise((resolve, reject) => {
+        const ok = await new Promise((resolve) => {
             let settled = false;
-            const timer = setTimeout(() => {
+            let timer = null;
+            const finish = (v) => {
+                if (settled)
+                    return;
+                settled = true;
+                if (timer)
+                    clearTimeout(timer);
+                resolve(v);
+            };
+            timer = setTimeout(() => {
                 if (settled)
                     return;
                 settled = true;
@@ -298,43 +346,33 @@ export function createWorkerRunner() {
                 bumpStat('timeouts');
                 // 超时：整个 worker 已经不可信（可能卡在网络/ffmpeg 上），杀掉由上层回退单次 spawn
                 killWorker();
-                reject(new Error('tts timeout'));
-            }, Math.max(1, budgetMs));
-            const pending = {
-                resolve: (v) => {
-                    if (settled)
-                        return;
-                    settled = true;
-                    clearTimeout(timer);
-                    resolve(v);
-                },
-                reject: (e) => {
-                    if (settled)
-                        return;
-                    settled = true;
-                    clearTimeout(timer);
-                    reject(e);
-                },
-                timer,
-            };
-            w.pending.set(id, pending);
+                resolve(false);
+            }, Math.max(1, deadline - Date.now()));
+            w.pending.set(id, { resolve: finish, timer });
             try {
                 w.child.stdin?.write(payload + '\n');
             }
             catch (e) {
+                // stdin 写不进去 = 管道已坏，这个 worker 不能再用
                 w.pending.delete(id);
-                pending.reject(new Error('tts worker write failed：' + shortError(e)));
+                logWarn('worker 写入失败，回退单次 spawn', e);
+                killWorker();
+                finish(false);
             }
         });
         if (!ok) {
-            if (w.err)
+            // 注意：这里**不杀** worker。走到这里只可能有两种情况：
+            //   ① 上面已经杀掉了（超时 / 写失败）——再杀是空操作；
+            //   ② worker 回了 {"ok":false}（例如某段文本 NoAudioReceived）——进程本身健康，
+            //      杀掉会连带失败掉其它并发请求，还要重新付出 worker 启动开销。
+            if (w.err) {
                 console.warn('[tts] worker 合成失败，回退单次 spawn：' + tailText(w.err));
-            killWorker();
+                w.err = '';
+            }
+            return false;
         }
-        else {
-            touchIdle(w);
-        }
-        return ok;
+        touchIdle(w);
+        return true;
     }
     return {
         async warm(interp) {

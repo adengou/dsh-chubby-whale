@@ -12,7 +12,11 @@
  * 并发语义（与拆分前一致）：
  *   · 同一 engine 实例内 startWorker 是单飞：ready 前到达的请求共享同一个启动 Promise，
  *     不会重复 spawn；队列本身没有长度上限，由各请求自己的合成预算兜底。
- *   · ready 成功后运行期崩溃/退出：立刻 reject 所有排队请求，不必等 20s 超时。
+ *   · 预算口径：每个请求的 budgetMs 覆盖「等 ready / 等别人启动 + 本段等待」全过程，
+ *     不是每段各给一份（否则 20s 预算会拖成 30s）。
+ *   · ready 成功后运行期崩溃/退出：立刻用返回值失败掉所有排队请求，不必等 20s 超时。
+ *   · 只有「进程不可信」（超时 / stdin 写失败）才 kill；某一段合成返回 ok:false 时
+ *     保留健康 worker，避免连带拖垮同一时刻的其它请求。
  */
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -31,7 +35,6 @@ import {
   killChild,
   logWarn,
   pythonEnv,
-  shortError,
   tailText,
 } from './common.js'
 import type { Pending, PythonInterp } from './common.js'
@@ -105,7 +108,10 @@ type WorkerState = {
 export interface WorkerRunner {
   /** 预热：把 worker 拉起来并等到 ready；true=已就绪 */
   warm(interp: PythonInterp): Promise<boolean>
-  /** 让 worker 合成到 outFile：true=成功；false=worker 不可用（交给上层回退单次 spawn） */
+  /**
+   * 让 worker 合成到 outFile。**永不抛异常**：失败返回 false，由上层回退单次 spawn。
+   * budgetMs 是这次调用的总预算（含等待 ready / 等待别的请求启动的 worker），不是"每阶段各一份"。
+   */
   synth(interp: PythonInterp, req: TtsSynthRequest, outFile: string, budgetMs: number): Promise<boolean>
   /** 停掉当前 worker（冷却逻辑仍在 runner 内） */
   kill(): void
@@ -149,7 +155,8 @@ export function createWorkerRunner(): WorkerRunner {
     if (w.idleTimer) { try { clearTimeout(w.idleTimer) } catch { } }
     for (const [, p] of w.pending) {
       try { clearTimeout(p.timer) } catch { }
-      try { p.reject(new Error('tts worker stopped')) } catch { }
+      // 用返回值而不是异常告诉调用方「这个 worker 没了，去走单次 spawn」
+      try { p.resolve(false) } catch { }
     }
     w.pending.clear()
     w.dead = true
@@ -239,6 +246,11 @@ export function createWorkerRunner(): WorkerRunner {
         }
         child.stdout?.on('data', onData)
         child.stderr?.on('data', (c: Buffer) => { w.err = (w.err + w.errDecoder.write(c)).slice(-2000) })
+        // 管道自身的 error（EPIPE / 被子进程关掉）必须有人接：流上未处理的 'error'
+        // 会变成未捕获异常，直接带走宿主进程。真正的失败由 pending 的预算兜底。
+        child.stdout?.on('error', () => { })
+        child.stderr?.on('error', () => { })
+        child.stdin?.on('error', () => { })
         child.on('error', () => finish(false))
         child.on('exit', () => finish(false))
       })
@@ -254,10 +266,10 @@ export function createWorkerRunner(): WorkerRunner {
       child.on('exit', (code: number | null) => {
         w.dead = true
         if (worker === w) worker = null
-        const errs = w.err ? '：' + tailText(w.err) : ''
+        if (w.err) console.warn('[tts] worker 退出（' + code + '）：' + tailText(w.err))
         for (const [, p] of w.pending) {
           try { clearTimeout(p.timer) } catch { }
-          try { p.reject(new Error('tts worker exited (' + code + ')' + errs)) } catch { }
+          try { p.resolve(false) } catch { }
         }
         w.pending.clear()
       })
@@ -273,14 +285,48 @@ export function createWorkerRunner(): WorkerRunner {
     return p
   }
 
+  /**
+   * 在预算内等一个 Promise 落地：超时返回 null（不取消原 Promise——startWorker 是单飞共享的，
+   * 别的请求还要用它）。用在这里是为了让「等 ready / 等别的请求启动 worker」也算进本次预算。
+   */
+  function settleWithin<T>(p: Promise<T>, ms: number): Promise<T | null> {
+    return new Promise<T | null>((resolve) => {
+      let done = false
+      let timer: any = null
+      const finish = (v: T | null): void => {
+        if (done) return
+        done = true
+        if (timer) clearTimeout(timer)
+        resolve(v)
+      }
+      timer = setTimeout(() => finish(null), Math.max(1, ms))
+      p.then((v) => finish(v), () => finish(null))
+    })
+  }
+
+  /**
+   * 让 worker 合成到 outFile。true=成功；false=本次不可用（调用方回退单次 spawn）。
+   * budgetMs 是**这次调用**的总预算（含等待 ready、含等别人正在启动的 worker），
+   * 不是「启动等一份、合成再等一份」——否则默认 20s 预算实际会拖到 30s。
+   * 失败一律用返回值表达，不抛异常：抛异常会让上层多一条与回退路径并行的错误分支。
+   */
   async function synth(interp: PythonInterp, req: TtsSynthRequest, outFile: string, budgetMs: number): Promise<boolean> {
-    const w = await startWorker(interp, Math.min(READY_TIMEOUT_MS, budgetMs))
+    const deadline = Date.now() + Math.max(1, budgetMs)
+    const w = await settleWithin(startWorker(interp, deadline - Date.now()), deadline - Date.now())
+    // 启动失败 / 冷却中 / 预算在启动阶段就用完了 → 交给上层单次 spawn
     if (!w) return false
     const id = ++seq
     const payload = JSON.stringify({ id, text: req.text, voice: req.voice, rate: req.rate, pitch: req.pitch, out: outFile })
-    const ok = await new Promise<boolean>((resolve, reject) => {
+    const ok = await new Promise<boolean>((resolve) => {
       let settled = false
-      const timer = setTimeout(() => {
+      let timer: any = null
+      const finish = (v: boolean): void => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        resolve(v)
+      }
+      timer = setTimeout(() => {
         if (settled) return
         settled = true
         w.pending.delete(id)
@@ -288,38 +334,32 @@ export function createWorkerRunner(): WorkerRunner {
         bumpStat('timeouts')
         // 超时：整个 worker 已经不可信（可能卡在网络/ffmpeg 上），杀掉由上层回退单次 spawn
         killWorker()
-        reject(new Error('tts timeout'))
-      }, Math.max(1, budgetMs))
-      const pending: Pending = {
-        resolve: (v: boolean) => {
-          if (settled) return
-          settled = true
-          clearTimeout(timer)
-          resolve(v)
-        },
-        reject: (e: any) => {
-          if (settled) return
-          settled = true
-          clearTimeout(timer)
-          reject(e)
-        },
-        timer,
-      }
-      w.pending.set(id, pending)
+        resolve(false)
+      }, Math.max(1, deadline - Date.now()))
+      w.pending.set(id, { resolve: finish, timer })
       try {
         w.child.stdin?.write(payload + '\n')
       } catch (e) {
+        // stdin 写不进去 = 管道已坏，这个 worker 不能再用
         w.pending.delete(id)
-        pending.reject(new Error('tts worker write failed：' + shortError(e)))
+        logWarn('worker 写入失败，回退单次 spawn', e)
+        killWorker()
+        finish(false)
       }
     })
     if (!ok) {
-      if (w.err) console.warn('[tts] worker 合成失败，回退单次 spawn：' + tailText(w.err))
-      killWorker()
-    } else {
-      touchIdle(w)
+      // 注意：这里**不杀** worker。走到这里只可能有两种情况：
+      //   ① 上面已经杀掉了（超时 / 写失败）——再杀是空操作；
+      //   ② worker 回了 {"ok":false}（例如某段文本 NoAudioReceived）——进程本身健康，
+      //      杀掉会连带失败掉其它并发请求，还要重新付出 worker 启动开销。
+      if (w.err) {
+        console.warn('[tts] worker 合成失败，回退单次 spawn：' + tailText(w.err))
+        w.err = ''
+      }
+      return false
     }
-    return ok
+    touchIdle(w)
+    return true
   }
 
   return {

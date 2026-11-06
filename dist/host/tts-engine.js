@@ -49,7 +49,7 @@
  *   - 本机没装 python / edge-tts → err.code = 'TTS_UNAVAILABLE'
  *   - 合成超时 / 进程非 0 退出 / 网络失败 → 普通 Error（路由 500）
  */
-import { readFile, unlink } from 'node:fs/promises';
+import { readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, logWarn, readStats, unavailableError } from './tts/common.js';
@@ -80,6 +80,8 @@ export function createEdgeTtsEngine(opts = {}) {
     // 合成总预算：默认 20s，允许测试传更小值，但绝不放大到 20s 以上
     const timeoutMs = Math.min(Math.max(1, Number(opts.timeoutMs) || DEFAULT_TIMEOUT_MS), MAX_TIMEOUT_MS);
     const worker = createWorkerRunner();
+    // 进程崩溃/句柄没放开会留下 chubby-tts-*.mp3：启动时顺手扫一次过期残留
+    void sweepStaleTmp();
     function remaining(startedAt) {
         return Math.max(1, timeoutMs - (Date.now() - startedAt));
     }
@@ -112,17 +114,25 @@ export function createEdgeTtsEngine(opts = {}) {
             }
             const tmpFile = join(tmpdir(), 'chubby-tts-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.mp3');
             try {
+                // worker 的失败用返回值表达（不抛异常）；进程不可信的两种情况（超时 / stdin 写失败）
+                // 由 worker runner 自己 kill，这里不要再补一刀——否则一段文本级失败会连带
+                // 杀掉健康的 worker（并发请求被迫改走慢路径，下次还要重付启动开销）。
                 let done = false;
                 try {
                     done = await worker.synth(interp, req, tmpFile, remaining(startedAt));
                 }
-                catch {
-                    // worker 超时/崩溃：下一步回退单次 spawn；此处不把异常直接抛给调用方
+                catch (e) {
+                    // 兜底：万一 worker 层破了"失败不抛异常"的契约，也按回退处理
+                    logWarn('worker 合成异常，回退单次 spawn', e);
                     done = false;
                 }
                 if (!done) {
-                    worker.kill();
-                    await synthViaCli(interp, req, tmpFile, remaining(startedAt));
+                    const left = remaining(startedAt);
+                    // 预算已经被 worker 吃光时，再 spawn 一个 python 只会立刻被超时杀掉，
+                    // 纯属白起进程 + 白留临时文件：直接按超时失败。
+                    if (left < MIN_CLI_BUDGET_MS)
+                        throw new Error('tts timeout');
+                    await synthViaCli(interp, req, tmpFile, left);
                 }
                 const buf = await readFile(tmpFile);
                 if (!buf || !buf.length)
@@ -132,10 +142,7 @@ export function createEdgeTtsEngine(opts = {}) {
                 return buf;
             }
             finally {
-                try {
-                    await unlink(tmpFile);
-                }
-                catch { }
+                await removeTemp(tmpFile);
             }
         },
         /** 测试/宿主关闭用：停掉常驻 worker（不属于 TtsEngine 端口，路由不依赖） */
@@ -146,4 +153,50 @@ export function createEdgeTtsEngine(opts = {}) {
             catch { }
         },
     };
+}
+/** 合成临时文件前缀：只清扫自己产生的文件，绝不动 tmp 里的其它东西 */
+const TMP_PREFIX = 'chubby-tts-';
+/** 超过 1 小时的残留才清：正在用的文件生命周期是秒级，1 小时的只可能是崩溃遗留 */
+const TMP_STALE_MS = 60 * 60 * 1000;
+/** 回退单次 spawn 至少要留这么多预算，否则不值得起进程 */
+const MIN_CLI_BUDGET_MS = 1000;
+/**
+ * 删临时文件：Windows 上 python 可能还握着 mp3 句柄（edge_tts 是边下边写），
+ * 立即 unlink 会 EBUSY/EPERM。重试几次再放弃；真的删不掉就留给下次启动的 sweepStaleTmp。
+ */
+async function removeTemp(file) {
+    for (let i = 0; i < 3; i++) {
+        try {
+            await unlink(file);
+            return;
+        }
+        catch {
+            if (i === 2)
+                return;
+            await new Promise((r) => setTimeout(r, i === 0 ? 100 : 200));
+        }
+    }
+}
+/** 启动时清扫：tmp 里超过 1 小时的 chubby-tts-*.mp3（崩溃遗留 / 句柄一直没放开） */
+async function sweepStaleTmp() {
+    const dir = tmpdir();
+    let names = [];
+    try {
+        names = await readdir(dir);
+    }
+    catch {
+        return;
+    }
+    for (const name of names) {
+        if (!name.startsWith(TMP_PREFIX) || !name.endsWith('.mp3'))
+            continue;
+        const full = join(dir, name);
+        try {
+            const st = await stat(full);
+            if (Date.now() - Number(st.mtimeMs || 0) < TMP_STALE_MS)
+                continue;
+            await unlink(full);
+        }
+        catch { }
+    }
 }
