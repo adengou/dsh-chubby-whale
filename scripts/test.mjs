@@ -914,6 +914,16 @@ try {
   res = mkRes()
   await handle(mkReq({ audio: Buffer.from('noise-audio').toString('base64') }), res)
   ok('噪声结果不写缓存（第二次仍要请求）', fetchCalls.length === 2, 'fetch=' + fetchCalls.length)
+
+  // ⑤b 打断词：单字也不能被「单字=气口」规则吞掉（客户端「朗读时喊停」依赖它原样上行）
+  reply = { ok: true, status: 200, text: '停' }
+  fetchCalls.length = 0
+  res = mkRes()
+  await handle(mkReq({ audio: Buffer.from('interrupt-audio').toString('base64') }), res)
+  ok('打断词「停」原样上行（不当噪声）', res.json() && res.json().text === '停', JSON.stringify(res.json()))
+  res = mkRes()
+  await handle(mkReq({ audio: Buffer.from('interrupt-audio').toString('base64') }), res)
+  ok('打断词不写缓存（第二次仍要请求）', fetchCalls.length === 2, 'fetch=' + fetchCalls.length)
   reply = { ok: true, status: 200, text: '主人好' }
 
   // ⑥ 上游 HTTP 错误

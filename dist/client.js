@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.44";
+  var VERSION = "1.1.45";
 
   // src/client/styles.ts
   var W = 240;
@@ -157,1177 +157,6 @@
     border: who === "me" ? "none" : "1px solid rgba(93,160,240,0.25)",
     boxShadow: who === "me" ? "0 4px 12px rgba(46,107,184,0.35)" : "0 2px 8px rgba(0,0,0,0.25)"
   });
-
-  // src/client/util.ts
-  function evStop(e) {
-    try {
-      if (e && typeof e.stopPropagation === "function") e.stopPropagation();
-    } catch (e2) {
-    }
-  }
-  function evPrevent(e) {
-    try {
-      if (e && typeof e.preventDefault === "function") e.preventDefault();
-    } catch (e2) {
-    }
-  }
-  function clearT(t) {
-    try {
-      if (t) clearTimeout(t);
-    } catch (e) {
-    }
-  }
-  function clearI(t) {
-    try {
-      if (t) clearInterval(t);
-    } catch (e) {
-    }
-  }
-  function str(x) {
-    return x == null ? "" : String(x);
-  }
-
-  // src/client/voice/voices.ts
-  var TTS_VOICES = [
-    "zh-CN-XiaoyiNeural",
-    "zh-CN-XiaoxiaoNeural",
-    "zh-CN-XiaochenNeural",
-    "zh-CN-YunxiNeural",
-    "zh-CN-YunyangNeural",
-    "en-US-AnaNeural",
-    "en-US-JennyNeural",
-    "en-GB-SoniaNeural",
-    "auto"
-  ];
-  deepFreeze(TTS_VOICES);
-  var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
-  function normalizeVoiceName(name, fallback = DEFAULT_VOICE) {
-    const n = str(name).trim();
-    return TTS_VOICES.indexOf(n) >= 0 ? n : fallback;
-  }
-  function readStoredVoiceName() {
-    try {
-      return normalizeVoiceName(localStorage.getItem("chubby-tts-voice"));
-    } catch (e) {
-      return DEFAULT_VOICE;
-    }
-  }
-
-  // src/client/menu.ts
-  function item(label, action) {
-    return { type: "item", label, action };
-  }
-  function sub(label, items) {
-    return { type: "sub", label, items };
-  }
-  function sep() {
-    return { type: "sep" };
-  }
-  function rateSub(prefix, action, current, opts) {
-    return sub(prefix + current + " ▸", opts.map(([rate, text]) => item((rate === current ? "✓ " : "") + text, action + rate)));
-  }
-  var MELODIES = ["小星星", "两只老虎", "生日快乐", "欢乐颂", "铃儿响叮当", "伦敦大桥", "斯卡布罗集市", "思君黯然", "绿袖子", "致爱丽丝", "友谊天长地久"];
-  deepFreeze(MELODIES);
-  var SONG_EN = {
-    "小星星": "Twinkle Twinkle Little Star",
-    "两只老虎": "Two Tigers",
-    "生日快乐": "Happy Birthday",
-    "欢乐颂": "Ode to Joy",
-    "铃儿响叮当": "Jingle Bells",
-    "伦敦大桥": "London Bridge",
-    "斯卡布罗集市": "Scarborough Fair",
-    "思君黯然": "Longing for You",
-    "绿袖子": "Greensleeves",
-    "致爱丽丝": "Fur Elise",
-    "友谊天长地久": "Auld Lang Syne"
-  };
-  deepFreeze(SONG_EN);
-  var EN_MAP = {
-    "投喂一碗": "Feed a bowl",
-    "选本书 ▸": "Choose a book ▸",
-    "书单没取到，稍后再试": "Book list unavailable, try again later",
-    "正在翻书单…": "Loading book list…",
-    "今日一句": "Daily quote",
-    "今日简报": "Today's briefing",
-    "数据导出…": "Export data…",
-    "数据导入…": "Import data…",
-    "使用统计": "Usage stats",
-    "设置 ▸": "Settings ▸",
-    "查看当前配置": "View current config",
-    "提醒管理…": "Manage reminders…",
-    "唤醒恢复": "Wake recovery",
-    "唤醒词 ▸": "Wake word ▸",
-    "默认（大肥鱼/肥鲸等）": "Default (Da Fei Yu / Fei Jing)",
-    "大肥鱼": "Da Fei Yu",
-    "肥鲸": "Fei Jing",
-    "小鲸": "Xiao Jing",
-    "自定义…": "Custom…",
-    "弹首曲子 ▸": "Play a song ▸",
-    "停止弹奏": "Stop music",
-    "跟她说两句": "Talk to her",
-    "换个声音 ▸": "Change voice ▸",
-    "聊天语言 ▸": "Chat language ▸",
-    "界面语言 ▸": "Interface language ▸",
-    "看张图…": "Look at a picture…",
-    "停止说话": "Stop talking",
-    "让她歇会儿": "Let her rest",
-    "回碗里待着": "Back in the bowl",
-    "长大一点": "Grow bigger",
-    "变小一点": "Shrink",
-    "记个饭点…": "Add a meal reminder…",
-    "提醒清单…": "Reminders…",
-    "端点检测：经典/自适应": "Endpoint detection: classic / adaptive",
-    "耳朵自检（听力诊断）": "Hearing self-test",
-    "文化气 ▸": "Culture ▸",
-    "说书（连载）": "Storytelling",
-    "稍快 -25%": "A bit faster -25%",
-    "适中 -30%": "Medium -30%",
-    "偏慢 -35%（默认）": "Slower -35% (default)",
-    "正常 -10%": "Normal -10%",
-    "偏慢 -20%（默认）": "Slow -20% (default)",
-    "很慢 -25%": "Very slow -25%",
-    "更慢 -30%": "Even slower -30%",
-    "稍快 -15%": "A bit faster -15%",
-    "适中 -20%": "Medium -20%",
-    "偏慢 -25%（默认）": "Slower -25% (default)",
-    "很慢 -30%": "Very slow -30%",
-    "很慢 -40%": "Very slow -40%",
-    "接着说": "Continue story",
-    "从头讲这本书": "Restart this book",
-    "念首诗": "Recite a poem",
-    "讲个民间故事": "Folk tale",
-    "讲个典故": "Classic allusion",
-    "成语辨析": "Idiom",
-    "出个对联 ▸": "Couplets ▸",
-    "随机一副": "Random pair",
-    "春联": "Spring couplet",
-    "格言": "Motto",
-    "谐趣": "Witty",
-    "名胜": "Landmarks",
-    "景观": "Scenery",
-    "书房": "Study",
-    "书院": "Academy",
-    "寿联": "Birthday couplet",
-    "中药": "Herbs",
-    "叠字": "Repeated characters",
-    "数字": "Numerals",
-    "清除记忆…": "Clear memory…",
-    "清空聊天缓存…": "Clear chat cache…",
-    "让它游走（退出）": "Let it go (exit)",
-    "鱼粮账本": "Token ledger",
-    "English": "English",
-    "中文": "Chinese",
-    // 动态 label（音色勾选/聊天缓存开关/自动）需要的英文键
-    "聊天缓存：开": "Chat cache: on",
-    "聊天缓存：关": "Chat cache: off",
-    "自动（按语言选音色）": "Auto (by language)",
-    "自动": "Auto",
-    "音色：晓伊（中·女）": "Voice: Xiaoyi (CN F)",
-    "音色：晓晓（中·女）": "Voice: Xiaoxiao (CN F)",
-    "音色：晓辰（中·女）": "Voice: Xiaochen (CN F)",
-    "音色：云希（中·男）": "Voice: Yunxi (CN M)",
-    "音色：云扬（中·男）": "Voice: Yunyang (CN M)",
-    "音色：Ana（英·女）": "Voice: Ana (EN F)",
-    "音色：Jenny（英·女）": "Voice: Jenny (EN F)",
-    "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)"
-  };
-  deepFreeze(EN_MAP);
-  var STAGE_EN = {
-    "初识": "New",
-    "熟悉": "Familiar",
-    "亲密": "Close",
-    "知心": "Confidant",
-    "家人": "Family"
-  };
-  deepFreeze(STAGE_EN);
-  var TOGGLE_EN = {
-    "语音朗读：": ["Voice output: on", "Voice output: off"],
-    "语音待命：": ["Voice standby: on", "Voice standby: off"],
-    "语音聊天：": ["Voice chat: on", "Voice chat: off"],
-    "流式回复：": ["Streaming replies: on", "Streaming replies: off"]
-  };
-  function tr(label, lang) {
-    if (lang !== "en") return label;
-    const exact = EN_MAP[label];
-    if (exact) return exact;
-    if (label.startsWith("✓ ")) {
-      const base = label.slice(2);
-      const en = tr(base, lang);
-      return en === base ? label : "✓ " + en;
-    }
-    if (label.startsWith("弹《") && label.endsWith("》")) {
-      const song = label.slice(2, label.length - 1);
-      return SONG_EN[song] ? 'Play "' + SONG_EN[song] + '"' : "Play a song";
-    }
-    if (label.startsWith("成长：")) {
-      const rest = label.slice(3);
-      const m = rest.match(/^(初识|熟悉|亲密|知心|家人)([\s\S]*)$/);
-      if (!m) return "Growth: " + rest;
-      const tail = String(m[2] || "").replace(/（/g, "(").replace(/）/g, ")");
-      return "Growth: " + (STAGE_EN[m[1]] || m[1]) + tail;
-    }
-    if (label.startsWith("版本：v")) return "Version: v" + label.slice(4);
-    if (label.startsWith("余额：")) return "Balance: " + label.slice(3);
-    for (const prefix of Object.keys(TOGGLE_EN)) {
-      if (label.startsWith(prefix)) {
-        const pair = TOGGLE_EN[prefix];
-        return label.slice(prefix.length) === "开" ? pair[0] : pair[1];
-      }
-    }
-    if (label.startsWith("说书语速：")) return label.replace("说书语速：", "Story speed: ");
-    if (label.startsWith("连播：")) return label.indexOf("开") >= 0 ? "Auto-continue: on" : "Auto-continue: off";
-    if (label.startsWith("念诗语速：")) return label.replace("念诗语速：", "Poem speed: ");
-    if (label.startsWith("叙述语速：")) return label.replace("叙述语速：", "Narration speed: ");
-    if (label.startsWith("聊天语速：")) return label.replace("聊天语速：", "Chat speed: ");
-    return label;
-  }
-  var VOICE_ITEMS = [
-    ["zh-CN-XiaoyiNeural", "音色：晓伊（中·女）"],
-    ["zh-CN-XiaoxiaoNeural", "音色：晓晓（中·女）"],
-    ["zh-CN-XiaochenNeural", "音色：晓辰（中·女）"],
-    ["zh-CN-YunxiNeural", "音色：云希（中·男）"],
-    ["zh-CN-YunyangNeural", "音色：云扬（中·男）"],
-    ["en-US-AnaNeural", "音色：Ana（英·女）"],
-    ["en-US-JennyNeural", "音色：Jenny（英·女）"],
-    ["en-GB-SoniaNeural", "音色：Sonia（英·女·英式）"]
-  ];
-  var STORY_RATE_ITEMS = [["-25%", "稍快 -25%"], ["-30%", "适中 -30%"], ["-35%", "偏慢 -35%（默认）"], ["-40%", "很慢 -40%"]];
-  var CHAT_RATE_ITEMS = [["-10%", "正常 -10%"], ["-20%", "偏慢 -20%（默认）"], ["-25%", "很慢 -25%"], ["-30%", "更慢 -30%"]];
-  var NARRATION_RATE_ITEMS = [["-15%", "稍快 -15%"], ["-20%", "适中 -20%"], ["-25%", "偏慢 -25%（默认）"], ["-30%", "很慢 -30%"]];
-  function buildMenu(version, state = {}) {
-    const voiceOn = state.voiceOn ? true : false;
-    const earOn = state.earOn ? true : false;
-    const voiceChatOn = state.voiceChatOn ? true : false;
-    const chatLang = state.chatLang ? String(state.chatLang) : "auto";
-    const ttsVoice = state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
-    const chatCacheOn = !(state.chatCacheOn === false);
-    const voiceTick = (voice) => ttsVoice === voice ? "✓ " : "";
-    const growthText = state && state.growth ? state.growth : "--";
-    const books = Array.isArray(state.storyBooks) ? state.storyBooks.map((b) => String(b || "").trim()).filter(Boolean) : [];
-    const bookItems = books.length ? books.map((b) => item(b, "story-book:" + b)) : [item(state.storyBooksTried ? "书单没取到，稍后再试" : "正在翻书单…", "story-books")];
-    return [
-      // ── 界面语言（主人定的位置：标题栏下方第一行）──
-      sub("界面语言 ▸", [
-        item("中文", "lang:zh"),
-        item("English", "lang:en")
-      ]),
-      // ── 吃饭与看图 ──
-      item("成长：" + growthText, "growth"),
-      item("投喂一碗", "feed"),
-      item("看张图…", "vision"),
-      sep(),
-      // ── 曲子 ──
-      sub("弹首曲子 ▸", MELODIES.map((m) => item("弹《" + m + "》", "music:" + m))),
-      item("停止弹奏", "music-stop"),
-      sep(),
-      // ── 说话与耳朵（语音类全放一起）──
-      item("跟她说两句", "type"),
-      item(voiceOn ? "语音朗读：开" : "语音朗读：关", "voice"),
-      item("停止说话", "tts-stop"),
-      sub("换个声音 ▸", [
-        ...VOICE_ITEMS.map(([voice, label]) => item(voiceTick(voice) + label, "voice:" + voice)),
-        item(voiceTick("auto") + "自动（按语言选音色）", "voice:auto")
-      ]),
-      sub("唤醒词 ▸", [
-        item("默认（大肥鱼/肥鲸等）", "wake-word:"),
-        item("大肥鱼", "wake-word:大肥鱼"),
-        item("肥鲸", "wake-word:肥鲸"),
-        item("小鲸", "wake-word:小鲸"),
-        item("自定义…", "wake-word:custom")
-      ]),
-      item("语音待命：" + (earOn ? "开" : "关"), "wake"),
-      item("语音聊天：" + (voiceChatOn ? "开" : "关"), "chatmode"),
-      item("流式回复：" + (state.streamOn === false ? "关" : "开"), "stream-toggle"),
-      item("端点检测：经典/自适应", "endpoint"),
-      item("耳朵自检（听力诊断）", "ear-check"),
-      sep(),
-      // ── 语言 ──
-      sub("聊天语言 ▸", [
-        item((chatLang === "auto" ? "✓ " : "") + "自动", "chat-lang:auto"),
-        item((chatLang === "zh" ? "✓ " : "") + "中文", "chat-lang:zh"),
-        item((chatLang === "en" ? "✓ " : "") + "English", "chat-lang:en")
-      ]),
-      sep(),
-      // ── 位置与大小 ──
-      item("让她歇会儿", "pause"),
-      item("回碗里待着", "home"),
-      item("长大一点", "bigger"),
-      item("变小一点", "smaller"),
-      sep(),
-      // ── 饭点提醒 ──
-      item("记个饭点…", "remind-add"),
-      item("提醒清单…", "remind-list"),
-      sep(),
-      // ── 文化气 ──
-      sub("文化气 ▸", [
-        item("说书（连载）", "culture-story"),
-        item("连播：" + (state.storyAuto === false ? "关" : "开") + "（讲完一段自动接下一段）", "story-auto"),
-        rateSub("说书语速：", "story-rate:", state.storyRate || "-35%", STORY_RATE_ITEMS),
-        item("接着说", "culture-story-next"),
-        item("从头讲这本书", "story-reset"),
-        item("念首诗", "poem"),
-        rateSub("聊天语速：", "chat-rate:", state.chatRate || "-20%", CHAT_RATE_ITEMS),
-        rateSub("叙述语速：", "narration-rate:", state.narrationRate || "-25%", NARRATION_RATE_ITEMS),
-        rateSub("念诗语速：", "poem-rate:", state.poemRate || "-25%", NARRATION_RATE_ITEMS),
-        item("讲个民间故事", "culture-tale"),
-        item("讲个典故", "culture-allusion"),
-        item("成语辨析", "culture-idiom"),
-        sub("出个对联 ▸", [
-          item("随机一副", "culture-couplet"),
-          item("春联", "culture-couplet:春联"),
-          item("格言", "culture-couplet:格言"),
-          item("谐趣", "culture-couplet:谐趣"),
-          item("名胜", "culture-couplet:名胜"),
-          item("景观", "culture-couplet:景观"),
-          item("书院", "culture-couplet:书院"),
-          item("书房", "culture-couplet:书房"),
-          item("寿联", "culture-couplet:寿联"),
-          item("中药", "culture-couplet:中药"),
-          item("叠字", "culture-couplet:叠字"),
-          item("数字", "culture-couplet:数字")
-        ])
-      ]),
-      sep(),
-      // ── 每日内容（说书选本 / 每日一句 / 今日简报）──
-      sub("选本书 ▸", bookItems),
-      item("今日一句", "daily-line"),
-      item("今日简报", "briefing-card"),
-      sep(),
-      // ── 数据与统计（处理器由其他分身实现，未接上时走兜底提示）──
-      item("数据导出…", "data-export"),
-      item("数据导入…", "data-import"),
-      item("使用统计", "stats"),
-      sub("设置 ▸", [
-        item("查看当前配置", "config-view")
-      ]),
-      item("提醒管理…", "remind-manage"),
-      item("唤醒恢复", "wake-recover"),
-      sep(),
-      // ── 记忆、缓存与退出 ──
-      item("清除记忆…", "clear-memory"),
-      item("清空聊天缓存…", "cache-clear"),
-      item(chatCacheOn ? "聊天缓存：开" : "聊天缓存：关", "cache-toggle"),
-      item("让它游走（退出）", "hide"),
-      sep(),
-      // ── 账本与版本（版本永远在最底下）──
-      item("鱼粮账本", "fishfood")
-    ];
-  }
-
-  // src/client/narration-progress.ts
-  function createProgress() {
-    let current = null;
-    function index() {
-      if (!current) return 0;
-      const eff = current.spoken - current.introLen;
-      if (eff < 0) return 0;
-      let done = 0;
-      for (const c of current.cum) {
-        if (c <= eff) done++;
-      }
-      const total = current.cum.length;
-      return Math.min(total, done + 1);
-    }
-    return {
-      start(label, lines, intro = "") {
-        const lens = (lines || []).map((l) => String(l || "").replace(/\s+/g, "").length).filter((n) => n > 0);
-        const cum = [];
-        let sum = 0;
-        for (const n of lens) {
-          sum += n;
-          cum.push(sum);
-        }
-        current = {
-          label: String(label || ""),
-          cum,
-          introLen: String(intro || "").replace(/\s+/g, "").length,
-          spoken: 0
-        };
-      },
-      stop() {
-        current = null;
-      },
-      active() {
-        return current !== null;
-      },
-      index,
-      bump(segment) {
-        if (!current) return "";
-        const seg = String(segment || "");
-        const idx = index();
-        current.spoken += seg.replace(/\s+/g, "").length;
-        const total = current.cum.length;
-        const head = total > 0 && idx > 0 ? current.label + "（第 " + idx + "/" + total + " 句）" : current.label;
-        return head + (seg.trim() ? "：" + seg.trim() : "");
-      }
-    };
-  }
-  var defaultProgress = createProgress();
-  var startProgress = defaultProgress.start;
-  var stopProgress = defaultProgress.stop;
-  var progressActive = defaultProgress.active;
-  var progressIndex = defaultProgress.index;
-  var bumpProgress = defaultProgress.bump;
-
-  // src/client/rates.ts
-  var NARRATION_RATES = ["-15%", "-20%", "-25%", "-30%"];
-  deepFreeze(NARRATION_RATES);
-  var DEFAULT_NARRATION_RATE = "-25%";
-  var CHAT_RATES = ["-10%", "-20%", "-25%", "-30%"];
-  deepFreeze(CHAT_RATES);
-  var DEFAULT_CHAT_RATE = "-20%";
-  var DEFAULT_STORY_RATE = "-35%";
-  var DEFAULT_POEM_RATE = "-25%";
-  function readPercentRate(key, fallback) {
-    try {
-      const s = String(localStorage.getItem(key) || "").trim();
-      if (/^-(?:[1-9]\d?)%$/.test(s)) return s;
-    } catch (e) {
-    }
-    return fallback;
-  }
-  function storyRate() {
-    return readPercentRate("chubby-story-rate", DEFAULT_STORY_RATE);
-  }
-  function poemRate(fallback = DEFAULT_POEM_RATE) {
-    return readPercentRate("chubby-poem-rate", fallback);
-  }
-  function chatRate() {
-    try {
-      const s = localStorage.getItem("chubby-chat-rate");
-      if (s && CHAT_RATES.indexOf(s) >= 0) return s;
-    } catch (e) {
-    }
-    return DEFAULT_CHAT_RATE;
-  }
-  function setChatRate(rate) {
-    const v = String(rate || "").trim();
-    if (CHAT_RATES.indexOf(v) < 0) return false;
-    try {
-      localStorage.setItem("chubby-chat-rate", v);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-  function narrationRate() {
-    try {
-      const s = localStorage.getItem("chubby-narration-rate");
-      if (s && NARRATION_RATES.indexOf(s) >= 0) return s;
-    } catch (e) {
-    }
-    return DEFAULT_NARRATION_RATE;
-  }
-  function setNarrationRate(rate) {
-    const v = String(rate || "").trim();
-    if (NARRATION_RATES.indexOf(v) < 0) return false;
-    try {
-      localStorage.setItem("chubby-narration-rate", v);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  // src/client/image.ts
-  var DEFAULT_MAX_EDGE = 1280;
-  var DEFAULT_QUALITY = 0.85;
-  var KEEP_RAW_BELOW = 400 * 1024;
-  function readFileAsDataUrl(file) {
-    return new Promise((resolve) => {
-      try {
-        const fr = new FileReader();
-        fr.onloadend = () => {
-          try {
-            resolve(String(fr.result || ""));
-          } catch (e) {
-            resolve("");
-          }
-        };
-        fr.onerror = () => resolve("");
-        fr.readAsDataURL(file);
-      } catch (e) {
-        resolve("");
-      }
-    });
-  }
-  function mimeFromDataUrl(dataUrl) {
-    const m = /^data:([^;,]+)/i.exec(String(dataUrl || ""));
-    return m ? m[1].toLowerCase() : "";
-  }
-  function decodeImage(file) {
-    return new Promise((resolve) => {
-      try {
-        const w = typeof window !== "undefined" ? window : globalThis;
-        if (typeof w.createImageBitmap === "function") {
-          let p;
-          try {
-            p = w.createImageBitmap(file, { imageOrientation: "from-image" });
-          } catch (e) {
-            p = w.createImageBitmap(file);
-          }
-          Promise.resolve(p).then((bmp) => resolve(bmp)).catch(() => {
-            try {
-              Promise.resolve(w.createImageBitmap(file)).then((bmp) => resolve(bmp)).catch(() => resolve(null));
-            } catch (e) {
-              resolve(null);
-            }
-          });
-          return;
-        }
-        const URLRef = w.URL || globalThis.URL;
-        const ImageRef = w.Image;
-        if (!URLRef || typeof URLRef.createObjectURL !== "function" || typeof ImageRef !== "function") {
-          resolve(null);
-          return;
-        }
-        const url = URLRef.createObjectURL(file);
-        const img = new ImageRef();
-        const done = (v) => {
-          try {
-            URLRef.revokeObjectURL(url);
-          } catch (e) {
-          }
-          resolve(v);
-        };
-        img.onload = () => done(img);
-        img.onerror = () => done(null);
-        img.src = url;
-      } catch (e) {
-        resolve(null);
-      }
-    });
-  }
-  async function imageToB64(file, opts) {
-    const dataUrl = await readFileAsDataUrl(file);
-    const at = dataUrl.indexOf(",");
-    const raw = at >= 0 ? dataUrl.slice(at + 1) : dataUrl;
-    if (!raw) return null;
-    const rawMime = mimeFromDataUrl(dataUrl) || String(file && file.type || "image/jpeg");
-    const rawResult = { b64: raw, mime: rawMime, width: 0, height: 0, compressed: false };
-    try {
-      const declared = Number(file && file.size);
-      const rawBytes = isFinite(declared) && declared > 0 ? declared : Math.ceil(raw.length * 3 / 4);
-      if (rawBytes <= KEEP_RAW_BELOW) return rawResult;
-      const maxEdge = Math.max(256, Math.min(4096, Math.round(Number(opts && opts.maxEdge) || DEFAULT_MAX_EDGE)));
-      const quality = Math.min(0.95, Math.max(0.5, Number(opts && opts.quality) || DEFAULT_QUALITY));
-      const img = await decodeImage(file);
-      if (!img) return rawResult;
-      try {
-        const iw = Math.max(1, Number(img.width || img.naturalWidth) || 1);
-        const ih = Math.max(1, Number(img.height || img.naturalHeight) || 1);
-        const scale = Math.min(1, maxEdge / Math.max(iw, ih));
-        const w = Math.max(1, Math.round(iw * scale));
-        const h = Math.max(1, Math.round(ih * scale));
-        const doc = typeof document !== "undefined" ? document : null;
-        if (!doc || typeof doc.createElement !== "function") return rawResult;
-        const canvas = doc.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const cx = canvas.getContext && canvas.getContext("2d");
-        if (!cx || typeof canvas.toDataURL !== "function") return rawResult;
-        if (typeof cx.fillRect === "function") {
-          cx.fillStyle = "#fff";
-          cx.fillRect(0, 0, w, h);
-        }
-        cx.drawImage(img, 0, 0, w, h);
-        const out = String(canvas.toDataURL("image/jpeg", quality) || "");
-        const cut = out.indexOf(",");
-        const b64 = cut >= 0 ? out.slice(cut + 1) : "";
-        if (!b64) return rawResult;
-        if (b64.length >= raw.length) return rawResult;
-        return { b64, mime: "image/jpeg", width: w, height: h, compressed: true };
-      } finally {
-        try {
-          if (img && typeof img.close === "function") img.close();
-        } catch (e) {
-        }
-      }
-    } catch (e) {
-      return rawResult;
-    }
-  }
-
-  // src/client/dropzone.ts
-  var MAX_DROP_BYTES = 4 * 1024 * 1024;
-  var MAX_TEXT_CHARS = 4e3;
-  var VISION_PROMPT = "看看这张图，说说你看到了什么";
-  var MAX_IMAGE_B64_CHARS = 4 * 1024 * 1024;
-  var TEXT_EXTS = [".txt", ".md", ".json", ".log", ".csv"];
-  function isImageFile(file) {
-    return Boolean(file && typeof file.type === "string" && file.type.indexOf("image/") === 0);
-  }
-  function isTextFile(file) {
-    const name = String(file && file.name || "").toLowerCase();
-    for (const ext of TEXT_EXTS) {
-      if (name.slice(-ext.length) === ext) return true;
-    }
-    return false;
-  }
-  function buildTextPrompt(text) {
-    return "总结一下这篇文档：\n" + String(text || "").slice(0, MAX_TEXT_CHARS);
-  }
-  function readTextFile(file) {
-    try {
-      if (file && typeof file.text === "function") {
-        return Promise.resolve(file.text()).then((t) => str(t)).catch(() => readTextViaReader(file));
-      }
-    } catch (e) {
-    }
-    return readTextViaReader(file);
-  }
-  function readTextViaReader(file) {
-    return new Promise((resolve) => {
-      try {
-        if (typeof FileReader === "undefined") {
-          resolve("");
-          return;
-        }
-        const fr = new FileReader();
-        fr.onloadend = () => {
-          try {
-            resolve(String(fr.result || ""));
-          } catch (e) {
-            resolve("");
-          }
-        };
-        fr.onerror = () => resolve("");
-        fr.readAsText(file);
-      } catch (e) {
-        resolve("");
-      }
-    });
-  }
-  async function handleFileDrop(file, deps) {
-    const d = deps || {};
-    const bubble = typeof d.showBubble === "function" ? d.showBubble : () => {
-    };
-    const speak = typeof d.speakText === "function" ? d.speakText : null;
-    const doFetch = d.fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
-    if (!file) {
-      bubble("没拿到文件，再拖一次试试", 4e3);
-      return { ok: false, kind: "empty", error: "no file" };
-    }
-    const size = Number(file.size) || 0;
-    if (size > MAX_DROP_BYTES) {
-      bubble("文件太大啦（超过 4MB），本鱼一口吃不下", 5e3);
-      return { ok: false, kind: "too-large", error: "too large" };
-    }
-    if (!doFetch) {
-      bubble("本鱼连不上服务器", 4e3);
-      return { ok: false, kind: "error", error: "no fetch" };
-    }
-    const post = async (body) => {
-      const r = await doFetch("/api/chubby-whale/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      let data = null;
-      try {
-        data = await r.json();
-      } catch (e) {
-        data = null;
-      }
-      const status = Number(r && r.status) || 0;
-      if (!data || r && r.ok === false || data.ok === false) {
-        const msg = String(data && (data.reply || data.error) || "").trim() || "请求失败" + (status ? "（HTTP " + status + "）" : "");
-        const err = new Error(msg);
-        err.reply = msg;
-        err.status = status;
-        throw err;
-      }
-      return data;
-    };
-    const fail = (e, fallback) => {
-      const msg = String(e && (e.reply || e.message) || e || "").trim() || fallback;
-      bubble(msg, 5e3);
-      const tooLarge = Number(e && e.status) === 413;
-      return {
-        ok: false,
-        kind: tooLarge ? "too-large" : "error",
-        error: msg,
-        reply: e && e.reply ? String(e.reply) : void 0
-      };
-    };
-    if (isImageFile(file)) {
-      bubble("本鲸看看这张图…", 3e3);
-      const img0 = await imageToB64(file);
-      const b64 = img0 ? img0.b64 : "";
-      const mime = img0 && img0.mime || file.type || "image/jpeg";
-      if (!b64) {
-        bubble("图片读不出来，再拖一次试试", 4e3);
-        return { ok: false, kind: "error", error: "empty image" };
-      }
-      if (b64.length > MAX_IMAGE_B64_CHARS) {
-        bubble("这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～", 5e3);
-        return { ok: false, kind: "too-large", error: "image too large" };
-      }
-      try {
-        const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime });
-        const reply = String(reply0 && reply0.reply || "").trim() || "这条鱼看不懂这张图……";
-        bubble("（看图）" + reply, 1e4);
-        if (speak) speak(reply);
-        return { ok: true, kind: "image", message: VISION_PROMPT, reply };
-      } catch (e) {
-        return fail(e, "图片处理失败");
-      }
-    }
-    if (isTextFile(file)) {
-      const text = String(await readTextFile(file) || "");
-      if (!text.trim()) {
-        bubble("这个文件里没读到字", 4e3);
-        return { ok: false, kind: "error", error: "empty text" };
-      }
-      const message = buildTextPrompt(text);
-      bubble("本鲸看看这份文档…", 3e3);
-      try {
-        const reply0 = await post({ message });
-        const reply = String(reply0 && reply0.reply || "").trim() || "这份文档本鲸没看懂……";
-        bubble("（文档）" + reply, 12e3);
-        if (speak) speak(reply);
-        return { ok: true, kind: "text", message, reply };
-      } catch (e) {
-        return fail(e, "文档处理失败");
-      }
-    }
-    bubble("这个格式本鱼还不会看", 4e3);
-    return { ok: false, kind: "unsupported", error: "unsupported type" };
-  }
-
-  // src/shared/growth.ts
-  var GROWTH_STAGES = [
-    { exp: 0, name: "初识" },
-    { exp: 200, name: "熟悉" },
-    { exp: 800, name: "亲密" },
-    { exp: 2500, name: "知心" },
-    { exp: 5e3, name: "家人" }
-  ];
-  deepFreeze(GROWTH_STAGES);
-  function growthStage(exp) {
-    let idx = 0;
-    for (let i = 0; i < GROWTH_STAGES.length; i++) {
-      if (exp >= GROWTH_STAGES[i].exp) idx = i;
-    }
-    const next = idx + 1 < GROWTH_STAGES.length ? GROWTH_STAGES[idx + 1].exp : 0;
-    return { index: idx, name: GROWTH_STAGES[idx].name, nextExp: next };
-  }
-
-  // src/client/look.ts
-  var TIER_EXP = [0, 200, 800];
-  deepFreeze(TIER_EXP);
-  var TIER_NAMES = ["初识", "熟络", "黏人"];
-  deepFreeze(TIER_NAMES);
-  var LOOKS = [
-    { tier: 0, label: "初识", scale: 1, dots: 2, halo: 0, tailEveryMs: 14e3 },
-    { tier: 1, label: "熟络", scale: 1.04, dots: 4, halo: 0.12, tailEveryMs: 9e3 },
-    { tier: 2, label: "黏人", scale: 1.08, dots: 6, halo: 0.22, tailEveryMs: 5500 }
-  ];
-  deepFreeze(LOOKS);
-  function tierOf(exp) {
-    const e = Number(exp);
-    if (Number.isNaN(e) || e <= 0) return 0;
-    for (let i = TIER_EXP.length - 1; i > 0; i--) {
-      if (e >= TIER_EXP[i]) return i;
-    }
-    return 0;
-  }
-  function lookFor(exp) {
-    return LOOKS[tierOf(exp)];
-  }
-  function lookForGrowth(info) {
-    if (!info || typeof info.exp !== "number") return LOOKS[0];
-    return LOOKS[tierOf(info.exp)];
-  }
-  var DEFAULT_GROWTH = { exp: 0, stage: "初识", nextExp: 200, tier: 0 };
-  deepFreeze(DEFAULT_GROWTH);
-  function parseGrowth(d) {
-    if (!d || typeof d !== "object" || !d.ok) return null;
-    const raw = Number(d.exp);
-    if (!isFinite(raw)) return null;
-    const exp = Math.max(0, Math.floor(raw));
-    const tier = tierOf(exp);
-    const host = growthStage(exp);
-    const n = Number(d.nextExp);
-    let nextExp = 0;
-    if (isFinite(n) && n >= 0) nextExp = Math.floor(n);
-    else nextExp = host.nextExp;
-    const stage = typeof d.stage === "string" && d.stage ? d.stage : host.name;
-    return { exp, stage, nextExp, tier };
-  }
-  function fetchGrowth(getJson2) {
-    try {
-      return Promise.resolve(getJson2("/growth", { cache: "no-store" })).then((d) => parseGrowth(d)).catch(() => null);
-    } catch (e) {
-      return Promise.resolve(null);
-    }
-  }
-
-  // src/client/anim.ts
-  var EYE_L = { x: 679, y: 430, r: 68 };
-  deepFreeze(EYE_L);
-  var EYE_R = { x: 860, y: 435, r: 68 };
-  deepFreeze(EYE_R);
-  var MOUTH = { x: 779, y: 525, rw: 26, rh: 18 };
-  deepFreeze(MOUTH);
-  var FIN_DOTS = [
-    { x: 308, y: 115 },
-    { x: 317, y: 113 },
-    { x: 326, y: 116 },
-    { x: 334, y: 120 },
-    { x: 343, y: 125 },
-    { x: 350, y: 131 }
-  ];
-  var TAIL_TIP = { x: 391, y: 270 };
-  var WAG_MS = 900;
-  var WAG_JITTER = 0.2;
-  var HALO = { x: 240, y: 228, r0: 30, r1: 252 };
-  var DOT_BREATH_MS = 620;
-  var TAU = Math.PI * 2;
-  var MAINTAIN_EVERY = 30;
-  var HEART_MAX = 8;
-  function pickDotIndexes(count) {
-    const n = FIN_DOTS.length;
-    const c = Math.max(2, Math.min(n, Math.round(Number(count)) || 2));
-    if (c >= n) return [0, 1, 2, 3, 4, 5];
-    const out = [];
-    for (let i = 0; i < c; i++) out.push(Math.round(i * (n - 1) / (c - 1)));
-    return out;
-  }
-  function createAnimator(opts) {
-    const { canvas, imgSrc, cw, ch, sx, sy, state } = opts;
-    const ctx = canvas && typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
-    if (!ctx) {
-      let fallbackLook = opts.look || lookFor(0);
-      return {
-        start() {
-        },
-        stop() {
-        },
-        talkFor(_ms) {
-        },
-        pushHeart() {
-        },
-        // 取不到上下文时动画无法重建，但外观数据仍要跟上成长（否则 getLook 永远停在初识档）
-        setLook(next) {
-          fallbackLook = next || lookFor(0);
-        },
-        getLook() {
-          return fallbackLook;
-        }
-      };
-    }
-    const img = new Image();
-    img.src = imgSrc;
-    let raf = 0;
-    let running = false;
-    let last = performance.now();
-    let blinkT = 0;
-    let blinkClosed = false;
-    let blinkGap = 3200 + Math.random() * 1800;
-    let look = opts.look || lookFor(0);
-    let dotIdx = pickDotIndexes(look.dots);
-    let nextWagAt = performance.now() + wagGap();
-    let wagStart = -1;
-    let splashes = [];
-    const haloGrads = [];
-    let visible = true;
-    let maintCountdown = MAINTAIN_EVERY;
-    let usedDpr = 0;
-    function dprNow() {
-      try {
-        const d = typeof window !== "undefined" ? Number(window.devicePixelRatio) : 1;
-        return isFinite(d) && d > 0 ? d : 1;
-      } catch (e) {
-        return 1;
-      }
-    }
-    function syncCanvasSize() {
-      try {
-        let cssW = 0;
-        let cssH = 0;
-        if (typeof canvas.getBoundingClientRect === "function") {
-          const r = canvas.getBoundingClientRect();
-          cssW = Number(r && r.width) || 0;
-          cssH = Number(r && r.height) || 0;
-        }
-        if (!(cssW > 0)) cssW = cw / 2;
-        if (!(cssH > 0)) cssH = ch / 2;
-        const dpr = dprNow();
-        const pxW = Math.max(1, Math.min(cw * 2, Math.round(cssW * dpr)));
-        const pxH = Math.max(1, Math.min(ch * 2, Math.round(cssH * dpr)));
-        if (canvas.width !== pxW) canvas.width = pxW;
-        if (canvas.height !== pxH) canvas.height = pxH;
-        if (typeof ctx.setTransform === "function") ctx.setTransform(pxW / cw, 0, 0, pxH / ch, 0, 0);
-        if (dpr !== usedDpr) {
-          usedDpr = dpr;
-          haloGrads.length = 0;
-        }
-      } catch (e) {
-      }
-    }
-    function checkVisible() {
-      try {
-        if (typeof document !== "undefined" && document.hidden) return false;
-        if (canvas.isConnected === false) return false;
-        if (typeof canvas.getClientRects === "function") return canvas.getClientRects().length > 0;
-      } catch (e) {
-      }
-      return true;
-    }
-    function maintain() {
-      maintCountdown = MAINTAIN_EVERY;
-      visible = checkVisible();
-      if (visible) syncCanvasSize();
-    }
-    let watchingResize = false;
-    function onWindowResize() {
-      try {
-        visible = checkVisible();
-      } catch (e) {
-      }
-      if (visible) syncCanvasSize();
-    }
-    function watchResize() {
-      if (watchingResize) return;
-      watchingResize = true;
-      try {
-        if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("resize", onWindowResize);
-      } catch (e) {
-      }
-    }
-    function unwatchResize() {
-      if (!watchingResize) return;
-      watchingResize = false;
-      try {
-        if (typeof window !== "undefined" && typeof window.removeEventListener === "function") window.removeEventListener("resize", onWindowResize);
-      } catch (e) {
-      }
-    }
-    function wagGap() {
-      return Math.max(2500, look.tailEveryMs * (1 - WAG_JITTER + Math.random() * WAG_JITTER * 2));
-    }
-    function applyLook(next) {
-      const prev = look;
-      look = next || lookFor(0);
-      if (look.dots !== prev.dots) dotIdx = pickDotIndexes(look.dots);
-      if (look.tailEveryMs !== prev.tailEveryMs) nextWagAt = performance.now() + wagGap();
-      try {
-        canvas.style.transform = "scale(" + look.scale + ")";
-        canvas.style.transformOrigin = "50% 100%";
-      } catch (e) {
-      }
-    }
-    applyLook(look);
-    function drawEye(c, closed) {
-      if (!closed) return;
-      const p = { x: c.x * sx, y: c.y * sy };
-      const r = c.r * sx;
-      ctx.fillStyle = "#F9EDE7";
-      ctx.beginPath();
-      ctx.ellipse(p.x, p.y, r * 1.15, r * 0.9, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "#3a2a24";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r * 0.8, 0.15 * Math.PI, 0.85 * Math.PI);
-      ctx.stroke();
-    }
-    function drawMouth(open) {
-      if (!open) return;
-      const p = { x: MOUTH.x * sx, y: MOUTH.y * sy };
-      const rw = MOUTH.rw * sx;
-      const rh = MOUTH.rh * sy;
-      ctx.fillStyle = "#E8566B";
-      ctx.beginPath();
-      ctx.ellipse(p.x, p.y, rw * 1.1, rh * 1.45, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#7c1f2c";
-      ctx.beginPath();
-      ctx.ellipse(p.x, p.y + rh * 0.5, rw * 0.6, rh * 0.55, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    const HEART_LIFE = 1.4;
-    function drawHearts(dtSec) {
-      const arr = state.hearts;
-      for (let i = arr.length - 1; i >= 0; i--) {
-        const hh = arr[i];
-        hh.age += dtSec;
-        if (hh.age >= HEART_LIFE) {
-          arr.splice(i, 1);
-          continue;
-        }
-        const p = hh.age / HEART_LIFE;
-        const x = cw * 0.42 + (hh.dx || 0) * cw * 0.12 + Math.sin(hh.age * 6) * cw * 0.01;
-        const y = ch * 0.26 - p * ch * 0.16 + Math.sin(hh.age * 5) * 2;
-        const alpha = Math.max(0, 1 - p);
-        const size = Math.max(12, Math.round(ch * 0.05 * (1 + p * 0.5)));
-        ctx.fillStyle = "rgba(255,120,150," + alpha.toFixed(3) + ")";
-        ctx.font = size + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",serif';
-        ctx.fillText("❤", x, y);
-      }
-    }
-    function haloGradient() {
-      const cached = haloGrads[look.tier];
-      if (cached) return cached;
-      const g = ctx.createRadialGradient(HALO.x, HALO.y, HALO.r0, HALO.x, HALO.y, HALO.r1);
-      g.addColorStop(0, "rgba(130,196,255,0.9)");
-      g.addColorStop(0.5, "rgba(80,150,240,0.38)");
-      g.addColorStop(1, "rgba(60,120,220,0)");
-      haloGrads[look.tier] = g;
-      return g;
-    }
-    function drawHalo(t) {
-      if (!(look.halo > 0)) return;
-      const breathe = 0.85 + 0.15 * Math.sin(t / 900);
-      ctx.save();
-      ctx.globalAlpha = look.halo * breathe;
-      ctx.fillStyle = haloGradient();
-      ctx.fillRect(0, 0, cw, ch);
-      ctx.restore();
-    }
-    function drawFinDots(t) {
-      if (!look.dots || !dotIdx.length) return;
-      ctx.save();
-      ctx.globalCompositeOperation = "lighter";
-      for (let i = 0; i < dotIdx.length; i++) {
-        const p = FIN_DOTS[dotIdx[i]];
-        const pulse = 0.7 + 0.3 * Math.sin(t / DOT_BREATH_MS + i * 1.15);
-        ctx.fillStyle = "#9FD6FF";
-        ctx.globalAlpha = 0.16 * pulse;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 5.2, 0, TAU);
-        ctx.fill();
-        ctx.fillStyle = "#E6F6FF";
-        ctx.globalAlpha = 0.9 * pulse;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 1.7, 0, TAU);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-    function spawnSplash() {
-      const n = 4;
-      for (let i = 0; i < n; i++) {
-        const a = -Math.PI / 2 + (Math.random() - 0.5) * 1.7;
-        const speed = 0.05 + Math.random() * 0.07;
-        splashes.push({
-          x: TAIL_TIP.x + (Math.random() - 0.5) * 12,
-          y: TAIL_TIP.y + (Math.random() - 0.5) * 8,
-          vx: Math.cos(a) * speed,
-          vy: Math.sin(a) * speed,
-          age: 0,
-          life: 420 + Math.random() * 260,
-          r: 1.2 + Math.random() * 1.8
-        });
-      }
-      if (splashes.length > 24) splashes = splashes.slice(splashes.length - 24);
-    }
-    function drawSplashes(dt) {
-      if (!splashes.length) return;
-      ctx.save();
-      for (let i = splashes.length - 1; i >= 0; i--) {
-        const p = splashes[i];
-        p.age += dt;
-        if (p.age >= p.life) {
-          splashes.splice(i, 1);
-          continue;
-        }
-        p.vy += 5e-4 * dt;
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
-        const k = 1 - p.age / p.life;
-        ctx.globalAlpha = 0.55 * k;
-        ctx.fillStyle = "#BFE6FF";
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r * (0.6 + 0.6 * k), 0, TAU);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-    function loop(t) {
-      if (!running) return;
-      const dt = Math.max(0, Math.min(50, t - last));
-      last = t;
-      maintCountdown -= 1;
-      if (maintCountdown <= 0) maintain();
-      if (!visible) {
-        raf = requestAnimationFrame(loop);
-        return;
-      }
-      ctx.clearRect(0, 0, cw, ch);
-      if (t >= nextWagAt) {
-        wagStart = t;
-        nextWagAt = t + wagGap();
-        spawnSplash();
-      }
-      const wagP = wagStart >= 0 && t >= wagStart && t <= wagStart + WAG_MS ? (t - wagStart) / WAG_MS : -1;
-      ctx.save();
-      if (wagP >= 0) {
-        const env = Math.sin(Math.PI * wagP);
-        const angle = Math.sin(wagP * Math.PI * 6) * 0.012 * env;
-        const bob = Math.sin(wagP * Math.PI * 4) * 1.6 * env;
-        ctx.translate(cw / 2, ch);
-        ctx.rotate(angle);
-        ctx.translate(0, bob);
-        ctx.translate(-cw / 2, -ch);
-      }
-      drawHalo(t);
-      if (img.complete && img.naturalWidth > 0) {
-        ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch);
-      }
-      drawFinDots(t);
-      blinkT += dt;
-      if (!blinkClosed && blinkT > blinkGap) {
-        blinkClosed = true;
-        blinkT = 0;
-      }
-      if (blinkClosed && blinkT > 150) {
-        blinkClosed = false;
-        blinkT = 0;
-        blinkGap = 3200 + Math.random() * 1800;
-      }
-      if (blinkClosed) {
-        drawEye(EYE_L, true);
-        drawEye(EYE_R, true);
-      }
-      if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0);
-      drawSplashes(dt);
-      ctx.restore();
-      drawHearts(dt / 1e3);
-      raf = requestAnimationFrame(loop);
-    }
-    function start() {
-      if (running) return;
-      running = true;
-      last = performance.now();
-      maintCountdown = MAINTAIN_EVERY;
-      visible = true;
-      watchResize();
-      syncCanvasSize();
-      raf = requestAnimationFrame(loop);
-    }
-    function stop() {
-      running = false;
-      unwatchResize();
-      cancelAnimationFrame(raf);
-      raf = 0;
-    }
-    function talkFor(ms2) {
-      state.talkUntil = performance.now() + ms2;
-    }
-    function pushHeart() {
-      if (state.hearts.length >= HEART_MAX) state.hearts.shift();
-      state.hearts.push({ age: 0, dx: Math.random() - 0.5 });
-    }
-    function setLook(next) {
-      applyLook(next);
-    }
-    function getLook() {
-      return look;
-    }
-    return { start, stop, talkFor, pushHeart, setLook, getLook };
-  }
 
   // src/client/ape.ts
   var APE_DEFAULTS = {
@@ -1485,6 +314,95 @@
       };
     }
   };
+
+  // src/client/rates.ts
+  var NARRATION_RATES = ["-15%", "-20%", "-25%", "-30%"];
+  deepFreeze(NARRATION_RATES);
+  var DEFAULT_NARRATION_RATE = "-25%";
+  var CHAT_RATES = ["-10%", "-20%", "-25%", "-30%"];
+  deepFreeze(CHAT_RATES);
+  var DEFAULT_CHAT_RATE = "-20%";
+  var DEFAULT_STORY_RATE = "-35%";
+  var DEFAULT_POEM_RATE = "-25%";
+  function readPercentRate(key, fallback) {
+    try {
+      const s = String(localStorage.getItem(key) || "").trim();
+      if (/^-(?:[1-9]\d?)%$/.test(s)) return s;
+    } catch (e) {
+    }
+    return fallback;
+  }
+  function storyRate() {
+    return readPercentRate("chubby-story-rate", DEFAULT_STORY_RATE);
+  }
+  function poemRate(fallback = DEFAULT_POEM_RATE) {
+    return readPercentRate("chubby-poem-rate", fallback);
+  }
+  function chatRate() {
+    try {
+      const s = localStorage.getItem("chubby-chat-rate");
+      if (s && CHAT_RATES.indexOf(s) >= 0) return s;
+    } catch (e) {
+    }
+    return DEFAULT_CHAT_RATE;
+  }
+  function setChatRate(rate) {
+    const v = String(rate || "").trim();
+    if (CHAT_RATES.indexOf(v) < 0) return false;
+    try {
+      localStorage.setItem("chubby-chat-rate", v);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  function narrationRate() {
+    try {
+      const s = localStorage.getItem("chubby-narration-rate");
+      if (s && NARRATION_RATES.indexOf(s) >= 0) return s;
+    } catch (e) {
+    }
+    return DEFAULT_NARRATION_RATE;
+  }
+  function setNarrationRate(rate) {
+    const v = String(rate || "").trim();
+    if (NARRATION_RATES.indexOf(v) < 0) return false;
+    try {
+      localStorage.setItem("chubby-narration-rate", v);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // src/client/util.ts
+  function evStop(e) {
+    try {
+      if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+    } catch (e2) {
+    }
+  }
+  function evPrevent(e) {
+    try {
+      if (e && typeof e.preventDefault === "function") e.preventDefault();
+    } catch (e2) {
+    }
+  }
+  function clearT(t) {
+    try {
+      if (t) clearTimeout(t);
+    } catch (e) {
+    }
+  }
+  function clearI(t) {
+    try {
+      if (t) clearInterval(t);
+    } catch (e) {
+    }
+  }
+  function str(x) {
+    return x == null ? "" : String(x);
+  }
 
   // src/client/text.ts
   function collapseText(raw) {
@@ -2090,16 +1008,23 @@
     "明镜与点点"
   ];
   deepFreeze(NOISE_TEXTS);
+  var INTERRUPT_WORDS = ["停", "别", "不", "闭嘴", "打住"];
+  deepFreeze(INTERRUPT_WORDS);
   function normalizeNoiseKey(text) {
     return String(text == null ? "" : text).replace(/\s+/g, "").replace(/[。，、！？；：,.!?;:…~～·""''（）()【】\[\]]/g, "").toLowerCase();
   }
   function isNoiseText(text) {
     const k = normalizeNoiseKey(text);
     if (!k) return true;
+    if (isInterruptWord(k)) return false;
     if (k.length <= 1) return true;
     if (NOISE_TEXTS.indexOf(k) >= 0) return true;
     if (k.length <= 6 && /^([\u4e00-\u9fa5])\1{2,}$/.test(k)) return true;
     return false;
+  }
+  function isInterruptWord(text) {
+    const k = normalizeNoiseKey(text);
+    return k.length > 0 && INTERRUPT_WORDS.indexOf(k) >= 0;
   }
 
   // src/client/sim.ts
@@ -2257,6 +1182,32 @@
         } catch (e) {
         }
       }
+    }
+  }
+
+  // src/client/voice/voices.ts
+  var TTS_VOICES = [
+    "zh-CN-XiaoyiNeural",
+    "zh-CN-XiaoxiaoNeural",
+    "zh-CN-XiaochenNeural",
+    "zh-CN-YunxiNeural",
+    "zh-CN-YunyangNeural",
+    "en-US-AnaNeural",
+    "en-US-JennyNeural",
+    "en-GB-SoniaNeural",
+    "auto"
+  ];
+  deepFreeze(TTS_VOICES);
+  var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
+  function normalizeVoiceName(name, fallback = DEFAULT_VOICE) {
+    const n = str(name).trim();
+    return TTS_VOICES.indexOf(n) >= 0 ? n : fallback;
+  }
+  function readStoredVoiceName() {
+    try {
+      return normalizeVoiceName(localStorage.getItem("chubby-tts-voice"));
+    } catch (e) {
+      return DEFAULT_VOICE;
     }
   }
 
@@ -3371,6 +2322,10 @@
         releaseAudio();
       } catch (e) {
       }
+      try {
+        echoFilter.reset();
+      } catch (e) {
+      }
       setStatus("idle");
     }
     function speak(text, o) {
@@ -3452,6 +2407,1062 @@
       stats,
       status: () => statusHolder.get()
     };
+  }
+
+  // src/client/menu.ts
+  function item(label, action) {
+    return { type: "item", label, action };
+  }
+  function sub(label, items) {
+    return { type: "sub", label, items };
+  }
+  function sep() {
+    return { type: "sep" };
+  }
+  function rateSub(prefix, action, current, opts) {
+    return sub(prefix + current + " ▸", opts.map(([rate, text]) => item((rate === current ? "✓ " : "") + text, action + rate)));
+  }
+  var MELODIES = ["小星星", "两只老虎", "生日快乐", "欢乐颂", "铃儿响叮当", "伦敦大桥", "斯卡布罗集市", "思君黯然", "绿袖子", "致爱丽丝", "友谊天长地久"];
+  deepFreeze(MELODIES);
+  var SONG_EN = {
+    "小星星": "Twinkle Twinkle Little Star",
+    "两只老虎": "Two Tigers",
+    "生日快乐": "Happy Birthday",
+    "欢乐颂": "Ode to Joy",
+    "铃儿响叮当": "Jingle Bells",
+    "伦敦大桥": "London Bridge",
+    "斯卡布罗集市": "Scarborough Fair",
+    "思君黯然": "Longing for You",
+    "绿袖子": "Greensleeves",
+    "致爱丽丝": "Fur Elise",
+    "友谊天长地久": "Auld Lang Syne"
+  };
+  deepFreeze(SONG_EN);
+  var EN_MAP = {
+    "投喂一碗": "Feed a bowl",
+    "选本书 ▸": "Choose a book ▸",
+    "书单没取到，稍后再试": "Book list unavailable, try again later",
+    "正在翻书单…": "Loading book list…",
+    "今日一句": "Daily quote",
+    "今日简报": "Today's briefing",
+    "数据导出…": "Export data…",
+    "数据导入…": "Import data…",
+    "使用统计": "Usage stats",
+    "设置 ▸": "Settings ▸",
+    "查看当前配置": "View current config",
+    "提醒管理…": "Manage reminders…",
+    "唤醒恢复": "Wake recovery",
+    "唤醒词 ▸": "Wake word ▸",
+    "默认（大肥鱼/肥鲸等）": "Default (Da Fei Yu / Fei Jing)",
+    "大肥鱼": "Da Fei Yu",
+    "肥鲸": "Fei Jing",
+    "小鲸": "Xiao Jing",
+    "自定义…": "Custom…",
+    "弹首曲子 ▸": "Play a song ▸",
+    "停止弹奏": "Stop music",
+    "跟她说两句": "Talk to her",
+    "换个声音 ▸": "Change voice ▸",
+    "聊天语言 ▸": "Chat language ▸",
+    "界面语言 ▸": "Interface language ▸",
+    "看张图…": "Look at a picture…",
+    "停止说话": "Stop talking",
+    "让她歇会儿": "Let her rest",
+    "回碗里待着": "Back in the bowl",
+    "长大一点": "Grow bigger",
+    "变小一点": "Shrink",
+    "记个饭点…": "Add a meal reminder…",
+    "提醒清单…": "Reminders…",
+    "端点检测：经典/自适应": "Endpoint detection: classic / adaptive",
+    "耳朵自检（听力诊断）": "Hearing self-test",
+    "文化气 ▸": "Culture ▸",
+    "说书（连载）": "Storytelling",
+    "稍快 -25%": "A bit faster -25%",
+    "适中 -30%": "Medium -30%",
+    "偏慢 -35%（默认）": "Slower -35% (default)",
+    "正常 -10%": "Normal -10%",
+    "偏慢 -20%（默认）": "Slow -20% (default)",
+    "很慢 -25%": "Very slow -25%",
+    "更慢 -30%": "Even slower -30%",
+    "稍快 -15%": "A bit faster -15%",
+    "适中 -20%": "Medium -20%",
+    "偏慢 -25%（默认）": "Slower -25% (default)",
+    "很慢 -30%": "Very slow -30%",
+    "很慢 -40%": "Very slow -40%",
+    "接着说": "Continue story",
+    "从头讲这本书": "Restart this book",
+    "念首诗": "Recite a poem",
+    "讲个民间故事": "Folk tale",
+    "讲个典故": "Classic allusion",
+    "成语辨析": "Idiom",
+    "出个对联 ▸": "Couplets ▸",
+    "随机一副": "Random pair",
+    "春联": "Spring couplet",
+    "格言": "Motto",
+    "谐趣": "Witty",
+    "名胜": "Landmarks",
+    "景观": "Scenery",
+    "书房": "Study",
+    "书院": "Academy",
+    "寿联": "Birthday couplet",
+    "中药": "Herbs",
+    "叠字": "Repeated characters",
+    "数字": "Numerals",
+    "清除记忆…": "Clear memory…",
+    "清空聊天缓存…": "Clear chat cache…",
+    "让它游走（退出）": "Let it go (exit)",
+    "鱼粮账本": "Token ledger",
+    "English": "English",
+    "中文": "Chinese",
+    // 动态 label（音色勾选/聊天缓存开关/自动）需要的英文键
+    "聊天缓存：开": "Chat cache: on",
+    "聊天缓存：关": "Chat cache: off",
+    "自动（按语言选音色）": "Auto (by language)",
+    "自动": "Auto",
+    "音色：晓伊（中·女）": "Voice: Xiaoyi (CN F)",
+    "音色：晓晓（中·女）": "Voice: Xiaoxiao (CN F)",
+    "音色：晓辰（中·女）": "Voice: Xiaochen (CN F)",
+    "音色：云希（中·男）": "Voice: Yunxi (CN M)",
+    "音色：云扬（中·男）": "Voice: Yunyang (CN M)",
+    "音色：Ana（英·女）": "Voice: Ana (EN F)",
+    "音色：Jenny（英·女）": "Voice: Jenny (EN F)",
+    "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)"
+  };
+  deepFreeze(EN_MAP);
+  var STAGE_EN = {
+    "初识": "New",
+    "熟悉": "Familiar",
+    "亲密": "Close",
+    "知心": "Confidant",
+    "家人": "Family"
+  };
+  deepFreeze(STAGE_EN);
+  var TOGGLE_EN = {
+    "语音朗读：": ["Voice output: on", "Voice output: off"],
+    "语音待命：": ["Voice standby: on", "Voice standby: off"],
+    "语音聊天：": ["Voice chat: on", "Voice chat: off"],
+    "流式回复：": ["Streaming replies: on", "Streaming replies: off"]
+  };
+  function tr(label, lang) {
+    if (lang !== "en") return label;
+    const exact = EN_MAP[label];
+    if (exact) return exact;
+    if (label.startsWith("✓ ")) {
+      const base = label.slice(2);
+      const en = tr(base, lang);
+      return en === base ? label : "✓ " + en;
+    }
+    if (label.startsWith("弹《") && label.endsWith("》")) {
+      const song = label.slice(2, label.length - 1);
+      return SONG_EN[song] ? 'Play "' + SONG_EN[song] + '"' : "Play a song";
+    }
+    if (label.startsWith("成长：")) {
+      const rest = label.slice(3);
+      const m = rest.match(/^(初识|熟悉|亲密|知心|家人)([\s\S]*)$/);
+      if (!m) return "Growth: " + rest;
+      const tail = String(m[2] || "").replace(/（/g, "(").replace(/）/g, ")");
+      return "Growth: " + (STAGE_EN[m[1]] || m[1]) + tail;
+    }
+    if (label.startsWith("版本：v")) return "Version: v" + label.slice(4);
+    if (label.startsWith("余额：")) return "Balance: " + label.slice(3);
+    for (const prefix of Object.keys(TOGGLE_EN)) {
+      if (label.startsWith(prefix)) {
+        const pair = TOGGLE_EN[prefix];
+        return label.slice(prefix.length) === "开" ? pair[0] : pair[1];
+      }
+    }
+    if (label.startsWith("说书语速：")) return label.replace("说书语速：", "Story speed: ");
+    if (label.startsWith("连播：")) return label.indexOf("开") >= 0 ? "Auto-continue: on" : "Auto-continue: off";
+    if (label.startsWith("念诗语速：")) return label.replace("念诗语速：", "Poem speed: ");
+    if (label.startsWith("叙述语速：")) return label.replace("叙述语速：", "Narration speed: ");
+    if (label.startsWith("聊天语速：")) return label.replace("聊天语速：", "Chat speed: ");
+    return label;
+  }
+  var VOICE_ITEMS = [
+    ["zh-CN-XiaoyiNeural", "音色：晓伊（中·女）"],
+    ["zh-CN-XiaoxiaoNeural", "音色：晓晓（中·女）"],
+    ["zh-CN-XiaochenNeural", "音色：晓辰（中·女）"],
+    ["zh-CN-YunxiNeural", "音色：云希（中·男）"],
+    ["zh-CN-YunyangNeural", "音色：云扬（中·男）"],
+    ["en-US-AnaNeural", "音色：Ana（英·女）"],
+    ["en-US-JennyNeural", "音色：Jenny（英·女）"],
+    ["en-GB-SoniaNeural", "音色：Sonia（英·女·英式）"]
+  ];
+  var STORY_RATE_ITEMS = [["-25%", "稍快 -25%"], ["-30%", "适中 -30%"], ["-35%", "偏慢 -35%（默认）"], ["-40%", "很慢 -40%"]];
+  var CHAT_RATE_ITEMS = [["-10%", "正常 -10%"], ["-20%", "偏慢 -20%（默认）"], ["-25%", "很慢 -25%"], ["-30%", "更慢 -30%"]];
+  var NARRATION_RATE_ITEMS = [["-15%", "稍快 -15%"], ["-20%", "适中 -20%"], ["-25%", "偏慢 -25%（默认）"], ["-30%", "很慢 -30%"]];
+  function buildMenu(version, state = {}) {
+    const voiceOn = state.voiceOn ? true : false;
+    const earOn = state.earOn ? true : false;
+    const voiceChatOn = state.voiceChatOn ? true : false;
+    const chatLang = state.chatLang ? String(state.chatLang) : "auto";
+    const ttsVoice = state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
+    const chatCacheOn = !(state.chatCacheOn === false);
+    const voiceTick = (voice) => ttsVoice === voice ? "✓ " : "";
+    const growthText = state && state.growth ? state.growth : "--";
+    const books = Array.isArray(state.storyBooks) ? state.storyBooks.map((b) => String(b || "").trim()).filter(Boolean) : [];
+    const bookItems = books.length ? books.map((b) => item(b, "story-book:" + b)) : [item(state.storyBooksTried ? "书单没取到，稍后再试" : "正在翻书单…", "story-books")];
+    return [
+      // ── 界面语言（主人定的位置：标题栏下方第一行）──
+      sub("界面语言 ▸", [
+        item("中文", "lang:zh"),
+        item("English", "lang:en")
+      ]),
+      // ── 吃饭与看图 ──
+      item("成长：" + growthText, "growth"),
+      item("投喂一碗", "feed"),
+      item("看张图…", "vision"),
+      sep(),
+      // ── 曲子 ──
+      sub("弹首曲子 ▸", MELODIES.map((m) => item("弹《" + m + "》", "music:" + m))),
+      item("停止弹奏", "music-stop"),
+      sep(),
+      // ── 说话与耳朵（语音类全放一起）──
+      item("跟她说两句", "type"),
+      item(voiceOn ? "语音朗读：开" : "语音朗读：关", "voice"),
+      item("停止说话", "tts-stop"),
+      sub("换个声音 ▸", [
+        ...VOICE_ITEMS.map(([voice, label]) => item(voiceTick(voice) + label, "voice:" + voice)),
+        item(voiceTick("auto") + "自动（按语言选音色）", "voice:auto")
+      ]),
+      sub("唤醒词 ▸", [
+        item("默认（大肥鱼/肥鲸等）", "wake-word:"),
+        item("大肥鱼", "wake-word:大肥鱼"),
+        item("肥鲸", "wake-word:肥鲸"),
+        item("小鲸", "wake-word:小鲸"),
+        item("自定义…", "wake-word:custom")
+      ]),
+      item("语音待命：" + (earOn ? "开" : "关"), "wake"),
+      item("语音聊天：" + (voiceChatOn ? "开" : "关"), "chatmode"),
+      item("流式回复：" + (state.streamOn === false ? "关" : "开"), "stream-toggle"),
+      item("端点检测：经典/自适应", "endpoint"),
+      item("耳朵自检（听力诊断）", "ear-check"),
+      sep(),
+      // ── 语言 ──
+      sub("聊天语言 ▸", [
+        item((chatLang === "auto" ? "✓ " : "") + "自动", "chat-lang:auto"),
+        item((chatLang === "zh" ? "✓ " : "") + "中文", "chat-lang:zh"),
+        item((chatLang === "en" ? "✓ " : "") + "English", "chat-lang:en")
+      ]),
+      sep(),
+      // ── 位置与大小 ──
+      item("让她歇会儿", "pause"),
+      item("回碗里待着", "home"),
+      item("长大一点", "bigger"),
+      item("变小一点", "smaller"),
+      sep(),
+      // ── 饭点提醒 ──
+      item("记个饭点…", "remind-add"),
+      item("提醒清单…", "remind-list"),
+      sep(),
+      // ── 文化气 ──
+      sub("文化气 ▸", [
+        item("说书（连载）", "culture-story"),
+        item("连播：" + (state.storyAuto === false ? "关" : "开") + "（讲完一段自动接下一段）", "story-auto"),
+        rateSub("说书语速：", "story-rate:", state.storyRate || "-35%", STORY_RATE_ITEMS),
+        item("接着说", "culture-story-next"),
+        item("从头讲这本书", "story-reset"),
+        item("念首诗", "poem"),
+        rateSub("聊天语速：", "chat-rate:", state.chatRate || "-20%", CHAT_RATE_ITEMS),
+        rateSub("叙述语速：", "narration-rate:", state.narrationRate || "-25%", NARRATION_RATE_ITEMS),
+        rateSub("念诗语速：", "poem-rate:", state.poemRate || "-25%", NARRATION_RATE_ITEMS),
+        item("讲个民间故事", "culture-tale"),
+        item("讲个典故", "culture-allusion"),
+        item("成语辨析", "culture-idiom"),
+        sub("出个对联 ▸", [
+          item("随机一副", "culture-couplet"),
+          item("春联", "culture-couplet:春联"),
+          item("格言", "culture-couplet:格言"),
+          item("谐趣", "culture-couplet:谐趣"),
+          item("名胜", "culture-couplet:名胜"),
+          item("景观", "culture-couplet:景观"),
+          item("书院", "culture-couplet:书院"),
+          item("书房", "culture-couplet:书房"),
+          item("寿联", "culture-couplet:寿联"),
+          item("中药", "culture-couplet:中药"),
+          item("叠字", "culture-couplet:叠字"),
+          item("数字", "culture-couplet:数字")
+        ])
+      ]),
+      sep(),
+      // ── 每日内容（说书选本 / 每日一句 / 今日简报）──
+      sub("选本书 ▸", bookItems),
+      item("今日一句", "daily-line"),
+      item("今日简报", "briefing-card"),
+      sep(),
+      // ── 数据与统计（处理器由其他分身实现，未接上时走兜底提示）──
+      item("数据导出…", "data-export"),
+      item("数据导入…", "data-import"),
+      item("使用统计", "stats"),
+      sub("设置 ▸", [
+        item("查看当前配置", "config-view")
+      ]),
+      item("提醒管理…", "remind-manage"),
+      item("唤醒恢复", "wake-recover"),
+      sep(),
+      // ── 记忆、缓存与退出 ──
+      item("清除记忆…", "clear-memory"),
+      item("清空聊天缓存…", "cache-clear"),
+      item(chatCacheOn ? "聊天缓存：开" : "聊天缓存：关", "cache-toggle"),
+      item("让它游走（退出）", "hide"),
+      sep(),
+      // ── 账本与版本（版本永远在最底下）──
+      item("鱼粮账本", "fishfood")
+    ];
+  }
+
+  // src/client/narration-progress.ts
+  function createProgress() {
+    let current = null;
+    function index() {
+      if (!current) return 0;
+      const eff = current.spoken - current.introLen;
+      if (eff < 0) return 0;
+      let done = 0;
+      for (const c of current.cum) {
+        if (c <= eff) done++;
+      }
+      const total = current.cum.length;
+      return Math.min(total, done + 1);
+    }
+    return {
+      start(label, lines, intro = "") {
+        const lens = (lines || []).map((l) => String(l || "").replace(/\s+/g, "").length).filter((n) => n > 0);
+        const cum = [];
+        let sum = 0;
+        for (const n of lens) {
+          sum += n;
+          cum.push(sum);
+        }
+        current = {
+          label: String(label || ""),
+          cum,
+          introLen: String(intro || "").replace(/\s+/g, "").length,
+          spoken: 0
+        };
+      },
+      stop() {
+        current = null;
+      },
+      active() {
+        return current !== null;
+      },
+      index,
+      bump(segment) {
+        if (!current) return "";
+        const seg = String(segment || "");
+        const idx = index();
+        current.spoken += seg.replace(/\s+/g, "").length;
+        const total = current.cum.length;
+        const head = total > 0 && idx > 0 ? current.label + "（第 " + idx + "/" + total + " 句）" : current.label;
+        return head + (seg.trim() ? "：" + seg.trim() : "");
+      }
+    };
+  }
+  var defaultProgress = createProgress();
+  var startProgress = defaultProgress.start;
+  var stopProgress = defaultProgress.stop;
+  var progressActive = defaultProgress.active;
+  var progressIndex = defaultProgress.index;
+  var bumpProgress = defaultProgress.bump;
+
+  // src/client/image.ts
+  var DEFAULT_MAX_EDGE = 1280;
+  var DEFAULT_QUALITY = 0.85;
+  var KEEP_RAW_BELOW = 400 * 1024;
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve) => {
+      try {
+        const fr = new FileReader();
+        fr.onloadend = () => {
+          try {
+            resolve(String(fr.result || ""));
+          } catch (e) {
+            resolve("");
+          }
+        };
+        fr.onerror = () => resolve("");
+        fr.readAsDataURL(file);
+      } catch (e) {
+        resolve("");
+      }
+    });
+  }
+  function mimeFromDataUrl(dataUrl) {
+    const m = /^data:([^;,]+)/i.exec(String(dataUrl || ""));
+    return m ? m[1].toLowerCase() : "";
+  }
+  function decodeImage(file) {
+    return new Promise((resolve) => {
+      try {
+        const w = typeof window !== "undefined" ? window : globalThis;
+        if (typeof w.createImageBitmap === "function") {
+          let p;
+          try {
+            p = w.createImageBitmap(file, { imageOrientation: "from-image" });
+          } catch (e) {
+            p = w.createImageBitmap(file);
+          }
+          Promise.resolve(p).then((bmp) => resolve(bmp)).catch(() => {
+            try {
+              Promise.resolve(w.createImageBitmap(file)).then((bmp) => resolve(bmp)).catch(() => resolve(null));
+            } catch (e) {
+              resolve(null);
+            }
+          });
+          return;
+        }
+        const URLRef = w.URL || globalThis.URL;
+        const ImageRef = w.Image;
+        if (!URLRef || typeof URLRef.createObjectURL !== "function" || typeof ImageRef !== "function") {
+          resolve(null);
+          return;
+        }
+        const url = URLRef.createObjectURL(file);
+        const img = new ImageRef();
+        const done = (v) => {
+          try {
+            URLRef.revokeObjectURL(url);
+          } catch (e) {
+          }
+          resolve(v);
+        };
+        img.onload = () => done(img);
+        img.onerror = () => done(null);
+        img.src = url;
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }
+  async function imageToB64(file, opts) {
+    const dataUrl = await readFileAsDataUrl(file);
+    const at = dataUrl.indexOf(",");
+    const raw = at >= 0 ? dataUrl.slice(at + 1) : dataUrl;
+    if (!raw) return null;
+    const rawMime = mimeFromDataUrl(dataUrl) || String(file && file.type || "image/jpeg");
+    const rawResult = { b64: raw, mime: rawMime, width: 0, height: 0, compressed: false };
+    try {
+      const declared = Number(file && file.size);
+      const rawBytes = isFinite(declared) && declared > 0 ? declared : Math.ceil(raw.length * 3 / 4);
+      if (rawBytes <= KEEP_RAW_BELOW) return rawResult;
+      const maxEdge = Math.max(256, Math.min(4096, Math.round(Number(opts && opts.maxEdge) || DEFAULT_MAX_EDGE)));
+      const quality = Math.min(0.95, Math.max(0.5, Number(opts && opts.quality) || DEFAULT_QUALITY));
+      const img = await decodeImage(file);
+      if (!img) return rawResult;
+      try {
+        const iw = Math.max(1, Number(img.width || img.naturalWidth) || 1);
+        const ih = Math.max(1, Number(img.height || img.naturalHeight) || 1);
+        const scale = Math.min(1, maxEdge / Math.max(iw, ih));
+        const w = Math.max(1, Math.round(iw * scale));
+        const h = Math.max(1, Math.round(ih * scale));
+        const doc = typeof document !== "undefined" ? document : null;
+        if (!doc || typeof doc.createElement !== "function") return rawResult;
+        const canvas = doc.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const cx = canvas.getContext && canvas.getContext("2d");
+        if (!cx || typeof canvas.toDataURL !== "function") return rawResult;
+        if (typeof cx.fillRect === "function") {
+          cx.fillStyle = "#fff";
+          cx.fillRect(0, 0, w, h);
+        }
+        cx.drawImage(img, 0, 0, w, h);
+        const out = String(canvas.toDataURL("image/jpeg", quality) || "");
+        const cut = out.indexOf(",");
+        const b64 = cut >= 0 ? out.slice(cut + 1) : "";
+        if (!b64) return rawResult;
+        if (b64.length >= raw.length) return rawResult;
+        return { b64, mime: "image/jpeg", width: w, height: h, compressed: true };
+      } finally {
+        try {
+          if (img && typeof img.close === "function") img.close();
+        } catch (e) {
+        }
+      }
+    } catch (e) {
+      return rawResult;
+    }
+  }
+
+  // src/client/dropzone.ts
+  var MAX_DROP_BYTES = 4 * 1024 * 1024;
+  var MAX_TEXT_CHARS = 4e3;
+  var VISION_PROMPT = "看看这张图，说说你看到了什么";
+  var MAX_IMAGE_B64_CHARS = 4 * 1024 * 1024;
+  var TEXT_EXTS = [".txt", ".md", ".json", ".log", ".csv"];
+  function isImageFile(file) {
+    return Boolean(file && typeof file.type === "string" && file.type.indexOf("image/") === 0);
+  }
+  function isTextFile(file) {
+    const name = String(file && file.name || "").toLowerCase();
+    for (const ext of TEXT_EXTS) {
+      if (name.slice(-ext.length) === ext) return true;
+    }
+    return false;
+  }
+  function buildTextPrompt(text) {
+    return "总结一下这篇文档：\n" + String(text || "").slice(0, MAX_TEXT_CHARS);
+  }
+  function readTextFile(file) {
+    try {
+      if (file && typeof file.text === "function") {
+        return Promise.resolve(file.text()).then((t) => str(t)).catch(() => readTextViaReader(file));
+      }
+    } catch (e) {
+    }
+    return readTextViaReader(file);
+  }
+  function readTextViaReader(file) {
+    return new Promise((resolve) => {
+      try {
+        if (typeof FileReader === "undefined") {
+          resolve("");
+          return;
+        }
+        const fr = new FileReader();
+        fr.onloadend = () => {
+          try {
+            resolve(String(fr.result || ""));
+          } catch (e) {
+            resolve("");
+          }
+        };
+        fr.onerror = () => resolve("");
+        fr.readAsText(file);
+      } catch (e) {
+        resolve("");
+      }
+    });
+  }
+  async function handleFileDrop(file, deps) {
+    const d = deps || {};
+    const bubble = typeof d.showBubble === "function" ? d.showBubble : () => {
+    };
+    const speak = typeof d.speakText === "function" ? d.speakText : null;
+    const doFetch = d.fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
+    if (!file) {
+      bubble("没拿到文件，再拖一次试试", 4e3);
+      return { ok: false, kind: "empty", error: "no file" };
+    }
+    const size = Number(file.size) || 0;
+    if (size > MAX_DROP_BYTES) {
+      bubble("文件太大啦（超过 4MB），本鱼一口吃不下", 5e3);
+      return { ok: false, kind: "too-large", error: "too large" };
+    }
+    if (!doFetch) {
+      bubble("本鱼连不上服务器", 4e3);
+      return { ok: false, kind: "error", error: "no fetch" };
+    }
+    const post = async (body) => {
+      const r = await doFetch("/api/chubby-whale/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      let data = null;
+      try {
+        data = await r.json();
+      } catch (e) {
+        data = null;
+      }
+      const status = Number(r && r.status) || 0;
+      if (!data || r && r.ok === false || data.ok === false) {
+        const msg = String(data && (data.reply || data.error) || "").trim() || "请求失败" + (status ? "（HTTP " + status + "）" : "");
+        const err = new Error(msg);
+        err.reply = msg;
+        err.status = status;
+        throw err;
+      }
+      return data;
+    };
+    const fail = (e, fallback) => {
+      const msg = String(e && (e.reply || e.message) || e || "").trim() || fallback;
+      bubble(msg, 5e3);
+      const tooLarge = Number(e && e.status) === 413;
+      return {
+        ok: false,
+        kind: tooLarge ? "too-large" : "error",
+        error: msg,
+        reply: e && e.reply ? String(e.reply) : void 0
+      };
+    };
+    if (isImageFile(file)) {
+      bubble("本鲸看看这张图…", 3e3);
+      const img0 = await imageToB64(file);
+      const b64 = img0 ? img0.b64 : "";
+      const mime = img0 && img0.mime || file.type || "image/jpeg";
+      if (!b64) {
+        bubble("图片读不出来，再拖一次试试", 4e3);
+        return { ok: false, kind: "error", error: "empty image" };
+      }
+      if (b64.length > MAX_IMAGE_B64_CHARS) {
+        bubble("这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～", 5e3);
+        return { ok: false, kind: "too-large", error: "image too large" };
+      }
+      try {
+        const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime });
+        const reply = String(reply0 && reply0.reply || "").trim() || "这条鱼看不懂这张图……";
+        bubble("（看图）" + reply, 1e4);
+        if (speak) speak(reply);
+        return { ok: true, kind: "image", message: VISION_PROMPT, reply };
+      } catch (e) {
+        return fail(e, "图片处理失败");
+      }
+    }
+    if (isTextFile(file)) {
+      const text = String(await readTextFile(file) || "");
+      if (!text.trim()) {
+        bubble("这个文件里没读到字", 4e3);
+        return { ok: false, kind: "error", error: "empty text" };
+      }
+      const message = buildTextPrompt(text);
+      bubble("本鲸看看这份文档…", 3e3);
+      try {
+        const reply0 = await post({ message });
+        const reply = String(reply0 && reply0.reply || "").trim() || "这份文档本鲸没看懂……";
+        bubble("（文档）" + reply, 12e3);
+        if (speak) speak(reply);
+        return { ok: true, kind: "text", message, reply };
+      } catch (e) {
+        return fail(e, "文档处理失败");
+      }
+    }
+    bubble("这个格式本鱼还不会看", 4e3);
+    return { ok: false, kind: "unsupported", error: "unsupported type" };
+  }
+
+  // src/shared/growth.ts
+  var GROWTH_STAGES = [
+    { exp: 0, name: "初识" },
+    { exp: 200, name: "熟悉" },
+    { exp: 800, name: "亲密" },
+    { exp: 2500, name: "知心" },
+    { exp: 5e3, name: "家人" }
+  ];
+  deepFreeze(GROWTH_STAGES);
+  function growthStage(exp) {
+    let idx = 0;
+    for (let i = 0; i < GROWTH_STAGES.length; i++) {
+      if (exp >= GROWTH_STAGES[i].exp) idx = i;
+    }
+    const next = idx + 1 < GROWTH_STAGES.length ? GROWTH_STAGES[idx + 1].exp : 0;
+    return { index: idx, name: GROWTH_STAGES[idx].name, nextExp: next };
+  }
+
+  // src/client/look.ts
+  var TIER_EXP = [0, 200, 800];
+  deepFreeze(TIER_EXP);
+  var TIER_NAMES = ["初识", "熟络", "黏人"];
+  deepFreeze(TIER_NAMES);
+  var LOOKS = [
+    { tier: 0, label: "初识", scale: 1, dots: 2, halo: 0, tailEveryMs: 14e3 },
+    { tier: 1, label: "熟络", scale: 1.04, dots: 4, halo: 0.12, tailEveryMs: 9e3 },
+    { tier: 2, label: "黏人", scale: 1.08, dots: 6, halo: 0.22, tailEveryMs: 5500 }
+  ];
+  deepFreeze(LOOKS);
+  function tierOf(exp) {
+    const e = Number(exp);
+    if (Number.isNaN(e) || e <= 0) return 0;
+    for (let i = TIER_EXP.length - 1; i > 0; i--) {
+      if (e >= TIER_EXP[i]) return i;
+    }
+    return 0;
+  }
+  function lookFor(exp) {
+    return LOOKS[tierOf(exp)];
+  }
+  function lookForGrowth(info) {
+    if (!info || typeof info.exp !== "number") return LOOKS[0];
+    return LOOKS[tierOf(info.exp)];
+  }
+  var DEFAULT_GROWTH = { exp: 0, stage: "初识", nextExp: 200, tier: 0 };
+  deepFreeze(DEFAULT_GROWTH);
+  function parseGrowth(d) {
+    if (!d || typeof d !== "object" || !d.ok) return null;
+    const raw = Number(d.exp);
+    if (!isFinite(raw)) return null;
+    const exp = Math.max(0, Math.floor(raw));
+    const tier = tierOf(exp);
+    const host = growthStage(exp);
+    const n = Number(d.nextExp);
+    let nextExp = 0;
+    if (isFinite(n) && n >= 0) nextExp = Math.floor(n);
+    else nextExp = host.nextExp;
+    const stage = typeof d.stage === "string" && d.stage ? d.stage : host.name;
+    return { exp, stage, nextExp, tier };
+  }
+  function fetchGrowth(getJson2) {
+    try {
+      return Promise.resolve(getJson2("/growth", { cache: "no-store" })).then((d) => parseGrowth(d)).catch(() => null);
+    } catch (e) {
+      return Promise.resolve(null);
+    }
+  }
+
+  // src/client/anim.ts
+  var EYE_L = { x: 679, y: 430, r: 68 };
+  deepFreeze(EYE_L);
+  var EYE_R = { x: 860, y: 435, r: 68 };
+  deepFreeze(EYE_R);
+  var MOUTH = { x: 779, y: 525, rw: 26, rh: 18 };
+  deepFreeze(MOUTH);
+  var FIN_DOTS = [
+    { x: 308, y: 115 },
+    { x: 317, y: 113 },
+    { x: 326, y: 116 },
+    { x: 334, y: 120 },
+    { x: 343, y: 125 },
+    { x: 350, y: 131 }
+  ];
+  var TAIL_TIP = { x: 391, y: 270 };
+  var WAG_MS = 900;
+  var WAG_JITTER = 0.2;
+  var HALO = { x: 240, y: 228, r0: 30, r1: 252 };
+  var DOT_BREATH_MS = 620;
+  var TAU = Math.PI * 2;
+  var MAINTAIN_EVERY = 30;
+  var HEART_MAX = 8;
+  function pickDotIndexes(count) {
+    const n = FIN_DOTS.length;
+    const c = Math.max(2, Math.min(n, Math.round(Number(count)) || 2));
+    if (c >= n) return [0, 1, 2, 3, 4, 5];
+    const out = [];
+    for (let i = 0; i < c; i++) out.push(Math.round(i * (n - 1) / (c - 1)));
+    return out;
+  }
+  function createAnimator(opts) {
+    const { canvas, imgSrc, cw, ch, sx, sy, state } = opts;
+    const ctx = canvas && typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+    if (!ctx) {
+      let fallbackLook = opts.look || lookFor(0);
+      return {
+        start() {
+        },
+        stop() {
+        },
+        talkFor(_ms) {
+        },
+        pushHeart() {
+        },
+        // 取不到上下文时动画无法重建，但外观数据仍要跟上成长（否则 getLook 永远停在初识档）
+        setLook(next) {
+          fallbackLook = next || lookFor(0);
+        },
+        getLook() {
+          return fallbackLook;
+        }
+      };
+    }
+    const img = new Image();
+    img.src = imgSrc;
+    let raf = 0;
+    let running = false;
+    let last = performance.now();
+    let blinkT = 0;
+    let blinkClosed = false;
+    let blinkGap = 3200 + Math.random() * 1800;
+    let look = opts.look || lookFor(0);
+    let dotIdx = pickDotIndexes(look.dots);
+    let nextWagAt = performance.now() + wagGap();
+    let wagStart = -1;
+    let splashes = [];
+    const haloGrads = [];
+    let visible = true;
+    let maintCountdown = MAINTAIN_EVERY;
+    let usedDpr = 0;
+    function dprNow() {
+      try {
+        const d = typeof window !== "undefined" ? Number(window.devicePixelRatio) : 1;
+        return isFinite(d) && d > 0 ? d : 1;
+      } catch (e) {
+        return 1;
+      }
+    }
+    function syncCanvasSize() {
+      try {
+        let cssW = 0;
+        let cssH = 0;
+        if (typeof canvas.getBoundingClientRect === "function") {
+          const r = canvas.getBoundingClientRect();
+          cssW = Number(r && r.width) || 0;
+          cssH = Number(r && r.height) || 0;
+        }
+        if (!(cssW > 0)) cssW = cw / 2;
+        if (!(cssH > 0)) cssH = ch / 2;
+        const dpr = dprNow();
+        const pxW = Math.max(1, Math.min(cw * 2, Math.round(cssW * dpr)));
+        const pxH = Math.max(1, Math.min(ch * 2, Math.round(cssH * dpr)));
+        if (canvas.width !== pxW) canvas.width = pxW;
+        if (canvas.height !== pxH) canvas.height = pxH;
+        if (typeof ctx.setTransform === "function") ctx.setTransform(pxW / cw, 0, 0, pxH / ch, 0, 0);
+        if (dpr !== usedDpr) {
+          usedDpr = dpr;
+          haloGrads.length = 0;
+        }
+      } catch (e) {
+      }
+    }
+    function checkVisible() {
+      try {
+        if (typeof document !== "undefined" && document.hidden) return false;
+        if (canvas.isConnected === false) return false;
+        if (typeof canvas.getClientRects === "function") return canvas.getClientRects().length > 0;
+      } catch (e) {
+      }
+      return true;
+    }
+    function maintain() {
+      maintCountdown = MAINTAIN_EVERY;
+      visible = checkVisible();
+      if (visible) syncCanvasSize();
+    }
+    let watchingResize = false;
+    function onWindowResize() {
+      try {
+        visible = checkVisible();
+      } catch (e) {
+      }
+      if (visible) syncCanvasSize();
+    }
+    function watchResize() {
+      if (watchingResize) return;
+      watchingResize = true;
+      try {
+        if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("resize", onWindowResize);
+      } catch (e) {
+      }
+    }
+    function unwatchResize() {
+      if (!watchingResize) return;
+      watchingResize = false;
+      try {
+        if (typeof window !== "undefined" && typeof window.removeEventListener === "function") window.removeEventListener("resize", onWindowResize);
+      } catch (e) {
+      }
+    }
+    function wagGap() {
+      return Math.max(2500, look.tailEveryMs * (1 - WAG_JITTER + Math.random() * WAG_JITTER * 2));
+    }
+    function applyLook(next) {
+      const prev = look;
+      look = next || lookFor(0);
+      if (look.dots !== prev.dots) dotIdx = pickDotIndexes(look.dots);
+      if (look.tailEveryMs !== prev.tailEveryMs) nextWagAt = performance.now() + wagGap();
+      try {
+        canvas.style.transform = "scale(" + look.scale + ")";
+        canvas.style.transformOrigin = "50% 100%";
+      } catch (e) {
+      }
+    }
+    applyLook(look);
+    function drawEye(c, closed) {
+      if (!closed) return;
+      const p = { x: c.x * sx, y: c.y * sy };
+      const r = c.r * sx;
+      ctx.fillStyle = "#F9EDE7";
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y, r * 1.15, r * 0.9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#3a2a24";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r * 0.8, 0.15 * Math.PI, 0.85 * Math.PI);
+      ctx.stroke();
+    }
+    function drawMouth(open) {
+      if (!open) return;
+      const p = { x: MOUTH.x * sx, y: MOUTH.y * sy };
+      const rw = MOUTH.rw * sx;
+      const rh = MOUTH.rh * sy;
+      ctx.fillStyle = "#E8566B";
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y, rw * 1.1, rh * 1.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#7c1f2c";
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y + rh * 0.5, rw * 0.6, rh * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const HEART_LIFE = 1.4;
+    function drawHearts(dtSec) {
+      const arr = state.hearts;
+      for (let i = arr.length - 1; i >= 0; i--) {
+        const hh = arr[i];
+        hh.age += dtSec;
+        if (hh.age >= HEART_LIFE) {
+          arr.splice(i, 1);
+          continue;
+        }
+        const p = hh.age / HEART_LIFE;
+        const x = cw * 0.42 + (hh.dx || 0) * cw * 0.12 + Math.sin(hh.age * 6) * cw * 0.01;
+        const y = ch * 0.26 - p * ch * 0.16 + Math.sin(hh.age * 5) * 2;
+        const alpha = Math.max(0, 1 - p);
+        const size = Math.max(12, Math.round(ch * 0.05 * (1 + p * 0.5)));
+        ctx.fillStyle = "rgba(255,120,150," + alpha.toFixed(3) + ")";
+        ctx.font = size + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",serif';
+        ctx.fillText("❤", x, y);
+      }
+    }
+    function haloGradient() {
+      const cached = haloGrads[look.tier];
+      if (cached) return cached;
+      const g = ctx.createRadialGradient(HALO.x, HALO.y, HALO.r0, HALO.x, HALO.y, HALO.r1);
+      g.addColorStop(0, "rgba(130,196,255,0.9)");
+      g.addColorStop(0.5, "rgba(80,150,240,0.38)");
+      g.addColorStop(1, "rgba(60,120,220,0)");
+      haloGrads[look.tier] = g;
+      return g;
+    }
+    function drawHalo(t) {
+      if (!(look.halo > 0)) return;
+      const breathe = 0.85 + 0.15 * Math.sin(t / 900);
+      ctx.save();
+      ctx.globalAlpha = look.halo * breathe;
+      ctx.fillStyle = haloGradient();
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.restore();
+    }
+    function drawFinDots(t) {
+      if (!look.dots || !dotIdx.length) return;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (let i = 0; i < dotIdx.length; i++) {
+        const p = FIN_DOTS[dotIdx[i]];
+        const pulse = 0.7 + 0.3 * Math.sin(t / DOT_BREATH_MS + i * 1.15);
+        ctx.fillStyle = "#9FD6FF";
+        ctx.globalAlpha = 0.16 * pulse;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5.2, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = "#E6F6FF";
+        ctx.globalAlpha = 0.9 * pulse;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.7, 0, TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    function spawnSplash() {
+      const n = 4;
+      for (let i = 0; i < n; i++) {
+        const a = -Math.PI / 2 + (Math.random() - 0.5) * 1.7;
+        const speed = 0.05 + Math.random() * 0.07;
+        splashes.push({
+          x: TAIL_TIP.x + (Math.random() - 0.5) * 12,
+          y: TAIL_TIP.y + (Math.random() - 0.5) * 8,
+          vx: Math.cos(a) * speed,
+          vy: Math.sin(a) * speed,
+          age: 0,
+          life: 420 + Math.random() * 260,
+          r: 1.2 + Math.random() * 1.8
+        });
+      }
+      if (splashes.length > 24) splashes = splashes.slice(splashes.length - 24);
+    }
+    function drawSplashes(dt) {
+      if (!splashes.length) return;
+      ctx.save();
+      for (let i = splashes.length - 1; i >= 0; i--) {
+        const p = splashes[i];
+        p.age += dt;
+        if (p.age >= p.life) {
+          splashes.splice(i, 1);
+          continue;
+        }
+        p.vy += 5e-4 * dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        const k = 1 - p.age / p.life;
+        ctx.globalAlpha = 0.55 * k;
+        ctx.fillStyle = "#BFE6FF";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * (0.6 + 0.6 * k), 0, TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    function loop(t) {
+      if (!running) return;
+      const dt = Math.max(0, Math.min(50, t - last));
+      last = t;
+      maintCountdown -= 1;
+      if (maintCountdown <= 0) maintain();
+      if (!visible) {
+        raf = requestAnimationFrame(loop);
+        return;
+      }
+      ctx.clearRect(0, 0, cw, ch);
+      if (t >= nextWagAt) {
+        wagStart = t;
+        nextWagAt = t + wagGap();
+        spawnSplash();
+      }
+      const wagP = wagStart >= 0 && t >= wagStart && t <= wagStart + WAG_MS ? (t - wagStart) / WAG_MS : -1;
+      ctx.save();
+      if (wagP >= 0) {
+        const env = Math.sin(Math.PI * wagP);
+        const angle = Math.sin(wagP * Math.PI * 6) * 0.012 * env;
+        const bob = Math.sin(wagP * Math.PI * 4) * 1.6 * env;
+        ctx.translate(cw / 2, ch);
+        ctx.rotate(angle);
+        ctx.translate(0, bob);
+        ctx.translate(-cw / 2, -ch);
+      }
+      drawHalo(t);
+      if (img.complete && img.naturalWidth > 0) {
+        ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch);
+      }
+      drawFinDots(t);
+      blinkT += dt;
+      if (!blinkClosed && blinkT > blinkGap) {
+        blinkClosed = true;
+        blinkT = 0;
+      }
+      if (blinkClosed && blinkT > 150) {
+        blinkClosed = false;
+        blinkT = 0;
+        blinkGap = 3200 + Math.random() * 1800;
+      }
+      if (blinkClosed) {
+        drawEye(EYE_L, true);
+        drawEye(EYE_R, true);
+      }
+      if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0);
+      drawSplashes(dt);
+      ctx.restore();
+      drawHearts(dt / 1e3);
+      raf = requestAnimationFrame(loop);
+    }
+    function start() {
+      if (running) return;
+      running = true;
+      last = performance.now();
+      maintCountdown = MAINTAIN_EVERY;
+      visible = true;
+      watchResize();
+      syncCanvasSize();
+      raf = requestAnimationFrame(loop);
+    }
+    function stop() {
+      running = false;
+      unwatchResize();
+      cancelAnimationFrame(raf);
+      raf = 0;
+    }
+    function talkFor(ms2) {
+      state.talkUntil = performance.now() + ms2;
+    }
+    function pushHeart() {
+      if (state.hearts.length >= HEART_MAX) state.hearts.shift();
+      state.hearts.push({ age: 0, dx: Math.random() - 0.5 });
+    }
+    function setLook(next) {
+      applyLook(next);
+    }
+    function getLook() {
+      return look;
+    }
+    return { start, stop, talkFor, pushHeart, setLook, getLook };
   }
 
   // src/client/wake.ts

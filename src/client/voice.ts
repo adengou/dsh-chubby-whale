@@ -967,6 +967,9 @@ export function createVoice(opts: VoiceOptions): Voice {
     levelOk = false
     levelDead = false
     try { releaseAudio() } catch (e) { }
+    // 关掉语音待命就清空回声记忆：否则 15 秒内重新打开、再说同一句，
+    // 仍会被判成「本鱼刚说过的回声」而丢掉（分身 2026-11-06 取证）
+    try { echoFilter.reset() } catch (e) { }
     setStatus('idle')
   }
 

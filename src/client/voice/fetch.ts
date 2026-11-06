@@ -1,7 +1,7 @@
 /**
  * client/voice/fetch.ts —— 带硬超时的 fetch（从 voice.ts 外提）
  *
- * 设计原则④：所有网络请求都有硬超时（ASR 15s / TTS 20s）。
+ * 设计原则④：所有网络请求都有硬超时（ASR 30s / TTS 20s）。
  * 审计补丁（2026-11-06）：原来 AbortSignal.any 不可用时直接 sig = outer，
  * 超时用的 ctl.abort() 根本没接到 fetch 上 —— 老 Safari（无 AbortSignal.any）上
  * 15s/20s 的硬超时形同虚设。现在降级为“把 outer 的 abort 转发给 ctl”，

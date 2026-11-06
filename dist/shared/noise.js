@@ -13,6 +13,13 @@ export const NOISE_TEXTS = [
     '本鱼在听', '嗯本鱼在听', '字幕由', '明镜与点点',
 ];
 deepFreeze(NOISE_TEXTS);
+/**
+ * 单字打断词：语音场景里最短的有效指令。
+ * 它们和「嗯/啊」一样只有一个字，但语义上必须放行——客户端专门留了
+ * 「朗读时喊停」的直通路径，宿主如果按「单字=气口」吞掉，喊停就永远无效。
+ */
+export const INTERRUPT_WORDS = ['停', '别', '不', '闭嘴', '打住'];
+deepFreeze(INTERRUPT_WORDS);
 /** 归一化：去空白与标点、统一小写 */
 export function normalizeNoiseKey(text) {
     return String(text == null ? '' : text)
@@ -23,6 +30,7 @@ export function normalizeNoiseKey(text) {
 /**
  * 判断一段识别结果是不是"没人说话"。
  * 规则：
+ *   ⓪ 打断词（停/别/不/闭嘴/打住）先放行——它们和单字气口同形但语义相反
  *   ① 归一化后为空，或只有一个字符（"嗯"「啊」这类气口）
  *   ② 命中噪声词表
  *   ③ 同一个字重复 ≥3 次且整句很短（"嗯嗯嗯嗯"）
@@ -31,6 +39,8 @@ export function isNoiseText(text) {
     const k = normalizeNoiseKey(text);
     if (!k)
         return true;
+    if (isInterruptWord(k))
+        return false;
     if (k.length <= 1)
         return true;
     if (NOISE_TEXTS.indexOf(k) >= 0)
@@ -38,4 +48,9 @@ export function isNoiseText(text) {
     if (k.length <= 6 && /^([\u4e00-\u9fa5])\1{2,}$/.test(k))
         return true;
     return false;
+}
+/** 是不是打断词（输入会先归一化，大小写/标点不影响判定） */
+export function isInterruptWord(text) {
+    const k = normalizeNoiseKey(text);
+    return k.length > 0 && INTERRUPT_WORDS.indexOf(k) >= 0;
 }

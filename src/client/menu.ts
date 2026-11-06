@@ -1,5 +1,5 @@
 import { deepFreeze } from '../shared/immutable.js'
-import { DEFAULT_VOICE } from './voice/voices.js'
+import { DEFAULT_VOICE } from './voice.js'
 /**
  * client/menu.ts —— 菜单数据（1:1 复刻 C# 版 的 menu.ps1，含中英双语）
  */
