@@ -2009,8 +2009,14 @@ try {
   hits.length = 0; spoke.length = 0
   ok('「讲个成语」走本地', router.route('讲个成语') === true)
   await new Promise((r) => setTimeout(r, 50))
-  ok('成语请求带 type=chengyu', hits.some((u) => u.indexOf('type=chengyu') >= 0))
+  ok('成语请求带 type=idiom（成语辨析池）', hits.some((u) => u.indexOf('type=idiom') >= 0), hits.join(','))
   ok('成语用叙述语速朗读', spoke.length === 1 && spoke[0].o && spoke[0].o.rate === '-25%', spoke[0] && String(spoke[0].o && spoke[0].o.rate))
+
+  // 典故点播：与菜单「讲典故」同口径，取 chengyu（典故故事池）
+  hits.length = 0
+  ok('「讲个典故」走本地', router.route('讲个典故') === true)
+  await new Promise((r) => setTimeout(r, 50))
+  ok('典故请求带 type=chengyu（典故故事池）', hits.some((u) => u.indexOf('type=chengyu') >= 0), hits.join(','))
 
   // ⑤ 讲故事 → 开说书并打开连播
   storyStart = null
@@ -2693,7 +2699,8 @@ try {
 
   ok('成语点播仍然有效', (() => {
     const a = it.detectIntent('讲个成语'); const b = it.detectIntent('来个典故'); const c = it.detectIntent('今天学个成语')
-    return a && a.kind === 'culture' && a.sub === 'chengyu' && b && b.kind === 'culture' && b.sub === 'idiom' && c && c.kind === 'culture'
+    // 2026-11-06 语义修正（与菜单一致）：成语→idiom（辨析）、典故→chengyu（故事）
+    return a && a.kind === 'culture' && a.sub === 'idiom' && b && b.kind === 'culture' && b.sub === 'chengyu' && c && c.kind === 'culture'
   })())
 } catch (e) {
   ok('能加载 intent.ts（书名/成语用例）', false, String(e.message))

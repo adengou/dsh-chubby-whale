@@ -88,7 +88,9 @@ export function detectIntent(rawText: string): Intent {
   // ③ 典故 / 成语：同样要有"点播证据"（"成语接龙"不是让我讲典故）
   if (/典故|成语/.test(t)) {
     const asksCulture = /讲|说|来|听|教|学|点|考/.test(t)
-    if (asksCulture) return { kind: 'culture', sub: /成语/.test(t) ? 'chengyu' : 'idiom' }
+    // 与菜单口径一致：菜单「讲典故」取 chengyu（典故故事）、「成语辨析」取 idiom（易误用辨析）。
+    // 点播同理：讲典故→chengyu、讲成语→idiom（2026-11-06 修：原来是对调的，「讲个典故」会念辨析文本）。
+    if (asksCulture) return { kind: 'culture', sub: /成语/.test(t) ? 'idiom' : 'chengyu' }
   }
 
   // ④ 讲故事 / 说书（可带书名）

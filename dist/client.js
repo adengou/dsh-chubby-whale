@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.29";
+  var VERSION = "1.1.30";
 
   // src/client/styles.ts
   var W = 240;
@@ -6353,7 +6353,7 @@
     if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) return { kind: "poem" };
     if (/典故|成语/.test(t)) {
       const asksCulture = /讲|说|来|听|教|学|点|考/.test(t);
-      if (asksCulture) return { kind: "culture", sub: /成语/.test(t) ? "chengyu" : "idiom" };
+      if (asksCulture) return { kind: "culture", sub: /成语/.test(t) ? "idiom" : "chengyu" };
     }
     let book = "";
     for (const [re, name] of BOOK_ALIAS) {
