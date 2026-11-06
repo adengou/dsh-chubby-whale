@@ -55,13 +55,13 @@ dsh web
 - 关掉后**已存内容仍会注入**，只是不再学习、不再写新心境。
 ### 本地开发（link 方式）
 
-```powershell
+```bash
 dsh plugin --profile web add "link:C:\Users\<你>\.dsh\plugins\dsh-chubby-whale"
 ```
 
 ### 卸载
 
-```powershell
+```bash
 dsh plugin --profile web remove dsh-chubby-whale
 ```
 
