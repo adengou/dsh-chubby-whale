@@ -1147,7 +1147,7 @@
       if (now - Number(item2 && item2.at || 0) > windowMs) continue;
       const prev = normalizeText(item2 && item2.text ? item2.text : "");
       if (!prev) continue;
-      if (cur === prev) return true;
+      if (cur === prev && cur.length >= minLen) return true;
       const shortOne = cur.length <= prev.length ? cur : prev;
       const longOne = cur.length <= prev.length ? prev : cur;
       if (shortOne.length >= minLen && longOne.indexOf(shortOne) >= 0) return true;
@@ -4281,6 +4281,7 @@
   }
 
   // src/client/melody.ts
+  var RESUME_GUARD_MS = 1200;
   var NOTE_FREQ = {
     "C3": 130.81,
     "C#3": 138.59,
@@ -4340,6 +4341,7 @@
     let ctx = null;
     let oscs = [];
     let doneTimer = null;
+    let resumeTimer = null;
     let seq = 0;
     function ensureCtx() {
       try {
@@ -4361,6 +4363,8 @@
       oscs = [];
       clearT(doneTimer);
       doneTimer = null;
+      clearT(resumeTimer);
+      resumeTimer = null;
     }
     function stop() {
       seq++;
@@ -4426,12 +4430,22 @@
           } catch (e) {
           }
         };
+        let ran = false;
+        const runOnce = () => {
+          if (ran) return;
+          ran = true;
+          clearT(resumeTimer);
+          resumeTimer = null;
+          schedule();
+        };
         try {
           const p = typeof c.resume === "function" ? c.resume() : null;
-          if (p && typeof p.then === "function") p.then(schedule, schedule);
-          else schedule();
+          if (p && typeof p.then === "function") {
+            p.then(runOnce, runOnce);
+            resumeTimer = setTimeout(runOnce, RESUME_GUARD_MS);
+          } else runOnce();
         } catch (e) {
-          schedule();
+          runOnce();
         }
       } catch (e) {
       }
