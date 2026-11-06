@@ -18,6 +18,9 @@
  *   F. 跨书：next 换书后书名跟着换（气泡/refs.book 同步）。
  *   G. 叙述锁与叙述进度（narration.ts / narration-progress.ts）：夹紧、自愈、按字数推进、
  *      多实例互不串味、没有 localStorage 记忆（因此不存在跨数据源脏值）。
+ *   H. 中止在途请求（B97 留下的边界 / B98）：停止说话、歇会儿、新一轮请求开始时真的 abort 掉
+ *      在途 fetch（服务端那边的 finish 不会再把没听到的一段记成已讲）；AbortError 静默，
+ *      迟到结果一律丢弃；没有 AbortController 的老浏览器退回原超时路径。
  *
  * 纯离线：不联网、不碰 dist、不写仓库（临时目录跑完删除）。
  */
@@ -81,8 +84,11 @@ function installStorage() {
 }
 
 // ---------- fetch 桩：按队列回包，记录每次调用的 URL/method/header ----------
+// B98：加「可控在途」defer()。它返回一个一直挂着的 promise，并像真 fetch 一样监听
+// init.signal —— signal 一中止就以 AbortError 拒绝。这样才测得出「停止说书有没有真掐断请求」。
 const calls = []
 const responses = []
+function abortError() { return new DOMException('The user aborted a request.', 'AbortError') }
 function installFetch() {
   globalThis.fetch = async (url, init) => {
     const u = String(url)
@@ -90,9 +96,42 @@ function installFetch() {
     const next = responses.shift()
     if (!next) throw new Error('UNEXPECTED_FETCH ' + u)
     if (next.error) throw next.error
+    if (next.defer) return deferredResponse(next, init)
     return { ok: true, status: 200, json: async () => next.body }
   }
 }
+/** 悬着的响应：测试里手动 resolve / reject；signal 中止时按真 fetch 的脾气拒绝 */
+function deferredResponse(d, init) {
+  return new Promise((resolve, reject) => {
+    d.done = false
+    d.settle = (err, body) => {
+      if (d.done) return
+      d.done = true
+      if (err) reject(err)
+      else resolve({ ok: true, status: 200, json: async () => body })
+    }
+    const sig = init && init.signal
+    d.signal = sig || null
+    d.signalCtor = sig && sig.constructor ? sig.constructor.name : 'none'
+    if (!sig) return
+    const onAbort = () => {
+      d.aborted = true
+      d.settle(abortError())
+    }
+    if (sig.aborted) { onAbort(); return }
+    // ignoreAbort：模拟「abort 已经太晚 / 浏览器照样把响应送达」，用来测迟到结果的丢弃
+    if (!d.ignoreAbort) sig.addEventListener('abort', onAbort, { once: true })
+  })
+}
+function defer(over = {}) {
+  const d = Object.assign({
+    defer: true, ignoreAbort: false, aborted: false, done: false,
+    signal: null, signalCtor: 'none', settle: null,
+  }, over)
+  responses.push(d)
+  return d
+}
+function resolveDeferred(d, body) { if (d.settle) d.settle(null, body) }
 function reply(body) { responses.push({ body }) }
 function replyError(error) { responses.push({ error }) }
 function resetFetch() { calls.length = 0; responses.length = 0 }
@@ -422,6 +461,156 @@ console.log('\n[D] 入口边界：连点、插队、reset、失败')
   await flush()
   ok('换书后最近书名跟着换（「从头讲」不会指回旧书）', h.refs.book.current === '西游记', h.refs.book.current)
   ok('换书后气泡显示新书', h.bubbles.some((b) => b.indexOf('正在讲《西游记》') >= 0), bubbleText(h.bubbles))
+}
+
+// ---------- J. 中止在途请求（B98）：停止说书要真的掐断 fetch ----------
+// 背景：服务端已改为「响应送出后才把该段记为已讲」。客户端只清 busy 不 abort 的话，
+// 响应照样送达 → 服务端 finish → 主人根本没听的那一段被记成已讲。这里逐条钉住。
+console.log('\n[F] 中止在途请求（B98）：停止说书要真的掐断 fetch')
+{
+  clearTimers(); resetFetch(); resetCounters()
+  const h = mkHost()
+  const story = createStoryController(h.host)
+  const d = defer()
+  story.start('西游记')
+  await flush()
+  ok('可控桩：请求挂着没落地（这才有「在途」可中止）', d.done === false && calls.length === 1, urls().join(','))
+  ok('在途请求带着可主动中止的 AbortSignal', !!d.signal && d.signal.aborted === false && d.signalCtor === 'AbortSignal')
+  story.next()
+  ok('正在讲时的「接着说」被挡下，且不误伤在途请求',
+    calls.length === 1 && d.done === false && d.aborted === false, bubbleText(h.bubbles))
+  // 「停止说话 / 歇会儿」：client.ts 的 stopTts() 清 busy + narrating
+  h.refs.busy.current = false
+  h.refs.narrating.current = false
+  await flush()
+  ok('停止之后在途请求真的被 abort（不是干等 25 秒超时）',
+    d.signal.aborted === true && d.aborted === true && d.done === true)
+  ok('AbortError 按「用户主动停」处理：不报「连不上」也不报「等太久」',
+    !h.bubbles.some((b) => b.indexOf('连不上') >= 0 || b.indexOf('等太久') >= 0), bubbleText(h.bubbles))
+  ok('停止之后不冒新段、状态干净（不算失败）',
+    h.speaks.length === 0 && h.refs.busy.current === false && h.refs.narrating.current === false)
+  reply(piece({ text: '停止后重新开讲。' }))
+  story.start('西游记')
+  await flush()
+  ok('停止后「接着说」立刻能重开（没被 abort 逻辑卡住）',
+    calls.length === 2 && h.speaks.length === 1 && h.speaks[0].text === '停止后重新开讲。', urls().join(','))
+}
+{
+  clearTimers(); resetFetch(); resetCounters()
+  const h = mkHost()
+  const story = createStoryController(h.host)
+  const d = defer()
+  story.start('')
+  await flush()
+  // 菜单「歇会儿 / 停止说话」（actions/system.ts）只清 busy 这一下
+  h.refs.busy.current = false
+  await flush()
+  ok('只清 busy（菜单 pause / tts-stop 的写法）也算停止：在途请求照样 abort',
+    d.aborted === true && d.signal.aborted === true, 'aborted=' + d.aborted + ' signal=' + d.signal.aborted)
+}
+{
+  // client.ts 每次渲染都会 createStoryController：停止钩子只在第一个实例上装一次，
+  // 发请求的是后来那个实例。共享状态（gen / inflight）必须按 refs.busy 找回同一份。
+  clearTimers(); resetFetch(); resetCounters()
+  const h = mkHost()
+  createStoryController(h.host)                 // 渲染 1：装钩子
+  const second = createStoryController(h.host)  // 渲染 2：真正发请求的实例
+  const d = defer()
+  second.start('')
+  await flush()
+  h.refs.busy.current = false
+  await flush()
+  ok('重渲染重建控制器后，停止仍能掐断在途请求（共享状态按 refs.busy 找回本轮）',
+    d.aborted === true && d.signal.aborted === true, 'aborted=' + d.aborted)
+  ok('重渲染后停止同样静默（不弹失败、不念旧段）',
+    h.speaks.length === 0 && !h.bubbles.some((b) => b.indexOf('连不上') >= 0 || b.indexOf('等太久') >= 0),
+    bubbleText(h.bubbles))
+}
+{
+  clearTimers(); resetFetch(); resetCounters()
+  const h = mkHost()
+  const story = createStoryController(h.host)
+  const d = defer({ ignoreAbort: true })   // 模拟 abort 太晚 / 浏览器照样把响应送达
+  story.start('')
+  await flush()
+  h.refs.busy.current = false
+  h.refs.narrating.current = false
+  await flush()
+  ok('停止时确实对 signal 发了 abort（握手已断）', d.signal.aborted === true)
+  resolveDeferred(d, piece({ text: '停止之后才到的正文。' }))
+  await flush()
+  ok('abort 之后迟到的响应被丢弃：不念、不弹错',
+    h.speaks.length === 0 && !h.bubbles.some((b) => b.indexOf('连不上') >= 0 || b.indexOf('等太久') >= 0),
+    bubbleText(h.bubbles))
+  ok('迟到的响应不会把占线重新拉起来', h.refs.busy.current === false && h.refs.narrating.current === false)
+}
+{
+  clearTimers(); resetFetch(); resetCounters()
+  const h = mkHost()
+  const story = createStoryController(h.host)
+  const old = defer({ ignoreAbort: true })
+  story.start('')
+  await flush()
+  h.refs.busy.current = false
+  h.refs.narrating.current = false
+  await flush()
+  const fresh = defer()
+  story.start('')                 // 新一轮请求开始
+  await flush()
+  ok('新一轮请求用自己的 signal（不复用旧的那条）', fresh.signal !== old.signal && fresh.signal.aborted === false)
+  resolveDeferred(old, piece({ text: '旧一轮迟到的正文。' }))
+  await flush()
+  ok('旧请求迟到：不念旧段、不抢新一轮的占线',
+    h.speaks.length === 0 && h.refs.busy.current === true && h.refs.narrating.current === true, bubbleText(h.bubbles))
+  resolveDeferred(fresh, piece({ text: '新一轮的正文。' }))
+  await flush()
+  ok('新一轮照常开念（未被旧的 AbortError 干扰）',
+    h.speaks.length === 1 && h.speaks[0].text === '新一轮的正文。', h.speaks.map((s) => s.text).join(','))
+}
+{
+  // 25 秒超时：原来是「超时信号只挂在 fetch 上」，现在要变成「到点真的 abort 本次请求」，
+  // 但主人看到的文案仍是「等太久」而不是「连不上」。
+  clearTimers(); resetFetch(); resetCounters()
+  const h = mkHost()
+  const story = createStoryController(h.host)
+  const realTimeout = AbortSignal.timeout
+  let fake = null
+  try {
+    AbortSignal.timeout = (ms) => { fake = new AbortController(); fake.ms = ms; return fake.signal }
+    const d = defer()
+    story.start('')
+    await flush()
+    ok('超时阈值仍是 REQUEST_TIMEOUT_MS（25 秒）', fake && fake.ms === 25000, String(fake && fake.ms))
+    fake.abort()                  // 模拟 25 秒到点
+    await flush()
+    ok('超时到点真的掐断在途请求（不再等 30 秒兜底）',
+      d.aborted === true && d.signal.aborted === true, 'aborted=' + d.aborted)
+    ok('超时仍报「等太久」而不是「连不上」',
+      h.bubbles.some((b) => b.indexOf('等太久') >= 0) && !h.bubbles.some((b) => b.indexOf('连不上') >= 0),
+      bubbleText(h.bubbles))
+    ok('超时后占线释放', h.refs.busy.current === false && h.refs.narrating.current === false)
+  } finally {
+    AbortSignal.timeout = realTimeout
+  }
+}
+{
+  // iOS Safari 12.2 以下没有 AbortController：必须退回原来的「只靠超时 signal + 30 秒兜底」路径，
+  // 不能抛错、不能说书讲不了。
+  clearTimers(); resetFetch(); resetCounters()
+  const h = mkHost()
+  const story = createStoryController(h.host)
+  const realAC = globalThis.AbortController
+  try {
+    globalThis.AbortController = undefined
+    reply(piece({ text: '没有 AbortController 也要能讲。' }))
+    story.start('')
+    await flush()
+    ok('没有 AbortController 的老浏览器仍能正常说书（退回原超时路径）',
+      h.speaks.length === 1 && h.speaks[0].text === '没有 AbortController 也要能讲。'
+      && !h.bubbles.some((b) => b.indexOf('连不上') >= 0), bubbleText(h.bubbles))
+  } finally {
+    globalThis.AbortController = realAC
+  }
 }
 
 // ---------- I. 叙述锁（narration.ts）：夹紧与自愈 ----------
