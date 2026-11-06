@@ -42,6 +42,18 @@ function cleanCount(value: any): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
 }
 
+/**
+ * 历史字段 intimacy（亲密度真源在 state.json，这里只做展示兼容）也按 [0,100] 整数夹紧。
+ * 旧实现只写了 `Math.min(100, (Number(p.intimacy) || 0) + 2)`：上界有、下界没有，
+ * pet_state.json 里一旦是负数（老文件/导入），每次喂食只会越喂越负（实测 -50 → -48 → -46），
+ * 还会以负值落盘。清洗口径与 state 仓储保持一致。
+ */
+function cleanLegacyIntimacy(value: any): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(0, Math.min(100, Math.floor(n)))
+}
+
 export function createPetRepo(dataDir: string): PetRepo {
   const PET = join(dataDir, 'pet_state.json')
 
@@ -69,13 +81,14 @@ export function createPetRepo(dataDir: string): PetRepo {
     }
     p.hunger = cleanHunger(hunger)
     p.lastSeen = now
-    // lastFeedAt 是新增字段：老文件没有就按 0；时钟回拨到将来时归零到 now
+    // lastFeedAt 是新增字段：老文件没有就按 0；时钟回拨（将来时间）也按 0，不参与 happy 判定
     const lastFeed = Number(p.lastFeedAt)
     if (Number.isFinite(lastFeed) && lastFeed > 0 && lastFeed <= now) p.lastFeedAt = lastFeed
     else p.lastFeedAt = 0
     p.mood = (p.lastFeedAt > 0 && now - p.lastFeedAt < HAPPY_WINDOW_MS)
       ? 'happy'
       : (p.hunger >= HUNGRY_AT ? 'hungry' : 'normal')
+    p.intimacy = cleanLegacyIntimacy(p.intimacy)   // 历史字段：落盘永远不出现负值/超限值
     savePet(p)
     return p
   }
@@ -84,7 +97,7 @@ export function createPetRepo(dataDir: string): PetRepo {
     const now = Date.now()
     p.feeds = cleanCount(p.feeds) + 1
     p.hunger = Math.max(0, cleanHunger(p.hunger) - 30)
-    p.intimacy = Math.min(100, (Number(p.intimacy) || 0) + 2)   // 照 C#：喂食亲密 +2（历史字段，真源在 state.json）
+    p.intimacy = Math.min(100, cleanLegacyIntimacy(p.intimacy) + 2)   // 照 C#：喂食亲密 +2（历史字段，真源在 state.json）
     p.lastFeedAt = now
     p.mood = 'happy'
     savePet(p)

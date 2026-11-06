@@ -38,7 +38,11 @@ export function createTokenRepo(dataDir) {
             if (!isMissingFileError(err))
                 quarantineFile(FISHFOOD, err, '[store]');
         }
-        return { chatTokens: 0, storyTokens: 0 };
+        // 新文件也要带 day/month 标记：否则首写落盘的文件没有标记，
+        // 下一次 addTokens 读到「无标记」会把它当成跨天（见 rollFishfood）
+        const fresh = { chatTokens: 0, storyTokens: 0 };
+        rollFishfood(fresh);
+        return fresh;
     }
     function saveFishfood(obj) {
         try {
@@ -48,21 +52,29 @@ export function createTokenRepo(dataDir) {
             console.error('[store] WRITE-FAIL ' + String(FISHFOOD) + ' err=' + String(err?.message || err));
         }
     }
-    /** 跨天/跨月把"今日/本月"清零（总量 totalTokens 不动，照 C# 的 date/month 滚动） */
+    /**
+     * 跨天/跨月把"今日/本月"清零（总量 totalTokens 不动，照 C# 的 date/month 滚动）。
+     *
+     * 缺 day/month 标记（新文件、老版本文件、备份导入）**不等于跨天**：只补标记、不清零。
+     * 旧实现无条件比较，null !== today 就清零；而首写的新文件没有标记（默认对象没走过
+     * rollFishfood），于是「第一次 addTokens 记的今日/本月 + 总量」会在下一次 addTokens
+     * 时被当成「昨天」清零（实测 chatTokens 7 → 0、dayTokens 7 → 3，只有 totalTokens 幸存）。
+     */
     function rollFishfood(f) {
         const now = new Date();
         const day = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
         const month = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
-        if (f.day !== day) {
-            f.day = day;
+        const hadDay = typeof f.day === 'string' && f.day.length > 0;
+        if (hadDay && f.day !== day) {
             f.chatTokens = 0;
             f.storyTokens = 0;
             f.dayTokens = 0;
         }
-        if (f.month !== month) {
-            f.month = month;
+        f.day = day;
+        const hadMonth = typeof f.month === 'string' && f.month.length > 0;
+        if (hadMonth && f.month !== month)
             f.monthTokens = 0;
-        }
+        f.month = month;
     }
     function addTokens(kind, n) {
         const f = loadFishfood();
