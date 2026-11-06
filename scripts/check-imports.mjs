@@ -61,6 +61,16 @@ function check(file) {
     if (from === 'client' || from === 'client-root') {
       if (target === 'host') problems.push(at + ' 反向依赖：client 不得引用 host（' + spec + '）')
     }
+    // 规则 A：host 路由不得绕过 ports 直连仓储/store/cache（应经注入的 ports）
+    if (rel.includes('/host/routes/')) {
+      if (/from '\.\.\/(repos|store\.js|cache\.js|chat-core\.js|prefs\.js)/.test(line)) {
+        problems.push(at + ' 路由越界：应经 ports 注入，不得直连内部模块（' + spec + '）')
+      }
+    }
+    // 规则 B：client 子模块不得反向 import 组件入口 client.ts（防循环）
+    if (rel.startsWith('src/client/') && /from '\.\.\/client\.js'/.test(line)) {
+      problems.push(at + ' 循环风险：client 子模块不得 import 组件入口 client.ts（' + spec + '）')
+    }
   })
 }
 
