@@ -24,6 +24,11 @@ export type TtsJob = {
   seq: number
   text: string
   rate: string
+  /**
+   * 音高（edge-tts 的 `pitch`，如 '+15Hz'）。
+   * 2026-11-07 修：buildTtsJobs 原来没复制这个字段 —— speak({pitch}) 一路传到 voice.ts 就丢了，
+   * /tts 请求体的 pitch 永远是空串（actions/culture.ts 的「念完啦」就带着 +15Hz）。
+   */
   pitch?: string
   narration: boolean
   attempts: number
@@ -98,17 +103,20 @@ export function prefetchTargets(
  * 把切好的句子变成队列任务。
  * 约定：只有最后一段挂 onDone —— 上层（说书/念诗锁）等的是一整段读完，不是第一段。
  * seq 由调用方给起点，返回后调用方自己推进（原实现是 ++ttsSeq）。
+ * pitch 必须逐段复制：synth() 直接读 job.pitch 拼 /tts 请求体，漏了就等于这个选项没实现。
  */
 export function buildTtsJobs(
   segs: string[],
-  opts: { rate: string; narration: boolean; strict: boolean; nextSeq: number; onDone?: () => void },
+  opts: { rate: string; pitch?: string; narration: boolean; strict: boolean; nextSeq: number; onDone?: () => void },
 ): TtsJob[] {
   const out: TtsJob[] = []
+  const pitch = opts.pitch ? String(opts.pitch) : undefined
   for (let i = 0; i < segs.length; i++) {
     out.push({
       seq: opts.nextSeq + i,
       text: segs[i],
       rate: opts.rate,
+      pitch,
       narration: opts.narration,
       attempts: 0,
       strict: opts.strict,
