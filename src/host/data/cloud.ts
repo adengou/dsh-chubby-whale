@@ -6,6 +6,9 @@
  *   culture/chengyu.json、culture/idioms.json、culture/minsu-00..09.json、
  *   story/index.json、story/<书名>.json。
  *
+ * 诗名索引 / 曲库（2026-11-07 端口收口新增）也按同一口径处理：云端清单里声明了
+ * poem-titles.json / melodies.json 就按需拉取，没声明就回退本地实现（包内只读文件）。
+ *
  * 策略：
  *   · 按需拉：用到哪本小说/哪类文化/哪片诗才拉哪个文件；
  *   · 内存缓存：拉过的文件留在进程内；清单每 30 秒最多检查一次，
@@ -358,5 +361,55 @@ export function createCloudDataPort(opts: {
     }, () => local.readDaily())
   }
 
-  return { readStoryIndex, readStoryBook, readCulture, readPoemsChunk, readDuilian, readDaily }
+  /**
+   * 回退到本地实现的可选端口方法：老宿主 / 测试假端口可能没实现 readPoemTitles /
+   * readMelodies（DataPort 上它们是可选方法）。缺失或抛错都按「本地也没数据」（null）
+   * 处理，绝不把异常带出数据层——路由拿到的不是数据就是 null。
+   */
+  async function localOrNull<T>(read?: () => Promise<T>): Promise<T | null> {
+    if (typeof read !== 'function') return null
+    try {
+      return await read.call(local)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 诗名索引：云端清单声明了 poem-titles.json 就取云端，否则回退本地包内文件。
+   * 清单没声明属于「数据缺失」（DataUnavailable）：静默回退、不进 60 秒冷却；
+   * 坏 JSON / 网络失败走链路失败分支：记 CLOUD-DATA-FAIL 后回退本地，绝不抛。
+   */
+  async function readPoemTitles(): Promise<{ titles: string[] } | null> {
+    return withFallback('readPoemTitles', async () => {
+      const raw = await readFile('poem-titles.json')
+      const titles: string[] = []
+      if (raw && Array.isArray(raw.titles)) {
+        for (const item of raw.titles) if (typeof item === 'string' && item) titles.push(item)
+      }
+      if (titles.length === 0) dataUnavailable('poem titles empty')
+      return { titles }
+    }, () => localOrNull(local.readPoemTitles))
+  }
+
+  /**
+   * 曲库：云端清单声明了 melodies.json 就取云端，否则回退本地。
+   * 返回顶层浅拷贝 + 新 songs 数组：fileCache 里的原始 parse 结果不直接递给路由
+   * （与 normalize 系列同一条所有权纪律）。非对象结构按数据缺失处理。
+   */
+  async function readMelodies(): Promise<any | null> {
+    return withFallback('readMelodies', async () => {
+      const raw = await readFile('melodies.json')
+      if (!raw || typeof raw !== 'object') dataUnavailable('melodies bad structure')
+      const songs = Array.isArray(raw.songs)
+        ? raw.songs.filter((s: any) => s && typeof s === 'object').map((s: any) => ({ ...s }))
+        : []
+      return { ...raw, songs }
+    }, () => localOrNull(local.readMelodies))
+  }
+
+  return {
+    readStoryIndex, readStoryBook, readCulture, readPoemsChunk, readDuilian, readDaily,
+    readPoemTitles, readMelodies,
+  }
 }

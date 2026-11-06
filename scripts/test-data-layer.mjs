@@ -503,7 +503,8 @@ console.log('\n[I] 封装：端口面与模块边界')
 try {
   const { createLocalDataPort } = await imp('src/host/data/local.ts')
   const { createCloudDataPort } = await imp('src/host/data/cloud.ts')
-  const want = ['readCulture', 'readDaily', 'readDuilian', 'readPoemsChunk', 'readStoryBook', 'readStoryIndex']
+  // 2026-11-07 B86：poem-titles / melodies 从「路由直读 data/」收口到端口，端口面由 6 项变 8 项
+  const want = ['readCulture', 'readDaily', 'readDuilian', 'readMelodies', 'readPoemTitles', 'readPoemsChunk', 'readStoryBook', 'readStoryIndex']
   const dir = mkTmp('whale-data-face-')
   const local = createLocalDataPort({ dataDir: dir, story: { listBooks: async () => [], loadBook: async () => [] } })
   const cloud = createCloudDataPort({ local, fetchImpl: async () => ({ ok: false, status: 500, text: async () => '' }) })

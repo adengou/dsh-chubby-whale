@@ -95,6 +95,17 @@ export interface DataPort {
   readDuilian(): Promise<DuilianData>
   /** 每日一句 */
   readDaily(): Promise<DailyItem[]>
+  /**
+   * 诗名索引（客户端「点诗」识别用，GET /poem-titles）：读不到 / 坏 JSON / 空表一律返回 null，
+   * 绝不把异常抛给路由。**可选**：老宿主或测试假端口没有这个能力时，路由退回读包内文件
+   * （过渡分支，见 routes/poem-titles.ts 的注释与移除条件）。
+   */
+  readPoemTitles?(): Promise<{ titles: string[] } | null>
+  /**
+   * 曲库（GET /melodies、/melody）：交出整份 melodies 数据（路由自己取 songs）。
+   * 读不到 / 坏 JSON 返回 null，绝不抛。**可选**：理由同上，仅在端口缺该能力时路由退回读文件。
+   */
+  readMelodies?(): Promise<any | null>
 }
 
 /** 缓存端口（host/cache.ts 实现；get/set 的 ext 与 maxAgeMs 语义见 cache.ts） */
