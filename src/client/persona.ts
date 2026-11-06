@@ -12,6 +12,7 @@
 
 import { deepFreeze } from '../shared/immutable.js'
 import personaData from '../../data/persona.json'
+import { clearT, str } from './util.js'
 
 export type Mood = 'idle' | 'hungry' | 'sleepy' | 'excited' | 'shy' | 'sulk' | 'guard'
 
@@ -63,7 +64,7 @@ export function currentMood(): Mood {
  * 其余值不覆盖（sleepy/sulk/shy/guard 是客户端本地情绪）。
  */
 export function applyServerMood(m: string): void {
-  const s = String(m == null ? '' : m).toLowerCase()
+  const s = str(m).toLowerCase()
   const map: Record<string, Mood> = { happy: 'excited', excited: 'excited', hungry: 'hungry', normal: 'idle', idle: 'idle' }
   const mood = map[s]
   if (!mood) return
@@ -72,7 +73,7 @@ export function applyServerMood(m: string): void {
 
 /** mood → 表情；未知情绪返回空串（不显示） */
 export function moodFace(mood?: string): string {
-  return (MOOD_FACES as any)[String(mood == null ? '' : mood)] || ''
+  return (MOOD_FACES as any)[str(mood)] || ''
 }
 
 /**
@@ -177,7 +178,7 @@ export function createPersona(opts?: PersonaOptions) {
   /** 临时情绪（默认 5 秒后自动回落到 refreshMood 的结果） */
   function setMood(m: Mood, holdMs = 5000): void {
     state.mood = m
-    try { if (moodTimer) clearTimeout(moodTimer) } catch (e) { }
+    clearT(moodTimer)
     moodTimer = setTimeout(() => {
       moodTimer = null
       try { state.mood = 'idle'; refreshMood() } catch (e) { }

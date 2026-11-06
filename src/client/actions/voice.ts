@@ -5,6 +5,7 @@
  * 这里只负责菜单动作到 host 的映射。
  */
 
+import { str } from '../util.js'
 import { readEndpointMode, writeEndpointMode } from '../endpoint.js'
 import type { ActionHost, ActionTable } from '../actions.js'
 import { normalizeVoiceName } from '../voice.js'
@@ -96,7 +97,7 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
 
   // —— 唤醒词：默认 / 候选 / 自定义（存 localStorage，即时生效；语音随时可说，唤醒词只用来剥句子开头）——
   table.definePrefix('wake-word:', (host, val) => {
-    const word = String(val == null ? '' : val).trim()
+    const word = str(val).trim()
     if (word === 'custom') {
       let input: any = null
       try { input = typeof window !== 'undefined' && typeof (window as any).prompt === 'function' ? (window as any).prompt('唤醒词（1–12 字）', '大肥鱼') : null } catch (e) { }

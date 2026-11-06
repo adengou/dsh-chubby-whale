@@ -1,4 +1,5 @@
 import { deepFreeze } from '../shared/immutable.js'
+import { DEFAULT_VOICE } from './voice/voices.js'
 /**
  * client/menu.ts —— 菜单数据（1:1 复刻 C# 版 的 menu.ps1，含中英双语）
  */
@@ -189,9 +190,6 @@ export function tr(label: string, lang: string): string {
   return label
 }
 
-/** 默认音色：晓伊（与 C# 版一致） */
-const DEFAULT_VOICE = 'zh-CN-XiaoyiNeural'
-
 /** 「换个声音 ▸」的音色表：取值与 label 一一对应（label 同时是 EN_MAP 的键） */
 const VOICE_ITEMS: Array<[string, string]> = [
   ['zh-CN-XiaoyiNeural', '音色：晓伊（中·女）'],
@@ -248,7 +246,6 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
   const ttsVoice = state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE
   const chatCacheOn = !(state.chatCacheOn === false)
   const voiceTick = (voice: string): string => (ttsVoice === voice ? '✓ ' : '')
-  const balanceText = (state && state.balance) ? state.balance : '--'
   const growthText = (state && state.growth) ? state.growth : '--'
   // 说书书单：书名原样作为菜单项，动作走 story-book:<书名>；
   // 拉不到（或拉回来是空列表）时给一条兜底项，点它会重试拉书单（story-books）

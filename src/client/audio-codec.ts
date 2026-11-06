@@ -12,6 +12,7 @@
  * 本模块只做纯计算：编码候选、mime 归类、宿主 format 映射、PCM→WAV、多声道下混。
  * 浏览器 API（isTypeSupported / decodeAudioData）由调用方获取后传入或另处调用。
  */
+import { str } from './util.js'
 import { deepFreeze } from '../shared/immutable.js'
 
 /** 宿主 /asr 认识的格式（与 src/host/routes/asr.ts 的白名单保持一致） */
@@ -42,7 +43,7 @@ export type RecorderPick = { mimeType: string; format: RecFormat }
  * 认不出的一律按 webm 处理：宿主白名单里有它，最坏情况与改造前完全一致。
  */
 export function formatFromMime(mime: unknown): RecFormat {
-  const m = String(mime == null ? '' : mime).toLowerCase()
+  const m = str(mime).toLowerCase()
   if (m.indexOf('webm') >= 0) return 'webm'
   if (m.indexOf('wav') >= 0 || m.indexOf('wave') >= 0) return 'wav'
   if (m.indexOf('mpeg') >= 0 || m.indexOf('mp3') >= 0) return 'mp3'

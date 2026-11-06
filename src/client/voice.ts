@@ -51,6 +51,7 @@ import {
   type LevelBox,
 } from './voice/recorder.js'
 import type { VoiceStatus, VoiceStats } from './voice/status.js'
+import { clearI } from './util.js'
 
 // 对外公开接口保持原路径可导入（voice-bridge 等只依赖 ./voice.js）
 export type { VoiceStatus, VoiceStats } from './voice/status.js'
@@ -113,8 +114,19 @@ const ASR_RETRY_ONCE = true         // 超时/网络错误自动重试一次（�
 // 冷却不是永久放弃——60 秒到期后，下一次朗读会自动重试一次合成，成功即恢复（ttsNoteSynthOk）。
 const TTS_FAIL_COOLDOWN_K = 3       // 连续 K 次合成失败 → 进入冷却
 const TTS_COOLDOWN_MS = 60000       // 冷却时长：期间跳过合成，直接用系统语音朗读
+/**
+ * 客户端同时允许在途的合成请求上限（1 条当前段 + 2 条预取）。
+ * 为什么不更高：宿主 edge-tts 常驻 worker 是单线程顺序处理（src/host/tts/worker.ts 逐行读 stdin），
+ * 多发只是堆在它的 stdin 队列里，反而把“马上要播的那一段”排到后面；3 条已够覆盖一段 2~4 秒的播放。
+ */
+const TTS_MAX_INFLIGHT = 3
 
 const ttsFailGuard = { streak: 0, count: 0, cooldownUntil: 0 }
+
+// ---- 预取诊断（模块级：跨语音实例累计，排障看趋势即可，不影响任何判定） ----
+// hits：pumpTts 取段时命中了 ttsPrefetch（播放直接等这段已有的合成结果，不再发新请求）；
+// misses：没命中，当场发 /tts。预取失败（结果 null）也算一次命中，随后重试路径按 miss 重新合成。
+const ttsPrefetchGuard = { hits: 0, misses: 0 }
 
 /** 此刻是否在冷却中（冷却到期后自动返回 false，下一段朗读会重新尝试合成） */
 function ttsInCooldown(now = Date.now()): boolean {
@@ -127,6 +139,8 @@ function ttsSyncDiag(): void {
     const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
     w.ttsFailCount = ttsFailGuard.count
     w.ttsCooldownUntil = ttsFailGuard.cooldownUntil
+    w.ttsPrefetchHits = ttsPrefetchGuard.hits
+    w.ttsPrefetchMisses = ttsPrefetchGuard.misses
   } catch (e) { }
 }
 
@@ -486,6 +500,11 @@ export function createVoice(opts: VoiceOptions): Voice {
     }
   }
 
+  /** TTS 诊断快照（原来 6 处手写同一段 try/catch；文本只留前 20 字） */
+  function ttsDiag(job: TtsJob, failed: boolean, reason?: string): void {
+    try { diag.setTts({ failed, reason, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+  }
+
   function ttsWatchdog(): void {
     try {
       const audioPlaying = !!(ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0)
@@ -540,17 +559,21 @@ export function createVoice(opts: VoiceOptions): Voice {
     } catch (e) { }
   }
 
-  const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
-/** 在途的合成请求：停止说话时一起 abort（服务器那边也会跟着断，不再白算一整段） */
-const ttsAborts = new Set<AbortController>()
-/** 在途的识别请求：关语音待命/卸载时取消（否则关了还会"听到"并回话） */
-const asrAborts = new Set<AbortController>()
+    const ttsPrefetch = new Map<number, Promise<ArrayBuffer | null>>()
+  /** 在途的合成请求：停止说话时一起 abort（服务器那边也会跟着断，不再白算一整段） */
+  const ttsAborts = new Set<AbortController>()
+  /** 在途的识别请求：关语音待命/卸载时取消（否则关了还会"听到"并回话） */
+  const asrAborts = new Set<AbortController>()
+  /** 在途合成数（当前段 + 预取）：预取按它截断到 TTS_MAX_INFLIGHT，避免把 worker 队列塞满 */
+  let ttsInflight = 0
   let ttsSeq = 0
 
   // 合成一段（带超时）。失败返回 null —— 对应 C# 的 wav == null
   function synth(job: TtsJob): Promise<ArrayBuffer | null> {
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
     if (ctl) ttsAborts.add(ctl)
+    // 在途计数与 abort 清理放在同一条 finally：命中/取消/失败三条路径都会回到这里
+    ttsInflight++
     return fetchWithTimeout(apiBase + '/tts', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -564,8 +587,26 @@ const asrAborts = new Set<AbortController>()
       if (!(ctl && ctl.signal.aborted)) ttsNoteSynthFail()
       return null
     }).finally(() => {
+      ttsInflight = Math.max(0, ttsInflight - 1)
       if (ctl) ttsAborts.delete(ctl)
     })
+  }
+
+  /**
+   * 预取队列里接下来的块：普通 2 块、叙述 3 块，按在途上限截断（voice/tts-queue.ts）。
+   * 预取失败不阻塞、不告警：synth 自身永远 resolve(null)，播放到那段时 pumpTts 发现
+   * 结果为空会当 miss 重新合成；它只是把"等合成"提前到播放期间，不改变任何播放/重试语义。
+   */
+  function prefetchUpcoming(narration: boolean): void {
+    // 退避窗口内不预取：正在等重试的那一段不能被"提前合成"绕过 500/1000/2000/4000 的退避
+    if (ttsNextRetryAt > 0) return
+    // 冷却期不预取：连续失败说明正在限流，预取只会多发一次注定失败的请求
+    if (ttsInCooldown()) return
+    const wants = prefetchTargets(ttsQ, narration, ttsInflight, (seq) => ttsPrefetch.has(seq), TTS_MAX_INFLIGHT)
+    for (let i = 0; i < wants.length; i++) {
+      const target = wants[i]
+      ttsPrefetch.set(target.seq, synth(target))
+    }
   }
 
   // 系统语音兜底的三家差异（voices 异步 / onend 不触发 / cancel 后被吞）
@@ -577,19 +618,19 @@ const asrAborts = new Set<AbortController>()
 
   /** 系统语音朗读期间按秒刷新进展时刻：否则看门狗 2.5 秒就判僵死、把队列打断 */
   function keepBrowserProgress(): () => void {
-    if (ttsBrowserKeep) { try { clearInterval(ttsBrowserKeep) } catch (e) { } ; ttsBrowserKeep = null }
+    clearI(ttsBrowserKeep); ttsBrowserKeep = null
     ttsProgressAt = Date.now()
     ttsBrowserKeep = setInterval(() => { ttsProgressAt = Date.now() }, TTS_WATCH_MS)
     return () => {
       if (!ttsBrowserKeep) return
-      try { clearInterval(ttsBrowserKeep) } catch (e) { }
+      clearI(ttsBrowserKeep)
       ttsBrowserKeep = null
     }
   }
 
   /** 停掉系统语音与心跳（看门狗复位 / 停止说话共用） */
   function stopBrowserSpeech(): void {
-    if (ttsBrowserKeep) { try { clearInterval(ttsBrowserKeep) } catch (e) { } ; ttsBrowserKeep = null }
+    clearI(ttsBrowserKeep); ttsBrowserKeep = null
     try { const s: any = (window as any).speechSynthesis; if (s && typeof s.cancel === 'function') s.cancel() } catch (e) { }
   }
 
@@ -619,7 +660,7 @@ const asrAborts = new Set<AbortController>()
   }
 
   function finishJob(j: TtsJob): void {
-    if (ttsBrowserKeep) { try { clearInterval(ttsBrowserKeep) } catch (e) { } ; ttsBrowserKeep = null }
+    clearI(ttsBrowserKeep); ttsBrowserKeep = null
     ttsNextRetryAt = 0
     ttsBusy = false
     if (ttsCurJob === j) ttsCurJob = null
@@ -669,25 +710,22 @@ const asrAborts = new Set<AbortController>()
     // 不是永久放弃——60 秒冷却到期后的下一次朗读会重新尝试合成，成功即恢复（ttsNoteSynthOk）。
     if (ttsInCooldown() && job.attempts <= 0) {
       ttsSynthAt = 0
-      try { diag.setTts({ failed: true, reason: 'cooldown', text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+      ttsDiag(job, true, 'cooldown')
       // 跳过开关优先：主人显式选了「跳过失败段」，冷却期也不拿系统语音顶替，否则等于没跳过
       if (ttsSkipFailOn()) { finishJob(job); return }
       ttsBrowserFallback(job, myToken)
       return
     }
 
-    const cur = ttsPrefetch.get(job.seq) || synth(job)
+    const cached = ttsPrefetch.get(job.seq)
+    const cur = cached || synth(job)
+    // 预取命中/未命中：只做诊断计数（__chubbyWhale 里看），不参与任何播放/重试判定
+    if (cached) { ttsPrefetchGuard.hits++; ttsSyncDiag() } else { ttsPrefetchGuard.misses++; ttsSyncDiag() }
     ttsSynthAt = Date.now()
     ttsPrefetch.delete(job.seq)
-    // 当前段开播前就把下一段合成压上去（C# 的 prefetch）；叙述（念诗/说书）句子短、段间停顿明显，
-    // 再多预取一段，减少"等合成"的空档。普通聊天只预取一段，避免把 worker 队列塞满。
-    const wants = prefetchTargets(ttsQ, job.narration)
-    for (let i = 0; i < wants.length; i++) {
-      const target = wants[i]
-      // 冷却期不预取：连续失败说明正在限流，预取只会多发一次注定失败的请求
-      if (ttsInCooldown()) break
-      if (!ttsPrefetch.has(target.seq)) ttsPrefetch.set(target.seq, synth(target))
-    }
+    // 预取并发：当前块一开始合成就把 N+1、N+2（叙述 N+3）压上去，worker 在播放当前块时
+    // 顺便把后面几段做完；播放仍由 ttsBusy 的串行门保证不重叠，预取命中时直接开播、不再发请求。
+    prefetchUpcoming(job.narration)
 
     cur.then((buf) => {
       // 令牌校验必须放最前：这一段如果已被 stopSpeaking / 看门狗作废，
@@ -712,7 +750,7 @@ const asrAborts = new Set<AbortController>()
           return
         }
         stats.ttsFail++
-        try { diag.setTts({ failed: true, reason: 'synth', text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+        ttsDiag(job, true, 'synth')
         try {
           const w: any = (window as any).__chubbyWhale
           w.ttsLost = w.ttsLost || []
@@ -745,10 +783,10 @@ const asrAborts = new Set<AbortController>()
         ttsAudio = null
         if (played) {
           stats.ttsPlayed++
-          try { diag.setTts({ failed: false, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+          ttsDiag(job, false)
         } else {
           stats.ttsFail++
-          try { diag.setTts({ failed: true, reason: 'play', text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+          ttsDiag(job, true, 'play')
         }
         finishJob(job)
       }
@@ -763,7 +801,7 @@ const asrAborts = new Set<AbortController>()
         // 播放没起来：先恢复麦克风再重试，别让麦一直关着（重试等待期间要能听见主人）
         if (!muted) micOn(true)
         stats.ttsFail++
-        try { diag.setTts({ failed: true, reason: 'play', text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+        ttsDiag(job, true, 'play')
         try { a.onended = null; a.onerror = null } catch (e) { }
         revokeUrl(url)
         ttsAudio = null
@@ -785,7 +823,7 @@ const asrAborts = new Set<AbortController>()
       ttsSynthAt = 0
       disposeTtsAudio()
       stats.ttsFail++
-      try { diag.setTts({ failed: true, reason: 'exception', text: job.text.slice(0, 20), at: Date.now() }) } catch (e2) { }
+      ttsDiag(job, true, 'exception')
       finishJob(job)
     })
   }
@@ -953,6 +991,9 @@ const asrAborts = new Set<AbortController>()
     })
     ttsSeq += segs.length
     for (let i = 0; i < jobs.length; i++) ttsQ.push(jobs[i])
+    // 首块优先：入队即把队首（及后一块）压上合成，不等播放循环 —— 旧段还在播时，
+    // 新段首块也能在旧段播完前合成好；播放仍交给 pumpTts 串行接管（命中预取直接开播）。
+    prefetchUpcoming(!!(ttsQ[0] && ttsQ[0].narration))
     pumpTts()
   }
 

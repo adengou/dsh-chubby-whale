@@ -5,6 +5,7 @@
  * 一律回退默认晓伊，绝不把坏值送给 edge-tts。
  * 'auto' 不在 edge-tts 的语音表里，但宿主 routes/tts.ts 认它：按文本语言自动选晓伊/Ana。
  */
+import { str } from '../util.js'
 import { deepFreeze } from '../../shared/immutable.js'
 
 /** 可用音色 —— 与菜单「换个声音 ▸」的列表一一对应 */
@@ -26,7 +27,7 @@ export const DEFAULT_VOICE = 'zh-CN-XiaoyiNeural'
 
 /** 音色名规范化：白名单外（含空值/坏值）一律回退 */
 export function normalizeVoiceName(name: unknown, fallback: string = DEFAULT_VOICE): string {
-  const n = String(name == null ? '' : name).trim()
+  const n = str(name).trim()
   return TTS_VOICES.indexOf(n) >= 0 ? n : fallback
 }
 

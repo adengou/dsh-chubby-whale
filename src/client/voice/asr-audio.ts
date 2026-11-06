@@ -13,6 +13,7 @@ import {
   formatFromMime, hostAsrFormat, downmixToMono, encodeWavPcm16, wavBytes,
   type RecFormat,
 } from '../audio-codec.js'
+import { clearT } from '../util.js'
 
 export type AsrWire = { base64: string; format: 'webm' | 'wav' | 'mp3' }
 
@@ -54,7 +55,7 @@ export function transcodeToWav(blob: Blob, actx: any, maxWavBytes = 6 * 1024 * 1
       if (settled) return
       settled = true
       // 成功路径原来不清这 3 秒兜底定时器（settled 守卫只是让它空转），这里顺手清掉
-      if (timeout) { try { clearTimeout(timeout) } catch (e) { } }
+      clearT(timeout)
       resolve(wav)
     }
     const finish = (buf: any) => {

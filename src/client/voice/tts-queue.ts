@@ -63,12 +63,34 @@ export function narrationPauseFor(text: string): number {
 /**
  * 当前段开始合成时，应该顺手把队列里哪几段压上去预合成。
  * 原实现：永远预取下一段；叙述模式再多预取一段（句子短、段间停顿明显，减少等合成空档）。
- * 只做“选谁”，合成与 Map 记账仍由 voice.ts 做。
+ * 2026-11-06 预取并发：普通聊天也预取后 2 块（N+1、N+2），叙述预取后 3 块 ——
+ * 播放第 N 段时后面两段已在合成，段间不必再等一次 /tts 往返。
+ *
+ * 只做“选谁”，合成与 Map 记账仍由 voice.ts 做。可选参数（在途上限）也留在这里，
+ * 是为了让「取几块」和「最多并发几条」是同一条纯逻辑：
+ *   · inflight：当前在途合成数（含刚发出的当前段），达到 maxInflight 就停；
+ *   · has(seq)：已经预取过的段跳过，不重复发请求；
+ *   · maxInflight 缺省 3 —— 宿主 edge-tts worker 单线程顺序处理（src/host/tts/worker.ts
+ *     逐行读 stdin），多发只会把“马上要播的那一段”往后排，3 条已够覆盖一段 2~4 秒播放。
  */
-export function prefetchTargets(queue: TtsJob[], narration: boolean): TtsJob[] {
+export function prefetchTargets(
+  queue: TtsJob[],
+  narration: boolean,
+  inflight = 0,
+  has?: (seq: number) => boolean,
+  maxInflight = 3,
+): TtsJob[] {
+  const depth = narration ? 3 : 2
+  const cap = Math.max(0, Math.floor(Number(maxInflight) || 0))
+  let n = Math.max(0, Math.floor(Number(inflight) || 0))
   const out: TtsJob[] = []
-  if (queue[0]) out.push(queue[0])
-  if (narration && queue[1]) out.push(queue[1])
+  for (let i = 0; i < depth && i < queue.length; i++) {
+    const t = queue[i]
+    if (has && has(t.seq)) continue
+    if (n >= cap) break
+    out.push(t)
+    n++
+  }
   return out
 }
 

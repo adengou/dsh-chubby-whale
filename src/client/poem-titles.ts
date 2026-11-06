@@ -17,6 +17,7 @@
  * 从 data/poem-titles.json 同步读一次，让既有断言无需 mock 网络即可验证诗名识别。
  * 浏览器 bundle 里没有 process，这段分支不会执行（真实浏览器只走 fetch）。
  */
+import { str } from './util.js'
 import { deepFreeze } from '../shared/immutable.js'
 import { getJson, timeoutSignal } from './http.js'
 
@@ -38,7 +39,7 @@ function normalize(list: unknown): string[] {
   const out: string[] = []
   if (!Array.isArray(list)) return out
   for (const item of list) {
-    const s = String(item == null ? '' : item)
+    const s = str(item)
     if (s) out.push(s)
   }
   return out.sort((a, b) => b.length - a.length)

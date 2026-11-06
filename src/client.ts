@@ -10,11 +10,11 @@ import { stopProgress } from './client/narration-progress.js'
 import { narrationRate, chatRate } from './client/rates.js'
 import { handleFileDrop } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
-import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth, type GrowthInfo } from './client/look.js'
+import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth } from './client/look.js'
 import { createVoiceBridge } from './client/voice-bridge.js'
 import { createActionTable, type ActionHost } from './client/actions.js'
 import { registerCultureActions } from './client/actions/culture.js'
-import { registerContentActions } from './client/actions/content.js'
+import { parseBookList, registerContentActions } from './client/actions/content.js'
 import { registerSystemActions } from './client/actions/system.js'
 import { registerVoiceActions } from './client/actions/voice.js'
 import { createPersona, applyServerMood } from './client/persona.js'
@@ -34,6 +34,7 @@ import { createRecover } from './client/recover.js'
 import { createHooks } from './client/hooks.js'
 import { bindFileDropCapture, bindOutsideClose, bindResize, bindChatFocus, bindMenuKeys, createUnmountCleanup, startGreeting, startWatchdog } from './client/effects.js'
 import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, listMenuEntries, menuRootProps } from './client/render.js'
+import { evPrevent, evStop } from './client/util.js'
 ;(window as any).__ModuleLoader__.load({
   id: 'dsh-chubby-whale',
   factory: (require: any) => {
@@ -65,6 +66,10 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
       }
     } catch (e) { }
     const h = R.createElement
+    /** 调试命名空间合并写入：window 不可用时静默；已有对象复用，绝不整替换（别处挂的字段不能丢） */
+    const dg = (patch: any): void => { try { Object.assign(((window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})), patch) } catch (e) { } }
+    /** 调试计数 +1（原来两处手写 `x = (x || 0) + 1`） */
+    const bump = (key: string): void => { try { const w: any = (window as any).__chubbyWhale; w[key] = (w[key] || 0) + 1 } catch (e) { } }
     // 气泡文字断行：样式表在 client/bubble.ts（冻结的公开接口），长串（URL / base64 /
     // 没有空格的长英文）在 white-space:pre-wrap 下不换行，会撑破 320px 气泡溢出屏幕，
     // 这里用内联样式补断行。常量提到组件外，避免每次渲染都新建样式对象。
@@ -108,7 +113,6 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
     // 叙述锁带时间上限：念诗/说书期间不理麦克风，但绝不能"忘了解锁"把耳朵永久关掉
     // （状态机与自愈在 client/narration.ts）
     const narration = createNarrationLock()
-    let lastSpeakingAt = 0   // 最近一次真正在朗读的时刻（用于锁的自愈）
     function setNarrating(ms: number): void {
       narration.lock(ms)
       try { storyNarratingRef.current = true } catch (e) { }
@@ -122,8 +126,8 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
     }
     let greetedOnce = false   // 打招呼只打一次（防挂载重复）
     // 台词/回复去重：原来是两段手写的时间窗判断，统一用 client/text.ts 的 deduper
-    const lineDeduper = createDeduper({ windowMs: 25000, onDuplicate: () => { try { (window as any).__chubbyWhale.dupLine = ((window as any).__chubbyWhale.dupLine || 0) + 1 } catch (e) { } } })
-    const replyDeduper = createDeduper({ windowMs: 30000, onDuplicate: () => { try { (window as any).__chubbyWhale.dupReply = ((window as any).__chubbyWhale.dupReply || 0) + 1 } catch (e) { } } })
+    const lineDeduper = createDeduper({ windowMs: 25000, onDuplicate: () => bump('dupLine') })
+    const replyDeduper = createDeduper({ windowMs: 30000, onDuplicate: () => bump('dupReply') })
     const latDiag: any = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 }
     // 琴声播放器：音符表、振荡器排程、停止/关闭 AudioContext 都在 client/melody.ts
     const melody = createMelodyPlayer()
@@ -135,15 +139,15 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
      * 失败时不再返回 null（整只鱼消失、主人无从恢复）：右下角留一个可点的「⚠」，
      * 点一下重试渲染。重试计数放在 try 之前，保证所有分支的 hooks 顺序一致。
      */
-    function WhaleOverlay(props: any) {
+    function WhaleOverlay() {
       const [retryTick, setRetryTick] = R.useState(0)
       try {
-        const tree = WhaleBody(props || {})
+        const tree = WhaleBody()
         lastRenderErr = ''
         return tree
       } catch (e: any) {
         const msg = String((e && e.stack) || e)
-        try { (window as any).__chubbyWhale.renderError = msg } catch (e2) { }
+        dg({ renderError: msg })
         if (msg !== lastRenderErr) {
           lastRenderErr = msg
           try { console.error('[chubby-whale] 渲染异常已被就地拦下：', e) } catch (e2) { }
@@ -153,21 +157,19 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
           style: recoverDotStyle,
           title: '本鲸打了个喷嚏，点一下再试（还不行就刷新页面）',
           onClick: (ev: any) => {
-            try { ev.stopPropagation() } catch (e2) { }
-            try { ev.preventDefault() } catch (e2) { }
+            evStop(ev); evPrevent(ev)
             try { setRetryTick((n: number) => n + 1) } catch (e2) { }
           },
         }, '⚠')
       }
     }
 
-    function WhaleBody(props: any) {
+    function WhaleBody() {
       const stageRef = R.useRef(null)
       const canvasRef = R.useRef(null)
       const posRef = R.useRef({ x: 0, y: 0 })
       const talkRef = R.useRef({ talkUntil: 0, hearts: [] as any[] })
       const voiceModeRef = R.useRef(false)
-      const wokeRef = R.useRef({ at: 0 })
       // 持久化开关：朗读 / 语音待命 / 语音聊天（默认都开；ref 给回调同步读，state 驱动菜单）
       const voiceOnState = hookApi.usePersistentBool('chubby-voice')
       const voiceOnRef = voiceOnState.ref
@@ -182,8 +184,6 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
       const voiceChatOnRef = voiceChatOnState.ref
       const voiceChatOn = voiceChatOnState.value
       const setVoiceChatOn = voiceChatOnState.set
-      // 录音循环的启停句柄（由 VAD 的 effect 注入：关掉语音待命时真停麦克风）
-      const earCtlRef = R.useRef({ stop: () => { }, boot: () => { } })
       const [balanceLabel, setBalanceLabel] = R.useState('--')
       // 聊天缓存开关（服务端持久化；这里只用于菜单显示与即时切换）
       const chatCacheOnRef = R.useRef(true)
@@ -279,13 +279,12 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
         onVoiceHeard: () => { try { voiceModeRef.current = true } catch (e) { } },
         onSpeaking: (playing: boolean) => {
           ttsPlaying = playing
-          if (playing) { try { lastSpeakingAt = Date.now() } catch (e) { } }
         },
         // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
         voiceChat: () => voiceChatOnRef.current,
         // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
         speaking: () => ttsPlaying,
-        diag: (patch: any) => { try { Object.assign(((window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})), patch) } catch (e) { } },
+        diag: dg,
       }))
       const bridge = bridgeRef.current
 
@@ -383,7 +382,6 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
       // ===== 状态提示（已按主人要求去掉）=====
       // 原来闲时一直挂「在听…」，还出现过"讲着话却显示在听"的矛盾。
       // 现在不主动显示任何状态字：只听/只在真正有内容时冒气泡（听到、回复、念完…）。
-      function setStatus(): void { bubble.dismissStatus() }
       function restoreIdleStatus(): void { }
 
       // 提醒管理面板：清单 + 「下一条输入」（数字=删 / d=顺延）共用同一个实例；
@@ -483,8 +481,7 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
               if (f && /^image\//.test(String(f.type || ''))) file = f
             }
             if (!file) return
-            try { e.preventDefault() } catch (e2) { }
-            try { e.stopPropagation() } catch (e2) { }
+            evPrevent(e); evStop(e)
             handleFileDrop(file, { showBubble, speakText }).catch(() => {
               try { showBubble('图片没处理成，再贴一次试试', 4000) } catch (e2) { }
             })
@@ -561,7 +558,7 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
           onMove: (x, y) => { if (dragRef.current.dragging) dragMoveTo(x, y) },
           onEnd: () => { if (dragRef.current.dragging) dragFinish() },
         })
-        try { (window as any).__chubbyWhale.dragInput = binding.mode } catch (e) { }
+        dg({ dragInput: binding.mode })
         return () => { try { binding.dispose() } catch (e) { } }
       }, [])
 
@@ -592,7 +589,7 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
           // 打了招呼再看是不是饿了：饿着就补一句（对应人设的 hungry 场景）
           hungryNow: (() => { try { const st: any = (persona as any).state; return !!(st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1000) } catch (e) { return false } })(),
         })
-        try { const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {}); w.persona = persona; w.sayLine = sayLine } catch (e) { }
+        dg({ persona, sayLine })
         // 状态行 2 秒周期刷新：常驻气泡只会在被调用时更新，靠事件驱动容易漏（就曾卡在「识别中…」）
         const stopWatch = startWatchdog(() => {
           // 占线自愈：一次请求异常不能让后续提问永远被「还在想上一句」挡住
@@ -601,12 +598,12 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
             try {
               if (narration.expire()) {
                 clearNarrating()
-                try { (window as any).__chubbyWhale.narrReset = ((window as any).__chubbyWhale.narrReset || 0) + 1 } catch (e3) { }
+                bump('narrReset')
               }
             } catch (e3) { }
             if (busyLock.watchdog()) {
               setBusy(false)
-              try { (window as any).__chubbyWhale.busyReset = ((window as any).__chubbyWhale.busyReset || 0) + 1 } catch (e2) { }
+              bump('busyReset')
             }
           } catch (e) { }
         })
@@ -638,13 +635,7 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
        */
       function refreshStoryBooks(): void {
         getJson('/story/books', { cache: 'no-store' })
-          .then((d: any) => {
-            const list = (d && d.ok && Array.isArray(d.books))
-              ? d.books.map((b: any) => String(b || '').trim()).filter(Boolean)
-              : []
-            setStoryBooks(list)
-            setStoryBooksTried(true)
-          })
+          .then((d: any) => { setStoryBooks(parseBookList(d)); setStoryBooksTried(true) })
           .catch(() => { setStoryBooks([]); setStoryBooksTried(true) })
       }
 
@@ -677,6 +668,11 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
           setGrowth(DEFAULT_GROWTH)
           return
         }
+        applyGrowthInfo(info)
+      }
+
+      /** 成长标签 + 外观一起更新（菜单标题与外观刷新共用一份格式，避免两处各拼一遍） */
+      function applyGrowthInfo(info: any): void {
         setGrowthLabel(info.stage + '（' + info.exp + (info.nextExp ? '/' + info.nextExp : '') + '）')
         setGrowth(info)
       }
@@ -684,12 +680,8 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
       /** 重新拉一次 /growth 并刷新外观（喂食后调用）；失败静默回落初识 */
       function syncGrowth(): void {
         fetchGrowth((p, init) => getJson(p, init)).then((info) => {
-          if (info) {
-            setGrowthLabel(info.stage + '（' + info.exp + (info.nextExp ? '/' + info.nextExp : '') + '）')
-            setGrowth(info)
-          } else {
-            setGrowth(DEFAULT_GROWTH)
-          }
+          if (info) applyGrowthInfo(info)
+          else setGrowth(DEFAULT_GROWTH)
         })
       }
 
@@ -727,8 +719,7 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
         if (!menu) return
         const onKeyDown = (e: any): void => {
           if (!e || (e.key !== 'Escape' && e.key !== 'Esc')) return
-          try { e.stopPropagation() } catch (e2) { }
-          try { e.preventDefault() } catch (e2) { }
+          evStop(e); evPrevent(e)
           setMenu(null)
           setSubOpen('')
         }
@@ -864,7 +855,7 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
         },
         chatCacheOn: () => chatCacheOnRef.current,
         setChatCacheOn: (v) => { chatCacheOnRef.current = v; setChatCacheOn(v) },
-        diag: (patch) => { try { Object.assign(((window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})), patch) } catch (e) { } },
+        diag: dg,
       }
 
       // 动作分发：先关菜单，再交给动作表；未注册的动作（或处理器抛错）给一句兜底提示
@@ -1020,7 +1011,7 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
       function speakText(text: string, o?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
         try {
           if (localStorage.getItem('chubby-voice') === 'off') {
-            try { (window as any).__chubbyWhale.ttsSkip = 'voice-off' } catch (e) { }
+            dg({ ttsSkip: 'voice-off' })
             // 语音关着：不合成，但仍要通知调用方「说完了」——文化类朗读的收尾（「讲完啦」、清叙述锁）靠 onDone，
             // 原来直接 return 会让语音关闭时永远没有收尾
             try { if (o && typeof o.onDone === 'function') o.onDone() } catch (e) { }

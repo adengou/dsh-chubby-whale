@@ -12,6 +12,7 @@ import { estimateMelodySeconds } from '../melody.js'
 import { collapsePoemBody, collapseText, taleParts, estimateSpeakMs } from '../text.js'
 import { startProgress, stopProgress } from '../narration-progress.js'
 import { setNarrationRate, setChatRate, poemRate } from '../rates.js'
+import { clearT } from '../util.js'
 
 /** 念诗需要的最小能力集（菜单动作与点播路由共用） */
 export type ReciteHost = Pick<ActionHost, 'bubble' | 'talkFor' | 'narrate' | 'clearNarrate' | 'say' | 'speak' | 'persona' | 'narrationRate'>
@@ -97,7 +98,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
     const c = pickCouplet(lastCouplet, cat)
     lastCouplet = c.upper
     host.bubble((withCat ? '【' + c.cat + '】' : '') + '上联：' + c.upper + '（先对一对，本鲸 6 秒后揭晓下联）', 5600)
-    if (revealTimer) { try { clearTimeout(revealTimer) } catch (e) { } }
+    clearT(revealTimer)
     revealTimer = setTimeout(() => {
       revealTimer = null
       try { host.bubble('下联：' + c.lower + '\n——' + c.source, 7000) } catch (e) { }

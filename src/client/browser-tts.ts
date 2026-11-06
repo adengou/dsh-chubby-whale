@@ -12,6 +12,8 @@
  * 对外只暴露两个函数：能不能用、怎么念（永远 resolve，绝不 reject）。
  */
 
+import { clearT } from './util.js'
+
 /** 取一个作用域对象（默认 window），便于 Node 里传 stub 验证 */
 function scopeOf(scope?: any): any {
   if (scope) return scope
@@ -69,7 +71,7 @@ export function speakViaBrowser(text: string, opts?: { scope?: any; watchdog?: n
     }
     // 看门狗：onend 不触发时也放行（Safari 的老毛病）
     const watch = setTimeout(finish, ms)
-    const realFinish = (): void => { try { clearTimeout(watch) } catch (e) { }; finish() }
+    const realFinish = (): void => { clearT(watch); finish() }
     try {
       const Synth: any = s && s.speechSynthesis
       const Utt: any = s && s.SpeechSynthesisUtterance

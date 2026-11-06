@@ -3,6 +3,7 @@
  * 纯逻辑：不碰 DOM 之外的东西（showBubble / speakText 由调用方注入，便于单测）
  */
 
+import { str } from './util.js'
 import { imageToB64 } from './image.js'
 
 // 图片读成 base64（去掉 data: 前缀）的实现已统一到 image.ts；这里原样再导出，保持 dropzone 的旧接口不变
@@ -59,7 +60,7 @@ export function buildTextPrompt(text: string): string {
 function readTextFile(file: any): Promise<string> {
   try {
     if (file && typeof file.text === 'function') {
-      return Promise.resolve(file.text()).then((t: any) => String(t == null ? '' : t)).catch(() => readTextViaReader(file))
+      return Promise.resolve(file.text()).then((t: any) => str(t)).catch(() => readTextViaReader(file))
     }
   } catch (e) { }
   return readTextViaReader(file)

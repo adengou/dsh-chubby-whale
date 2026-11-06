@@ -1,3 +1,4 @@
+import { str } from './util.js'
 import { deepFreeze } from '../shared/immutable.js'
 /**
  * client/wake.ts —— 唤醒词门（纯逻辑，不碰 DOM / 网络，可在 Node 里单测）
@@ -34,7 +35,7 @@ export function loadCustomWakeWords(): string[] | undefined {
 /** 设置自定义唤醒词；传空串恢复默认词表。返回最终是否为自定义 */
 export function setCustomWakeWord(word: string): boolean {
   try {
-    const v = String(word == null ? '' : word).trim().slice(0, 12)
+    const v = str(word).trim().slice(0, 12)
     if (!v) { localStorage.removeItem(WAKE_WORD_KEY); return false }
     localStorage.setItem(WAKE_WORD_KEY, v)
     return true
@@ -77,7 +78,7 @@ const TRAD_TO_SIMPLE: Record<string, string> = { '魚': '鱼', '飛': '飞', '�
 
 /** 归一化：去掉空白与常见标点、统一小写（ASR 会给出"大肥鱼，"这种带标点的结果） */
 export function normalizeWakeText(text: unknown): string {
-  return String(text == null ? '' : text)
+  return str(text)
     .split('')
     .map((c) => TRAD_TO_SIMPLE[c] || c)
     .join('')
@@ -106,7 +107,7 @@ function escapeRe(s: string): string {
  * 剥离优先在原文上做（保留其余标点），剥不干净再用归一化文本兜底。
  */
 export function stripWakeWords(input: unknown, words: string[] = WAKE_WORDS): { hit: boolean; text: string; word: string } {
-  const raw = String(input == null ? '' : input)
+  const raw = str(input)
   const norm = normalizeWakeText(raw)
   if (!norm) return { hit: false, text: '', word: '' }
 
@@ -183,7 +184,7 @@ export function createWakeGate(opts: { words?: string[]; windowMs?: number; now?
         return { hit: true, pass: true, text: r.text, word: r.word, remainingMs: windowMs }
       }
       const pass = awake(now)
-      return { hit: false, pass, text: String(text == null ? '' : text).trim(), word: '', remainingMs: remainingMs(now) }
+      return { hit: false, pass, text: str(text).trim(), word: '', remainingMs: remainingMs(now) }
     },
   }
 }

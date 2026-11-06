@@ -9,6 +9,7 @@
  * 失败一律静默降级成一句轻提示（「导出没成功」「备份文件读不了」），不弹错误框。
  */
 
+import { str } from '../util.js'
 import { getJson, postJson, delJson } from '../http.js'
 
 /** 备份体积上限，与 host/backup/fields.ts 的 BACKUP_MAX_BYTES 同口径（2MB） */
@@ -76,7 +77,7 @@ function numOf(...vals: any[]): number {
 
 /** 摘要文本：压空白、截断；空值返回空串 */
 function shortText(v: any, max = 16): string {
-  const t = String(v == null ? '' : v).replace(/\s+/g, ' ').trim()
+  const t = str(v).replace(/\s+/g, ' ').trim()
   if (!t) return ''
   return t.length > max ? t.slice(0, max) + '…' : t
 }
@@ -219,13 +220,13 @@ export function readFileText(file: any): Promise<string> {
     try {
       if (!file) { reject(new Error('no file')); return }
       if (typeof file.text === 'function') {
-        file.text().then((t: any) => resolve(String(t == null ? '' : t)), reject)
+        file.text().then((t: any) => resolve(str(t)), reject)
         return
       }
       const FR = (typeof FileReader !== 'undefined') ? FileReader : null
       if (!FR) { reject(new Error('FileReader missing')); return }
       const fr = new FR()
-      fr.onload = () => resolve(String(fr.result == null ? '' : fr.result))
+      fr.onload = () => resolve(str(fr.result))
       fr.onerror = () => reject(new Error('read failed'))
       fr.readAsText(file)
     } catch (e) {
@@ -236,7 +237,7 @@ export function readFileText(file: any): Promise<string> {
 
 /** 解析备份文本：必须是 JSON 对象/数组，否则返回 null（由调用方提示「备份文件读不了」） */
 export function parseImportText(text: any): any {
-  const raw = String(text == null ? '' : text).trim()
+  const raw = str(text).trim()
   if (!raw) return null
   let v: any = null
   try { v = JSON.parse(raw) } catch (e) { return null }

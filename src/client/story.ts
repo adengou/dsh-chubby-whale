@@ -23,6 +23,7 @@ import { estimateSpeakMs } from './text.js'
 import { normalizeRate } from '../shared/tts.js'
 import { storyRate } from './rates.js'
 import type { Persona } from './persona.js'
+import { clearT, str } from './util.js'
 
 export type StoryRefs = {
   /** 正在讲（防止「接着说」插队） */
@@ -96,7 +97,7 @@ function isAbortError(err: any): boolean {
 
 /** 后端错误码 → 主人能看懂的话（后端这几个 error 是英文常量） */
 function storyErrorText(raw: any): string {
-  const e = String(raw == null ? '' : raw).trim()
+  const e = str(raw).trim()
   if (!e) return '接口没应'
   if (e === 'no books') return '书单是空的'
   if (e === 'no book') return '没给书名'
@@ -129,7 +130,7 @@ export function createStoryController(host: StoryHost): StoryController {
 
   function clearGuard(): void {
     if (!shared.guard) return
-    try { clearTimeout(shared.guard) } catch (e) { }
+    clearT(shared.guard)
     shared.guard = null
   }
 

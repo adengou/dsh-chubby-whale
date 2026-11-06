@@ -21,6 +21,7 @@ import type { Deduper } from './text.js'
 import type { BusyLock, Epoch } from './busy.js'
 import { chatRate } from './rates.js'
 import type { Persona } from './persona.js'
+import { clearT } from './util.js'
 
 export type ChatHost = {
   persona: Persona
@@ -69,6 +70,12 @@ export function resolveChatLang(): string {
     const v = localStorage.getItem('chubby-chatlang')
     return v === 'zh' || v === 'en' ? v : 'auto'
   } catch (e) { return 'auto' }
+}
+
+/** 兜底提示：消息列表留一条 + 气泡（两个动作各自失败都不影响主流程，原来三处各写两份） */
+function fishTip(host: ChatHost, tip: string, ms = 6000): void {
+  try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tip }]) } catch (e) { }
+  try { host.bubble(tip, ms) } catch (e) { }
 }
 
 /** 诊断对象：与旧实现一样直接写 window.__chubbyWhale */
@@ -231,9 +238,7 @@ export function createChatSender(host: ChatHost): ChatController {
               if (d) d.lastChat = { stage: 'stream-done', firstDeltaMs: obj.firstDeltaMs || 0, ms: obj.ms || 0, cached: !!obj.cached, reply: reply.slice(0, 40) }
             } else {
               // 空回复也不许静默：给一句兜底并留在消息列表里
-              const tip = host.persona.line('error')
-              try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tip }]) } catch (e) { }
-              try { host.bubble(tip, 6000) } catch (e) { }
+              fishTip(host, host.persona.line('error'))
               const d = diag()
               if (d) d.lastChat = { stage: 'stream-empty', at: Date.now() }
             }
@@ -254,9 +259,7 @@ export function createChatSender(host: ChatHost): ChatController {
         try { host.bubble(tail, 6000) } catch (e) { }
         try { host.scrollBody() } catch (e) { }
       } else {
-        const tip = host.persona.line('error')
-        try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tip }]) } catch (e) { }
-        try { host.bubble(tip, 6000) } catch (e) { }
+        fishTip(host, host.persona.line('error'))
       }
       return true
     } catch (e: any) {
@@ -364,10 +367,9 @@ export function createChatSender(host: ChatHost): ChatController {
       const timedOut = !!err && (err.name === 'AbortError' || err.code === 20 || err.code === 2)
       const tip = timedOut ? '主人，本鲸等太久啦（网络慢），再问一次？' : host.persona.line('error')
       if (d1) d1.lastChat = { stage: timedOut ? 'timeout' : 'error', error: String((err && err.message) || err).slice(0, 60), at: Date.now() }
-      try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tip }]) } catch (e) { }
-      try { host.bubble(tip, 5000) } catch (e) { }
+      fishTip(host, tip, 5000)
     } finally {
-      if (timeoutTimer) { try { clearTimeout(timeoutTimer) } catch (e) { } }
+      clearT(timeoutTimer)
       if (activeChat && activeChat.ctl === ctl) activeChat = null
       // 只有仍然归我时才解占线：被新请求接管时（epoch 变了）不能把新请求的锁放掉
       if (host.epoch.isCurrent(myEpoch)) {

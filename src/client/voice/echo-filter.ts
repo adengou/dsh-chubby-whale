@@ -10,7 +10,7 @@
  * 统计不在这里记：原来同一事件在过滤内部与调用点各记一次（echoDropped 双计），
  * 现在统一由调用方按返回的 reason 记一次。
  */
-import { echoKey, isShortEchoFragment } from '../text.js'
+import { echoKey, isShortEchoFragment, normalizePlain } from '../text.js'
 import { isNoiseText } from '../../shared/noise.js'
 import { isRepeat } from '../sim.js'
 
@@ -54,7 +54,7 @@ export function createEchoFilter(): EchoFilter {
       acceptedSeg.push(segId)
       while (acceptedSeg.length > 50) acceptedSeg.shift()
     }
-    const plain = text.replace(/[\s。，！？,.!?、…~～]/g, '')
+    const plain = normalizePlain(text)
     const plainKey = echoKey(text)
     // 单字放行白名单：主人喊「停！」也要能打断说书/朗读
     if (plain.length < 2 && !/^[停别不]$/.test(plain)) return { ok: false, reason: 'trivial' }
@@ -66,7 +66,7 @@ export function createEchoFilter(): EchoFilter {
     for (const s of spokenRecent) {
       if (now - s.at > 15000) continue
       if (now - s.at <= 8000) hadRecentSpeech = true
-      const target = s.text.replace(/[\s。，！？,.!?、…~～]/g, '')
+      const target = normalizePlain(s.text)
       if (!target) continue
       // 去掉动作描写后的比对（专治"星号"回声）
       const targetKey = echoKey(s.text)

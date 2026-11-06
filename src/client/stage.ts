@@ -6,6 +6,8 @@
  * DOM 写入仍由 client.ts 的 applyPos 负责，行为逐项对得上旧实现。
  */
 
+import { evStop } from './util.js'
+
 export type Pos = { x: number; y: number }
 
 /** 非有限数一律按 0：localStorage 里的位置被手改成坏值时，不能把 NaN 传进 left/top（鱼会整只消失） */
@@ -163,7 +165,7 @@ export function bindDragInput(target: any, win: any, handlers: DragInputHandlers
   const handled = (e: any): boolean => { try { return !!(e && e.__chubbyDragHandled) } catch (e2) { return false } }
   /** 拦掉「不属于当前拖拽指针」的事件：capture 阶段 stopPropagation 同时挡住元素上的 React 处理器 */
   const swallow = (e: any): void => {
-    try { if (e && typeof e.stopPropagation === 'function') e.stopPropagation() } catch (e2) { }
+    evStop(e)
     try { if (e && e.cancelable && typeof e.preventDefault === 'function') e.preventDefault() } catch (e2) { }
   }
   /** 事件目标是否在鱼身上（按在页面其它地方的手指不归我们管） */

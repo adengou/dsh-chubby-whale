@@ -6,12 +6,11 @@
  */
 
 import type { ActionHost, ActionTable } from '../actions.js'
-import { cancelRecite } from './culture.js'
 import { getJson, postJson, delJson } from '../http.js'
 import { VISION_PROMPT } from '../dropzone.js'
 import { imageToB64 } from '../image.js'
 import { parseDue, cleanReminderText } from '../../shared/time.js'
-import { exportBackup, importBackup, formatStats } from './data.js'
+import { exportBackup, importBackup } from './data.js'
 
 export function registerSystemActions(table: ActionTable<ActionHost>): void {
   /**

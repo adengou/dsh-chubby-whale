@@ -786,6 +786,7 @@ function loadClientPoemTitles(cwdDir) {
     {
       '../shared/immutable.js': { deepFreeze: (x) => x },
       './http.js': { getJson: () => Promise.resolve({ ok: false }), timeoutSignal: () => undefined },
+      './util.js': { str: (x) => (x == null ? '' : String(x)) },
     },
     fakeProcess(cwdDir),
   )

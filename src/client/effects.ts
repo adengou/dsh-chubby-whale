@@ -11,6 +11,8 @@
  * client.ts 原处，所以 effect 的执行顺序与旧实现一致。
  */
 
+import { clearI, clearT, evPrevent, evStop } from './util.js'
+
 export type Dispose = () => void
 
 /** 拖放捕获：落点命中判定 + 收文件；返回解绑函数 */
@@ -99,8 +101,8 @@ export function startGreeting(opts: {
   const tGreet = setTimeout(opts.greet, opts.greetMs ?? 3000)
   const tHungry = opts.hungryNow ? setTimeout(opts.hungry, opts.hungryMs ?? 6000) : null
   return () => {
-    try { clearTimeout(tGreet) } catch (e) { }
-    if (tHungry !== null) { try { clearTimeout(tHungry) } catch (e) { } }
+    clearT(tGreet)
+    clearT(tHungry)
   }
 }
 
@@ -136,7 +138,7 @@ export function bindChatFocus(opts: {
   const fire = (): void => {
     if (done) return
     done = true
-    if (timer !== null) { try { clearTimeout(timer) } catch (e) { } ; timer = null }
+    clearT(timer); timer = null
     try { if (panelEl && typeof panelEl.removeEventListener === 'function') panelEl.removeEventListener('animationend', fire) } catch (e) { }
     try {
       // 只聚焦、不改滚动/选中；输入框可能已被宿主移走，focus 抛错就静默
@@ -162,7 +164,7 @@ export function bindChatFocus(opts: {
       timer = setTimeout(fire, opts.maxWaitMs ?? 400)
       return () => {
         done = true
-        if (timer !== null) { try { clearTimeout(timer) } catch (e) { } ; timer = null }
+        clearT(timer); timer = null
         try { panelEl.removeEventListener('animationend', fire) } catch (e) { }
       }
     }
@@ -208,22 +210,19 @@ export function bindMenuKeys(opts: {
       if (key === 'ArrowDown' || key === 'ArrowUp') {
         const step = key === 'ArrowDown' ? 1 : -1
         const next = cur < 0 ? (step > 0 ? 0 : n - 1) : (cur + step + n) % n
-        try { e.preventDefault() } catch (e2) { }
-        try { e.stopPropagation() } catch (e2) { }
+        evPrevent(e); evStop(e)
         opts.setIndex(next)
         return
       }
       if (key === 'Enter') {
         if (e.repeat || cur < 0) return
         if (!opts.activate(cur)) return
-        try { e.preventDefault() } catch (e2) { }
-        try { e.stopPropagation() } catch (e2) { }
+        evPrevent(e); evStop(e)
         return
       }
       if (key === 'Escape' || key === 'Esc') {
         if (e.repeat) return
-        try { e.preventDefault() } catch (e2) { }
-        try { e.stopPropagation() } catch (e2) { }
+        evPrevent(e); evStop(e)
         opts.close()
       }
     } catch (e2) { }
@@ -236,7 +235,7 @@ export function bindMenuKeys(opts: {
 export function startWatchdog(tick: () => void, intervalMs = 2000): Dispose {
   const t = setInterval(tick, intervalMs)
   return () => {
-    try { clearInterval(t) } catch (e) { }
+    clearI(t)
   }
 }
 

@@ -13,6 +13,7 @@
  * 本模块只管流程与文案；取数、气泡全部由 host 注入，方便离线验证。
  */
 
+import { str } from './util.js'
 import { getJson, postJson, delJson } from './http.js'
 
 /** 面板有效窗：最近打开后 60 秒内才接住数字输入 */
@@ -54,7 +55,7 @@ export type ManageInput =
  * 只用于判断「是不是管理指令」，不改动交给聊天的原文。
  */
 export function normalizeManageInput(text: unknown): string {
-  return String(text == null ? '' : text)
+  return str(text)
     .replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, '')
     .toLowerCase()
 }
@@ -81,7 +82,7 @@ export function formatClock(at: any): string {
 function stampOf(item: ManageItem): string {
   const raw = item.nextAt || item.at
   const d = new Date(raw)
-  if (isNaN(d.getTime())) return String(raw == null ? '' : raw)
+  if (isNaN(d.getTime())) return str(raw)
   try { return d.toLocaleString('zh-CN') } catch (e) { return formatClock(d) }
 }
 
@@ -105,11 +106,11 @@ export function normalizeReminderList(payload: any): ManageItem[] {
   for (const x of arr) {
     if (!x || typeof x !== 'object') continue
     if (x.done === true) continue
-    const id = String(x.id == null ? '' : x.id)
+    const id = str(x.id)
     if (!id) continue
     out.push({
       id,
-      text: String(x.text == null ? '' : x.text),
+      text: str(x.text),
       at: x.at,
       nextAt: x.nextAt,
       repeat: x.repeat,

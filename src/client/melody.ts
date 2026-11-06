@@ -1,4 +1,5 @@
 import { deepFreeze } from '../shared/immutable.js'
+import { clearT } from './util.js'
 /**
  * client/melody.ts —— 琴声播放（WebAudio 振荡器，不碰 React）
  *
@@ -67,7 +68,7 @@ export function createMelodyPlayer(): MelodyPlayer {
   function stopNotes(): void {
     for (const o of oscs) { try { o.stop() } catch (e) { } }
     oscs = []
-    if (doneTimer) { try { clearTimeout(doneTimer) } catch (e) { } doneTimer = null }
+    clearT(doneTimer); doneTimer = null
   }
 
   function stop(): void {

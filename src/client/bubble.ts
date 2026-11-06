@@ -1,3 +1,4 @@
+import { str } from './util.js'
 import { deepFreeze } from '../shared/immutable.js'
 import { moodPrefix } from './persona.js'
 /**
@@ -27,7 +28,7 @@ deepFreeze(STATUS_TEXTS)
  * 纯状态字不加（dismissStatus 按原文比较）；已经以表情开头的不再叠一个；空串不加。
  */
 function decorateText(text: string): string {
-  const raw = String(text == null ? '' : text)
+  const raw = str(text)
   if (!raw) return raw
   try {
     if (STATUS_TEXTS.indexOf(raw.trim()) >= 0) return raw

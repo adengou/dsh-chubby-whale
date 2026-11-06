@@ -7,16 +7,17 @@
  * 全部是可直接在 node 里单测的纯函数。
  */
 
+import { str } from './util.js'
 import { deepFreeze } from '../shared/immutable.js'
 
 /** 正文换行/连续空白压成单空格（照 C# Culture.Collapse） */
 export function collapseText(raw: any): string {
-  return String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim()
+  return str(raw).replace(/\s+/g, ' ').trim()
 }
 
 /** 诗句正文转朗读稿：换行→逗号；抹掉「。，」「，，」这类重复标点，免得 TTS 念出怪停顿 */
 export function collapsePoemBody(raw: any): string {
-  let t = String(raw == null ? '' : raw)
+  let t = str(raw)
   t = t.replace(/\r/g, '')
   t = t.replace(/\n+/g, '，')
   t = t.replace(/[。！？；]+，/g, (m) => m.slice(0, 1))
@@ -41,7 +42,7 @@ export function taleParts(rawTitle: string): { title: string; book: string } {
 
 /** 去标点与空白后的归一文本：判断「是不是同一句话」用 */
 export function normalizePlain(text: any): string {
-  return String(text == null ? '' : text).replace(/[\s。，！？,.!?、…~～]/g, '')
+  return str(text).replace(/[\s。，！？,.!?、…~～]/g, '')
 }
 
 /**
@@ -68,7 +69,7 @@ export function normalizePlain(text: any): string {
  * 有限性：JS 字符串上限约 2^30 个码元，按每码元最多 300ms 计约 3e11ms，远小于 MAX_SAFE_INTEGER。
  */
 export function estimateSpeakMs(text: any): number {
-  const s = String(text == null ? '' : text)
+  const s = str(text)
   if (!s.trim()) return 0
   let cjk = 0
   let cjkPuncts = 0
@@ -169,7 +170,7 @@ export type Deduper = {
  * 麦克风听回去后再和原文比对永远不中，于是自己的动作被当成主人发言。
  */
 export function echoKey(s: any): string {
-  return String(s == null ? '' : s)
+  return str(s)
     .replace(/星号|米字号/g, '*')
     .replace(/\*[^*]{1,60}\*/g, '')
     .replace(/[\s。，！？,.!?、…~～]/g, '')
@@ -205,7 +206,7 @@ export function isShortEchoFragment(plain: string, hadRecentSpeech: boolean): bo
  * （memory.json 里真出现过 7 条这种回声）。剥完顺便收拾标点后的空格。
  */
 export function stripStageDirections(raw: any): string {
-  let t = String(raw == null ? '' : raw)
+  let t = str(raw)
   t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, ' ')
   t = t.replace(/[\*＊]/g, ' ')
   // 剥完动作后别留"主人， 白饭"这种标点后空格
@@ -275,7 +276,7 @@ export function createSentenceBuffer(maxLen = 40): SentenceBuffer {
   }
   return {
     push(delta: string): string[] {
-      tail += String(delta == null ? '' : delta)
+      tail += str(delta)
       return take(false)
     },
     flush(): string[] {
