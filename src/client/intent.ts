@@ -48,6 +48,37 @@ deepFreeze(BOOK_ALIAS)
 /** 判断"整句就是诗名/书名"时去掉空白与标点（两处共用一份字符集） */
 const BARE_STRIP = /[\s。，！？、,.!?…~～]/g
 
+/** 书名尾巴上允许出现的语气词（「三国吧」「西游记吧」仍是点播） */
+const BARE_TAIL_PARTICLES = '吧啊呀呢么嘛哈哦嗯啦'
+
+/**
+ * 「整句就是书名」的判定（别名表里的书名都是日常词，必须卡严）。
+ *
+ * 旧实现只比长度：`bare.length <= book.length + 1`，于是**任何**比书名长一个字的句子都算点播——
+ * 「我在看三国」「三国好看」这类普通陈述被劫持去说书，模型的回复主人根本看不到。
+ * 现在只认三种形态：
+ *   ① 整句就是全名（「红楼梦」「世说新语」）；
+ *   ② 去掉句末一个语气词后就是全名（「西游记吧」）；
+ *   ③ 别名（「三国」「水浒」）从第一个字起，最多多出一个字（手误），且不能有多余的前缀/后文。
+ */
+function isBareBookName(bare: string, book: string, alias: RegExp): boolean {
+  if (!bare) return false
+  if (bare === book) return true
+  const core = BARE_TAIL_PARTICLES.indexOf(bare.slice(-1)) >= 0 ? bare.slice(0, -1) : bare
+  if (core === book) return true
+  const m = alias.exec(core)
+  return !!m && m.index === 0 && core.length <= m[0].length + 1
+}
+
+/**
+ * 否定/劝阻式祈使（「不要讲故事了」「别背诗了」「不用念了」）不是点播。
+ *
+ * 旧实现只认动词，主人说「不要讲故事」反而被劫持去讲一段——意思正好相反。
+ * 这条守卫只拦「不/别/甭/勿 + 可选的 要|用|想|再|许|必 + 点播动词」，
+ * 「别客气，讲个故事」这类不受影响（别字后面不是点播动词）。
+ */
+const NEGATED_ASK = /(不|别|甭|勿|无需)(要|用|想|再|许|必)?\s*(讲|说|念|背|来|放|听|唱)/
+
 /** 从一句话里认出诗名（认不出返回空串；标题未就绪时按认不出处理） */
 export function matchPoemTitle(text: string): string {
   const t = String(text || '')
@@ -58,9 +89,13 @@ export function matchPoemTitle(text: string): string {
   return ''
 }
 
-/** 真提问的标记：命中则不劫持 */
+/**
+ * 真提问的标记：命中则不劫持。
+ * `吗/呢` 后面允许跟一个句末标点：「讲个故事吗。」和「讲个故事吗」一样是提问，
+ * 旧实现只认裸的句尾「吗」，带句号的同一句话反而被劫持去讲故事。
+ */
 export function isQuestion(text: string): boolean {
-  return /[?？]|为什么|怎么|如何|什么|谁|哪[儿里]?|多少|几点|几号|是不是|能不能|要不要|吗\s*$|呢\s*$/.test(String(text || ''))
+  return /[?？]|为什么|怎么|如何|什么|谁|哪[儿里]?|多少|几点|几号|是不是|能不能|要不要|吗[。．.!！…~～]*\s*$|呢[。．.!！…~～]*\s*$/.test(String(text || ''))
 }
 
 /** 识别点播意图；返回 null 表示"交给模型" */
@@ -68,6 +103,8 @@ export function detectIntent(rawText: string): Intent {
   const t = String(rawText || '').trim()
   if (!t || t.length > 30) return null
   if (isQuestion(t)) return null
+  // 否定式祈使不劫持：「不要讲故事」「别背诗了」交给模型，别反着做
+  if (NEGATED_ASK.test(t)) return null
 
   // ① 点名要某首诗：按标题取（"背雨霖铃""来首水调歌头"）。
   //    注意：诗名里有大量日常词（梅花/风雨/落花/春思/锦瑟…），只凭"句子里出现诗名"就劫持，
@@ -96,12 +133,12 @@ export function detectIntent(rawText: string): Intent {
   // ④ 讲故事 / 说书（可带书名）
   //    书名同样是"日常词"（西游/水浒/红楼/三国…），"我小时候看过西游记"不是点播。
   //    要么有讲故事动词，要么整句就是书名（"红楼梦"这种直接报书名）。
-  let book = ''
-  for (const [re, name] of BOOK_ALIAS) { if (re.test(t)) { book = name; break } }
-  if (book) {
+  let hit: [RegExp, string] | null = null
+  for (const pair of BOOK_ALIAS) { if (pair[0].test(t)) { hit = pair; break } }
+  if (hit) {
     const bare = t.replace(BARE_STRIP, '')
-    const asksBook = /讲|说书|听|来(一)?段|来(一)?回/.test(t) || bare.length <= book.length + 1
-    if (asksBook) return { kind: 'story', book }
+    const asksBook = /讲|说书|听|来(一)?段|来(一)?回/.test(t) || isBareBookName(bare, hit[1], hit[0])
+    if (asksBook) return { kind: 'story', book: hit[1] }
   }
   if (/讲故事|讲个故事|说书|来段|讲一段/.test(t)) return { kind: 'story', book: '' }
   return null

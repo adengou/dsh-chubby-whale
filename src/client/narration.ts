@@ -12,14 +12,21 @@ export const NARRATE_MIN_MS = 8000
 export const NARRATE_MAX_MS = 5 * 60 * 1000
 
 export type NarrationLock = {
-  /** 上锁：ms 超出 [MIN, MAX] 时自动夹紧，非法值按 60 秒 */
+  /**
+   * 上锁：ms 超出 [MIN, MAX] 时一律夹紧（0 与负数也走下限 8 秒）；NaN/非数按 60 秒兜底。
+   *
+   * 为什么 0 不映射成「不上锁」：空文本（estimateSpeakMs('') === 0）时 client.ts 那边
+   * 仍然会把 narrating 标记置真，而它的自愈只能靠 expire() → resetNarration()。
+   * 不上锁 = expire() 永远返回 false = narrating 卡死（P2 提醒会一直等空闲）。
+   * 锁下限 8 秒既让它照常过期自愈，又不会像旧实现那样把 0 当非法值闭麦 60 秒。
+   */
   lock: (ms: number) => void
   clear: () => void
   /** 现在是否处于叙述中 */
   active: (now?: number) => boolean
   /** 剩余毫秒（未上锁返回 0） */
   remaining: (now?: number) => number
-  /** 到点自愈：过期就清锁并返回 true */
+  /** 到点自愈：过期就清锁并返回 true（与 active 同一条界线：t >= until 即到期） */
   expire: (now?: number) => boolean
 }
 
@@ -27,7 +34,10 @@ export function createNarrationLock(): NarrationLock {
   let until = 0
   return {
     lock(ms: number): void {
-      const dur = Math.max(NARRATE_MIN_MS, Math.min(Number(ms) || 60000, NARRATE_MAX_MS))
+      // 旧实现是 `Number(ms) || 60000`：0 / null 被当成"非法值"跳到 60 秒，
+      // 于是「没有内容要念」也闭麦一分钟。夹紧到 [MIN, MAX] 才是文档写的语义。
+      const n = ms == null ? NaN : Number(ms)
+      const dur = Math.max(NARRATE_MIN_MS, Math.min(Number.isNaN(n) ? 60000 : n, NARRATE_MAX_MS))
       until = Date.now() + dur
     },
     clear(): void { until = 0 },
@@ -41,7 +51,9 @@ export function createNarrationLock(): NarrationLock {
     },
     expire(now?: number): boolean {
       const t = typeof now === 'number' ? now : Date.now()
-      if (!until || t <= until) return false
+      // 界线必须与 active() 一致：t === until 时 active 已返回 false，
+      // 旧实现还要求 t > until 才清，于是「已不算叙述中」的锁要等下一个轮询周期才真被清掉。
+      if (!until || t < until) return false
       until = 0
       return true
     },

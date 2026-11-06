@@ -27,6 +27,15 @@ export const DEFAULT_STORY_RATE = '-35%'
 export const DEFAULT_POEM_RATE = '-25%'
 
 /**
+ * 归一「-xx%」写法：只收 -1%～-99%（拒绝 -0% / -01% / -00% / -100% / +10% / 带小数）；
+ * 不合法返回空串，由调用方决定回落值。读存储与校验 fallback 共用同一把尺子。
+ */
+function validPercent(v: unknown): string {
+  const s = String(v == null ? '' : v).trim()
+  return /^-(?:[1-9]\d?)%$/.test(s) ? s : ''
+}
+
+/**
  * 读「-xx%」形态的语速偏好（说书 / 念诗共用这一份读取口径）：
  * 读不到、浏览器禁存储、格式不对 → 回默认值。
  *
@@ -36,8 +45,8 @@ export const DEFAULT_POEM_RATE = '-25%'
  */
 function readPercentRate(key: string, fallback: string): string {
   try {
-    const s = String(localStorage.getItem(key) || '').trim()
-    if (/^-(?:[1-9]\d?)%$/.test(s)) return s
+    const s = validPercent(localStorage.getItem(key))
+    if (s) return s
   } catch (e) { }
   return fallback
 }
@@ -47,9 +56,15 @@ export function storyRate(): string {
   return readPercentRate('chubby-story-rate', DEFAULT_STORY_RATE)
 }
 
-/** 读当前念诗语速（非法值回落 fallback，缺省 -25%） */
+/**
+ * 读当前念诗语速（非法值回落 fallback，缺省 -25%）。
+ *
+ * fallback 也要过一遍校验：它来自调用方的 narrationRate()，历史上有过把脏值透传的先例；
+ * 一旦 -200%/胡说 这类字符串漏进 TTS 的 rate 参数，念出来要么原速要么直接报错。
+ * 非法 fallback 退回 DEFAULT_POEM_RATE。
+ */
 export function poemRate(fallback: string = DEFAULT_POEM_RATE): string {
-  return readPercentRate('chubby-poem-rate', fallback)
+  return readPercentRate('chubby-poem-rate', validPercent(fallback) || DEFAULT_POEM_RATE)
 }
 
 /** 读当前聊天语速（非法值回落默认 -20%）；用时现读，菜单改完立即生效 */
