@@ -22,6 +22,11 @@ export function bindFileDropCapture(opts: {
   hitTest: (x: number, y: number) => boolean
   /** 命中后交出的文件（可能为 undefined） */
   onFile: (file: any) => void
+  /**
+   * 一次拖了多个文件时回调（参数是总数）。界面只处理第一个，其余不能**静默**丢掉——
+   * 主人会以为都收下了（2026-11-07 分身审计的 G 项）。
+   */
+  onMany?: (count: number) => void
 }): Dispose {
   const win = opts.win
   if (!win || !win.addEventListener) return () => { }
@@ -37,7 +42,12 @@ export function bindFileDropCapture(opts: {
     e.preventDefault()
     e.stopPropagation()
     const dt = e.dataTransfer
-    const file = dt && dt.files && dt.files[0]
+    const files = dt && dt.files ? dt.files : null
+    const file = files && files[0]
+    // 多文件：先说明「一次一张」，再处理第一张（顺序不能反，否则提示晚于结果）
+    try {
+      if (files && files.length > 1 && typeof opts.onMany === 'function') opts.onMany(files.length)
+    } catch (e2) { }
     try { opts.onFile(file) } catch (e2) { }
   }
   win.addEventListener('dragover', onDragOverCapture, true)

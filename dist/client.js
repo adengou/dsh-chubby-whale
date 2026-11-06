@@ -7825,7 +7825,12 @@
       e.preventDefault();
       e.stopPropagation();
       const dt = e.dataTransfer;
-      const file = dt && dt.files && dt.files[0];
+      const files = dt && dt.files ? dt.files : null;
+      const file = files && files[0];
+      try {
+        if (files && files.length > 1 && typeof opts.onMany === "function") opts.onMany(files.length);
+      } catch (e2) {
+      }
       try {
         opts.onFile(file);
       } catch (e2) {
@@ -8694,6 +8699,12 @@
               try {
                 handleFileDrop(file, { showBubble, speakText }).catch(() => {
                 });
+              } catch (e2) {
+              }
+            },
+            onMany: (n) => {
+              try {
+                showBubble("一次先看一张哦～先看第一张（共 " + n + " 个）", 3200);
               } catch (e2) {
               }
             }
