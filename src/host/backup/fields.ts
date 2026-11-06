@@ -173,7 +173,8 @@ export function cleanFishfood(value: any): any | null {
 export function cleanPet(value: any): any | null {
   if (!isPlainObject(value)) return null
   const out: any = {}
-  for (const k of ['feeds', 'hunger', 'lastSeen', 'intimacy']) {
+  // lastFeedAt：喂食时刻（mood 的 happy 窗口要用它；漏掉会让导入后情绪退回 normal）
+  for (const k of ['feeds', 'hunger', 'lastSeen', 'lastFeedAt', 'intimacy']) {
     if (isNum(value[k])) out[k] = Math.max(0, Math.floor(value[k]))
   }
   if (typeof value.mood === 'string') out.mood = clip(value.mood, 20)
