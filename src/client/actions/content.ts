@@ -67,18 +67,46 @@ export function parseBriefing(d: any): { first: string; second: string } | null 
   return { first: first.join('\n'), second: second.join('\n') }
 }
 
-/** 气泡 + 朗读（语音朗读关着时只出气泡；锁在朗读结束时释放，异常由叙述锁自愈兜底） */
+/**
+ * 叙述锁的归属代次：只有「最后一次由本模块上锁」的那次朗读才有权解自己的锁。
+ *
+ * 朗读队列是串行播的（client/voice.ts 的 speak → ttsQ.push，一段播完才轮到下一段），
+ * 而叙述锁只有一份（client/narration.ts）。旧实现每个 onDone 都直接 host.clearNarrate()：
+ * 「今日一句还没念完就点今日简报」时，简报刚上锁、今日一句那段播完 → 它的 onDone
+ * 把简报的锁解掉 → 朗读还在响，麦克风却开始拾音（念出来的声音被当成主人说话）。
+ * 收尾回调先比对令牌、过期作废，与 client/story.ts 的 playPiece(…onDone) 同一做法。
+ */
+let narrateGen = 0
+
+/** 气泡 + 朗读（语音朗读关着时只出气泡；锁只由自己那次朗读的收尾来解，异常由叙述锁自愈兜底） */
 function showAndSpeak(host: ActionHost, shown: string, speech: string, ms: number): void {
   host.bubble(shown, ms)
   host.talkFor(5000)
   if (!host.voiceOn()) return
+  const my = ++narrateGen
   host.narrate(estimateSpeakMs(speech))
-  host.speak(speech, { rate: host.narrationRate(), onDone: () => host.clearNarrate() })
+  // 后来的朗读已经接过这把锁：旧段的收尾不许替它解开（否则那段朗读期间麦克风提前开）
+  // 同一段的收尾也只解一次：TTS 兜底/两次回调重复到达时不重复动锁（clearNarrate 还会顺手清进度）
+  let released = false
+  const release = (): void => {
+    if (released) return
+    released = true
+    if (my === narrateGen) host.clearNarrate()
+  }
+  try {
+    host.speak(speech, { rate: host.narrationRate(), onDone: release })
+  } catch (e) {
+    // 朗读没起来（TTS 不可用等）：锁当场放掉，别按估算时长白闭麦十几秒
+    release()
+  }
 }
 
 export function registerContentActions(table: ActionTable<ActionHost>): void {
   // —— 选本书：书单没拉到时菜单显示这项，点一下重试并报数 ——
   table.define('story-books', (host) => {
+    // 与其它内容入口同一道防连点闸（念诗/典故/今日一句都有）：
+    // 没有它连点两下会并发两个 GET，各回一句气泡，后到的结果还把先到的提示顶掉
+    if (!beginOnce('story-books')) { host.bubble('正在翻书单，稍等～', 2000); return }
     getJson('/story/books', { cache: 'no-store' })
       .then((d: any) => {
         const books = parseBookList(d)

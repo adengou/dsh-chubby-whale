@@ -68,9 +68,20 @@ export function createMiscHandlers(opts) {
                 return;
             }
             const data = r.data;
-            const infos = data?.balance_infos || [];
-            const cny = infos.find((x) => x.currency === 'CNY') || infos[0] || null;
-            sendJson(res, { ok: true, balance: cny ? cny.total_balance : null, currency: cny ? cny.currency : 'CNY' });
+            // 200 但回包形状不对（不是对象 / balance_infos 不是数组）属于上游坏了：
+            // 给可诊断的 BAD_RESPONSE，别把 "infos.find is not a function" 这种内部报错当错误文案
+            if (!data || typeof data !== 'object' || !Array.isArray(data.balance_infos)) {
+                console.error('[misc] BALANCE-SHAPE 回包缺少 balance_infos 数组');
+                sendJson(res, { ok: false, error: 'BAD_RESPONSE', balance: null });
+                return;
+            }
+            const infos = data.balance_infos;
+            const cny = infos.find((x) => Boolean(x) && x.currency === 'CNY') || infos.find((x) => Boolean(x)) || null;
+            // balance / currency 必须恒有值：undefined 会被 JSON.stringify 整个丢掉，
+            // 客户端拿到「ok:true 但没有 balance 字段」会当成没刷出来（而不是"没有余额信息"）
+            const balance = cny && cny.total_balance != null ? cny.total_balance : null;
+            const currency = cny && typeof cny.currency === 'string' && cny.currency ? cny.currency : 'CNY';
+            sendJson(res, { ok: true, balance, currency });
         }
         catch (err) {
             // 超时/网络错误：照旧回 ok:false + balance:null，日志里留 BALANCE-TIMEOUT 标签
@@ -117,15 +128,20 @@ export function createMiscHandlers(opts) {
                 const pet = opts.feedPet();
                 // 亲密度以 state.json 为准：喂食只负责"加"，不再让 pet_state.intimacy 自成一套
                 let intimacy = cleanIntimacy(pet && pet.intimacy);
+                let bumped = false;
                 if (opts.bumpIntimacy) {
                     try {
                         const v = Number(opts.bumpIntimacy(2));
-                        if (Number.isFinite(v))
+                        if (Number.isFinite(v)) {
                             intimacy = cleanIntimacy(v);
+                            bumped = true;
+                        }
                     }
                     catch (e) { }
                 }
-                else if (opts.loadIntimacy) {
+                // 加分失败（写 state.json 出错/返回非数字）时仍要显示当前亲密度：
+                // 用 loadIntimacy 兜底，否则喂一次食会把面板显示成 0，而 state 里的值其实还在
+                if (!bumped && opts.loadIntimacy) {
                     try {
                         const v = Number(opts.loadIntimacy());
                         if (Number.isFinite(v))

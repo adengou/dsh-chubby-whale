@@ -12,12 +12,21 @@
  *   · 停止说话/新提问能打断普通 /chat：原来只登记流式请求，停止后普通请求回来照样念。
  *   · 流式 4 秒超时只看「响应头」：原 gotHeaders 从没置 true，模型首字慢就被误杀并重跑一次。
  *   · 流式失败不再吞消息：同句去重只压气泡，正文照常入列；断流时把已念的部分也留在列表里。
+ *
+ * 2026-11-07 并发复审（B68）：
+ *   · 流式没接上、回退普通 /chat 之前补一次纪元校验：await 期间被新提问顶掉时不再白打一轮，
+ *     也不会把 busy / activeChat 从新请求手里抢走（并发纪律 五-1）。
+ *   · P0 打断条件补上 storyBusy：叙述锁过期看门狗只清 narrating，TTS 退避期间 ttsPlaying 也可能是假，
+ *     只认 narrating||ttsPlaying 会漏掉说书占线，旁白会在回答之后再抢话筒。
+ *   · 人设 reactTo 提到两条路径之前：原来在 tryStream 之后，流式（默认开着）成功时永远走不到。
+ *   · 占线阈值与 client/busy.ts 共用 BUSY_STALE_MS，不再手写 35000。
  */
 
 import { postJson, postRaw, timeoutSignal } from './http.js'
 import { parseSseBuffer } from '../shared/sse.js'
 import { createSentenceBuffer } from './text.js'
 import type { Deduper } from './text.js'
+import { BUSY_STALE_MS } from './busy.js'
 import type { BusyLock, Epoch } from './busy.js'
 import { chatRate } from './rates.js'
 import type { Persona } from './persona.js'
@@ -296,14 +305,19 @@ export function createChatSender(host: ChatHost): ChatController {
     // 诊断字段要能信，删掉这行，真正的跳过原因由 speak 侧写。
     // 占线保护：上一条还在想就拒绝（不排队），避免两条回复抢同一个话筒
     if (d0) d0.lastChat = { stage: 'entry', busy: host.busy.isBusy(), tts: !!host.ttsPlaying(), at: Date.now() }
-    if (host.busy.isBusy() && host.busy.age() < 35000) {
+    // 阈值与 client/busy.ts 的看门狗共用 BUSY_STALE_MS：两处各写一个数字时，
+    // 改过 staleMs 的实例会出现「看门狗已解锁、发送入口还当忙」的错位。
+    if (host.busy.isBusy() && host.busy.age() < BUSY_STALE_MS) {
       if (d0) d0.lastChat.stage = 'blocked-busy'
       // 打字也要提示：客户端发送后会把输入框清空，原来只在语音时冒一句，打字的这句就静默丢了
       host.bubble('本鲸还在想上一句呢，稍等～', 2500)
       return
     }
-    // 用户提问永远优先：先打断正在播的旁白（说书/念诗）再回答
-    if (host.narrating.current || host.ttsPlaying()) {
+    // 用户提问永远优先：先打断正在播的旁白（说书/念诗）再回答。
+    // storyBusy 也要算：client.ts 的叙述锁过期看门狗只清 narrating、不清 storyBusy
+    // （narration.expire → clearNarrating），TTS 退避重试期间 ttsPlaying 也可能是 false；
+    // 只认 narrating||ttsPlaying 会漏掉这一轮，说书的旗子留到回答之后再抢话筒。
+    if (host.narrating.current || host.storyBusy.current || host.ttsPlaying()) {
       try { host.stopSpeak() } catch (e) { }
       host.narrating.current = false
       try { host.storyBusy.current = false } catch (e) { }
@@ -318,10 +332,17 @@ export function createChatSender(host: ChatHost): ChatController {
     // 开着流式时聊天记录里只有鱼的话、没有主人的提问。
     host.setInput('')
     try { host.setMessages((m: any[]) => [...m, { who: 'me', text }]) } catch (e) { }
+    // 人设情绪/台词是对「主人这句话」的反应，流式与普通两条路径都要触发：
+    // 原来这行在 tryStream 之后，流式（默认开着）成功时永远走不到 —— 情绪状态机与气泡表情
+    // 等于没接上，只有流式失败/被关掉时才偶尔生效。点播命中在上面已经 return，不会误触发。
+    try { const hit = host.persona.reactTo(text); if (hit) { host.say(hit.text, 4000); if (hit.event === 'praise') host.heart() } } catch (e) { }
     // 流式优先：边生成边念；失败会自动回退到下面的普通 /chat
     try { if (await tryStream(text, opts, myEpoch)) return } catch (e) { }
+    // 每个 await 之后都要问一句「我还是当前那个请求吗」（docs/并发纪律.md 五-1）：
+    // 流式没接上、正要回退普通 /chat 的这段间隙里，可能已经有更晚的提问顶掉了本纪元。
+    // 这时再发一次 /chat 会白烧一轮 token，还会把 busy / activeChat 从新请求手里抢过来。
+    if (!host.epoch.isCurrent(myEpoch)) return
 
-    try { const hit = host.persona.reactTo(text); if (hit) { host.say(hit.text, 4000); if (hit.event === 'praise') host.heart() } } catch (e) { }
     // 等待提示（人设 waiting）：只在语音提问时偶尔冒一句，概率 25%，不刷屏
     try { if (opts && opts.voice && !host.ttsPlaying() && Math.random() < 0.25) host.say(host.persona.line('waiting'), 3000) } catch (e) { }
     host.busy.begin()
