@@ -32,11 +32,15 @@ export type VoiceStats = {
 /**
  * 新建一份全零统计。
  * 刻意不做成模块级共享常量：多个语音实例（或多标签页）共用一份计数会互相污染。
+ *
+ * dupDropped 原先漏在初值里（类型标了可选，读取处各自 `|| 0` 兜着），
+ * 但「全零统计」的契约要求每个字段都在：否则一次性 JSON 快照（自检复制/诊断面板）
+ * 会缺这一项，排障时看到的是一份不完整的账。
  */
 export function createVoiceStats(): VoiceStats {
   return {
     windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrRetry: 0, asrTexts: 0, heard: 0,
-    echoDropped: 0, shortDropped: 0, ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
+    echoDropped: 0, shortDropped: 0, dupDropped: 0, ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
   }
 }
 

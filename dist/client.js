@@ -2150,9 +2150,8 @@
   function createEchoFilter() {
     const spokenRecent = [];
     const recentHeard = [];
-    let lastText = "";
-    let lastTextAt = 0;
     const acceptedSeg = [];
+    let maxSegId = 0;
     function noteSpoken(text, now) {
       const t = String(text || "").trim();
       if (!t) return;
@@ -2161,23 +2160,26 @@
     }
     function accept(text, nowIn, segId) {
       if (typeof segId === "number") {
+        if (segId < maxSegId) return { ok: false, reason: "dup" };
         if (acceptedSeg.indexOf(segId) >= 0) return { ok: false, reason: "dup" };
         acceptedSeg.push(segId);
         while (acceptedSeg.length > 50) acceptedSeg.shift();
+        if (segId > maxSegId) maxSegId = segId;
       }
-      const plain = normalizePlain(text);
-      const plainKey = echoKey(text);
-      if (plain.length < 2 && !/^[停别不]$/.test(plain)) return { ok: false, reason: "trivial" };
-      if (isNoiseText(plain)) return { ok: false, reason: "noise" };
+      const plain = normalizePlain(text).toLowerCase();
+      const plainKey = echoKey(text).toLowerCase();
+      const interrupt = /^[停别不]$/.test(plain);
+      if (plain.length < 2 && !interrupt) return { ok: false, reason: "trivial" };
+      if (!interrupt && isNoiseText(plain)) return { ok: false, reason: "noise" };
       if (/^本鱼在听/.test(plain)) return { ok: false, reason: "self" };
       const now = typeof nowIn === "number" ? nowIn : Date.now();
       let hadRecentSpeech = false;
       for (const s of spokenRecent) {
         if (now - s.at > 15e3) continue;
         if (now - s.at <= 8e3) hadRecentSpeech = true;
-        const target = normalizePlain(s.text);
+        const target = normalizePlain(s.text).toLowerCase();
         if (!target) continue;
-        const targetKey = echoKey(s.text);
+        const targetKey = echoKey(s.text).toLowerCase();
         if (plainKey && targetKey && (plainKey === targetKey || targetKey.length >= 6 && plainKey.indexOf(targetKey.slice(0, 6)) >= 0)) {
           return { ok: false, reason: "echo" };
         }
@@ -2192,9 +2194,6 @@
       }
       recentHeard.push({ text, at: now });
       while (recentHeard.length > 3) recentHeard.shift();
-      if (text === lastText && now - lastTextAt < 8e3) return { ok: false, reason: "dup" };
-      lastText = text;
-      lastTextAt = now;
       return { ok: true };
     }
     return {
@@ -2203,8 +2202,8 @@
       reset() {
         spokenRecent.length = 0;
         recentHeard.length = 0;
-        lastText = "";
-        lastTextAt = 0;
+        acceptedSeg.length = 0;
+        maxSegId = 0;
       }
     };
   }
@@ -2273,6 +2272,7 @@
       heard: 0,
       echoDropped: 0,
       shortDropped: 0,
+      dupDropped: 0,
       ttsRequests: 0,
       ttsPlayed: 0,
       ttsFail: 0,
