@@ -63,14 +63,14 @@ mkdirSync(TMP, { recursive: true })
 const out = path.join(TMP, 'bundle.mjs')
 const ENTRY_SRC = `
 import { deepFreeze } from './src/shared/immutable.js'
-import { NOISE_TEXTS, INTERRUPT_WORDS, normalizeNoiseKey, isNoiseText, isInterruptWord } from './src/shared/noise.js'
+import { NOISE_TEXTS, INTERRUPT_WORDS, INTERRUPT_PHRASES, normalizeNoiseKey, isNoiseText, isInterruptWord, isInterruptCommand } from './src/shared/noise.js'
 import { GROWTH_STAGES, growthStage } from './src/shared/growth.js'
 import { createVoiceStats, createStatusHolder, createDiagSnapshots } from './src/client/voice/status.js'
 import { TTS_VOICES, DEFAULT_VOICE, normalizeVoiceName, readStoredVoiceName } from './src/client/voice/voices.js'
 import { fetchWithTimeout } from './src/client/voice/fetch.js'
 export {
   deepFreeze,
-  NOISE_TEXTS, INTERRUPT_WORDS, normalizeNoiseKey, isNoiseText, isInterruptWord,
+  NOISE_TEXTS, INTERRUPT_WORDS, INTERRUPT_PHRASES, normalizeNoiseKey, isNoiseText, isInterruptWord, isInterruptCommand,
   GROWTH_STAGES, growthStage,
   createVoiceStats, createStatusHolder, createDiagSnapshots,
   TTS_VOICES, DEFAULT_VOICE, normalizeVoiceName, readStoredVoiceName,
@@ -184,6 +184,16 @@ group('noise 噪声判定边界', () => {
   eq('「 闭嘴 」是打断词', M.isInterruptWord(' 闭嘴 '), true)
   eq('「不错」不是打断词', M.isInterruptWord('不错'), false)
   eq('打断词不算噪声', [M.isNoiseText('停'), M.isNoiseText('别'), M.isNoiseText('不'), M.isNoiseText('停｡')], [false, false, false, false])
+
+  // 2026-11-07 B93：整句打断指令也收到 shared（echo-filter 与 voice-bridge 曾各抄一份）
+  eq('整句打断词表已冻结', Object.isFrozen(M.INTERRUPT_PHRASES), true)
+  eq('词表含两边原先各自的口语说法',
+    ['停下来吧', '不要说了', '不用说了', '暂停', '算了', '别吵'].every((x) => M.INTERRUPT_PHRASES.indexOf(x) >= 0), true)
+  eq('「停下来吧」是整句打断指令', M.isInterruptCommand('停下来吧'), true)
+  eq('「停！」带标点也认', M.isInterruptCommand('停！'), true)
+  eq('单个规范词仍认', M.isInterruptCommand('闭嘴'), true)
+  eq('正文里含「别」不算指令（只认整句）', M.isInterruptCommand('别人家的孩子'), false)
+  eq('空/非字符串不炸', [M.isInterruptCommand(''), M.isInterruptCommand(null), M.isInterruptCommand(undefined)], [false, false, false])
 })
 
 // ---------- ③ growth：经验→阶段边界 ----------

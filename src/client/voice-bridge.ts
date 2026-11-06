@@ -19,15 +19,13 @@ import type { Voice } from './voice.js'
 import type { NarrationLock } from './narration.js'
 import { bumpProgress } from './narration-progress.js'
 import { createWakeGate, normalizeWakeText, loadCustomWakeWords, stripWakeWords, WAKE_WORDS } from './wake.js'
-import { isInterruptWord } from '../shared/noise.js'
+import { isInterruptCommand } from '../shared/noise.js'
 
 /**
- * 朗读场景里可以直接掐断的整句。
- * 另外五个规范打断词（停 / 别 / 不 / 闭嘴 / 打住）以 shared/noise.ts 的 INTERRUPT_WORDS
- * 为唯一真相源——宿主 ASR 专门放行这五个，客户端原来只认"停"，喊「别」「不」会被当成
- * 正文送去模型（喊了不生效）。这里不再抄一份，统一走 isInterruptWord()。
+ * 整句打断指令的判定已统一到 shared/noise.ts 的 isInterruptCommand()（2026-11-07 B93）：
+ * 五个规范词 + 19 条口语说法同一份真源，不再与 echo-filter 各抄一份。
+ * 叙述期仍保留 NARR_STOP_RE 的放宽匹配（句中带「不念/算了」也停，容忍度高）。
  */
-const STOP_PHRASES: string[] = ['停下', '停一下', '别说了', '别讲了', '别念了', '别吵', '安静', '够了']
 
 /** 说书/念诗期间"别念了"这类放宽匹配（句中带"不念/算了"也停，叙述中容忍度高） */
 const NARR_STOP_RE = /停|别念|不念|够了|算了|打住/
@@ -41,8 +39,7 @@ const HAS_CONTENT_RE = /[\u4e00-\u9fa5a-z0-9]/i
  */
 function isStopCommand(norm: string): boolean {
   if (!norm) return false
-  if (isInterruptWord(norm)) return true
-  return STOP_PHRASES.indexOf(norm) >= 0
+  return isInterruptCommand(norm)
 }
 
 export type VoiceBridgeHost = {

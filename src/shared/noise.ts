@@ -62,6 +62,29 @@ export function isNoiseText(text: unknown): boolean {
 }
 
 /** 是不是打断词（输入会先归一化，大小写/标点不影响判定） */
+/**
+ * 可以直接掐断朗读的**整句**指令（2026-11-07 B93 收口）。
+ * 为什么要有：echo-filter 与 voice-bridge 各抄过一份（前者 19 条、后者 8 条），
+ * 于是「停下来吧」在回声闸门里能放行、在桥接里却认不出，喊停时灵时不灵。
+ * 这里作为唯一真源：新增口语说法只改这一处。
+ */
+export const INTERRUPT_PHRASES: readonly string[] = Object.freeze([
+  '停下', '停下来', '停下来吧', '停一下', '停一停', '停吧',
+  '别说了', '别讲了', '别念了', '别吵', '别说下去了',
+  '不要说了', '不用说了', '安静', '打住', '够了', '暂停', '算了',
+])
+
+/**
+ * 是不是「让本鱼停下」的指令：既认单个规范打断词，也认整句说法。
+ * 只认**整句**（归一化后完全相等）——正文里恰好含「别」「不」的正常发言不能被吞掉。
+ */
+export function isInterruptCommand(text: unknown): boolean {
+  const k = normalizeNoiseKey(text)
+  if (!k) return false
+  if (isInterruptWord(k)) return true
+  return INTERRUPT_PHRASES.indexOf(k) >= 0
+}
+
 export function isInterruptWord(text: unknown): boolean {
   const k = normalizeNoiseKey(text)
   return k.length > 0 && INTERRUPT_WORDS.indexOf(k) >= 0
