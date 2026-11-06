@@ -104,6 +104,62 @@ const ASR_TIMEOUT_MS = 15000        // 识别上传硬超时（TTS 的 20s 在 t
 
 // 噪声判定与宿主共用一份（shared/noise.ts），避免两边各写一套、缓存又把噪声写进去
 
+// ---- TTS 瞬时失败策略（2026-11-06：微软 edge-tts 偶发 NoAudioReceived） ----
+// 分工：
+//   · 重试次数与指数退避在 voice/tts-queue.ts（500ms 起、×2、最多 4 次，总等待 7.5s）；
+//   · 这里管「连续失败 → 本会话冷却、直接用浏览器朗读」与「失败段跳过开关」。
+// 冷却状态放模块级而不是实例内：限流是页面会话级别的事，重开语音待命（重建实例）不该重置。
+// 冷却不是永久放弃——60 秒到期后，下一次朗读会自动重试一次合成，成功即恢复（ttsNoteSynthOk）。
+const TTS_FAIL_COOLDOWN_K = 3       // 连续 K 次合成失败 → 进入冷却
+const TTS_COOLDOWN_MS = 60000       // 冷却时长：期间跳过合成，直接用系统语音朗读
+
+const ttsFailGuard = { streak: 0, count: 0, cooldownUntil: 0 }
+
+/** 此刻是否在冷却中（冷却到期后自动返回 false，下一段朗读会重新尝试合成） */
+function ttsInCooldown(now = Date.now()): boolean {
+  return ttsFailGuard.cooldownUntil > 0 && now < ttsFailGuard.cooldownUntil
+}
+
+/** 把 TTS 稳定性诊断同步到 window.__chubbyWhale（控制台排障直接看） */
+function ttsSyncDiag(): void {
+  try {
+    const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
+    w.ttsFailCount = ttsFailGuard.count
+    w.ttsCooldownUntil = ttsFailGuard.cooldownUntil
+  } catch (e) { }
+}
+
+/** 记一次合成失败；连续 K 次即进入 60 秒冷却。返回此刻是否在冷却中 */
+function ttsNoteSynthFail(): boolean {
+  const now = Date.now()
+  ttsFailGuard.count++
+  ttsFailGuard.streak++
+  if (ttsFailGuard.streak >= TTS_FAIL_COOLDOWN_K && !ttsInCooldown(now)) {
+    ttsFailGuard.cooldownUntil = now + TTS_COOLDOWN_MS
+  }
+  ttsSyncDiag()
+  return ttsInCooldown(now)
+}
+
+/** 合成成功：清零连败并解除冷却（冷却到期后那次重试成功就靠它恢复） */
+function ttsNoteSynthOk(): void {
+  ttsFailGuard.streak = 0
+  ttsFailGuard.cooldownUntil = 0
+  ttsSyncDiag()
+}
+
+/**
+ * 失败段跳过开关（localStorage: chubby-tts-skip-fail，默认 off）。
+ * on = 某段重试失败后跳过该段、继续下一段（完整性换稳定）；off = 保持原行为（降级浏览器朗读）。
+ * 每次失败时就地读取：主人改完刷新即可生效，不必重建语音实例。
+ */
+function ttsSkipFailOn(): boolean {
+  try {
+    if (typeof localStorage === 'undefined' || !localStorage) return false
+    return String(localStorage.getItem('chubby-tts-skip-fail') || '').trim().toLowerCase() === 'on'
+  } catch (e) { return false }
+}
+
 
 export function createVoice(opts: VoiceOptions): Voice {
   const apiBase = opts.apiBase || '/api/chubby-whale'
@@ -117,6 +173,8 @@ export function createVoice(opts: VoiceOptions): Voice {
   // 诊断快照（上一段录音 / 上一句朗读 / 当前 APE 帧）与统计对象由 voice/status.ts 持有
   const diag = createDiagSnapshots()
   const stats: VoiceStats = createVoiceStats()
+  // 诊断字段先落 0：控制台 __chubbyWhale.ttsFailCount / ttsCooldownUntil 一开始就可读
+  ttsSyncDiag()
 
   // ---- 状态机（去重与回调隔离在 status.ts，转移判定仍只在这里） ----
   const statusHolder = createStatusHolder((s: VoiceStatus) => {
@@ -166,6 +224,10 @@ export function createVoice(opts: VoiceOptions): Voice {
   let ttsProgressAt = 0  // 本段最近一次"有进展"的时刻（开播/播放进度/收到新 chunk）；看门狗按它判停滞
   let ttsCurJob: TtsJob | null = null  // 当前正在处理的段：看门狗复位时要给它结账（回调 onDone）
   let ttsWatch: any = null
+  // 系统语音朗读期间的「进展心跳」：看门狗按 ttsProgressAt 判停滞，浏览器朗读可能十几秒
+  let ttsBrowserKeep: any = null
+  // 退避窗口：下一次允许重试的时刻（0 = 无）。窗口内新 speak 不能把退避等待挤掉
+  let ttsNextRetryAt = 0
   let mutedUntil = 0
   let speakToken = 0
 
@@ -433,6 +495,9 @@ export function createVoice(opts: VoiceOptions): Voice {
       speakToken++
       // 看门狗自己是"结账方"：把这段的令牌同步到新纪元，finishJob 才能在结账后继续 pump
       if (dead) dead.token = speakToken
+      // 复位即放弃这一段：系统语音还在念的话一并掐掉（否则会和下一段叠音），退避窗口也清掉
+      stopBrowserSpeech()
+      ttsNextRetryAt = 0
       disposeTtsAudio()
       ttsSynthAt = 0
       ttsProgressAt = 0
@@ -474,6 +539,8 @@ const asrAborts = new Set<AbortController>()
       return r.arrayBuffer()
     }).catch((e: any) => {
       stats.lastError = 'tts: ' + String((e && e.name) || e)
+      // 主动取消（停止说话 abort）不是"合成失败"：不能因为主人点了停止就推进冷却计数
+      if (!(ctl && ctl.signal.aborted)) ttsNoteSynthFail()
       return null
     }).finally(() => {
       if (ctl) ttsAborts.delete(ctl)
@@ -487,7 +554,49 @@ const asrAborts = new Set<AbortController>()
 
   // 叙述换气停顿（narrationPauseFor）在 voice/tts-queue.ts：纯函数，单测可覆盖
 
+  /** 系统语音朗读期间按秒刷新进展时刻：否则看门狗 2.5 秒就判僵死、把队列打断 */
+  function keepBrowserProgress(): () => void {
+    if (ttsBrowserKeep) { try { clearInterval(ttsBrowserKeep) } catch (e) { } ; ttsBrowserKeep = null }
+    ttsProgressAt = Date.now()
+    ttsBrowserKeep = setInterval(() => { ttsProgressAt = Date.now() }, TTS_WATCH_MS)
+    return () => {
+      if (!ttsBrowserKeep) return
+      try { clearInterval(ttsBrowserKeep) } catch (e) { }
+      ttsBrowserKeep = null
+    }
+  }
+
+  /** 停掉系统语音与心跳（看门狗复位 / 停止说话共用） */
+  function stopBrowserSpeech(): void {
+    if (ttsBrowserKeep) { try { clearInterval(ttsBrowserKeep) } catch (e) { } ; ttsBrowserKeep = null }
+    try { const s: any = (window as any).speechSynthesis; if (s && typeof s.cancel === 'function') s.cancel() } catch (e) { }
+  }
+
+  /**
+   * 一段朗读的最终降级（合成失败 / 冷却期 / 播放被拒绝后都走这里）：
+   *   strict（试听）          → 静默结账，不冒充音色
+   *   chubby-tts-skip-fail=on → 跳过该段、继续下一段（完整性换稳定，用户显式选择）
+   *   系统语音可用            → 用浏览器 speechSynthesis 念完
+   *   都没有                  → 结账继续，这一段记为丢失
+   */
+  function ttsBrowserFallback(job: TtsJob, myToken: number): void {
+    const canBrowser = !job.strict && browserVoiceUsable()
+    if (job.strict || ttsSkipFailOn() || !canBrowser) { finishJob(job); return }
+    // 朗读期间开麦会把自己的声音录回去：与音频路径一致先闭麦，finishJob 里 700ms 后恢复
+    if (!muted) micOn(false)
+    const stopKeep = keepBrowserProgress()
+    speakViaBrowser(job.text).then(() => {
+      stopKeep()
+      // 审计补丁：浏览器兜底可能念很久，念完时这一段可能已被停止/看门狗作废；
+      // 没有这道令牌守卫就会在停止后仍回调 onDone（说书锁被解开）并把状态回写成 listening。
+      if (myToken !== speakToken) return
+      finishJob(job)
+    })
+  }
+
   function finishJob(j: TtsJob): void {
+    if (ttsBrowserKeep) { try { clearInterval(ttsBrowserKeep) } catch (e) { } ; ttsBrowserKeep = null }
+    ttsNextRetryAt = 0
     ttsBusy = false
     if (ttsCurJob === j) ttsCurJob = null
     ttsProgressAt = 0
@@ -508,8 +617,14 @@ const asrAborts = new Set<AbortController>()
     }
   }
 
-  function pumpTts(): void {
+  /** force=true：退避定时器到点后的自唤醒，不再做一次毫秒级窗口比较（否则偶发提前 1ms 就永久卡住） */
+  function pumpTts(force?: boolean): void {
     if (ttsBusy) return
+    // 退避窗口内不取任务：新 speak 不能把「重试等待」挤掉（否则退避形同虚设、请求更密）
+    if (ttsNextRetryAt > 0) {
+      if (!force && Date.now() < ttsNextRetryAt) return
+      ttsNextRetryAt = 0
+    }
     const job = ttsQ.shift()
     if (!job) { setStatus('listening'); return }
     ttsBusy = true
@@ -524,6 +639,19 @@ const asrAborts = new Set<AbortController>()
     // （自身回声由 acceptText 的 spokenRecent 比对 + 说完后的静音窗兜住）。
     stats.ttsRequests++
 
+    // 冷却期（连续合成失败达到阈值）：暂时不打 /tts，直接把这一段交给系统语音。
+    // 正在退避重试中的段（attempts > 0）例外：让它按 4 次上限走完（冷却只拦"下一段"，
+    // 否则第 4 次重试永远轮不到，"最多 4 次"名存实亡）。
+    // 不是永久放弃——60 秒冷却到期后的下一次朗读会重新尝试合成，成功即恢复（ttsNoteSynthOk）。
+    if (ttsInCooldown() && job.attempts <= 0) {
+      ttsSynthAt = 0
+      try { diag.setTts({ failed: true, reason: 'cooldown', text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+      // 跳过开关优先：主人显式选了「跳过失败段」，冷却期也不拿系统语音顶替，否则等于没跳过
+      if (ttsSkipFailOn()) { finishJob(job); return }
+      ttsBrowserFallback(job, myToken)
+      return
+    }
+
     const cur = ttsPrefetch.get(job.seq) || synth(job)
     ttsSynthAt = Date.now()
     ttsPrefetch.delete(job.seq)
@@ -532,6 +660,8 @@ const asrAborts = new Set<AbortController>()
     const wants = prefetchTargets(ttsQ, job.narration)
     for (let i = 0; i < wants.length; i++) {
       const target = wants[i]
+      // 冷却期不预取：连续失败说明正在限流，预取只会多发一次注定失败的请求
+      if (ttsInCooldown()) break
       if (!ttsPrefetch.has(target.seq)) ttsPrefetch.set(target.seq, synth(target))
     }
 
@@ -542,37 +672,35 @@ const asrAborts = new Set<AbortController>()
       if (myToken !== speakToken) return
       ttsSynthAt = 0
       if (!buf) {
-        // 失败：最多重试 TTS_RETRY_MAX 次（每次间隔递增）。绝不静默跳过——跳过就是'少内容'。
+        // 合成失败：按指数退避（500/1000/2000/4000ms）重试，最多 TTS_RETRY_MAX 次，
+        // 绝不静默跳过（默认 off 时重试后降级浏览器朗读，保证内容完整）。
+        // 冷却只影响「后续段」：本段已经开念，仍按 4 次上限走完——否则冷却阈值（3 次）
+        // 会让第 4 次重试永远轮不到，"最多 4 次"名存实亡。
         if (job.attempts < TTS_RETRY_MAX) {
           job.attempts++
           ttsQ.unshift(job)
           ttsBusy = false
           const backoff = ttsRetryDelayMs(job.attempts)
+          ttsNextRetryAt = Date.now() + backoff
           try { (window as any).__chubbyWhale.ttsRetry = ((window as any).__chubbyWhale.ttsRetry || 0) + 1 } catch (e) { }
           // 令牌守卫：停止说话后这次重试不能再把状态机拉起来
-          setTimeout(() => { if (myToken !== speakToken) return; try { pumpTts() } catch (e) { } }, backoff)
+          setTimeout(() => { if (myToken !== speakToken) return; try { pumpTts(true) } catch (e) { } }, backoff)
           return
         }
         stats.ttsFail++
-        try { diag.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+        try { diag.setTts({ failed: true, reason: 'synth', text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
         try {
           const w: any = (window as any).__chubbyWhale
           w.ttsLost = w.ttsLost || []
           w.ttsLost.push(job.text.slice(0, 16))
           if (w.ttsLost.length > 10) w.ttsLost.shift()
         } catch (e) { }
-        // 系统语音兜底：只有真的有可用语音时才用（没语音就当场静音，等于丢内容）
-        // 试听（strict）不兜底：否则换了音色听起来还是系统音，等于没接线
-        const canBrowser = !job.strict && browserVoiceUsable()
-        if (canBrowser) speakViaBrowser(job.text).then(() => {
-          // 审计补丁：浏览器兜底可能念很久，念完时这一段可能已被停止/看门狗作废；
-          // 没有这道令牌守卫就会在停止后仍回调 onDone（说书锁被解开）并把状态回写成 listening。
-          if (myToken !== speakToken) return
-          finishJob(job)
-        })
-        else finishJob(job)
+        // 系统语音兜底 / 失败段跳过开关都在 ttsBrowserFallback 里（strict 试听不兜底）
+        ttsBrowserFallback(job, myToken)
         return
       }
+      // 合成成功：清零连败、解除冷却（限流恢复后不再用系统语音顶替）
+      ttsNoteSynthOk()
       try { opts.onSegment && opts.onSegment(job.text) } catch (e) { }
       const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
       // 先登记再建元素：new Audio 若抛错，下面 catch 里的 disposeTtsAudio 也能收回这个 URL
@@ -596,7 +724,7 @@ const asrAborts = new Set<AbortController>()
           try { diag.setTts({ failed: false, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
         } else {
           stats.ttsFail++
-          try { diag.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+          try { diag.setTts({ failed: true, reason: 'play', text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
         }
         finishJob(job)
       }
@@ -611,11 +739,11 @@ const asrAborts = new Set<AbortController>()
         // 播放没起来：先恢复麦克风再重试，别让麦一直关着（重试等待期间要能听见主人）
         if (!muted) micOn(true)
         stats.ttsFail++
-        try { diag.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+        try { diag.setTts({ failed: true, reason: 'play', text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
         try { a.onended = null; a.onerror = null } catch (e) { }
         revokeUrl(url)
         ttsAudio = null
-        // 播放被拒绝：先重试一次（换新音频元素），仍不行才用系统语音；没语音说明当场静音，记为丢失
+        // 播放被拒绝：先重试一次（换新音频元素），仍不行才降级；跳过开关与系统语音兜底同合成失败
         if (job.attempts < 1) {
           job.attempts++
           ttsQ.unshift(job)
@@ -623,12 +751,7 @@ const asrAborts = new Set<AbortController>()
           setTimeout(() => { if (myToken !== speakToken) return; try { pumpTts() } catch (e) { } }, 250)
           return
         }
-        const canBrowser2 = !job.strict && browserVoiceUsable()
-        if (canBrowser2) speakViaBrowser(job.text).then(() => {
-          if (myToken !== speakToken) return
-          finishJob(job)
-        })
-        else finishJob(job)
+        ttsBrowserFallback(job, myToken)
       })
     }).catch((e: any) => {
       // 兜底：建 Blob / objectURL / 音频元素或启动播放时的未预料异常不能把 ttsBusy 卡住
@@ -638,7 +761,7 @@ const asrAborts = new Set<AbortController>()
       ttsSynthAt = 0
       disposeTtsAudio()
       stats.ttsFail++
-      try { diag.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() }) } catch (e2) { }
+      try { diag.setTts({ failed: true, reason: 'exception', text: job.text.slice(0, 20), at: Date.now() }) } catch (e2) { }
       finishJob(job)
     })
   }
@@ -824,8 +947,10 @@ const asrAborts = new Set<AbortController>()
     // 停止也要释放 objectURL：否则每次「停止说话」都白留一段音频 Blob，直到刷新页面
     disposeTtsAudio()
     ttsBusy = false
+    // 退避窗口与系统语音心跳一起清：停止后不能再有迟到的重试/叠音
+    ttsNextRetryAt = 0
     // 系统语音兜底可能还在念：一起取消（Safari/Firefox 都支持 cancel）
-    try { const s: any = (window as any).speechSynthesis; if (s && typeof s.cancel === 'function') s.cancel() } catch (e) { }
+    stopBrowserSpeech()
     if (!muted) micOn(true)
     mutedUntil = Date.now() + ECHO_MUTE_MS
     // 没开麦时不能报「在听」：原来无条件 listening，菜单试听/停止后状态会假装麦克风开着

@@ -28,6 +28,13 @@ export type LocalRouteHost = {
   talkFor: (ms: number) => void
   story: StoryController
   storyState: StoryRefs
+  /**
+   * 打断上一轮还在跑的聊天请求（流式与普通 /chat 一起停）。
+   * 点播接住这条消息时调用：主人等回复期间点「背首诗／讲故事」，
+   * 旧回复不该继续等、更不该回来插进新内容里。
+   * 由 client.ts 注入（接 client/chat.ts 的 abortStream）；非必填，未注入时静默跳过。
+   */
+  abortChat?: () => void
 }
 
 export type LocalRouter = {
@@ -36,6 +43,17 @@ export type LocalRouter = {
 }
 
 export function createLocalRouter(host: LocalRouteHost): LocalRouter {
+  /**
+   * 接住这条消息 = 不再送模型：先把上一轮还在等的聊天请求打断。
+   * 不打断的话，等回复期间点「背首诗／讲个典故／说书」，旧回复回来照旧会
+   * 写进消息列表、写气泡、念出来，和新内容叠在一起。
+   * 每条消息最多从这里过一次（各分支 return 前调用）；abortChat 没接线时什么都不做。
+   */
+  function takeOver(): void {
+    if (!host.abortChat) return
+    try { host.abortChat() } catch (e) { }
+  }
+
   function fetchPoem(query: string, onItem: (p: any) => void): void {
     getJson('/poem' + query).then((d: any) => {
       const p = (d && d.ok && d.item) ? d.item : null
@@ -49,11 +67,13 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
 
     // 追问：接着念诗 / 接着说书（主人不必重新"点播"一次）
     if (/^(再来|再念|换)(一)?(首|个)/.test(t0)) {
+      takeOver()
       host.bubble('（点播）好，再念一首', 3000)
       fetchPoem('', (p) => recitePoem(host, p))
       return true
     }
     if (/^(继续|接着说|接着讲|往下讲)$/.test(t0)) {
+      takeOver()
       host.bubble('（点播）接着说', 3000)
       // 点播故事=要连播：同步写 localStorage，避免菜单显示「关」但实际自动接段
       try { host.storyState.auto.current = true; localStorage.setItem('chubby-story-auto', 'on') } catch (e) { }
@@ -63,6 +83,7 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
 
     // 报书名 / 报书单：本地列书单，不进模型（「报书名」是点播指令里唯一不带书名的那种）
     if (/^(报|说|列)(一下|下)?(书名|书单)$/.test(t0)) {
+      takeOver()
       host.bubble('（点播）本鲸数数书单…', 3000)
       getJson('/story/books', { cache: 'no-store' }).then((d: any) => {
         const books = (d && d.ok && Array.isArray(d.books))
@@ -76,6 +97,9 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
 
     const hit = detectIntent(rawText)
     if (!hit) return false
+    // 命中点播（念诗 / 典故 / 说书）后才打断旧聊天：没命中的消息照旧交给模型，
+    // 绝不能在这里提前 abort，否则普通提问会把自己的请求打断。
+    takeOver()
 
     if (hit.kind === 'poem') {
       host.bubble('（点播）好，念一首', 3000)

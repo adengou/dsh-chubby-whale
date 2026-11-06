@@ -15,10 +15,10 @@ export const TTS_WATCH_MS = 1000
 export const TTS_ZOMBIE_MS = 2500
 /** 朗读结束后继续闭麦/静音的时间（回声静音窗） */
 export const ECHO_MUTE_MS = 700
-/** 合成失败最多重试几次 */
-export const TTS_RETRY_MAX = 3
-/** 重试退避基数：第 n 次重试等 n * 300ms（300/600/900） */
-export const TTS_RETRY_BASE_MS = 300
+/** 合成失败最多重试几次（4 次：500 + 1000 + 2000 + 4000ms，总等待 7.5 秒） */
+export const TTS_RETRY_MAX = 4
+/** 重试退避基数：第 n 次重试等 500 * 2^(n-1)（500/1000/2000/4000） */
+export const TTS_RETRY_BASE_MS = 500
 
 export type TtsJob = {
   seq: number
@@ -36,9 +36,13 @@ export type TtsJob = {
   token?: number
 }
 
-/** 第 attempt 次重试的退避时长（attempt 从 1 开始） */
+/**
+ * 第 attempt 次重试的退避时长（attempt 从 1 开始）：指数退避 500 → 1000 → 2000 → 4000。
+ * 超出上限的 attempt 按最后一次算，保证总等待不会失控（4 次合计 7.5 秒）。
+ */
 export function ttsRetryDelayMs(attempt: number): number {
-  return TTS_RETRY_BASE_MS * Math.max(1, Math.floor(Number(attempt) || 1))
+  const n = Math.max(1, Math.floor(Number(attempt) || 1))
+  return TTS_RETRY_BASE_MS * Math.pow(2, Math.min(n, TTS_RETRY_MAX) - 1)
 }
 
 /**

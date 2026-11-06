@@ -909,6 +909,8 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
         talkFor,
         story,
         storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
+        // 点播（念诗/讲故事/讲典故）命中时打断进行中的聊天请求：不再等旧回复，也不会回来抢话
+        abortChat: () => { try { chat.abortStream() } catch (e) { } },
       })
 
 

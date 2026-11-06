@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.31";
+  var VERSION = "1.1.32";
 
   // src/client/styles.ts
   var W = 240;
@@ -2294,10 +2294,11 @@
   var TTS_WATCH_MS = 1e3;
   var TTS_ZOMBIE_MS = 2500;
   var ECHO_MUTE_MS = 700;
-  var TTS_RETRY_MAX = 3;
-  var TTS_RETRY_BASE_MS = 300;
+  var TTS_RETRY_MAX = 4;
+  var TTS_RETRY_BASE_MS = 500;
   function ttsRetryDelayMs(attempt) {
-    return TTS_RETRY_BASE_MS * Math.max(1, Math.floor(Number(attempt) || 1));
+    const n = Math.max(1, Math.floor(Number(attempt) || 1));
+    return TTS_RETRY_BASE_MS * Math.pow(2, Math.min(n, TTS_RETRY_MAX) - 1);
   }
   function narrationPauseFor(text) {
     const t = String(text || "").trim();
@@ -2424,6 +2425,43 @@
 
   // src/client/voice.ts
   var ASR_TIMEOUT_MS = 15e3;
+  var TTS_FAIL_COOLDOWN_K = 3;
+  var TTS_COOLDOWN_MS = 6e4;
+  var ttsFailGuard = { streak: 0, count: 0, cooldownUntil: 0 };
+  function ttsInCooldown(now = Date.now()) {
+    return ttsFailGuard.cooldownUntil > 0 && now < ttsFailGuard.cooldownUntil;
+  }
+  function ttsSyncDiag() {
+    try {
+      const w = window.__chubbyWhale || (window.__chubbyWhale = {});
+      w.ttsFailCount = ttsFailGuard.count;
+      w.ttsCooldownUntil = ttsFailGuard.cooldownUntil;
+    } catch (e) {
+    }
+  }
+  function ttsNoteSynthFail() {
+    const now = Date.now();
+    ttsFailGuard.count++;
+    ttsFailGuard.streak++;
+    if (ttsFailGuard.streak >= TTS_FAIL_COOLDOWN_K && !ttsInCooldown(now)) {
+      ttsFailGuard.cooldownUntil = now + TTS_COOLDOWN_MS;
+    }
+    ttsSyncDiag();
+    return ttsInCooldown(now);
+  }
+  function ttsNoteSynthOk() {
+    ttsFailGuard.streak = 0;
+    ttsFailGuard.cooldownUntil = 0;
+    ttsSyncDiag();
+  }
+  function ttsSkipFailOn() {
+    try {
+      if (typeof localStorage === "undefined" || !localStorage) return false;
+      return String(localStorage.getItem("chubby-tts-skip-fail") || "").trim().toLowerCase() === "on";
+    } catch (e) {
+      return false;
+    }
+  }
   function createVoice(opts) {
     const apiBase = opts.apiBase || "/api/chubby-whale";
     let voiceName = normalizeVoiceName(opts.voiceName || readStoredVoiceName());
@@ -2431,6 +2469,7 @@
     const ape = new Ape();
     const diag2 = createDiagSnapshots();
     const stats = createVoiceStats();
+    ttsSyncDiag();
     const statusHolder = createStatusHolder((s) => {
       try {
         opts.onStatus && opts.onStatus(s);
@@ -2466,6 +2505,8 @@
     let ttsProgressAt = 0;
     let ttsCurJob = null;
     let ttsWatch = null;
+    let ttsBrowserKeep = null;
+    let ttsNextRetryAt = 0;
     let mutedUntil = 0;
     let speakToken = 0;
     const level = () => {
@@ -2797,6 +2838,8 @@
         ttsCurJob = null;
         speakToken++;
         if (dead) dead.token = speakToken;
+        stopBrowserSpeech();
+        ttsNextRetryAt = 0;
         disposeTtsAudio();
         ttsSynthAt = 0;
         ttsProgressAt = 0;
@@ -2838,12 +2881,73 @@
         return r.arrayBuffer();
       }).catch((e) => {
         stats.lastError = "tts: " + String(e && e.name || e);
+        if (!(ctl && ctl.signal.aborted)) ttsNoteSynthFail();
         return null;
       }).finally(() => {
         if (ctl) ttsAborts.delete(ctl);
       });
     }
+    function keepBrowserProgress() {
+      if (ttsBrowserKeep) {
+        try {
+          clearInterval(ttsBrowserKeep);
+        } catch (e) {
+        }
+        ;
+        ttsBrowserKeep = null;
+      }
+      ttsProgressAt = Date.now();
+      ttsBrowserKeep = setInterval(() => {
+        ttsProgressAt = Date.now();
+      }, TTS_WATCH_MS);
+      return () => {
+        if (!ttsBrowserKeep) return;
+        try {
+          clearInterval(ttsBrowserKeep);
+        } catch (e) {
+        }
+        ttsBrowserKeep = null;
+      };
+    }
+    function stopBrowserSpeech() {
+      if (ttsBrowserKeep) {
+        try {
+          clearInterval(ttsBrowserKeep);
+        } catch (e) {
+        }
+        ;
+        ttsBrowserKeep = null;
+      }
+      try {
+        const s = window.speechSynthesis;
+        if (s && typeof s.cancel === "function") s.cancel();
+      } catch (e) {
+      }
+    }
+    function ttsBrowserFallback(job, myToken) {
+      const canBrowser = !job.strict && browserVoiceUsable();
+      if (job.strict || ttsSkipFailOn() || !canBrowser) {
+        finishJob(job);
+        return;
+      }
+      if (!muted) micOn(false);
+      const stopKeep = keepBrowserProgress();
+      speakViaBrowser(job.text).then(() => {
+        stopKeep();
+        if (myToken !== speakToken) return;
+        finishJob(job);
+      });
+    }
     function finishJob(j) {
+      if (ttsBrowserKeep) {
+        try {
+          clearInterval(ttsBrowserKeep);
+        } catch (e) {
+        }
+        ;
+        ttsBrowserKeep = null;
+      }
+      ttsNextRetryAt = 0;
       ttsBusy = false;
       if (ttsCurJob === j) ttsCurJob = null;
       ttsProgressAt = 0;
@@ -2868,8 +2972,12 @@
         pumpTts();
       }
     }
-    function pumpTts() {
+    function pumpTts(force) {
       if (ttsBusy) return;
+      if (ttsNextRetryAt > 0) {
+        if (!force && Date.now() < ttsNextRetryAt) return;
+        ttsNextRetryAt = 0;
+      }
       const job = ttsQ.shift();
       if (!job) {
         setStatus("listening");
@@ -2883,12 +2991,26 @@
       job.token = myToken;
       setStatus("speaking");
       stats.ttsRequests++;
+      if (ttsInCooldown() && job.attempts <= 0) {
+        ttsSynthAt = 0;
+        try {
+          diag2.setTts({ failed: true, reason: "cooldown", text: job.text.slice(0, 20), at: Date.now() });
+        } catch (e) {
+        }
+        if (ttsSkipFailOn()) {
+          finishJob(job);
+          return;
+        }
+        ttsBrowserFallback(job, myToken);
+        return;
+      }
       const cur = ttsPrefetch.get(job.seq) || synth(job);
       ttsSynthAt = Date.now();
       ttsPrefetch.delete(job.seq);
       const wants = prefetchTargets(ttsQ, job.narration);
       for (let i = 0; i < wants.length; i++) {
         const target = wants[i];
+        if (ttsInCooldown()) break;
         if (!ttsPrefetch.has(target.seq)) ttsPrefetch.set(target.seq, synth(target));
       }
       cur.then((buf) => {
@@ -2900,6 +3022,7 @@
             ttsQ.unshift(job);
             ttsBusy = false;
             const backoff = ttsRetryDelayMs(job.attempts);
+            ttsNextRetryAt = Date.now() + backoff;
             try {
               window.__chubbyWhale.ttsRetry = (window.__chubbyWhale.ttsRetry || 0) + 1;
             } catch (e) {
@@ -2907,7 +3030,7 @@
             setTimeout(() => {
               if (myToken !== speakToken) return;
               try {
-                pumpTts();
+                pumpTts(true);
               } catch (e) {
               }
             }, backoff);
@@ -2915,7 +3038,7 @@
           }
           stats.ttsFail++;
           try {
-            diag2.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() });
+            diag2.setTts({ failed: true, reason: "synth", text: job.text.slice(0, 20), at: Date.now() });
           } catch (e) {
           }
           try {
@@ -2925,14 +3048,10 @@
             if (w.ttsLost.length > 10) w.ttsLost.shift();
           } catch (e) {
           }
-          const canBrowser = !job.strict && browserVoiceUsable();
-          if (canBrowser) speakViaBrowser(job.text).then(() => {
-            if (myToken !== speakToken) return;
-            finishJob(job);
-          });
-          else finishJob(job);
+          ttsBrowserFallback(job, myToken);
           return;
         }
+        ttsNoteSynthOk();
         try {
           opts.onSegment && opts.onSegment(job.text);
         } catch (e) {
@@ -2973,7 +3092,7 @@
           } else {
             stats.ttsFail++;
             try {
-              diag2.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() });
+              diag2.setTts({ failed: true, reason: "play", text: job.text.slice(0, 20), at: Date.now() });
             } catch (e) {
             }
           }
@@ -2990,7 +3109,7 @@
           if (!muted) micOn(true);
           stats.ttsFail++;
           try {
-            diag2.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() });
+            diag2.setTts({ failed: true, reason: "play", text: job.text.slice(0, 20), at: Date.now() });
           } catch (e) {
           }
           try {
@@ -3013,12 +3132,7 @@
             }, 250);
             return;
           }
-          const canBrowser2 = !job.strict && browserVoiceUsable();
-          if (canBrowser2) speakViaBrowser(job.text).then(() => {
-            if (myToken !== speakToken) return;
-            finishJob(job);
-          });
-          else finishJob(job);
+          ttsBrowserFallback(job, myToken);
         });
       }).catch((e) => {
         try {
@@ -3030,7 +3144,7 @@
         disposeTtsAudio();
         stats.ttsFail++;
         try {
-          diag2.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() });
+          diag2.setTts({ failed: true, reason: "exception", text: job.text.slice(0, 20), at: Date.now() });
         } catch (e2) {
         }
         finishJob(job);
@@ -3256,11 +3370,8 @@
       }
       disposeTtsAudio();
       ttsBusy = false;
-      try {
-        const s = window.speechSynthesis;
-        if (s && typeof s.cancel === "function") s.cancel();
-      } catch (e) {
-      }
+      ttsNextRetryAt = 0;
+      stopBrowserSpeech();
       if (!muted) micOn(true);
       mutedUntil = Date.now() + ECHO_MUTE_MS;
       setStatus(running ? "listening" : "idle");
@@ -4038,6 +4149,29 @@
   }
   function registerCultureActions(table) {
     let lastCouplet = "";
+    let revealTimer = null;
+    function showCouplet(host, cat, withCat) {
+      if (!beginOnce("couplet", 6e3)) {
+        host.bubble("正在出对联，等本鲸揭晓～", 2e3);
+        return;
+      }
+      const c = pickCouplet(lastCouplet, cat);
+      lastCouplet = c.upper;
+      host.bubble((withCat ? "【" + c.cat + "】" : "") + "上联：" + c.upper + "（先对一对，本鲸 6 秒后揭晓下联）", 5600);
+      if (revealTimer) {
+        try {
+          clearTimeout(revealTimer);
+        } catch (e) {
+        }
+      }
+      revealTimer = setTimeout(() => {
+        revealTimer = null;
+        try {
+          host.bubble("下联：" + c.lower + "\n——" + c.source, 7e3);
+        } catch (e) {
+        }
+      }, 6e3);
+    }
     table.define("poem", (host) => {
       getJson("/poem").then((d) => {
         const p = d && d.ok && d.item ? d.item : null;
@@ -4165,26 +4299,10 @@
       }).catch(() => host.bubble("没查到"));
     });
     table.define("culture-couplet", (host) => {
-      const c = pickCouplet(lastCouplet);
-      lastCouplet = c.upper;
-      host.bubble("上联：" + c.upper + "（先对一对，本鲸 6 秒后揭晓下联）", 5600);
-      setTimeout(() => {
-        try {
-          host.bubble("下联：" + c.lower + "\n——" + c.source, 7e3);
-        } catch (e) {
-        }
-      }, 6e3);
+      showCouplet(host);
     });
     table.definePrefix("culture-couplet:", (host, cat) => {
-      const c = pickCouplet(lastCouplet, cat);
-      lastCouplet = c.upper;
-      host.bubble("【" + c.cat + "】上联：" + c.upper + "（先对一对，本鲸 6 秒后揭晓下联）", 5600);
-      setTimeout(() => {
-        try {
-          host.bubble("下联：" + c.lower + "\n——" + c.source, 7e3);
-        } catch (e) {
-        }
-      }, 6e3);
+      showCouplet(host, cat, true);
     });
     table.definePrefix("music:", (host, name) => {
       host.stopSpeak();
@@ -6373,6 +6491,13 @@
 
   // src/client/chat-route.ts
   function createLocalRouter(host) {
+    function takeOver() {
+      if (!host.abortChat) return;
+      try {
+        host.abortChat();
+      } catch (e) {
+      }
+    }
     function fetchPoem(query, onItem) {
       getJson("/poem" + query).then((d) => {
         const p = d && d.ok && d.item ? d.item : null;
@@ -6386,11 +6511,13 @@
     function route(rawText) {
       const t0 = String(rawText || "").trim();
       if (/^(再来|再念|换)(一)?(首|个)/.test(t0)) {
+        takeOver();
         host.bubble("（点播）好，再念一首", 3e3);
         fetchPoem("", (p) => recitePoem(host, p));
         return true;
       }
       if (/^(继续|接着说|接着讲|往下讲)$/.test(t0)) {
+        takeOver();
         host.bubble("（点播）接着说", 3e3);
         try {
           host.storyState.auto.current = true;
@@ -6401,6 +6528,7 @@
         return true;
       }
       if (/^(报|说|列)(一下|下)?(书名|书单)$/.test(t0)) {
+        takeOver();
         host.bubble("（点播）本鲸数数书单…", 3e3);
         getJson("/story/books", { cache: "no-store" }).then((d) => {
           const books = d && d.ok && Array.isArray(d.books) ? d.books.map((b) => String(b || "").trim()).filter(Boolean) : [];
@@ -6414,6 +6542,7 @@
       }
       const hit = detectIntent(rawText);
       if (!hit) return false;
+      takeOver();
       if (hit.kind === "poem") {
         host.bubble("（点播）好，念一首", 3e3);
         fetchPoem(hit.title || "" ? "?title=" + encodeURIComponent(hit.title || "") : "", (p) => recitePoem(host, p));
@@ -8728,7 +8857,14 @@
           clearNarrate: clearNarrating,
           talkFor,
           story,
-          storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef }
+          storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
+          // 点播（念诗/讲故事/讲典故）命中时打断进行中的聊天请求：不再等旧回复，也不会回来抢话
+          abortChat: () => {
+            try {
+              chat.abortStream();
+            } catch (e) {
+            }
+          }
         });
         const chatRef = hookApi.useLazyRef(() => createChatSender({
           persona,

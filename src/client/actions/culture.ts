@@ -81,6 +81,28 @@ function finishSpeech(host: ActionHost, doneText: string): void {
 export function registerCultureActions(table: ActionTable<ActionHost>): void {
   // 上一副对联放在闭包里：模块级单例会在"重复注册/测试多实例"之间串味
   let lastCouplet = ''
+  // 「6 秒后揭晓下联」的定时器只留一个：同一时刻只允许有一条待揭晓，
+  // 旧实现每次点击各排一个，连点两下就会先后冒出两副下联。
+  let revealTimer: any = null
+
+  /**
+   * 出对联（随机／按分类共用一份）：
+   *   · 连点用 beginOnce 挡在 6 秒揭晓窗口内，第二下只提示、不排队；
+   *   · 揭晓定时器同一时刻只留一个，万一漏进来第二下也只是换一副，
+   *     不会出现「上联 A、上联 B、下联 B、下联 A」这种两副同时揭晓。
+   * withCat 只控制气泡前缀：按分类点播保留【分类】，随机一副保持原样。
+   */
+  function showCouplet(host: ActionHost, cat?: string, withCat?: boolean): void {
+    if (!beginOnce('couplet', 6000)) { host.bubble('正在出对联，等本鲸揭晓～', 2000); return }
+    const c = pickCouplet(lastCouplet, cat)
+    lastCouplet = c.upper
+    host.bubble((withCat ? '【' + c.cat + '】' : '') + '上联：' + c.upper + '（先对一对，本鲸 6 秒后揭晓下联）', 5600)
+    if (revealTimer) { try { clearTimeout(revealTimer) } catch (e) { } }
+    revealTimer = setTimeout(() => {
+      revealTimer = null
+      try { host.bubble('下联：' + c.lower + '\n——' + c.source, 7000) } catch (e) { }
+    }, 6000)
+  }
   // —— 念首诗 ——
   table.define('poem', (host) => {
     getJson('/poem').then((d: any) => {
@@ -174,20 +196,10 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
     }).catch(() => host.bubble('没查到'))
   })
 
-  table.define('culture-couplet', (host) => {
-    const c = pickCouplet(lastCouplet)
-    lastCouplet = c.upper
-    host.bubble('上联：' + c.upper + '（先对一对，本鲸 6 秒后揭晓下联）', 5600)
-    setTimeout(() => { try { host.bubble('下联：' + c.lower + '\n——' + c.source, 7000) } catch (e) { } }, 6000)
-  })
+  table.define('culture-couplet', (host) => { showCouplet(host) })
 
   // —— 出个对联（按分类）：culture-couplet:<分类> ——
-  table.definePrefix('culture-couplet:', (host, cat) => {
-    const c = pickCouplet(lastCouplet, cat)
-    lastCouplet = c.upper
-    host.bubble('【' + c.cat + '】上联：' + c.upper + '（先对一对，本鲸 6 秒后揭晓下联）', 5600)
-    setTimeout(() => { try { host.bubble('下联：' + c.lower + '\n——' + c.source, 7000) } catch (e) { } }, 6000)
-  })
+  table.definePrefix('culture-couplet:', (host, cat) => { showCouplet(host, cat, true) })
   // —— 弹首曲子：先停朗读，再弹；弹完顺带说一句（带自检记录）——
   table.definePrefix('music:', (host, name) => {
     host.stopSpeak()
