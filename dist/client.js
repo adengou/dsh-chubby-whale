@@ -2821,21 +2821,53 @@
   var DEFAULT_MAX_EDGE = 1280;
   var DEFAULT_QUALITY = 0.85;
   var KEEP_RAW_BELOW = 400 * 1024;
+  var READ_TIMEOUT_MS = 3e4;
   function readFileAsDataUrl(file) {
     return new Promise((resolve) => {
+      let done = false;
+      let timer = null;
+      let fr = null;
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        if (timer) {
+          try {
+            clearTimeout(timer);
+          } catch (e) {
+          }
+          timer = null;
+        }
+        try {
+          if (fr) {
+            fr.onloadend = null;
+            fr.onerror = null;
+            fr.onabort = null;
+          }
+        } catch (e) {
+        }
+        resolve(value);
+      };
       try {
-        const fr = new FileReader();
+        fr = new FileReader();
         fr.onloadend = () => {
           try {
-            resolve(String(fr.result || ""));
+            finish(String(fr.result || ""));
           } catch (e) {
-            resolve("");
+            finish("");
           }
         };
-        fr.onerror = () => resolve("");
+        fr.onerror = () => finish("");
+        fr.onabort = () => finish("");
+        timer = setTimeout(() => {
+          try {
+            if (fr && typeof fr.abort === "function") fr.abort();
+          } catch (e) {
+          }
+          finish("");
+        }, READ_TIMEOUT_MS);
         fr.readAsDataURL(file);
       } catch (e) {
-        resolve("");
+        finish("");
       }
     });
   }
