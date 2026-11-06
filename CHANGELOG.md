@@ -2,7 +2,30 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
-## [未发布]（Gitee 工作区，2026-11-05 → 11-06）
+## [未发布]
+
+## [1.1.0] - 2026-11-06
+
+### 行为修复
+- 流式聊天补齐亲密度/经验/长期记忆摘要（客户端优先走 /chat-stream，此前日常聊天几乎不记账）
+- 说书 reset 只接受书单内书名、多客户端队列 LRU+TTL、坏书负缓存
+- 每日一句日期按日序号比较（修 `2026-9-30` 误判）、非补零日期容错、缺行自动跳过
+- 备份导入：坏 JSON 返回 400、原型污染防护、字段上限、心境走 CORE_GUARD
+
+### 架构
+- index.ts 只做组装：人设抽到 `host/persona.ts`、迁移抽到 `host/migrate.ts`
+- `backup.ts`/`personality.ts`/`tts-engine.ts` 拆分子模块，模块只暴露接口
+- 模块边界检查（反向依赖/深引用/路由越界/client 循环）+ 接口清单 `--check` 接入测试
+
+### 跨平台
+- TTS Python 解释器探测（win: python→py -3→python3；linux/macOS: python3→python）与超时 kill
+- 原子写 rename 重试、POSIX 0600/0700、BOM 容错、坏文件隔离名跨平台安全
+- 新增 `scripts/platform-check.mjs`（21 项平台检查）
+
+### 质量与体积
+- `npm test` 前置 host/client 双 tsc；聊天限额/安全测试 59 条并入
+- 客户端包 301,390 → 255,053 B（-15.4%）：菜单工厂化、对联元组化、诗题索引改 host 按需下发
+（Gitee 工作区，2026-11-05 → 11-06）
 
 这一轮迭代只推 Gitee（npm/GitHub 冻结在 1.0.1），重点是语音体感、数据正确性与回归防线。
 

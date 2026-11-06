@@ -15,7 +15,8 @@ import { join } from 'node:path'
 import { sendJson } from '../respond.js'
 
 export function createPoemTitlesHandler(opts: { dataDir?: string }) {
-  const FILE = join(opts.dataDir || '.', 'poem-titles.json')
+  // 生产装配（index.ts）总会传 DATA_DIR；这里兜底用 cwd/data（与 client seedFromDisk 的查找出发点一致）
+  const FILE = join(opts.dataDir || join(process.cwd(), 'data'), 'poem-titles.json')
   /** 成功读到的标题（只缓存成功结果：文件后来补上时不用重启就能恢复） */
   let cached: string[] | null = null
 

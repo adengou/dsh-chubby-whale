@@ -87,14 +87,24 @@ function seedFromDisk(): string[] {
     const fs = proc.getBuiltinModule('node:fs')
     const nodePath = proc.getBuiltinModule('node:path')
     if (!fs || !nodePath) return []
-    const raw = fs.readFileSync(nodePath.join(proc.cwd(), 'data', 'poem-titles.json'), 'utf8')
-    const data = JSON.parse(String(raw).replace(/^\uFEFF/, ''))
-    return Array.isArray(data && data.titles) ? data.titles : []
+    // 单测可能从任意 cwd 启动：从 cwd 逐级向上找 data/poem-titles.json（最多 4 层，找到即用）
+    let dir = proc.cwd()
+    for (let i = 0; i < 4; i++) {
+      const candidate = nodePath.join(dir, 'data', 'poem-titles.json')
+      try {
+        const raw = fs.readFileSync(candidate, 'utf8')
+        const data = JSON.parse(String(raw).replace(/^\uFEFF/, ''))
+        return Array.isArray(data && data.titles) ? data.titles : []
+      } catch { /* 这一层没有，继续向上 */ }
+      const parent = nodePath.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+    return []
   } catch {
     return []
   }
 }
-
 /** 同步读缓存：空数组 = 尚未就绪（调用方应跳过诗名匹配，不要在这里等网络） */
 export function poemTitles(): readonly string[] {
   return cache

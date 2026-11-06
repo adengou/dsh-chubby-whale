@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.0.1";
+  var VERSION = "1.1.0";
 
   // src/client/styles.ts
   var W = 240;
@@ -5370,9 +5370,20 @@
       const fs = proc.getBuiltinModule("node:fs");
       const nodePath = proc.getBuiltinModule("node:path");
       if (!fs || !nodePath) return [];
-      const raw = fs.readFileSync(nodePath.join(proc.cwd(), "data", "poem-titles.json"), "utf8");
-      const data = JSON.parse(String(raw).replace(/^\uFEFF/, ""));
-      return Array.isArray(data && data.titles) ? data.titles : [];
+      let dir = proc.cwd();
+      for (let i = 0; i < 4; i++) {
+        const candidate = nodePath.join(dir, "data", "poem-titles.json");
+        try {
+          const raw = fs.readFileSync(candidate, "utf8");
+          const data = JSON.parse(String(raw).replace(/^\uFEFF/, ""));
+          return Array.isArray(data && data.titles) ? data.titles : [];
+        } catch {
+        }
+        const parent = nodePath.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+      return [];
     } catch {
       return [];
     }
