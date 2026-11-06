@@ -55,6 +55,8 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     }
     if (/^(继续|接着说|接着讲|往下讲)$/.test(t0)) {
       host.bubble('（点播）接着说', 3000)
+      // 点播故事=要连播：同步写 localStorage，避免菜单显示「关」但实际自动接段
+      try { host.storyState.auto.current = true; localStorage.setItem('chubby-story-auto', 'on') } catch (e) { }
       host.story.start(host.storyState.book.current || '')
       return true
     }

@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.30";
+  var VERSION = "1.1.31";
 
   // src/client/styles.ts
   var W = 240;
@@ -6392,6 +6392,11 @@
       }
       if (/^(继续|接着说|接着讲|往下讲)$/.test(t0)) {
         host.bubble("（点播）接着说", 3e3);
+        try {
+          host.storyState.auto.current = true;
+          localStorage.setItem("chubby-story-auto", "on");
+        } catch (e) {
+        }
         host.story.start(host.storyState.book.current || "");
         return true;
       }
@@ -8850,7 +8855,10 @@
                 window.__chubbyWhale.ttsSkip = "voice-off";
               } catch (e) {
               }
-              ;
+              try {
+                if (o && typeof o.onDone === "function") o.onDone();
+              } catch (e) {
+              }
               return;
             }
           } catch (e) {

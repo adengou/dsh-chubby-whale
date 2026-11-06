@@ -1016,7 +1016,15 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
 
       // ---- 旧调用点兼容层：全部转到新模块 ----
       function speakText(text: string, o?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
-        try { if (localStorage.getItem('chubby-voice') === 'off') { try { (window as any).__chubbyWhale.ttsSkip = 'voice-off' } catch (e) { } ; return } } catch (e) { }
+        try {
+          if (localStorage.getItem('chubby-voice') === 'off') {
+            try { (window as any).__chubbyWhale.ttsSkip = 'voice-off' } catch (e) { }
+            // 语音关着：不合成，但仍要通知调用方「说完了」——文化类朗读的收尾（「讲完啦」、清叙述锁）靠 onDone，
+            // 原来直接 return 会让语音关闭时永远没有收尾
+            try { if (o && typeof o.onDone === 'function') o.onDone() } catch (e) { }
+            return
+          }
+        } catch (e) { }
         bridge.speak(text, o)
       }
       function stopTts(): void {
