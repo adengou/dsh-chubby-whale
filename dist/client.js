@@ -1,16 +1,27 @@
 (() => {
   // src/shared/immutable.ts
-  function deepFreeze(value) {
+  function freezeInto(value, seen) {
     if (value === null || typeof value !== "object") return value;
-    const obj = value;
-    if (Object.isFrozen(obj)) return value;
-    Object.freeze(obj);
-    if (Array.isArray(obj)) {
-      for (const v of obj) deepFreeze(v);
-    } else if (Object.prototype.toString.call(obj) === "[object Object]") {
-      for (const k of Object.keys(obj)) deepFreeze(obj[k]);
+    if (seen.has(value)) return value;
+    seen.add(value);
+    const tag = Object.prototype.toString.call(value);
+    Object.freeze(value);
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) freezeInto(value[i], seen);
+    } else if (tag === "[object Map]") {
+      for (const [k, v] of value) {
+        freezeInto(k, seen);
+        freezeInto(v, seen);
+      }
+    } else if (tag === "[object Set]") {
+      for (const v of value) freezeInto(v, seen);
+    } else if (tag === "[object Object]") {
+      for (const k of Reflect.ownKeys(value)) freezeInto(value[k], seen);
     }
     return value;
+  }
+  function deepFreeze(value) {
+    return freezeInto(value, /* @__PURE__ */ new WeakSet());
   }
 
   // src/client/version.ts
@@ -1085,7 +1096,7 @@
   var INTERRUPT_WORDS = ["停", "别", "不", "闭嘴", "打住"];
   deepFreeze(INTERRUPT_WORDS);
   function normalizeNoiseKey(text) {
-    return String(text == null ? "" : text).replace(/\s+/g, "").replace(/[。，、！？；：,.!?;:…~～·""''（）()【】\[\]]/g, "").toLowerCase();
+    return String(text == null ? "" : text).normalize("NFKC").replace(/[\u200b-\u200f\u2060\ufeff]/g, "").replace(/\s+/g, "").replace(/[。，、！？；：,.!?;:…~～·""''（）()【】\[\]「」『』《》〈〉"'`]/g, "").toLowerCase();
   }
   function isNoiseText(text) {
     const k = normalizeNoiseKey(text);
@@ -1093,7 +1104,7 @@
     if (isInterruptWord(k)) return false;
     if (k.length <= 1) return true;
     if (NOISE_TEXTS.indexOf(k) >= 0) return true;
-    if (k.length <= 6 && /^([\u4e00-\u9fa5])\1{2,}$/.test(k)) return true;
+    if (/^([\u4e00-\u9fa5])\1{2,}$/.test(k)) return true;
     return false;
   }
   function isInterruptWord(text) {
@@ -1210,13 +1221,6 @@
   // src/client/voice/fetch.ts
   async function fetchWithTimeout(url, init, ms2, outer) {
     const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
-    const timer = ctl ? setTimeout(() => {
-      try {
-        ctl.abort();
-      } catch (e) {
-      }
-    }, ms2) : null;
-    let sig = ctl ? ctl.signal : void 0;
     const forwardOuter = () => {
       try {
         if (ctl) ctl.abort();
@@ -1224,6 +1228,22 @@
       }
     };
     let hooked = false;
+    const unhook = () => {
+      if (!hooked) return;
+      hooked = false;
+      try {
+        if (outer) outer.removeEventListener("abort", forwardOuter);
+      } catch (e) {
+      }
+    };
+    const timer = ctl ? setTimeout(() => {
+      unhook();
+      try {
+        ctl.abort();
+      } catch (e) {
+      }
+    }, ms2) : null;
+    let sig = ctl ? ctl.signal : void 0;
     if (outer && ctl) {
       const AnySig = AbortSignal;
       if (typeof AnySig.any === "function") {
@@ -1247,15 +1267,21 @@
       sig = outer;
     }
     try {
-      return await fetch(url, sig ? { ...init, signal: sig } : init);
-    } finally {
-      if (timer) clearTimeout(timer);
-      if (hooked) {
+      const resp = await fetch(url, sig ? { ...init, signal: sig } : init);
+      try {
+        if (timer && typeof timer.unref === "function") timer.unref();
+      } catch (e) {
+      }
+      return resp;
+    } catch (e) {
+      unhook();
+      if (timer) {
         try {
-          outer.removeEventListener("abort", forwardOuter);
-        } catch (e) {
+          clearTimeout(timer);
+        } catch (e2) {
         }
       }
+      throw e;
     }
   }
 
@@ -1273,9 +1299,21 @@
   ];
   deepFreeze(TTS_VOICES);
   var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
+  var VOICE_BY_KEY = (() => {
+    const m = /* @__PURE__ */ new Map();
+    for (const v of TTS_VOICES) m.set(v.toLowerCase(), v);
+    return m;
+  })();
   function normalizeVoiceName(name, fallback = DEFAULT_VOICE) {
-    const n = str(name).trim();
-    return TTS_VOICES.indexOf(n) >= 0 ? n : fallback;
+    let n = "";
+    try {
+      n = str(name).trim();
+    } catch (e) {
+      return fallback;
+    }
+    if (!n) return fallback;
+    const hit = VOICE_BY_KEY.get(n.toLowerCase());
+    return hit || fallback;
   }
   function readStoredVoiceName() {
     try {
@@ -9496,6 +9534,10 @@
           }
           resetNarration();
           bridge.stopSpeak();
+          try {
+            melody.stop();
+          } catch (e) {
+          }
           try {
             storyBusyRef.current = false;
           } catch (e) {

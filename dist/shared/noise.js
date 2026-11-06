@@ -20,11 +20,21 @@ deepFreeze(NOISE_TEXTS);
  */
 export const INTERRUPT_WORDS = ['停', '别', '不', '闭嘴', '打住'];
 deepFreeze(INTERRUPT_WORDS);
-/** 归一化：去空白与标点、统一小写 */
+/**
+ * 归一化：NFKC（全角→半角、兼容字符折叠）→ 去零宽 → 去空白与标点 → 统一小写。
+ *
+ * 为什么要 NFKC（2026-11-07 修）：识别服务会吐半角片假名标点，`｡`（U+FF61）不在中文
+ * 标点表里，于是「嗯｡」归一化后还剩两个字 → 单字规则失效、被当成真话送进模型；
+ * 「停｡」更糟：认不出是打断词，喊停掐不掉朗读。NFKC 把 ｡ → 。、＂ → "、Ａ → A、
+ * ～ → ~，再统一小写，全角脏值才不会各说各话。
+ * 零宽字符（\u200b-\u200f / \u2060 / BOM）同理：不删就会把单字撑成两个字。
+ */
 export function normalizeNoiseKey(text) {
     return String(text == null ? '' : text)
+        .normalize('NFKC')
+        .replace(/[\u200b-\u200f\u2060\ufeff]/g, '')
         .replace(/\s+/g, '')
-        .replace(/[。，、！？；：,.!?;:…~～·""''（）()【】\[\]]/g, '')
+        .replace(/[。，、！？；：,.!?;:…~～·""''（）()【】\[\]「」『』《》〈〉"'`]/g, '')
         .toLowerCase();
 }
 /**
@@ -33,7 +43,8 @@ export function normalizeNoiseKey(text) {
  *   ⓪ 打断词（停/别/不/闭嘴/打住）先放行——它们和单字气口同形但语义相反
  *   ① 归一化后为空，或只有一个字符（"嗯"「啊」这类气口）
  *   ② 命中噪声词表
- *   ③ 同一个字重复 ≥3 次且整句很短（"嗯嗯嗯嗯"）
+ *   ③ 整句只有一个字重复 ≥3 次（"嗯嗯嗯…"）：不设总长上限
+ *      —— 旧实现卡在 length<=6，"啊"重复 7 次反而逃脱，越像气口越判成真话，是反直觉的漏洞
  */
 export function isNoiseText(text) {
     const k = normalizeNoiseKey(text);
@@ -45,7 +56,7 @@ export function isNoiseText(text) {
         return true;
     if (NOISE_TEXTS.indexOf(k) >= 0)
         return true;
-    if (k.length <= 6 && /^([\u4e00-\u9fa5])\1{2,}$/.test(k))
+    if (/^([\u4e00-\u9fa5])\1{2,}$/.test(k))
         return true;
     return false;
 }

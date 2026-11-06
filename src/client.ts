@@ -1134,6 +1134,10 @@ import { evPrevent, evStop } from './client/util.js'
         // 停止朗读 = 权威清锁：不认持有者，连长段探针一起撤（卸载也会走这里，不许留悬挂 timer）
         resetNarration()
         bridge.stopSpeak()
+        // 琴声也要停：扬声器同一时刻只能播一段（docs/并发纪律.md §二）。
+        // 原来只有「暂停/关音乐」和卸载会停琴，于是「弹琴中来 P0 提问」会变成 TTS 与琴声同时响。
+        // 反方向（弹琴前先停朗读）culture.ts 已经做了，这里补齐另一半（2026-11-07 B91 审计）。
+        try { melody.stop() } catch (e) { }
         // 说书锁也一起放：stopSpeaking 作废了当前段，它原本的 onDone 不会再来，
         // storyBusy 卡在 true 的话「接着说 / 说书」会永远回"正讲着呢"。
         try { storyBusyRef.current = false } catch (e) { }
