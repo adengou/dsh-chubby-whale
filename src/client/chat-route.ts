@@ -10,6 +10,7 @@
  *   · 有问号、「为什么/怎么/如何」、或太长（>30 字）的一律交给模型
  */
 
+import { setStoryAuto } from './story-auto.js'
 import { getJson } from './http.js'
 import { detectIntent } from './intent.js'
 import { collapseText } from './text.js'
@@ -76,7 +77,7 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
       takeOver()
       host.bubble('（点播）接着说', 3000)
       // 点播故事=要连播：同步写 localStorage，避免菜单显示「关」但实际自动接段
-      try { host.storyState.auto.current = true; localStorage.setItem('chubby-story-auto', 'on') } catch (e) { }
+      try { host.storyState.auto.current = true; setStoryAuto(true) } catch (e) { }
       host.story.start(host.storyState.book.current || '')
       return true
     }

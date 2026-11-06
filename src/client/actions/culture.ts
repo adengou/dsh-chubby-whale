@@ -6,6 +6,7 @@
  */
 
 
+import { hasStoryAutoStorage, isStoryAutoOn, setStoryAuto } from '../story-auto.js'
 import type { ActionHost, ActionTable } from '../actions.js'
 import { getJson } from '../http.js'
 import { estimateMelodySeconds } from '../melody.js'
@@ -130,18 +131,18 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
    * 退回内存值 —— 那种环境本来就没有持久化，至少让开关改得动，气泡按实际值说。
    */
   function storyAutoPref(host: ActionHost): boolean {
-    try {
-      const s = localStorage.getItem('chubby-story-auto')
-      return s === null ? true : s !== '0'
-    } catch (e) {
+    // 读侧统一走 story-auto.ts（兼容历史脏值 'on'/'1'）；禁存储时才退回内存值
+    if (!hasStoryAutoStorage()) {
+      // 禁存储/隐私模式：退回内存里的一次性开关（否则「开」会被当成真实值，点一下方向会反）
       return host && host.storyState && host.storyState.auto ? !!host.storyState.auto.current : true
     }
+    return isStoryAutoOn()
   }
   // 连播开关：默认开（主人要求）；关掉后一段讲完就停，状态记在 localStorage
   table.define('story-auto', (host: ActionHost) => {
     const next = !storyAutoPref(host)
     try { if (host.storyState && host.storyState.auto) host.storyState.auto.current = next } catch (e) { }
-    try { localStorage.setItem('chubby-story-auto', next ? '1' : '0') } catch (e) { }
+    setStoryAuto(next)
     host.bubble(next ? '连播：开——讲完这段自动接下一段' : '连播：关——讲完这段就停', 4000)
   })
   // 叙述语速：菜单里选一档，立即生效（典故/成语/讲东西都用它）
