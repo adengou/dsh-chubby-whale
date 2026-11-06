@@ -4,6 +4,27 @@
 
 ## [未发布]
 
+## [1.1.69] - 2026-11-07
+
+### 修复
+- **说书进度「先记后播」**：`pickNext` 在响应返回前就记「已讲」；客户端 25s 超时放弃（服务端冷读 30s）时，
+  用户没听到的那段被跳过。改为「先内存预约、响应 `finish` 后 `confirm` 才落盘」；`close/error/写前 destroyed` → `discard`，
+  被丢弃的 `next` 段塞回该客户端队首。**关键事实**：服务端后写时 `res.end()` 会把 `writableFinished` 置真却**不发 finish 事件**，
+  所以只能认 `finish` + `destroyed`，不能认 `writableFinished`
+
+### 新增
+- **内部模型用量进鱼账本**：后台长期记忆摘要、人格学习（L2）、人格自写（L3）三类调用此前完全没记账，
+  账本金额低于真实账单。现在三处拿到 `usage` 后按与聊天相同的口径记拆分与人民币（`kind=summary/personality`，
+  **缺拆分不记金额**），装配层通过注入式 `ledger` 端口接线
+
+### 重构
+- `routes/story.ts` 删掉值级兼容导出 `STORY_AUTHORS`（薄 HTTP 路由不再携带播放器业务数据，全仓零引用），
+  并在回归里加断言「谁加回来谁红」
+
+### 测试
+- 新增 `test-internal-usage.mjs`(77，含装配接线断言) 接入 `npm test`；`test-story-player` 57→66、`test-story-host` 108→117
+- 全链 **4383 项 0 失败**（`node tools/test-count.mjs`：61 个套件，失败 0，未识别 0）
+
 ## [1.1.68] - 2026-11-07
 
 ### 新增：鱼账本（真实 token 明细 + 人民币估算）
