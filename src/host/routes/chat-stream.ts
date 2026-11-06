@@ -19,9 +19,12 @@
  *   · 命中缓存：直接发一条 delta + done(cached:true)
  *   · 未命中：边转发边累积，结束时写缓存、写记忆、记 token；半截（中断/客户端断开）一律不落盘。
  *
- * 已知差异（端口层没给能力，不是本文件遗漏）：本路由不写亲密度/经验、不触发长期记忆摘要，
- * 因为 ChatStreamRouteDeps 没有 loadState/saveState/addExp/saveMemorySummary，index.ts 也没注入。
- * 要补齐得同时改 host/ports.ts 与 src/index.ts（两者的装配口径），不能在路由里绕过端口直连 store。
+ * 记账口径（2026-11-06 起与普通 /chat 一致）：
+ *   · 成功回复：亲密度 +1、经验 +1（可升级）、appendTurns、token、onReply；
+ *   · 完整回复第 10 次触发长期记忆摘要（写回前做代际校验，/clear-memory 后不复活旧记忆）；
+ *   · 缓存命中：只加亲密度，不加经验、不写记忆、不 onReply；
+ *   · 半截/中断/客户端断开：一律不落盘、不记账。
+ * 依赖由 index.ts 装配注入（loadState/saveState/addExp/saveMemorySummary）；路由不绕过端口直连 store。
  *
  * 超时语义（2026-11-05 起）：
  *   · 30s 是**空闲超时**——每收到一段上游数据就重置，模型还在吐字就不算超时；
