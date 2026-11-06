@@ -462,6 +462,7 @@ try {
     reminders: { handleReminders: fn },
     culture: { handleCulture: fn, handleMelodies: fn, handleMelody: fn },
     poem: { handlePoem: fn },
+    poemTitles: { handlePoemTitles: fn },
     briefing: { handleBriefing: fn },
     tts: fn, asr: fn,
     personality: { handlePersonality: fn, handleRevert: fn },

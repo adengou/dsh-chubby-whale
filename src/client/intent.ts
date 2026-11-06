@@ -8,10 +8,14 @@
  *   · 只有明确的点播指令才走本地（讲故事 / 背诗 / 讲典故 / 报书名）
  *   · 只要句子里有问号、"为什么/怎么/如何"，一律交给模型，不劫持
  *   · 太长的一句（>30 字）也不劫持——那多半是在说话，不是在点播
+ *
+ * 诗名索引不在本文件里：634 个标题约 11 KB，改由 host 按需下发
+ * （client/poem-titles.ts 负责拉取与缓存）。detectIntent 保持同步——
+ * 标题没就绪时跳过诗名匹配、只认泛化意图，后台预热完成后下次调用即可点名诗。
  */
 
-import poemTitleData from '../../data/poem-titles.json' with { type: 'json' }
 import { deepFreeze } from '../shared/immutable.js'
+import { ensurePoemTitles, poemTitles } from './poem-titles.js'
 
 export type Intent =
   | { kind: 'poem'; title?: string }
@@ -41,17 +45,14 @@ export const BOOK_ALIAS: Array<[RegExp, string]> = [
 ]
 deepFreeze(BOOK_ALIAS)
 
-/** 诗名索引（按长度降序，保证「雨霖铃」优先于「雨」这类短名） */
-const POEM_TITLES: string[] = ((poemTitleData as any).titles || []).slice().sort((a: string, b: string) => b.length - a.length)
-
 /** 判断"整句就是诗名/书名"时去掉空白与标点（两处共用一份字符集） */
 const BARE_STRIP = /[\s。，！？、,.!?…~～]/g
 
-/** 从一句话里认出诗名（认不出返回空串） */
+/** 从一句话里认出诗名（认不出返回空串；标题未就绪时按认不出处理） */
 export function matchPoemTitle(text: string): string {
   const t = String(text || '')
   if (!t) return ''
-  for (const title of POEM_TITLES) {
+  for (const title of poemTitles()) {
     if (title.length >= 2 && t.indexOf(title) >= 0) return title
   }
   return ''
@@ -71,6 +72,9 @@ export function detectIntent(rawText: string): Intent {
   // ① 点名要某首诗：按标题取（"背雨霖铃""来首水调歌头"）。
   //    注意：诗名里有大量日常词（梅花/风雨/落花/春思/锦瑟…），只凭"句子里出现诗名"就劫持，
   //    会把「梅花开了」「落花人独立」这类普通陈述抢去念诗。必须有"点播动词"或整句就是诗名才算。
+  //    标题索引是 host 按需下发的：第一次走到这里发起后台预热（不 await，同步函数不能等网络）；
+  //    本次未就绪就跳过诗名匹配，下面 ②③④ 的泛化意图不受影响。
+  if (poemTitles().length === 0) ensurePoemTitles()
   const byTitle = matchPoemTitle(t)
   if (byTitle) {
     const bare = t.replace(BARE_STRIP, '')

@@ -38,6 +38,7 @@ import { createMiscHandlers } from './host/routes/misc.js'
 import { createReminderHandlers } from './host/routes/reminders.js'
 import { createCultureHandlers } from './host/routes/culture.js'
 import { createPoemHandler } from './host/routes/poem.js'
+import { createPoemTitlesHandler } from './host/routes/poem-titles.js'
 import { createBriefingHandlers } from './host/routes/briefing.js'
 import { createTtsHandler } from './host/routes/tts.js'
 import { createAsrHandler } from './host/routes/asr.js'
@@ -256,6 +257,8 @@ export function apply(ctx: any, rawConfig?: any): void {
   })
   const culture = createCultureHandlers({ dataDir: DATA_DIR, runtimeDir: RUNTIME_DIR, dataPort })
   const poem = createPoemHandler({ runtimeDir: RUNTIME_DIR, dataDir: DATA_DIR, dataPort })
+  // 诗名索引：客户端点诗识别按需拉取（数据是包内只读文件，读一次后进程内缓存）
+  const poemTitles = createPoemTitlesHandler({ dataDir: DATA_DIR })
   const briefing = createBriefingHandlers({
     loadGrowth: store.loadGrowth,
     loadReminders: store.loadReminders,
@@ -311,7 +314,7 @@ export function apply(ctx: any, rawConfig?: any): void {
 
   // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
   const routeTable = createRouteTable({
-    misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, briefing, tts, asr, personality: personalityRoutes,
+    misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles, briefing, tts, asr, personality: personalityRoutes,
     daily, backup, stats,
   })
 

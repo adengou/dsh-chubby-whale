@@ -1,6 +1,7 @@
 /**
  * host/routes/chat.ts —— 聊天路由（可复用模块）
- * 外呼统一走 host/http.ts：主聊天 30 秒、记忆摘要 20 秒（后台跑，不吊住回复）；请求体上限 6MB
+ * 外呼统一走 host/http.ts：主聊天 30 秒、记忆摘要 20 秒（后台跑，不吊住回复）；
+ * 请求体上限 6MB，单图 base64 上限 4MB（≈3MB 原图，超限回 413，与流式同一口径）
  * 纯函数（语言判定/缓存 key/prompt 组装）在 host/chat-core.ts，流式路由共用同一份；
  * 本文件只做 HTTP 编排与「缓存 → 模型 → 记忆/成长」的调用顺序。
  *
@@ -24,6 +25,8 @@ const CHAT_TIMEOUT = 30 * 1000                 // 主聊天：30 秒
 const SUMMARY_TIMEOUT = 20 * 1000              // 长期记忆摘要：20 秒
 const CHAT_MAX_BODY = 6 * 1024 * 1024          // 6MB（图片 base64 约 4MB * 1.34）
 const NET_FALLBACK = '主人，本鲸一时想不起来话（网络或接口有点问题）……'
+/** 图片超限文案：与 host/routes/chat-stream.ts 的同一句保持一致（路由之间不横向 import，各持一份） */
+const IMAGE_TOO_LARGE_FALLBACK = '主人，这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～'
 
 
 
@@ -53,6 +56,13 @@ export function createChatHandler(opts: ChatRouteDeps) {
       // 用 trim 判空：只发空格/换行不该白调一次模型（图片消息走 VISION_PROMPT 自带文案）
       if (!message.trim()) {
         sendJson(res, { ok: false, error: 'empty message' }, 400)
+        return
+      }
+      // 图片体积兜底：6MB 管的是整包 JSON，管不住「单图过大」——上限口径在 chat-core，
+      // 这里只负责按同一状态码/文案拒绝（不解析、不上传、不调模型，省一次必然失败的请求）
+      if (reqInfo.imageTooLarge) {
+        console.error('[chat] IMAGE-TOO-LARGE b64=' + imageB64.length)
+        sendJson(res, { ok: false, error: 'image too large', reply: IMAGE_TOO_LARGE_FALLBACK }, 413)
         return
       }
       // 读一份历史快照 + 长期记忆：只用来拼 prompt / 算缓存 key，不再拿它整份写回
@@ -123,7 +133,11 @@ export function createChatHandler(opts: ChatRouteDeps) {
       const reasoning = String(data?.choices?.[0]?.message?.reasoning_content || '').trim()
       const blank = !content && !reasoning
       const reply = content || reasoning || '主人……本鲸刚刚走神了。'
-      // 鱼粮：token 统计
+      // 鱼粮：token 统计（口径见 chat-stream.ts 同一段注释）
+      //   · 只记「本轮真拿到模型回复」的 usage.total_tokens：超时/网络/HTTP 非 2xx 都已在上面的
+      //     分支 return，那种时候没有可信 usage，硬估会虚记，宁可漏记；
+      //   · 上游没返回 usage（部分兼容服务不实现）时同样跳过，不猜；
+      //   · 空回复走兜底文案仍算一次正常回复，token 照记——这次请求确实消耗了。
       try {
         const u = data?.usage
         if (u && typeof u.total_tokens === 'number' && opts.addTokens) opts.addTokens('chat', u.total_tokens)
@@ -141,6 +155,8 @@ export function createChatHandler(opts: ChatRouteDeps) {
       st.intimacy = Math.min(100, (Number(st.intimacy) || 0) + 1)
       opts.saveState(st)
       // 成长 +1（来源 chat，受日上限与来源上限约束，可能升级）
+      // 既有口径：空回复（content/reasoning 都空、已回退到兜底文案）同样计 1 次经验、1 次 L2。
+      // 审计已确认这是取舍而非漏判；要改成「空回复不计」属行为变更，本次未动。
       let upgraded = false
       try {
         if (opts.addExp) {

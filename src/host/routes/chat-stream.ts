@@ -9,6 +9,11 @@
  *   data: {"done":true,"reply":"完整回复","cached":false}
  *   data: {"error":"原因"}            // 失败时；客户端据此回退到普通 /chat
  *
+ * 建立 SSE 流之前就被拒的情况（不写 SSE 帧，直接 HTTP 413 JSON）：
+ *   · 整包请求体 > 6MB：{"ok":false,"error":"too large"}
+ *   · 单图 base64 > 4MB 字符（≈3MB 原图）：{"ok":false,"error":"image too large","reply":"…"}
+ *   客户端对非 2xx 一律回退 /chat（见 src/client/chat.ts 的 tryStream），文案由 /chat 的 reply 给出。
+ *
  * 缓存与记忆行为与普通 /chat 一致：
  *   · 请求解析、system 片段、messages 结构全部走 host/chat-core.ts（同一输入 → 同一请求体）；
  *   · 命中缓存：直接发一条 delta + done(cached:true)
@@ -29,7 +34,7 @@
 
 import { sendTooLarge } from '../http.js'
 import { readJsonBody } from '../body.js'
-import { sendSseHeaders } from '../respond.js'
+import { sendJson, sendSseHeaders } from '../respond.js'
 import type { ChatStreamRouteDeps } from '../ports.js'
 import { DEFAULT_CHAT_MODEL } from '../config.js'
 import {
@@ -42,6 +47,8 @@ const CHAT_IDLE_TIMEOUT = 30 * 1000      // 空闲超时：连续这么久没有
 const CHAT_MAX_DURATION = 120 * 1000     // 总时长硬上限：不论有没有数据，到点就断
 const SSE_PING_MS = 12 * 1000            // SSE 心跳间隔
 const CHAT_MAX_BODY = 6 * 1024 * 1024
+/** 图片超限文案：与 host/routes/chat.ts 的同一句保持一致（路由之间不横向 import，各持一份） */
+const IMAGE_TOO_LARGE_FALLBACK = '主人，这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～'
 
 let summaryCount = 0
 
@@ -104,6 +111,13 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
         res.end()
         return
       }
+      // 图片体积兜底（与 /chat 同一上限、同一状态码、同一句文案）：必须排在 sendSseHeaders 之前，
+      // 否则 200 SSE 头已经发出去，客户端只能看到一条 error 帧，拿不到「请求被拒」的语义。
+      if (reqInfo.imageTooLarge) {
+        console.error('[chat-stream] IMAGE-TOO-LARGE b64=' + image.b64.length)
+        sendJson(res, { ok: false, error: 'image too large', reply: IMAGE_TOO_LARGE_FALLBACK }, 413)
+        return
+      }
 
       sendSseHeaders(res)
       // 立刻把 SSE 头刷出去，客户端不必等首帧；同时记录客户端断开
@@ -157,6 +171,10 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
 
       const key = opts.getKey()
       if (!key) {
+        // 只发 error 帧、不带兜底文案：error 帧的协议语义就是「本路径失败」。
+        // 回退链（src/client/chat.ts）：收到 error 帧即 throw → 未念过任何字时 tryStream 返回 false
+        // → send() 继续走普通 /chat，那里的 NO_KEY 回包带 reply 文案，由客户端展示/朗读。
+        // 补一条 reply 字段不破坏兼容（加字段不改已有字段），但既然回退链成立就没必要改协议。
         send({ error: 'NO_KEY' })
         res.end()
         return
@@ -254,6 +272,11 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       if (aborted || clientGone) { try { res.end() } catch { } ; return }
       const text = reply.trim() || '主人……本鲸刚刚走神了。'
       // 收尾：token / 记忆 / done（与普通 /chat 同口径）
+      // token 口径：
+      //   · 请求体已带 stream_options.include_usage，usage 在 [DONE] 之前的最后一帧里给，拿到就记；
+      //   · 中断（空闲/总时长超时、客户端断开、上游异常）在上面的 aborted/clientGone 分支已 return，
+      //     不计 token —— 半截流没有最终 usage，估算只会虚记，宁可漏记；
+      //   · 上游不回 usage（部分兼容服务不实现）时同样跳过，不猜。
       try {
         const u = usage
         if (u && typeof u.total_tokens === 'number' && opts.addTokens) opts.addTokens('chat', u.total_tokens)
@@ -270,6 +293,7 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
         }
       } catch { }
       // 成长 +1（来源 chat，受日上限/来源上限约束）
+      // 空回复仍计 1 次经验/L2：与 /chat 同口径（审计确认是取舍；跳过属行为变更，未改）
       let upgraded = false
       try { if (opts.addExp) { const g = opts.addExp(1, 'chat'); upgraded = Boolean(g && g.upgraded) } } catch { }
       // 每 10 次聊天压缩一次长期记忆（与 /chat 同口径：取最近 14 条 + 本轮）

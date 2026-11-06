@@ -22,6 +22,13 @@ const CHAT_MAX_MESSAGE_CHARS = 500;
 const CHAT_CACHE_MIN_VOICE = 2;
 const CHAT_CACHE_MIN_TEXT = 6;
 /**
+ * 图片 base64 最多允许多少字符（两条路径共用；4MB 字符 ≈ 3MB 原图，base64 按 4/3 膨胀）。
+ * 为什么不能只靠 6MB 请求体上限：那个上限管的是「整包 JSON」，一张 4MB 图 + 长文字照样能塞进来，
+ * 而视觉模型按像素计费、上游对单图大小也有硬限，超了就是白烧一次注定失败的请求。
+ * 所以解析阶段只标出 imageTooLarge，状态码与文案由两条路由各自按同一口径回。
+ */
+const CHAT_MAX_IMAGE_B64 = 4 * 1024 * 1024;
+/**
  * 聊天 / 流式的 max_tokens 预算（2026-11 调整：260 → 800）。
  * 新模型若忽略 thinking:{type:'disabled'}、把预算花在 reasoning_content 上，260 会出现「只思考不回答」；
  * 预算给到 800 后即使思考占掉一部分，也仍有足够额度吐出正文。
@@ -58,6 +65,8 @@ export function detectLang(message) {
  *   · lang：只认 zh/en/auto，其它值（含非字符串）一律 auto，auto 再按内容判定；
  *   · voice：只认布尔 true 或 'true'（流式此前用 !!body.voice，'false' 会被当成语音）；
  *   · image：mime 只接受 image/<token>，其余回落 image/jpeg（客户端可伪造该字段）；
+ *     base64 超过 CHAT_MAX_IMAGE_B64（4MB 字符 ≈ 3MB 原图）时置 imageTooLarge，
+ *     由路由回 413 + 文案（两条路径同一上限、同一状态码）；
  *   · cacheable：语音 ≥2 字、打字 ≥6 字（短句进缓存会变成复读机）。
  */
 export function readChatRequest(body) {
@@ -73,7 +82,9 @@ export function readChatRequest(body) {
     const declared = rawLang === 'zh' || rawLang === 'en' || rawLang === 'auto' ? rawLang : 'auto';
     const lang = declared === 'auto' ? detectLang(message) : declared;
     const cacheable = message.trim().length >= (isVoice ? CHAT_CACHE_MIN_VOICE : CHAT_CACHE_MIN_TEXT);
-    return { message, image: { b64, mime }, isVoice, lang, cacheable };
+    // 只判字符数，不解码：解码一张超大图本身就要几百毫秒内存分配，没必要
+    const imageTooLarge = b64.length > CHAT_MAX_IMAGE_B64;
+    return { message, image: { b64, mime }, imageTooLarge, isVoice, lang, cacheable };
 }
 /** 取最近 n 条（只做截断，不改内容）；纯函数，便于离线断言 */
 export function recentHistory(history, n) {
