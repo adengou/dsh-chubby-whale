@@ -59,23 +59,36 @@ export type MenuListCtx = {
 }
 
 /** 计算「当前可见的全部菜单项」（键盘高亮顺序的唯一真源） */
+/**
+ * 可见菜单项（键盘导航用）：按渲染顺序把「菜单项 / 子菜单父项」摊平。
+ * 子菜单展开时子项紧跟父项；分隔线与收起的子项不出现。
+ * **index 在返回前统一重编号**——旧实现递归时子项 index 从 0 重计，
+ * 导致展开子菜单后高亮错项/多项同亮（49 个可见项只有 36 个不同 index）。
+ */
 export function listMenuEntries(items: any[], ctx: MenuListCtx, parentPath = ''): MenuEntry[] {
   const out: MenuEntry[] = []
-  if (!Array.isArray(items)) return out
+  collectMenuEntries(items, ctx, parentPath, out)
+  // 全部摊平后统一重编号：各层递归不再各自从 0 起算
+  for (let i = 0; i < out.length; i++) out[i].index = i
+  return out
+}
+
+/** 递归收集（内部用；index 先占位，由 listMenuEntries 统一重编号） */
+function collectMenuEntries(items: any[], ctx: MenuListCtx, parentPath: string, out: MenuEntry[]): void {
+  if (!Array.isArray(items)) return
   for (const it of items) {
     if (!it || typeof it !== 'object') continue
     if (it.type === 'sub') {
       if (typeof it.label !== 'string') continue
       const path = parentPath ? parentPath + SUB_PATH_SEP + it.label : it.label
       const open = ctx.subOpen === path || ctx.subOpen.indexOf(path + SUB_PATH_SEP) === 0
-      out.push({ kind: 'sub', action: '', path, parentPath, label: ctx.tr(it.label, ctx.lang), open, index: out.length })
-      if (open) out.push(...listMenuEntries(it.items, ctx, path))
+      out.push({ kind: 'sub', action: '', path, parentPath, label: ctx.tr(it.label, ctx.lang), open, index: 0 })
+      if (open) collectMenuEntries(it.items, ctx, path, out)
       continue
     }
     if (it.type !== 'item' || typeof it.label !== 'string') continue
-    out.push({ kind: 'item', action: String(it.action || ''), path: '', parentPath, label: ctx.tr(it.label, ctx.lang), open: false, index: out.length })
+    out.push({ kind: 'item', action: String(it.action || ''), path: '', parentPath, label: ctx.tr(it.label, ctx.lang), open: false, index: 0 })
   }
-  return out
 }
 
 /**

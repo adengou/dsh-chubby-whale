@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.10";
+  var VERSION = "1.1.11";
 
   // src/client/styles.ts
   var W = 240;
@@ -7461,21 +7461,25 @@
   // src/client/render.ts
   function listMenuEntries(items, ctx, parentPath = "") {
     const out = [];
-    if (!Array.isArray(items)) return out;
+    collectMenuEntries(items, ctx, parentPath, out);
+    for (let i = 0; i < out.length; i++) out[i].index = i;
+    return out;
+  }
+  function collectMenuEntries(items, ctx, parentPath, out) {
+    if (!Array.isArray(items)) return;
     for (const it of items) {
       if (!it || typeof it !== "object") continue;
       if (it.type === "sub") {
         if (typeof it.label !== "string") continue;
         const path = parentPath ? parentPath + SUB_PATH_SEP + it.label : it.label;
         const open = ctx.subOpen === path || ctx.subOpen.indexOf(path + SUB_PATH_SEP) === 0;
-        out.push({ kind: "sub", action: "", path, parentPath, label: ctx.tr(it.label, ctx.lang), open, index: out.length });
-        if (open) out.push(...listMenuEntries(it.items, ctx, path));
+        out.push({ kind: "sub", action: "", path, parentPath, label: ctx.tr(it.label, ctx.lang), open, index: 0 });
+        if (open) collectMenuEntries(it.items, ctx, path, out);
         continue;
       }
       if (it.type !== "item" || typeof it.label !== "string") continue;
-      out.push({ kind: "item", action: String(it.action || ""), path: "", parentPath, label: ctx.tr(it.label, ctx.lang), open: false, index: out.length });
+      out.push({ kind: "item", action: String(it.action || ""), path: "", parentPath, label: ctx.tr(it.label, ctx.lang), open: false, index: 0 });
     }
-    return out;
   }
   function menuRootProps(ctx) {
     return {

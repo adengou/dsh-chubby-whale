@@ -3317,6 +3317,17 @@ try {
   ok('能运行流式记账用例', false, String(e.message))
 }
 
+// ---------- 63 行为回归（菜单键盘 / TTS 估算 / 说书进度键 / 云端并发 / 情绪台词） ----------
+console.log('\n[63] 行为回归（菜单键盘 / TTS 估算 / 说书进度键 / 云端并发 / 情绪台词）')
+try {
+  // 单独脚本也已纳入 package.json 的 test 链，可脱离 test.mjs 独立运行
+  const { runBehaviorRegressions } = await import('./test-behavior-regressions.mjs')
+  const result = await runBehaviorRegressions(ok, { registerResolver: false })
+  if (!result || result.total === 0) ok('行为回归用例有断言', false)
+} catch (e) {
+  ok('能运行行为回归用例', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
