@@ -58,7 +58,8 @@ export const recoverDotStyle = {
 
 export const menuStyle = (menu: any) => ({
   position: 'fixed' as const,
-  left: (menu ? Math.min(menu.x, window.innerWidth - 220) : 0) + 'px',
+  // 窄视口（<220px）时 innerWidth-220 为负会把菜单甩出左边；夹到 8px 保底
+  left: (menu ? Math.max(8, Math.min(menu.x, window.innerWidth - 220)) : 0) + 'px',
   top: (menu ? Math.max(8, Math.min(menu.y, window.innerHeight - 520)) : 0) + 'px',
   width: 210,
   maxHeight: (typeof window !== "undefined" ? Math.max(200, Math.min(480, window.innerHeight - 32)) : 480),

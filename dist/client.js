@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.7";
+  var VERSION = "1.1.8";
 
   // src/client/styles.ts
   var W = 240;
@@ -64,7 +64,8 @@
   };
   var menuStyle = (menu) => ({
     position: "fixed",
-    left: (menu ? Math.min(menu.x, window.innerWidth - 220) : 0) + "px",
+    // 窄视口（<220px）时 innerWidth-220 为负会把菜单甩出左边；夹到 8px 保底
+    left: (menu ? Math.max(8, Math.min(menu.x, window.innerWidth - 220)) : 0) + "px",
     top: (menu ? Math.max(8, Math.min(menu.y, window.innerHeight - 520)) : 0) + "px",
     width: 210,
     maxHeight: typeof window !== "undefined" ? Math.max(200, Math.min(480, window.innerHeight - 32)) : 480,
@@ -7373,8 +7374,6 @@
       let ttsPlaying = false;
       const channels = { mic: { stats: {} }, asr: { stats: {} }, speak: { stats: {} } };
       const epoch = createEpoch();
-      let asrBusy = false;
-      let asrBusyAt = 0;
       const storyNarratingRef = { current: false };
       const persona = createPersona();
       try {
@@ -7382,7 +7381,6 @@
         w.persona = persona;
       } catch (e) {
       }
-      let lastPoemSpeech = "";
       const narration = createNarrationLock();
       let lastSpeakingAt = 0;
       function setNarrating(ms2) {
@@ -7982,12 +7980,7 @@
             } catch (e) {
             }
           });
-          const tF = setTimeout(() => {
-            try {
-              prefetchFiller();
-            } catch (e) {
-            }
-          }, 3e3);
+          const tF = 0;
           return () => {
             stopGreet();
             try {
@@ -8442,14 +8435,6 @@
             storyNarratingRef.current = false;
           } catch (e) {
           }
-        }
-        function muteMic() {
-          bridge.mute(true);
-        }
-        function unmuteMic() {
-          bridge.mute(false);
-        }
-        function prefetchFiller() {
         }
         function sayLine(text, ms2 = 3500, voiceOpts) {
           if (!lineDeduper.allow(text)) return;

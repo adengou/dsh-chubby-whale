@@ -95,8 +95,6 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
     const channels: any = { mic: { stats: {} }, asr: { stats: {} }, speak: { stats: {} } }
     // 请求纪元：主人一问新问题，旧的异步回复自动作废（client/busy.ts）
     const epoch = createEpoch()
-    let asrBusy = false
-    let asrBusyAt = 0   // 识别位占用的起始时刻（用于僵尸复位与状态显示）
     // 叙述语速（与 voice.ts 同源，localStorage 可调，默认 -25%）
     
     const storyNarratingRef = { current: false }
@@ -107,7 +105,6 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
     const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
     w.persona = persona
   } catch (e) { }
-    let lastPoemSpeech = ''
     // 叙述锁带时间上限：念诗/说书期间不理麦克风，但绝不能"忘了解锁"把耳朵永久关掉
     // （状态机与自愈在 client/narration.ts）
     const narration = createNarrationLock()
@@ -586,7 +583,7 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
             }
           } catch (e) { }
         })
-        const tF = setTimeout(() => { try { prefetchFiller() } catch (e) { } }, 3000)
+        const tF: any = 0 // 原 filler 预热已无实现，保留变量供 cleanup 兼容
         return () => {
           stopGreet()
           try { clearTimeout(tF) } catch (e) { }
@@ -958,9 +955,6 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
         try { storyBusyRef.current = false } catch (e) { }
         try { storyNarratingRef.current = false } catch (e) { }
       }
-      function muteMic(): void { bridge.mute(true) }
-      function unmuteMic(): void { bridge.mute(false) }
-      function prefetchFiller(): void { }
 
       /** 人设台词：气泡 + 语音一起出（语音朗读关着时只出气泡；正在说别的话时不打断） */
       function sayLine(text: string, ms = 3500, voiceOpts?: { rate?: string; pitch?: string }): void {

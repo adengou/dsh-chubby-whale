@@ -3,6 +3,12 @@
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
 ## [未发布]
+## [1.1.8] - 2026-11-06
+
+### 清理与修复
+- 删除 6 个零引用死代码（`asrBusy`/`asrBusyAt`/`lastPoemSpeech`/`muteMic`/`unmuteMic`/空的 `prefetchFiller` 及其定时器）
+- 菜单在窄视口（<220px）不再被甩出屏幕左边（`left` 加 8px 保底）
+
 ## [1.1.7] - 2026-11-06
 
 ### 修复
