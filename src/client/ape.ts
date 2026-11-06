@@ -89,11 +89,22 @@ export const APE_DEFAULTS: ApeParams = {
    */
   steadyMaxAboveFloorDb: 20,
   maxSegmentMs: 6000,
-  steadyWindowFrames: 10,   // 25 帧 × 60ms = 1.5s
+  /**
+   * 平稳性判别窗口（帧）。10 帧 × 60ms = 600ms。
+   * 注意：起判前至少采 8 帧再算起伏（见 step 里的 minFrames，窗口配得更小时按窗口本身算）；
+   * 这里原来写「25 帧 = 1.5s」是旧稿注释，与取值不符，2026-11-07 按实际取值改正。
+   */
+  steadyWindowFrames: 10,
   steadySpreadDb: 3,
   steadyMs: 400,
 }
 deepFreeze(APE_DEFAULTS)
+
+/**
+ * 电平哨兵：readLevel() 读不到时返回 -160，数字静音（rms=0）算出来同样是 -160。
+ * APE 把"不高于它"的帧当作没有有效电平（见 step 里的 valid 判断）。
+ */
+const SENTINEL_DB = -160
 
 export type ApeStep = {
   db: number
@@ -149,26 +160,54 @@ export class Ape {
     return this.floorDb === null ? -70 : this.floorDb
   }
 
-  step(db: number): ApeStep {
+  step(rawDb: number): ApeStep {
     const p = this.p
-    if (this.floorDb === null) this.floorDb = db
+    /**
+     * 有效电平 = 有限值且高于哨兵 -160。
+     *
+     * 为什么要单列：readLevel() 在 analyser 读不到时返回 -160；数字静音（rms=0）
+     * 按 `20*log10(rms+1e-8)` 算出来也正好是 -160；AudioContext 被自动播放策略挂起时
+     * analyser 恒返回 0，同样落在这个值上（voice.ts 里记着这条实测）。
+     * 这类帧一旦写进噪声底，起判阈值会被压到 floor+4 ≈ -156：之后任何真实电平都算
+     * "说话"，安静帧再也出现不了 → 噪声底永远回不来，每段都要等满 6 秒按 overflow 收尾。
+     * NaN / ±Infinity 更直接：写进去后 onsetTh 变 NaN（所有比较为假，永远判不出发言）
+     * 或 -Infinity（所有帧误判成说话）。
+     *
+     * 处理：按"安静帧"推进时长（窗口要按时间收口，不能因为读不到电平就永不停止录音），
+     * 但**不参与噪声底 / 峰值估计**，也不初始化噪声底。
+     */
+    const valid = Number.isFinite(rawDb) && rawDb > SENTINEL_DB
+    // 无效帧的 db 只用于诊断展示（写当前噪声底），不参与任何判定
+    const db = valid ? rawDb : this.floor()
 
-    // 峰值包络（随时间衰减，用于算动态范围）
-    if (db > this.peakDb) this.peakDb = db
-    else this.peakDb = Math.max(-160, this.peakDb - p.peakDecayDb)
+    if (valid) {
+      if (this.floorDb === null) this.floorDb = db
+      // 峰值包络（随时间衰减，用于算动态范围）
+      if (db > this.peakDb) this.peakDb = db
+      else this.peakDb = Math.max(-160, this.peakDb - p.peakDecayDb)
+    }
 
-    const range = this.peakDb - this.floorDb
+    const floorNow = this.floor()
+    const range = this.peakDb - floorNow
     const margin = Math.max(p.marginMinDb, Math.min(p.marginMaxDb, range * p.marginRatio))
-    const onsetTh = this.floorDb + margin
-    const offsetTh = this.floorDb + p.offsetMarginDb
+    const onsetTh = floorNow + margin
+    const offsetTh = floorNow + p.offsetMarginDb
 
     this.elapsedMs += p.frameMs
 
-    if (db > onsetTh) {
+    if (!valid) {
+      // 没有有效电平：只按安静推进（噪声底原样不动，理由见上）
+      this.quietMs += p.frameMs
+      this.bandMs = 0
+    } else if (db > onsetTh) {
       // 说话帧。先做平稳性判别：真人说话电平必有起伏（>3dB），恒定电平是环境噪声
       this.steadyHist.push(db)
       while (this.steadyHist.length > p.steadyWindowFrames) this.steadyHist.shift()
-      const spread = this.steadyHist.length >= 8
+      // 起伏判别至少要采几帧：默认窗口 10 帧时取 8；窗口被调小（参数是可配的）时
+      // 按窗口本身取。原来这里写死 8，steadyWindowFrames < 8 时窗口永远采不满 →
+      // 恒定噪声永远判不出"平稳"，每段都要等满 maxSegmentMs（6000ms）才按 overflow 收尾。
+      const minFrames = Math.max(2, Math.min(8, p.steadyWindowFrames))
+      const spread = this.steadyHist.length >= minFrames
         ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist)
         : 99
       const nearFloor = (db - this.floorDb) <= p.steadyMaxAboveFloorDb
@@ -242,7 +281,7 @@ export class Ape {
 
     return {
       db,
-      floorDb: this.floorDb,
+      floorDb: this.floor(),
       onsetTh,
       offsetTh,
       speechMs: this.speechMs,

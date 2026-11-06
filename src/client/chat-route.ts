@@ -65,15 +65,30 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
 
   function route(rawText: string): boolean {
     const t0 = String(rawText || '').trim()
+    /**
+     * 句末的陈述语气标点先剥掉再认整句指令：主人打字常带「接着说。」「报书名！」，
+     * 而下面的整句正则都以 `$` 收尾。问号不剥——带问号的是提问（"接着说？"是问，
+     * 不是命令），照旧交给模型。
+     */
+    const cmd = t0.replace(/[。．.!！~～…]+$/, '')
 
-    // 追问：接着念诗 / 接着说书（主人不必重新"点播"一次）
-    if (/^(再来|再念|换)(一)?(首|个)/.test(t0)) {
+    /**
+     * 追问：接着念诗 / 接着说书（主人不必重新"点播"一次）。
+     * 只接两种：① 不点具体内容（「再来一首」「换一个」「再念首」）；
+     * ② 明确点诗（「再来一首诗」）。
+     * 其余一律交给模型——「换个说法 / 换个话题 / 换个声音 / 换个故事 / 再来个故事」
+     * 都不是"再念一首诗"。intent 的既有断言（test-utils-pure「不是点播的近似说法
+     * 照样交给模型（来点故事 / 换个故事）」）已经把这类说法划给模型，这里不能再抢先接住。
+     */
+    const again = /^(再来|再念|换)(一)?(首|个)([\s\S]*)$/.exec(cmd)
+    const againTail = again ? again[4] : ''
+    if (again && (againTail === '' || /^[吧啊呀哦嘛哈啦呗吖诗]+/.test(againTail))) {
       takeOver()
       host.bubble('（点播）好，再念一首', 3000)
       fetchPoem('', (p) => recitePoem(host, p))
       return true
     }
-    if (/^(继续|接着说|接着讲|往下讲)$/.test(t0)) {
+    if (/^(继续|接着说|接着讲|往下讲)$/.test(cmd)) {
       takeOver()
       host.bubble('（点播）接着说', 3000)
       // 点播故事=要连播：同步写 localStorage，避免菜单显示「关」但实际自动接段
@@ -83,7 +98,7 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     }
 
     // 报书名 / 报书单：本地列书单，不进模型（「报书名」是点播指令里唯一不带书名的那种）
-    if (/^(报|说|列)(一下|下)?(书名|书单)$/.test(t0)) {
+    if (/^(报|说|列)(一下|下)?(书名|书单)$/.test(cmd)) {
       takeOver()
       host.bubble('（点播）本鲸数数书单…', 3000)
       getJson('/story/books', { cache: 'no-store' }).then((d: any) => {
@@ -109,18 +124,24 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     }
 
     if (hit.kind === 'culture') {
-      // 映射照 intent 的原意：成语 → chengyu（带出处的小故事，/culture?type=chengyu），
-      // 典故 → idiom（/culture?type=idiom）。两者是不同数据池，别在这里对调：
-      // 「讲个成语」拿到 chengyu.json 的典故故事，与菜单「成语辨析」（idioms.json）分工不同。
+      // 数据池口径以 intent 的为准（2026-11-06 定）：讲成语 → idiom（成语辨析池）、
+      // 讲典故 → chengyu（带出处的典故故事池）。两者是不同数据池，别在这里对调。
       const type = hit.sub
       if (!beginOnce('route:' + type)) { host.bubble('正在讲呢，稍等～', 2000); return true }
-      host.bubble(type === 'chengyu' ? '（点播）讲个成语' : '（点播）讲个典故', 3000)
+      /**
+       * 播报用词按「主人说的是哪个词」走，不跟着数据池名走：
+       * 旧实现按 type 取标签，讲典故（type=chengyu）会念成「成语·」「讲个成语——」，
+       * 与主人刚说的话正好相反（type 是数据池名，不是主语）。判据与 intent 同一条：
+       * 句子里出现「成语」就是成语，其余都是典故。
+       */
+      const saidIdiom = /成语/.test(t0)
+      host.bubble(saidIdiom ? '（点播）讲个成语' : '（点播）讲个典故', 3000)
       getJson('/culture?type=' + type).then((d: any) => {
         const it = (d && d.ok && d.item) ? d.item : null
         if (!it) { host.bubble('这个没读到', 4000); return }
         const body = collapseText(String(it.text || ''))
-        host.bubble((type === 'chengyu' ? '成语·' : '典故·') + String(it.title || ''), 15000)
-        host.speak((type === 'chengyu' ? '讲个成语——' : '讲个典故——') + String(it.title || '') + (it.src ? '，出自' + String(it.src) : '') + '。' + body, { rate: host.narrationRate() })
+        host.bubble((saidIdiom ? '成语·' : '典故·') + String(it.title || ''), 15000)
+        host.speak((saidIdiom ? '讲个成语——' : '讲个典故——') + String(it.title || '') + (it.src ? '，出自' + String(it.src) : '') + '。' + body, { rate: host.narrationRate() })
       }).catch(() => host.bubble('这个没读到', 4000))
       return true
     }

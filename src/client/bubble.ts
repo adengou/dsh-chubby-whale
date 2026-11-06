@@ -128,7 +128,9 @@ export function createBubble(opts: BubbleOptions): Bubble {
       if (!el) return
       const te = opts.textEl()
       const txt = te ? String(te.textContent || '') : ''
-      if (STATUS_TEXTS.indexOf(txt) >= 0) {
+      // 与 decorateText 的判据保持一致（那边按 trim 后比较）：带尾随空格/换行的状态字
+      // 也算纯状态字，否则「在想… 」这类会被判成"正文"，气泡永远收不起来。
+      if (STATUS_TEXTS.indexOf(txt.trim()) >= 0) {
         clearTimer(el)
         el.classList.remove('show')
       }
