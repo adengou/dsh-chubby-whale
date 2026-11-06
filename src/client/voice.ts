@@ -21,6 +21,11 @@ import { echoKey, isShortEchoFragment, stripStageDirections } from './text.js'
 import { isNoiseText } from '../shared/noise.js'
 import { isPlaybackZombie } from './playback.js'
 import { readEndpointMode, writeEndpointMode, normalizeEndpointMode } from './endpoint.js'
+import {
+  pickRecorderMime, formatFromMime, hostAsrFormat, downmixToMono, encodeWavPcm16, wavBytes,
+  type RecFormat,
+} from './audio-codec.js'
+import { browserVoiceUsable, speakViaBrowser } from './browser-tts.js'
 
 export type VoiceStatus = 'idle' | 'listening' | 'recognizing' | 'thinking' | 'speaking'
 
@@ -164,7 +169,18 @@ export function createVoice(opts: VoiceOptions): Voice {
   let analyser: AnalyserNode | null = null
   let rec: MediaRecorder | null = null
   let timeBuf: Float32Array | null = null
+  let byteBuf: Uint8Array | null = null   // getFloatTimeDomainData 缺失时（老 Safari）用它兜底
   let running = false
+  // 录音编码：recMime 为空 = 不传 options（浏览器自选）；recFormat 是实际容器
+  let recMime = ''
+  let recFormat: RecFormat = 'webm'
+  // 电平可用性：AudioContext 被自动播放策略挂起时，analyser 恒返回 0 → 静音判定会把每段都丢掉，
+  // 表现是"开了麦克风但鱼永远听不见"。探测失败就关掉静音判定，改为按段长/体积兜底。
+  let levelOk = false
+  let levelDead = false
+  let levelProbeAt = 0
+  // 自动播放策略：suspended 时挂一次性手势，用户一碰页面就恢复
+  let gestureHooks: { resume: () => void } | null = null
   // 识别没配 Key（NO_KEY）：本次语音会话内不再上传，避免每段窗口都白打一次请求
   let asrNoKey = false
   let muted = false
@@ -197,17 +213,79 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
   let mutedUntil = 0
   let speakToken = 0
 
+  /**
+   * 当前电平（dBFS）。
+   * · 优先 getFloatTimeDomainData（Chrome/Edge/Firefox、Safari 14.1+）；
+   * · 老 Safari 只有 getByteTimeDomainData：8bit 中心值 128 → 近似 [-1,1]；
+   * · 接口缺失或抛错一律返回 -160（静音），由 levelDead 决定要不要采信。
+   */
   const level = () => {
-    if (!analyser || !timeBuf) return -160
-    analyser.getFloatTimeDomainData(timeBuf as any)
+    const an: any = analyser
+    if (!an || !timeBuf) return -160
+    let ok = false
+    try {
+      if (typeof an.getFloatTimeDomainData === 'function') {
+        an.getFloatTimeDomainData(timeBuf as any)
+        ok = true
+      } else if (typeof an.getByteTimeDomainData === 'function') {
+        if (!byteBuf || byteBuf.length !== timeBuf.length) byteBuf = new Uint8Array(timeBuf.length)
+        an.getByteTimeDomainData(byteBuf as any)
+        for (let i = 0; i < timeBuf.length; i++) timeBuf[i] = (byteBuf[i] - 128) / 128
+        ok = true
+      }
+    } catch (e) { ok = false }
+    if (!ok) return -160
     let sum = 0
     for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i]
     const rms = Math.sqrt(sum / timeBuf.length)
-    return 20 * Math.log10(rms + 1e-8)
+    const db = 20 * Math.log10(rms + 1e-8)
+    // 有真实读数就说明 analyser 在工作（哪怕此刻很安静，底噪也不会正好等于 -160）
+    if (db > -159) levelOk = true
+    return db
   }
 
   function micOn(on: boolean): void {
     try { if (stream) stream.getAudioTracks().forEach((t) => { t.enabled = on }) } catch (e) { }
+  }
+
+  /** 释放麦克风与 AudioContext：start 失败与 stop 共用 —— 绝不把录音灯留在亮着 */
+  function releaseAudio(): void {
+    try { if (rec && rec.state !== 'inactive') rec.stop() } catch (e) { }
+    try { if (actx) actx.close() } catch (e) { }
+    try { if (stream) stream.getTracks().forEach((t) => { t.stop() }) } catch (e) { }
+    rec = null; actx = null; analyser = null; stream = null; timeBuf = null; byteBuf = null
+  }
+
+  function unhookGestureResume(): void {
+    const g = gestureHooks
+    if (!g) return
+    gestureHooks = null
+    try { window.removeEventListener('pointerdown', g.resume, true) } catch (e) { }
+    try { window.removeEventListener('touchstart', g.resume, true) } catch (e) { }
+    try { window.removeEventListener('keydown', g.resume, true) } catch (e) { }
+  }
+
+  /**
+   * 自动播放策略：没有用户手势时新建的 AudioContext 常是 suspended（Safari 最严格）。
+   * suspended 下 AnalyserNode 不出数，电平恒静音 → 静音判定会把每段都丢掉。
+   * 挂一次性手势：一碰页面就恢复（并重新开始电平探活）。
+   */
+  function hookGestureResume(): void {
+    if (gestureHooks) return
+    const resume = (): void => {
+      try {
+        const c: any = actx
+        if (c && c.state === 'suspended') c.resume()
+        if (c && c.state !== 'suspended') { levelDead = false; levelOk = false; levelProbeAt = performance.now() }
+      } catch (e) { }
+      unhookGestureResume()
+    }
+    gestureHooks = { resume }
+    try {
+      window.addEventListener('pointerdown', resume, true)
+      window.addEventListener('touchstart', resume, true)
+      window.addEventListener('keydown', resume, true)
+    } catch (e) { }
   }
 
   function scheduleNext(ms: number): void {
@@ -241,6 +319,12 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     if (!running || !rec || rec.state !== 'recording') return
     try {
       const db = level()
+      // 探活：启动后 1.2 秒还读不到任何电平 → analyser 没在工作（典型是 AudioContext 被自动播放策略挂起）。
+      // 此时绝不能继续按电平判静音，否则每段都被当"太安静"丢掉，表现就是"Safari 上开了麦却永远听不见"。
+      if (!levelOk && !levelDead && levelProbeAt && performance.now() - levelProbeAt > 1200) {
+        levelDead = true
+        try { opts.onDiag && opts.onDiag({ stage: 'analyser-dead', hint: '电平不可用，静音判定已降级（改按段长/体积）' }) } catch (e) { }
+      }
       if (epMode === 'ape') {
         // APE 路径：判定全部交给 client/ape.ts（已用 10 个合成场景单测）
         const st = ape.step(db)
@@ -249,6 +333,13 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
         if (st.commit && rec && rec.state === 'recording') {
           try { rec.stop() } catch (e) { }
           try { opts.onDiag && opts.onDiag({ stage: 'window-end', why: st.commitReason, floor: Math.round(st.floorDb) }) } catch (e) { }
+          return
+        }
+        // 电平不可用：APE 会一直判"静音"、永不提交（它会静默重置窗口继续录）。
+        // 这里按窗口上限强制收尾，交给 onWindowDone 的体积/时长兜底。
+        if (levelDead && performance.now() - winStart >= WINDOW_MS) {
+          try { rec.stop() } catch (e) { }
+          try { opts.onDiag && opts.onDiag({ stage: 'window-end', why: 'no-level' }) } catch (e) { }
           return
         }
         tickTimer = setTimeout(tick, 60)
@@ -280,18 +371,22 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     if (asrNoKey) { stats.skippedSilent++; scheduleNext(150); return }
     stats.windows++
     // 太安静：直接丢（识别服务对静音会编词，浪费钱还制造幻觉）
-    if (epMode === 'ape') {
-      const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150)
-      if (!okSpeech) { stats.skippedSilent++; scheduleNext(150); return }
-    } else if (winPeak < SILENT_PEAK_DB) { stats.skippedSilent++; scheduleNext(150); return }
+    // levelDead（analyser 不可用）时没有可信电平，跳过静音判定，只按体积/回声窗兜底。
+    if (!levelDead) {
+      if (epMode === 'ape') {
+        const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150)
+        if (!okSpeech) { stats.skippedSilent++; scheduleNext(150); return }
+      } else if (winPeak < SILENT_PEAK_DB) { stats.skippedSilent++; scheduleNext(150); return }
+    }
     if (Date.now() < mutedUntil) { stats.skippedSilent++; scheduleNext(150); return }
     if (blob.size < 1200) { stats.skippedSilent++; scheduleNext(150); return }
 
     stats.uploaded++
     setStatus('recognizing')
     try {
-      const b64 = await blobToBase64(blob)
-      if (!b64) { stats.asrFail++; stats.lastError = 'b64-empty'; return }
+      // 编码协商 + Safari 的 mp4→WAV：上传前的容器转换都在这里（client/audio-codec.ts 提供纯函数）
+      const wire = await prepareAudioForAsr(blob)
+      if (!wire || !wire.base64) { stats.asrFail++; stats.lastError = 'b64-empty'; return }
       const asrCtl = typeof AbortController !== 'undefined' ? new AbortController() : null
       if (asrCtl) asrAborts.add(asrCtl)
       let res: Response
@@ -299,7 +394,9 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
         res = await fetchWithTimeout(apiBase + '/asr', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ audio: b64, format: 'webm' }),
+          // format 必须带实际值：宿主按它决定 multipart 的 filename/Content-Type。
+          // 白名单是 webm/wav/mp3（src/host/routes/asr.ts），mp4 不在其中 → hostAsrFormat 已回落成 webm。
+          body: JSON.stringify({ audio: wire.base64, format: wire.format }),
         }, ASR_TIMEOUT_MS, asrCtl ? asrCtl.signal : undefined)
       } finally {
         if (asrCtl) asrAborts.delete(asrCtl)
@@ -316,7 +413,7 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
         return
       }
       if (!data || !data.ok) { stats.asrFail++; stats.lastError = 'asr: ' + String((data && data.error) || 'failed'); return }
-      try { lastSeg = { mode: epMode, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) } } catch (e) { }
+      try { lastSeg = { mode: epMode, fmt: wire.format, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) } } catch (e) { }
       const text = String(data.text || '').trim()
       if (!text) return
       stats.asrTexts++
@@ -468,22 +565,10 @@ const asrAborts = new Set<AbortController>()
     })
   }
 
-  // 系统语音兜底 —— 对应 C# 的 SAPI 兜底
-  function speakViaBrowser(text: string): Promise<void> {
-    return new Promise((resolve) => {
-      try {
-        const Synth: any = (window as any).speechSynthesis
-        const Utt: any = (window as any).SpeechSynthesisUtterance
-        if (!Synth || !Utt) { resolve(); return }
-        const u = new Utt(text)
-        u.lang = 'zh-CN'
-        u.onend = () => resolve()
-        u.onerror = () => resolve()
-        try { Synth.cancel() } catch (e) { }
-        Synth.speak(u)
-      } catch (e) { resolve() }
-    })
-  }
+  // 系统语音兜底的三家差异（voices 异步 / onend 不触发 / cancel 后被吞）
+  // 全部收进 client/browser-tts.ts，这里只用它导出的两个接口：
+  //   browserVoiceUsable() —— 是否值得一试
+  //   speakViaBrowser()    —— 念一段，Promise 永远 resolve（内部看门狗）
 
   /**
    * 自适应停顿：照真人换气节奏给不同标点不同停顿
@@ -565,7 +650,7 @@ const asrAborts = new Set<AbortController>()
         } catch (e) { }
         // 系统语音兜底：只有真的有可用语音时才用（没语音就当场静音，等于丢内容）
         // 试听（strict）不兜底：否则换了音色听起来还是系统音，等于没接线
-        const canBrowser = !job.strict && (() => { try { const s: any = (window as any).speechSynthesis; return !!(s && s.getVoices && s.getVoices().length > 0) } catch (e) { return false } })()
+        const canBrowser = !job.strict && browserVoiceUsable()
         if (canBrowser) speakViaBrowser(job.text).then(() => finishJob(job))
         else finishJob(job)
         return
@@ -610,7 +695,7 @@ const asrAborts = new Set<AbortController>()
           setTimeout(() => { try { pumpTts() } catch (e) { } }, 250)
           return
         }
-        const canBrowser2 = !job.strict && (() => { try { const s: any = (window as any).speechSynthesis; return !!(s && s.getVoices && s.getVoices().length > 0) } catch (e) { return false } })()
+        const canBrowser2 = !job.strict && browserVoiceUsable()
         if (canBrowser2) speakViaBrowser(job.text).then(() => finishJob(job))
         else finishJob(job)
       })
@@ -638,6 +723,72 @@ const asrAborts = new Set<AbortController>()
     const rest = sbuf.trim()
     if (rest) out.push(rest)
     return out
+  }
+
+  // ---- 上传前的容器准备（Safari 兼容的关键一段）----
+  /** Blob → ArrayBuffer；用 FileReader（Blob.arrayBuffer() 在老 Safari 上没有） */
+  function readBlobBuffer(blob: Blob): Promise<ArrayBuffer | null> {
+    return new Promise((resolve) => {
+      try {
+        const fr = new FileReader()
+        fr.onload = () => resolve((fr.result as ArrayBuffer) || null)
+        fr.onerror = () => resolve(null)
+        fr.readAsArrayBuffer(blob)
+      } catch (e) { resolve(null) }
+    })
+  }
+
+  /**
+   * mp4 → 16bit 单声道 WAV。
+   * 只用于"Safari 只能录 mp4"这一种情况：宿主白名单不含 mp4（webm/wav/mp3），转 wav 才稳。
+   * decodeAudioData 在旧 Safari 只有回调式（Promise 式 14.1 才有），两种都接；
+   * 3 秒没回调就当失败 → 回退原字节，绝不让转码把识别卡死。
+   */
+  function transcodeToWav(blob: Blob): Promise<Blob | null> {
+    return new Promise((resolve) => {
+      const ctx: any = actx
+      if (!ctx || typeof ctx.decodeAudioData !== 'function') { resolve(null); return }
+      let settled = false
+      const done = (wav: Blob | null) => { if (settled) return; settled = true; resolve(wav) }
+      const finish = (buf: any) => {
+        try {
+          if (!buf || !buf.numberOfChannels) { done(null); return }
+          const chans: Float32Array[] = []
+          const n = Math.min(2, Number(buf.numberOfChannels) || 1)
+          for (let i = 0; i < n; i++) chans.push(buf.getChannelData(i))
+          const mono = downmixToMono(chans)
+          // 宿主解码后上限 8MB：转出来超 6MB 就别传了，按原字节回退
+          if (wavBytes(mono.length / (Number(buf.sampleRate) || 48000), buf.sampleRate) > 6 * 1024 * 1024) { done(null); return }
+          done(new Blob([encodeWavPcm16(mono, buf.sampleRate)], { type: 'audio/wav' }))
+        } catch (e) { done(null) }
+      }
+      readBlobBuffer(blob).then((ab) => {
+        if (!ab) { done(null); return }
+        try {
+          const ret: any = ctx.decodeAudioData(ab, finish, () => done(null))
+          if (ret && typeof ret.then === 'function') ret.then(finish).catch(() => done(null))
+        } catch (e) { done(null) }
+      })
+      setTimeout(() => done(null), 3000)
+    })
+  }
+
+  /**
+   * 上传前准备：确定实际容器；mp4 先转 WAV，转不动就按原字节走。
+   * 返回的 format 一定是宿主认识的值（webm/wav/mp3）。
+   */
+  async function prepareAudioForAsr(blob: Blob): Promise<{ base64: string; format: 'webm' | 'wav' | 'mp3' } | null> {
+    let src: Blob = blob
+    let fmt: RecFormat = formatFromMime(blob.type || recMime)
+    if (fmt === 'mp4') {
+      const wav = await transcodeToWav(blob)
+      if (wav) { src = wav; fmt = 'wav' } else {
+        try { opts.onDiag && opts.onDiag({ stage: 'mp4-no-transcode', hint: 'mp4 没能转成 wav，按原字节上传' }) } catch (e) { }
+      }
+    }
+    const b64 = await blobToBase64(src)
+    if (!b64) return null
+    return { base64: b64, format: hostAsrFormat(fmt) }
   }
 
   async function blobToBase64(blob: Blob): Promise<string> {
@@ -677,26 +828,59 @@ const asrAborts = new Set<AbortController>()
     asrNoKey = false   // 重新开语音会话就再试一次（主人可能刚配好 Key）
     if (running) return
     running = true
+    recMime = ''
+    recFormat = 'webm'
+    levelOk = false
+    levelDead = false
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
+      // 非安全上下文（http + 内网 IP）下 Chrome/Safari 都没有 mediaDevices：
+      // 这属于常见部署形态，给一条能看懂的诊断，别只留一个 "TypeError"。
+      const nav: any = typeof navigator !== 'undefined' ? navigator : null
+      if (!nav || !nav.mediaDevices || typeof nav.mediaDevices.getUserMedia !== 'function') {
+        throw { name: 'NoGetUserMedia' }
+      }
+      stream = await nav.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
       })
-      if (!running) { try { stream.getTracks().forEach((t) => t.stop()) } catch (e) { } ; return }
+      if (!running) { releaseAudio(); return }
+      // Safari 用 webkitAudioContext；两个都没有就别硬走
       const Ctx: any = (window as any).AudioContext || (window as any).webkitAudioContext
+      if (!Ctx) throw { name: 'NoAudioContext' }
       actx = new Ctx()
-      try { await actx!.resume() } catch (e) { }
-      const src = actx!.createMediaStreamSource(stream)
-      analyser = actx!.createAnalyser()
+      // 自动播放策略：resume 一次；仍 suspended 就等用户手势（见 hookGestureResume）
+      try { await (actx as any).resume() } catch (e) { }
+      try { if ((actx as any).state === 'suspended') hookGestureResume() } catch (e) { }
+      const srcNode: any = (actx as any).createMediaStreamSource(stream)
+      analyser = (actx as any).createAnalyser()
       analyser.fftSize = 1024
       analyser.smoothingTimeConstant = 0
-      timeBuf = new Float32Array(1024)
-      src.connect(analyser)
-      rec = new MediaRecorder(stream)
+      timeBuf = new Float32Array(analyser.fftSize || 1024)
+      try { srcNode.connect(analyser) } catch (e) { }
+      levelProbeAt = performance.now()
+      // 老 Safari（< 14.1）没有 MediaRecorder：明确诊断并放掉麦克风，不要装作在听
+      const Rec: any = typeof MediaRecorder !== 'undefined' ? MediaRecorder : null
+      if (!Rec) throw { name: 'NoMediaRecorder' }
+      // 编码协商：Chrome/Edge/Firefox → webm(opus)；Safari → audio/mp4（后面转 wav 再传）
+      const picked = pickRecorderMime(Rec)
+      recMime = picked.mimeType
+      recFormat = picked.format
+      try {
+        rec = recMime ? new Rec(stream, { mimeType: recMime }) : new Rec(stream)
+      } catch (e) {
+        // isTypeSupported 说支持、构造时却挑食的浏览器：退回不指定 mimeType，保证还能录
+        rec = new Rec(stream)
+        recMime = ''
+        recFormat = 'webm'
+      }
+      try { opts.onDiag && opts.onDiag({ stage: 'recorder', mime: recMime || '(default)', fmt: recFormat }) } catch (e) { }
       rec.ondataavailable = (e: BlobEvent) => { if (e.data && e.data.size > 0) parts.push(e.data) }
       rec.onstop = () => {
         // 已经 stop() 了：这段残响不能再走识别（哪怕录音器自己又 stop 了一次）
         if (!running) { parts = []; return }
-        const blob = new Blob(parts, { type: 'audio/webm' })
+        // blob 的 type 用录音器实际报的 mime（Safari 这里是 audio/mp4），绝不写死 webm：
+        // 写死会让后面的 format 归类拿到错误容器，Safari 的 mp4 就永远走不到转 wav 那条路。
+        const blobType = String((rec && (rec as any).mimeType) || recMime || 'audio/webm')
+        const blob = new Blob(parts, { type: blobType })
         parts = []
         void onWindowDone(blob)
       }
@@ -710,8 +894,11 @@ const asrAborts = new Set<AbortController>()
       stats.lastError = ''
     } catch (e: any) {
       running = false
-      stats.lastError = 'getUserMedia: ' + String((e && e.name) || e)
+      stats.lastError = 'start: ' + String((e && e.name) || e)
       setStatus('idle')
+      // 失败也把麦克风/AudioContext 收掉：否则标签页一直亮录音灯（用户会以为在偷听）
+      try { unhookGestureResume() } catch (e2) { }
+      try { releaseAudio() } catch (e2) { }
       try { opts.onDiag && opts.onDiag({ stage: 'start-failed', err: stats.lastError }) } catch (e2) { }
     }
   }
@@ -727,10 +914,11 @@ const asrAborts = new Set<AbortController>()
     // 朗读侧一起收：原来只停录音，说书/回复还在播、队列还留着，
     // 结果是"关了语音待命，声音没停、麦克风还被静音"，点菜单也不对。
     try { stopSpeaking() } catch (e) { }
-    try { if (rec && rec.state !== 'inactive') rec.stop() } catch (e) { }
-    try { if (actx) actx.close() } catch (e) { }
-    try { if (stream) stream.getTracks().forEach((t) => t.stop()) } catch (e) { }
-    rec = null; actx = null; analyser = null; stream = null; timeBuf = null
+    try { unhookGestureResume() } catch (e) { }
+    levelProbeAt = 0
+    levelOk = false
+    levelDead = false
+    try { releaseAudio() } catch (e) { }
     setStatus('idle')
   }
 
@@ -774,7 +962,8 @@ const asrAborts = new Set<AbortController>()
     try { if (ttsAudio) { ttsAudio.pause(); ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }
     ttsAudio = null
     ttsBusy = false
-    if (typeof speechSynthesis !== 'undefined') { try { speechSynthesis.cancel() } catch (e) { } }
+    // 系统语音兜底可能还在念：一起取消（Safari/Firefox 都支持 cancel）
+    try { const s: any = (window as any).speechSynthesis; if (s && typeof s.cancel === 'function') s.cancel() } catch (e) { }
     if (!muted) micOn(true)
     mutedUntil = Date.now() + ECHO_MUTE_MS
     setStatus('listening')

@@ -1,3 +1,22 @@
+/**
+ * host/data/cloud.ts —— 云端数据源（可选，配置 dataSource=cloud 时启用）
+ *
+ * 数据来自 https://adengou.cn/culture/v1/（静态 JSON，无需 CORS）：
+ *   manifest.json、daily.json、duilian.json、poems/poems-00..14.json、
+ *   culture/chengyu.json、culture/idioms.json、culture/minsu-00..09.json、
+ *   story/index.json、story/<书名>.json。
+ *
+ * 策略：
+ *   · 按需拉：用到哪本小说/哪类文化/哪片诗才拉哪个文件；
+ *   · 内存缓存：拉过的文件留在进程内；清单每 30 秒最多检查一次，
+ *     version+generatedAt 变了才清空数据缓存、按新清单重拉（没变就继续用缓存）；
+ *   · 网络失败静默回退本地：同一个故障周期只 console.error 一次，60 秒冷却期内
+ *     直接走本地，不反复卡网络；恢复后打一条 recovered 日志。错误绝不抛给路由。
+ *
+ * 跨平台：这里只有 URL 路径（一律 '/'，不是文件系统路径，无需 join）；
+ * 响应体读入容错 UTF-8 BOM，避免 CDN/镜像加 BOM 后整类数据解析失败。
+ */
+import { stripBom } from '../atomic.js';
 import { normalizeCultureItems, normalizeDaily, normalizeDuilian, normalizePoemItems, normalizeStoryChunks, } from './normalize.js';
 export const CLOUD_DATA_BASE = 'https://adengou.cn/culture/v1/';
 /** 单次请求超时；云端挂了也不能让本地说书/念诗一起卡死 */
@@ -54,7 +73,7 @@ export function createCloudDataPort(opts) {
             });
             if (!res || !res.ok)
                 throw new Error('HTTP ' + String(res && res.status));
-            return JSON.parse(await res.text());
+            return JSON.parse(stripBom(await res.text()));
         }
         finally {
             clearTimeout(timer);

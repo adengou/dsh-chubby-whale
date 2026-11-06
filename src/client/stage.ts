@@ -87,3 +87,94 @@ export function decayVelocity(vx: number, vy: number): { vx: number; vy: number;
   const ny = vy * INERTIA_DECAY
   return { vx: nx, vy: ny, done: Math.abs(nx) < INERTIA_STOP && Math.abs(ny) < INERTIA_STOP }
 }
+
+/**
+ * 拖拽该挂哪套事件。
+ * Safari 13 之前没有 PointerEvent：只绑 pointerdown/move/up 的话事件永远不触发，
+ * 整只鱼拖不动，而且是**静默失效**（没报错、没日志），最难受的坏法。这种环境改挂 touch + mouse。
+ */
+export function pickInputMode(hasPointerEvent: boolean): 'pointer' | 'touch' {
+  return hasPointerEvent ? 'pointer' : 'touch'
+}
+
+/** 从任意事件取指针坐标：touch 用 touches[0]/changedTouches[0]，mouse/pointer 用 clientX/Y */
+export function pointOf(e: any): { x: number; y: number } {
+  const t = (e && e.touches && e.touches[0]) || (e && e.changedTouches && e.changedTouches[0])
+  const s = t || e || {}
+  const x = Number(s.clientX)
+  const y = Number(s.clientY)
+  return { x: isFinite(x) ? x : 0, y: isFinite(y) ? y : 0 }
+}
+
+export type DragInputHandlers = {
+  onDown: (x: number, y: number) => void
+  onMove: (x: number, y: number) => void
+  onEnd: () => void
+}
+
+/**
+ * 绑定拖拽输入（DOM 侧唯一一处，可离线测）。
+ *
+ * 三家差异：
+ *   · Safari 13 之前没有 PointerEvent → 改挂 touch + mouse（元素上 touchstart/mousemove）；
+ *   · iOS Safari 的 setPointerCapture 可能失效、指针会滑出元素 → window 上兜一层 move/up；
+ *   · 兜底与元素处理器会收到同一个事件：先处理的一方在事件上打 __chubbyDragHandled，
+ *     后来的一看标记就跳过，绝不会把一次移动算两遍（那会让鱼瞬移）。
+ *
+ * 返回 mode 便于诊断：'pointer' 还是 'touch' 一眼能看出走的是哪套。
+ */
+export function bindDragInput(target: any, win: any, handlers: DragInputHandlers): { mode: 'pointer' | 'touch'; dispose: () => void } {
+  const mode = pickInputMode(!!(win && win.PointerEvent))
+  const add = (el: any, t: string, fn: any, opts?: any): void => { try { el.addEventListener(t, fn, opts) } catch (e) { } }
+  const del = (el: any, t: string, fn: any): void => { try { el.removeEventListener(t, fn) } catch (e) { } }
+  const mark = (e: any): void => { try { e.__chubbyDragHandled = true } catch (e2) { } }
+  const handled = (e: any): boolean => { try { return !!(e && e.__chubbyDragHandled) } catch (e2) { return false } }
+  const onDown = (e: any): void => {
+    if (handled(e)) return
+    const p = pointOf(e)
+    handlers.onDown(p.x, p.y)
+  }
+  const onMove = (e: any): void => {
+    if (handled(e)) return
+    const p = pointOf(e)
+    handlers.onMove(p.x, p.y)
+  }
+  const onTouchMove = (e: any): void => {
+    // 老 Safari 没有 touch-action: none，只能在这里拦掉页面滚动
+    try { if (e.cancelable) e.preventDefault() } catch (e2) { }
+    // 先自己处理，再打标：标记是给 window 兜底看的（同一事件冒泡到 window 时不再算一次）
+    const p = pointOf(e)
+    handlers.onMove(p.x, p.y)
+    mark(e)
+  }
+  const onEnd = (e: any): void => {
+    if (handled(e)) return
+    handlers.onEnd()
+  }
+  if (target && win) {
+    if (mode === 'touch') {
+      add(target, 'touchstart', onDown, { passive: false })
+      add(target, 'touchmove', onTouchMove, { passive: false })
+      add(target, 'mousedown', onDown)
+    }
+    // window 兜底：bubble 阶段，元素先处理并打标
+    add(win, mode === 'touch' ? 'touchmove' : 'pointermove', onMove)
+    add(win, mode === 'touch' ? 'touchend' : 'pointerup', onEnd)
+    add(win, mode === 'touch' ? 'touchcancel' : 'pointercancel', onEnd)
+    if (mode === 'touch') { add(win, 'mousemove', onMove); add(win, 'mouseup', onEnd) }
+  }
+  const dispose = (): void => {
+    if (target && win) {
+      if (mode === 'touch') {
+        del(target, 'touchstart', onDown)
+        del(target, 'touchmove', onTouchMove)
+        del(target, 'mousedown', onDown)
+      }
+      del(win, mode === 'touch' ? 'touchmove' : 'pointermove', onMove)
+      del(win, mode === 'touch' ? 'touchend' : 'pointerup', onEnd)
+      del(win, mode === 'touch' ? 'touchcancel' : 'pointercancel', onEnd)
+      if (mode === 'touch') { del(win, 'mousemove', onMove); del(win, 'mouseup', onEnd) }
+    }
+  }
+  return { mode, dispose }
+}

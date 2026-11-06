@@ -7,10 +7,13 @@
  *
  * 与改造前行为一致：按文件 mtime 缓存，改数据不重启；读坏只记一条日志并返回空，
  * 绝不把异常抛给路由。新增的 DataPort 只是把这些读盘逻辑收进一个实现里。
+ *
+ * 跨平台：路径一律 join；读入容错 UTF-8 BOM（数据文件被 Windows 工具改写过也不至于整类失效）。
  */
 import { readFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
+import { stripBom } from '../atomic.js'
 import type { CultureKind, DailyItem, DataPort, DuilianData, PoemChunk, StoryBookMeta } from '../ports.js'
 import type { StoryChunk, StoryRepo } from '../story/repo.js'
 import {
@@ -40,14 +43,18 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
   let duilianCache: CacheEntry<DuilianData> | null = null
   let dailyCache: CacheEntry<DailyItem[]> | null = null
 
-  /** 文件最后修改时间（读不到返回 0）；缓存据此失效，改数据不必重启 */
+  /**
+   * 文件最后修改时间（读不到返回 0）；缓存据此失效，改数据不必重启。
+   * mtimeMs 在 NTFS / ext4 / APFS 上可靠；FAT / exFAT 只有 2 秒精度，
+   * 同一秒内改写数据时可能「偶尔不更新」，刷新生效会晚 1~2 秒——属已知限制，不影响正确性。
+   */
   function fileMtime(p: string): number {
     try { return statSync(p).mtimeMs } catch { return 0 }
   }
 
   async function loadJsonArray(file: string, logTag: string): Promise<any[]> {
     try {
-      const data = JSON.parse(await readFile(file, 'utf8'))
+      const data = JSON.parse(stripBom(await readFile(file, 'utf8')))
       const arr = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : null)
       if (!arr) {
         console.error(logTag + ' file=' + file + ' err=bad structure')
@@ -102,7 +109,7 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     if (!(poemsCache && mt > 0 && poemsCache.mtimeMs === mt)) {
       let raw: any = null
       try {
-        const data = JSON.parse(await readFile(POEMS_FILE, 'utf8'))
+        const data = JSON.parse(stripBom(await readFile(POEMS_FILE, 'utf8')))
         raw = Array.isArray(data) ? data : (Array.isArray(data?.poems) ? data.poems : null)
         if (!raw) console.error('POEM-LOAD-FAIL file=' + POEMS_FILE + ' err=bad structure')
       } catch (err: any) {
@@ -120,7 +127,7 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     if (duilianCache && mt > 0 && duilianCache.mtimeMs === mt) return { ...duilianCache.value }
     let raw: any = null
     try {
-      raw = JSON.parse(await readFile(DUILIAN_FILE, 'utf8'))
+      raw = JSON.parse(stripBom(await readFile(DUILIAN_FILE, 'utf8')))
     } catch (err: any) {
       if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
         console.error('DUILIAN-LOAD-FAIL file=' + DUILIAN_FILE + ' err=' + String(err?.message || err))
@@ -136,7 +143,7 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     if (dailyCache && mt > 0 && dailyCache.mtimeMs === mt) return dailyCache.value.slice()
     let raw: any = null
     try {
-      raw = JSON.parse(await readFile(DAILY_FILE, 'utf8'))
+      raw = JSON.parse(stripBom(await readFile(DAILY_FILE, 'utf8')))
     } catch (err: any) {
       // data/daily.json 是可选文件：没有它属于正常态，不刷日志；读坏要留痕
       if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {

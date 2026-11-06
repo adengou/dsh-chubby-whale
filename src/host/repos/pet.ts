@@ -3,10 +3,10 @@
  *
  * 从 host/store.ts 拆出：离线越久越饿（每小时 +3）、喂食 -30 饥饿 +2 亲密（照 C# 版）。
  * 写盘走 host/atomic.ts；读坏文件按 [store] 前缀留痕并备份。
+ * 读入容错 UTF-8 BOM，写出统一 UTF-8 无 BOM。
  */
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { writeJsonAtomic, isMissingFileError, quarantineFile } from '../atomic.js'
+import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } from '../atomic.js'
 
 export interface PetRepo {
   loadPet(): any
@@ -22,7 +22,7 @@ export function createPetRepo(dataDir: string): PetRepo {
 
   function loadPet(): any {
     try {
-      const obj = JSON.parse(readFileSync(PET, 'utf8'))
+      const obj = JSON.parse(readTextNoBom(PET))
       if (obj && typeof obj === 'object') return obj
     } catch (err: any) {
       if (!isMissingFileError(err)) quarantineFile(PET, err, '[store]')

@@ -12,7 +12,11 @@
  *     version+generatedAt 变了才清空数据缓存、按新清单重拉（没变就继续用缓存）；
  *   · 网络失败静默回退本地：同一个故障周期只 console.error 一次，60 秒冷却期内
  *     直接走本地，不反复卡网络；恢复后打一条 recovered 日志。错误绝不抛给路由。
+ *
+ * 跨平台：这里只有 URL 路径（一律 '/'，不是文件系统路径，无需 join）；
+ * 响应体读入容错 UTF-8 BOM，避免 CDN/镜像加 BOM 后整类数据解析失败。
  */
+import { stripBom } from '../atomic.js'
 import type { CultureKind, DailyItem, DataPort, DuilianData, PoemChunk, StoryBookMeta } from '../ports.js'
 import type { StoryChunk } from '../story/repo.js'
 import {
@@ -91,7 +95,7 @@ export function createCloudDataPort(opts: {
         headers: { accept: 'application/json' },
       })
       if (!res || !res.ok) throw new Error('HTTP ' + String(res && res.status))
-      return JSON.parse(await res.text())
+      return JSON.parse(stripBom(await res.text()))
     } finally {
       clearTimeout(timer)
     }

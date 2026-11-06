@@ -28,7 +28,7 @@ export function createStoryPlayer(opts) {
     const clientQueues = new Map();
     function loadProgress() {
         try {
-            const obj = JSON.parse(readFileSync(opts.progressFile, 'utf8'));
+            const obj = JSON.parse(String(readFileSync(opts.progressFile, 'utf8')).replace(/^\uFEFF/, ''));
             const out = {};
             if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
                 for (const k of Object.keys(obj)) {

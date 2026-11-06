@@ -2,10 +2,10 @@
  * host/repos/fishfood.ts —— 鱼粮（token 统计）仓储（fishfood.json）
  * 从 host/store.ts 拆出：跨天/跨月清零「今日/本月」，总量 totalTokens 不动（照 C# 的 date/month 滚动）。
  * 写盘走 host/atomic.ts；读坏文件按 [store] 前缀留痕并备份。
+ * 读入容错 UTF-8 BOM，写出统一 UTF-8 无 BOM。
  */
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { writeJsonAtomic, isMissingFileError, quarantineFile } from '../atomic.js'
+import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } from '../atomic.js'
 
 export interface TokenRepo {
   loadFishfood(): any
@@ -19,7 +19,7 @@ export function createTokenRepo(dataDir: string): TokenRepo {
 
   function loadFishfood(): any {
     try {
-      const obj = JSON.parse(readFileSync(FISHFOOD, 'utf8'))
+      const obj = JSON.parse(readTextNoBom(FISHFOOD))
       if (obj && typeof obj === 'object') return obj
     } catch (err: any) {
       if (!isMissingFileError(err)) quarantineFile(FISHFOOD, err, '[store]')

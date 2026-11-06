@@ -59,7 +59,7 @@ export function createCultureHandlers(opts) {
         const out = {};
         let legacy = false;
         try {
-            const obj = JSON.parse(readFileSync(SEEN_FILE, 'utf8'));
+            const obj = JSON.parse(String(readFileSync(SEEN_FILE, 'utf8')).replace(/^\uFEFF/, ''));
             if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
                 const hasArrays = Array.isArray(obj.allusions) || Array.isArray(obj.tales)
                     || Array.isArray(obj.idioms) || Array.isArray(obj.minsu);

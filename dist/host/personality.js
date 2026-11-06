@@ -397,7 +397,7 @@ export function createPersonalityRepo(runtimeDir) {
     function load() {
         let text = '';
         try {
-            text = readFileSync(file, 'utf8');
+            text = String(readFileSync(file, 'utf8')).replace(/^\uFEFF/, ''); // 容错 BOM：带 BOM 的 JSON.parse 会失败，导致人格被误隔离
         }
         catch (err) {
             if (!isMissingFileError(err))

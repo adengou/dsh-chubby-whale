@@ -4,10 +4,25 @@
  * 内存：条目数 + 总字节双上限，LRU 淘汰（音频 Buffer 很占内存，必须限总量）
  * 磁盘：超过 MAX_FILES 时按 mtime 删最旧的一半（不读文件内容）
  * 过期：内存条目记写入时间 at（+ 可选 ttl），getJson 带 maxAgeMs 时内存命中也校验，不再让旧值顶掉 TTL
+ *
+ * 跨平台：
+ *   · 写入走「唯一临时文件 + rename」，与 host/atomic.ts 同一套语义；rename 遇 Windows
+ *     偶发 EPERM / EACCES / EBUSY 时重试 3 次（间隔 20ms），最终失败清临时文件并记日志。
+ *   · POSIX 下缓存目录 0700、文件 0600（默认创建权限靠 mode 选项，Windows 忽略 mode）。
+ *   · 读 JSON 容错 UTF-8 BOM；写出一律 UTF-8 无 BOM。
+ *   · TTL / prune 用 stat().mtimeMs 判断新旧：NTFS / ext4 / APFS 精度足够；
+ *     FAT / exFAT 只有 2 秒精度，会出现「刚写就被判过期/排序并列」的偶发现象，属已知限制，
+ *     只影响缓存命中率，不影响正确性（宁可重算，不返回错内容）。
  */
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir, readdir, unlink, stat, rename } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isRetriableRenameError, chmodPrivateDir, stripBom } from './atomic.js';
+/** 磁盘 rename 失败后的重试次数（不含首次）与间隔；与 host/atomic.ts 保持一致 */
+const RENAME_RETRY_LIMIT = 3;
+const RENAME_RETRY_DELAY_MS = 20;
+/** prune 节流窗口：每次写都全量 readdir+stat 会把磁盘扫描串进回复延迟 */
+const PRUNE_INTERVAL_MS = 30000;
 export function hashKey(text) {
     return createHash('sha1').update(text).digest('hex');
 }
@@ -35,6 +50,10 @@ function sizeOf(value) {
         return 64;
     }
 }
+/** 等待 ms 毫秒（异步重试用；不要为 20ms 阻塞同进程的其它请求） */
+function delay(ms) {
+    return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
 export function createCache(opts) {
     const mem = new Map();
     const MEM_ITEMS = opts.memLimit || 500;
@@ -46,10 +65,25 @@ export function createCache(opts) {
         if (ensured)
             return;
         try {
-            await mkdir(opts.dir, { recursive: true });
+            await mkdir(opts.dir, { recursive: true, mode: 0o700 });
             ensured = true;
         }
         catch { }
+        chmodPrivateDir(opts.dir); // POSIX 收紧到 0700；Windows 跳过
+    }
+    /** rename 带重试：Windows 上目标文件被占用时偶发 EPERM/EBUSY，重试几次通常就过去了 */
+    async function renameWithRetry(tmp, target) {
+        for (let attempt = 0;; attempt++) {
+            try {
+                await rename(tmp, target);
+                return;
+            }
+            catch (err) {
+                if (attempt >= RENAME_RETRY_LIMIT || !isRetriableRenameError(err))
+                    throw err;
+                await delay(RENAME_RETRY_DELAY_MS);
+            }
+        }
     }
     /** 从内存拿掉一条（同步扣减字节计数，避免计数漂移） */
     function forget(key) {
@@ -149,7 +183,8 @@ export function createCache(opts) {
                 }
             }
             const buf = await readFile(file);
-            const val = ext === 'json' ? JSON.parse(buf.toString('utf8')) : buf;
+            // 剥 BOM：缓存文件正常不带，但外部工具改写过时要容错（否则整条缓存静默失效）
+            const val = ext === 'json' ? JSON.parse(stripBom(buf.toString('utf8'))) : buf;
             remember(key, val);
             return cloneHit(val);
         }
@@ -165,19 +200,19 @@ export function createCache(opts) {
             // 原子写：先写唯一临时文件再 rename 覆盖（并发同 key 不会交错产出坏文件）
             const target = join(opts.dir, key + '.' + ext);
             const tmp = target + '.' + process.pid + '.' + Math.random().toString(36).slice(2, 8) + '.tmp';
+            // POSIX：创建即 0600；Windows 忽略 mode。写出统一 UTF-8 无 BOM
             if (ext === 'json')
-                await writeFile(tmp, JSON.stringify(value), 'utf8');
+                await writeFile(tmp, JSON.stringify(value), { encoding: 'utf8', mode: 0o600 });
             else
-                await writeFile(tmp, value);
+                await writeFile(tmp, value, { mode: 0o600 });
             try {
-                await rename(tmp, target);
+                await renameWithRetry(tmp, target);
             }
             catch (e) {
                 try {
                     await unlink(tmp);
                 }
-                catch { }
-                ;
+                catch { } // 改名失败别留垃圾
                 throw e;
             }
             await prune();
@@ -187,15 +222,24 @@ export function createCache(opts) {
             console.error('[cache] WRITE-FAIL key=' + key + ' err=' + String(err?.message || err));
         }
     }
-    /** 文件太多时按 mtime 删最旧的一半；只 stat，不读内容 */
-    /** prune 节流：每次写都全量 readdir+stat 会把磁盘扫描串进回复延迟，30 秒最多扫一次 */
+    /**
+     * 文件太多时按 mtime 删最旧的一半；只 stat，不读内容。
+     * 容错：单个文件 stat 失败（被并发删除/权限变化/句柄占用）只跳过这一条，不中断整轮。
+     * 并发：prune 是异步的，两个写请求同时触发时用 pruning 标志保证同一时刻只跑一轮。
+     * mtime 可靠性：NTFS / ext4 / APFS 的 mtimeMs 足够；FAT / exFAT 只有 2 秒精度，
+     * 同一秒内写入的多个文件排序可能并列，删除顺序不必完全精确（只删最旧的一半，不删新条目）。
+     */
     let lastPruneAt = 0;
+    let pruning = false;
     async function prune() {
+        if (pruning)
+            return;
         try {
             const nowMs = Date.now();
-            if (nowMs - lastPruneAt < 30000)
+            if (nowMs - lastPruneAt < PRUNE_INTERVAL_MS)
                 return;
             lastPruneAt = nowMs;
+            pruning = true;
             const files = await readdir(opts.dir);
             if (files.length <= MAX_FILES)
                 return;
@@ -203,10 +247,12 @@ export function createCache(opts) {
             for (const f of files) {
                 try {
                     const st = await stat(join(opts.dir, f));
-                    if (st.isFile())
-                        entries.push({ f, t: st.mtimeMs });
+                    if (!st.isFile())
+                        continue;
+                    // mtimeMs 异常（NaN）时排到最末，宁可少删也不误删
+                    entries.push({ f, t: Number.isFinite(st.mtimeMs) ? st.mtimeMs : Number.MAX_SAFE_INTEGER });
                 }
-                catch { }
+                catch { } // 单个文件 stat 失败：跳过，继续整轮
             }
             entries.sort((a, b) => a.t - b.t);
             const toDelete = entries.slice(0, Math.floor(entries.length / 2));
@@ -224,7 +270,12 @@ export function createCache(opts) {
                 forget(k);
             }
         }
-        catch { }
+        catch {
+            // readdir 失败（目录被删/权限）：本轮放弃，下个窗口再试；不阻塞写盘
+        }
+        finally {
+            pruning = false;
+        }
     }
     // 内存直写：和 setJson 一样经 remember 打 at（可选 ttl），过期判定不会拿到没有时间的条目
     function memSet(key, value, ttlMs = 0) { remember(key, value, ttlMs); }

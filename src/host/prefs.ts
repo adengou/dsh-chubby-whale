@@ -31,7 +31,7 @@ export function createPrefs(runtimeDir: string): PrefsRepo {
   const PREFS_FILE = join(runtimeDir, 'prefs.json')
 
   function load(): PrefsData {
-    try { return JSON.parse(readFileSync(PREFS_FILE, 'utf8')) } catch { return {} }
+    try { return JSON.parse(String(readFileSync(PREFS_FILE, 'utf8')).replace(/^\uFEFF/, '')) } catch { return {} }
   }
   function save(p: PrefsData): void {
     // 原子写：写坏一次就整份偏好丢失（与 store 同一套工具）

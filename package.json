@@ -23,7 +23,6 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "data",
     "dist",
     "cordis.patch.yml",
     "assets",
@@ -31,7 +30,14 @@
     "LICENSE",
     "CHANGELOG.md",
     "config.example.json",
-    "docs"
+    "docs",
+    "data/story",
+    "data/culture",
+    "data/poems.json",
+    "data/duilian.json",
+    "data/melodies.json",
+    "data/persona.json",
+    "data/poem-titles.json"
   ],
   "engines": {
     "node": ">=22",
@@ -75,11 +81,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/adengou/dsh-chubby-whale.git"
+    "url": "git+https://gitee.com/adengou/dsh-chubby-whale.git"
   },
-  "homepage": "https://github.com/adengou/dsh-chubby-whale#readme",
+  "homepage": "https://gitee.com/adengou/dsh-chubby-whale#readme",
   "bugs": {
-    "url": "https://github.com/adengou/dsh-chubby-whale/issues"
+    "url": "https://gitee.com/adengou/dsh-chubby-whale/issues"
   },
   "author": "adengou"
 }

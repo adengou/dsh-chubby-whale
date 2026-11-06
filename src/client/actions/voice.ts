@@ -72,7 +72,12 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
         })()
         + (st.lastError ? '\n最近错误：' + st.lastError : '')
       host.bubble(line, 15000)
-      try { navigator.clipboard.writeText(JSON.stringify(st)) } catch (e) { }
+      // navigator.clipboard 在 http 非安全上下文里是 undefined，写失败还会 reject；
+      // 这里只是"顺手复制"，失败绝不能影响自检气泡（旧写法 try/catch 抓不到 Promise rejection）
+      try {
+        const clip: any = (navigator as any).clipboard
+        if (clip && typeof clip.writeText === 'function') Promise.resolve(clip.writeText(JSON.stringify(st))).catch(() => { })
+      } catch (e) { }
     } catch (e: any) { host.bubble('自检失败：' + String(e && e.message), 5000) }
   })
 

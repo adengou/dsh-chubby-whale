@@ -3,15 +3,15 @@
  *
  * 从 host/store.ts 拆出：新增、到期判定、重复提醒推进、删除都在这里。
  * 写盘走 host/atomic.ts；读坏文件按 [store] 前缀留痕并备份。
+ * 读入容错 UTF-8 BOM，写出统一 UTF-8 无 BOM。
  */
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { writeJsonAtomic, isMissingFileError, quarantineFile } from '../atomic.js';
+import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } from '../atomic.js';
 export function createReminderRepo(dataDir) {
     const REMINDERS = join(dataDir, 'reminders.json');
     function loadReminders() {
         try {
-            const arr = JSON.parse(readFileSync(REMINDERS, 'utf8'));
+            const arr = JSON.parse(readTextNoBom(REMINDERS));
             if (Array.isArray(arr))
                 return arr;
         }

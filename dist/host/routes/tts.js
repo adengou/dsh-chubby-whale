@@ -8,7 +8,7 @@ import { hashKey } from '../cache.js';
 import { sendTooLarge } from '../http.js';
 import { readJsonBody } from '../body.js';
 import { sendJson, sendBuffer } from '../respond.js';
-import { normalizeRate } from '../../shared/tts.js';
+import { normalizeRate, TTS_UNAVAILABLE } from '../../shared/tts.js';
 import { createEdgeTtsEngine } from '../tts-engine.js';
 /** 单次合成的安全上限：客户端已按 80 字分段，这里只防整本大 JSON 被一次送进来 */
 const MAX_TEXT = 6000;
@@ -17,11 +17,15 @@ const TTS_MAX_BODY = 64 * 1024;
 export function createTtsHandler(opts) {
     const cache = opts.cache;
     const engine = opts.engine || createEdgeTtsEngine();
-    // 预热常驻 worker（只导入依赖、不合成）：首句不必再等 python 启动
+    // 预热常驻 worker（只解析解释器、导入依赖，不合成）：首句不必再等 python 启动。
+    // warm 自身保证不抛；这里再兜一层，防止自定义引擎的异步 rejection 变成未处理异常。
     try {
         const w = engine;
-        if (typeof w.warm === 'function')
-            void w.warm();
+        if (typeof w.warm === 'function') {
+            const p = w.warm.call(engine);
+            if (p && typeof p.catch === 'function')
+                void p.catch(() => { });
+        }
     }
     catch { }
     return async function handleTts(req, res) {
@@ -69,11 +73,14 @@ export function createTtsHandler(opts) {
         }
         catch (err) {
             try {
-                // 合成不可用（没装 python/edge-tts）→ 501，客户端据此改用浏览器 speechSynthesis；其余 → 500
-                const unavailable = Boolean(err && err.code === 'TTS_UNAVAILABLE');
+                // 合成不可用（没装 python/edge-tts）→ 501，客户端据此改用浏览器 speechSynthesis；其余 → 500。
+                // 只记录错误摘要（引擎侧已把 python stderr 截到前 500 字），不打印请求文本。
+                const unavailable = Boolean(err && err.code === TTS_UNAVAILABLE);
+                console.error('[tts] ' + (unavailable ? '语音合成不可用（已回 501，客户端降级浏览器朗读）' : '语音合成失败（回 500）')
+                    + '：' + String(err?.message || err).slice(0, 300));
                 sendJson(res, {
                     ok: false,
-                    code: unavailable ? 'TTS_UNAVAILABLE' : 'TTS_FAILED',
+                    code: unavailable ? TTS_UNAVAILABLE : 'TTS_FAILED',
                     error: String(err?.message || err),
                 }, unavailable ? 501 : 500);
             }

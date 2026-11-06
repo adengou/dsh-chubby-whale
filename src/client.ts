@@ -22,7 +22,7 @@ import { createMelodyPlayer } from './client/melody.js'
 import { createBubble, ensureBubbleStyle } from './client/bubble.js'
 import { createNarrationLock } from './client/narration.js'
 import { createBusyLock, createEpoch } from './client/busy.js'
-import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag, endDrag, decayVelocity } from './client/stage.js'
+import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag, endDrag, decayVelocity, bindDragInput } from './client/stage.js'
 import { createStoryController } from './client/story.js'
 import { createLocalRouter } from './client/chat-route.js'
 import { createChatSender } from './client/chat.js'
@@ -368,23 +368,21 @@ import { createRecover } from './client/recover.js'
       }, [])
 
       // 拖动
-      function onPointerDown(e: any): void {
-        if (e.button !== 0) return
-        beginDrag(dragRef.current, e.clientX, e.clientY, posRef.current.x, posRef.current.y)
+      function dragBeginAt(x: number, y: number): void {
+        beginDrag(dragRef.current, x, y, posRef.current.x, posRef.current.y)
         try {
           const el = stageRef.current
           // 拖动期间关掉投影滤镜：大滤镜每帧重算是拖拽卡死/闪退的主因之一
           if (el && el.style) { el.style.filter = 'none'; el.style.willChange = 'transform' }
         } catch (e2) { }
-        try { e.currentTarget.setPointerCapture(e.pointerId) } catch { }
       }
-      function onPointerMove(e: any): void {
+      function dragMoveTo(x: number, y: number): void {
         const d = dragRef.current
         if (!d.dragging) return
-        const m = moveDrag(d, e.clientX, e.clientY)
+        const m = moveDrag(d, x, y)
         applyPos(posRef.current.x + m.x, posRef.current.y + m.y)
       }
-      function onPointerUp(): void {
+      function dragFinish(): void {
         const d = dragRef.current
         if (!d.dragging) return
         const v = endDrag(d)
@@ -404,6 +402,37 @@ import { createRecover } from './client/recover.js'
         }
         requestAnimationFrame(step)
       }
+      function onPointerDown(e: any): void {
+        // 触摸事件的 button 是 0；右键是 2。没有 button 字段的合成事件按左键处理
+        if (typeof e.button === 'number' && e.button !== 0) return
+        dragBeginAt(e.clientX, e.clientY)
+        try { e.currentTarget.setPointerCapture(e.pointerId) } catch { }
+      }
+      function onPointerMove(e: any): void {
+        try { e.__chubbyDragHandled = true } catch (e2) { }
+        dragMoveTo(e.clientX, e.clientY)
+      }
+      function onPointerUp(e?: any): void {
+        try { if (e) e.__chubbyDragHandled = true } catch (e2) { }
+        dragFinish()
+      }
+
+      // ===== 拖拽输入兼容（差异与兜底全在 client/stage.ts 的 bindDragInput 里）=====
+      // ① 没有 PointerEvent（Safari 13 之前）→ 改挂 touch + mouse，否则鱼拖不动；
+      // ② iOS Safari 的 capture 可能失效、指针会滑出元素 → window 上补 move/up 兜底；
+      // ③ touchmove 用 passive:false 才能 preventDefault，免得拖动时页面跟着滚。
+      R.useEffect(() => {
+        const el: any = stageRef.current
+        const win: any = typeof window !== 'undefined' ? window : null
+        if (!el || !win) return
+        const binding = bindDragInput(el, win, {
+          onDown: (x, y) => dragBeginAt(x, y),
+          onMove: (x, y) => { if (dragRef.current.dragging) dragMoveTo(x, y) },
+          onEnd: () => { if (dragRef.current.dragging) dragFinish() },
+        })
+        try { (window as any).__chubbyWhale.dragInput = binding.mode } catch (e) { }
+        return () => { try { binding.dispose() } catch (e) { } }
+      }, [])
 
       // 余额/成长只在「菜单打开」时拉（见 refreshMenuStats），开机不预请求
       R.useEffect(() => {
@@ -541,9 +570,15 @@ import { createRecover } from './client/recover.js'
             setSubOpen('')
           } catch { }
         }
+        // Safari 13 之前没有 pointerdown：补 mousedown/touchstart，否则菜单点外面关不掉。
+        // 三个都挂且幂等（onDocDown 里重复 setMenu(null) 无副作用）。
         (document as any).addEventListener('pointerdown', onDocDown, true)
+        (document as any).addEventListener('mousedown', onDocDown, true)
+        (document as any).addEventListener('touchstart', onDocDown, true)
         return () => {
           try { (document as any).removeEventListener('pointerdown', onDocDown, true) } catch { }
+          try { (document as any).removeEventListener('mousedown', onDocDown, true) } catch { }
+          try { (document as any).removeEventListener('touchstart', onDocDown, true) } catch { }
         }
       }, [menu])
 

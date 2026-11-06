@@ -1,6 +1,8 @@
 # 更新日志
 
-## 未发布（Gitee 工作区，2026-11-05 → 11-06）
+本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
+
+## [未发布]（Gitee 工作区，2026-11-05 → 11-06）
 
 这一轮迭代只推 Gitee（npm/GitHub 冻结在 1.0.1），重点是语音体感、数据正确性与回归防线。
 
@@ -31,7 +33,7 @@
 - 新增检查器：模块边界 B1-B6、诊断键跨文件冲突、文字体检（已纳入 npm test）
 - 新增 `tools/tts-bench.mjs`、`tools/voice-bench.mjs` 与 `docs/待重启生效.md`（含重启后逐条打勾清单）
 
-## 1.0.1
+## [1.0.1]
 
 - 补 `CHANGELOG.md`，README 顶部加 npm / 许可证徽章
 - 仓库内新增发布工具（不进 npm 包体积的运行时路径）：
@@ -40,7 +42,7 @@
 - `package.json` 新增 `npm run version:check`、`npm run sync:github`
 - 新增 `docs/发布流程.md`：发版四步与常见坑（2FA、`0.0.0-stage` 占位、中文路径、包体积）
 
-## 1.0.0
+## [1.0.0]
 
 首发到 npm / GitHub / Gitee 三处。
 

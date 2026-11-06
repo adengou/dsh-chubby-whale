@@ -3,12 +3,12 @@
  *
  * 从 host/store.ts 拆出：成长阶段表、每日/每来源经验上限、跨天重置都在这里。
  * 写盘走 host/atomic.ts；读坏文件按 [store] 前缀留痕并备份。
+ * 读入容错 UTF-8 BOM，写出统一 UTF-8 无 BOM。
  */
-import { readFileSync } from 'node:fs';
 import { deepFreeze } from '../../shared/immutable.js';
 import { GROWTH_STAGES, growthStage } from '../../shared/growth.js';
 import { join } from 'node:path';
-import { writeJsonAtomic, isMissingFileError, quarantineFile } from '../atomic.js';
+import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } from '../atomic.js';
 // 阶段表与"经验→阶段"规则在 shared/growth.ts（纯函数，路由也能直接用）
 export { GROWTH_STAGES, growthStage };
 /** 每天最多涨 12 点经验（照 C# Growth.DailyCap） */
@@ -28,7 +28,7 @@ export function createGrowthRepo(dataDir) {
     /** 读成长数据；老文件缺 dayKey / dayExp / src 时按 0 兜底，其它字段与已有数据原样保留 */
     function loadGrowth() {
         try {
-            const obj = JSON.parse(readFileSync(GROWTH, 'utf8'));
+            const obj = JSON.parse(readTextNoBom(GROWTH));
             if (obj && typeof obj === 'object')
                 return obj;
         }

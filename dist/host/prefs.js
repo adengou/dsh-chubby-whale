@@ -16,7 +16,7 @@ export function createPrefs(runtimeDir) {
     const PREFS_FILE = join(runtimeDir, 'prefs.json');
     function load() {
         try {
-            return JSON.parse(readFileSync(PREFS_FILE, 'utf8'));
+            return JSON.parse(String(readFileSync(PREFS_FILE, 'utf8')).replace(/^\uFEFF/, ''));
         }
         catch {
             return {};

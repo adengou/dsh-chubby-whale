@@ -41,7 +41,7 @@ export function createPoemHandler(opts) {
             return seen;
         const s = new Set();
         try {
-            const arr = JSON.parse(readFileSync(SEEN_FILE, 'utf8'));
+            const arr = JSON.parse(String(readFileSync(SEEN_FILE, 'utf8')).replace(/^\uFEFF/, ''));
             if (Array.isArray(arr)) {
                 for (const k of arr)
                     if (typeof k === 'string' && k.trim())

@@ -66,7 +66,20 @@ export function createAnimator(opts: {
   look?: Look
 }) {
   const { canvas, imgSrc, cw, ch, sx, sy, state } = opts
-  const ctx = canvas.getContext('2d')
+  const ctx: any = canvas && typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null
+  // 取不到 2D 上下文（元素尺寸为 0、GPU 进程回收等）时给一个空句柄：
+  // 后面每帧都要在 ctx 上调方法，绝不能让它抛异常 —— 那会把宿主整棵渲染树拖垮。
+  if (!ctx) {
+    const fallback = opts.look || lookFor(0)
+    return {
+      start(): void { },
+      stop(): void { },
+      talkFor(_ms?: number): void { },
+      pushHeart(): void { },
+      setLook(_next?: Look): void { },
+      getLook(): Look { return fallback },
+    }
+  }
   const img = new Image()
   img.src = imgSrc
   let raf = 0
@@ -147,7 +160,9 @@ export function createAnimator(opts: {
       const alpha = Math.max(0, 1 - p)       // 寿命结束时透明度正好降到 0
       const size = Math.max(12, Math.round(ch * 0.05 * (1 + p * 0.5)))
       ctx.fillStyle = 'rgba(255,120,150,' + alpha.toFixed(3) + ')'
-      ctx.font = size + 'px serif'
+      // 字体回退链：三家都不一定给 serif 配 emoji 字形。
+      // 显式列出颜色 emoji 字体，免得 Safari 画成黑白、Linux 上画成豆腐块。
+      ctx.font = size + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",serif'
       ctx.fillText('❤', x, y)
     }
   }

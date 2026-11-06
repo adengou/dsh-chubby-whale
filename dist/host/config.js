@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 function readConfigJson(pluginDir) {
     try {
-        return JSON.parse(readFileSync(join(pluginDir, 'config.json'), 'utf8'));
+        return JSON.parse(String(readFileSync(join(pluginDir, 'config.json'), 'utf8')).replace(/^\uFEFF/, ''));
     }
     catch {
         return null;

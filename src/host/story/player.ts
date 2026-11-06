@@ -61,7 +61,7 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
 
   function loadProgress(): Record<string, any> {
     try {
-      const obj = JSON.parse(readFileSync(opts.progressFile, 'utf8'))
+      const obj = JSON.parse(String(readFileSync(opts.progressFile, 'utf8')).replace(/^\uFEFF/, ''))
       const out: Record<string, any> = {}
       if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
         for (const k of Object.keys(obj)) {

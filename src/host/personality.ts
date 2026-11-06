@@ -464,7 +464,7 @@ export function createPersonalityRepo(runtimeDir: string): PersonalityRepo {
   function load(): PersonalityData {
     let text = ''
     try {
-      text = readFileSync(file, 'utf8')
+    text = String(readFileSync(file, 'utf8')).replace(/^\uFEFF/, '') // 容错 BOM：带 BOM 的 JSON.parse 会失败，导致人格被误隔离
     } catch (err: any) {
       if (!isMissingFileError(err)) quarantineFile(file, err, '[personality]')
       return emptyPersonality()

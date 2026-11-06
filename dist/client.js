@@ -789,7 +789,25 @@
   }
   function createAnimator(opts) {
     const { canvas, imgSrc, cw, ch, sx, sy, state } = opts;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas && typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+    if (!ctx) {
+      const fallback = opts.look || lookFor(0);
+      return {
+        start() {
+        },
+        stop() {
+        },
+        talkFor(_ms) {
+        },
+        pushHeart() {
+        },
+        setLook(_next) {
+        },
+        getLook() {
+          return fallback;
+        }
+      };
+    }
     const img = new Image();
     img.src = imgSrc;
     let raf = 0;
@@ -861,7 +879,7 @@
         const alpha = Math.max(0, 1 - p);
         const size = Math.max(12, Math.round(ch * 0.05 * (1 + p * 0.5)));
         ctx.fillStyle = "rgba(255,120,150," + alpha.toFixed(3) + ")";
-        ctx.font = size + "px serif";
+        ctx.font = size + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",serif';
         ctx.fillText("\u2764", x, y);
       }
     }
@@ -1423,6 +1441,188 @@
     }
   }
 
+  // src/client/audio-codec.ts
+  var RECORDER_MIME_CANDIDATES = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4"
+  ];
+  deepFreeze(RECORDER_MIME_CANDIDATES);
+  var WAV_HEADER_BYTES = 44;
+  function formatFromMime(mime) {
+    const m = String(mime == null ? "" : mime).toLowerCase();
+    if (m.indexOf("webm") >= 0) return "webm";
+    if (m.indexOf("wav") >= 0 || m.indexOf("wave") >= 0) return "wav";
+    if (m.indexOf("mpeg") >= 0 || m.indexOf("mp3") >= 0) return "mp3";
+    if (m.indexOf("mp4") >= 0 || m.indexOf("m4a") >= 0 || m.indexOf("aac") >= 0) return "mp4";
+    return "webm";
+  }
+  function pickRecorderMime(caps) {
+    const can = caps && typeof caps.isTypeSupported === "function" ? caps : null;
+    if (can) {
+      for (let i = 0; i < RECORDER_MIME_CANDIDATES.length; i++) {
+        const t = RECORDER_MIME_CANDIDATES[i];
+        try {
+          if (can.isTypeSupported(t)) return { mimeType: t, format: formatFromMime(t) };
+        } catch (e) {
+        }
+      }
+    }
+    return { mimeType: "", format: "webm" };
+  }
+  function hostAsrFormat(format) {
+    return format === "wav" ? "wav" : format === "mp3" ? "mp3" : "webm";
+  }
+  function downmixToMono(channels) {
+    const list = (channels || []).filter(Boolean);
+    if (!list.length) return new Float32Array(0);
+    let len = 0;
+    for (let i = 0; i < list.length; i++) len = Math.max(len, list[i].length >>> 0);
+    const out = new Float32Array(len);
+    for (let c = 0; c < list.length; c++) {
+      const ch = list[c];
+      for (let i = 0; i < len; i++) {
+        const v = i < ch.length ? Number(ch[i]) : 0;
+        out[i] += isFinite(v) ? v : 0;
+      }
+    }
+    if (list.length > 1) for (let i = 0; i < len; i++) out[i] = out[i] / list.length;
+    return out;
+  }
+  function writeAscii(view, offset, text) {
+    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i) & 255);
+  }
+  function encodeWavPcm16(samples, sampleRate) {
+    const src = samples || [];
+    const n = Math.max(0, src.length >>> 0);
+    const rateRaw = Math.round(Number(sampleRate) || 48e3);
+    const sr = Math.max(8e3, Math.min(96e3, rateRaw));
+    const dataBytes = n * 2;
+    const buf = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes);
+    const v = new DataView(buf);
+    writeAscii(v, 0, "RIFF");
+    v.setUint32(4, 36 + dataBytes, true);
+    writeAscii(v, 8, "WAVE");
+    writeAscii(v, 12, "fmt ");
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true);
+    v.setUint32(24, sr, true);
+    v.setUint32(28, sr * 2, true);
+    v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true);
+    writeAscii(v, 36, "data");
+    v.setUint32(40, dataBytes, true);
+    for (let i = 0; i < n; i++) {
+      let s = Number(src[i]);
+      if (!isFinite(s)) s = 0;
+      if (s < -1) s = -1;
+      else if (s > 1) s = 1;
+      v.setInt16(WAV_HEADER_BYTES + i * 2, s < 0 ? Math.round(s * 32768) : Math.round(s * 32767), true);
+    }
+    return buf;
+  }
+  function wavBytes(seconds, sampleRate) {
+    const sec = Math.max(0, Number(seconds) || 0);
+    const sr = Math.max(8e3, Math.min(96e3, Math.round(Number(sampleRate) || 48e3)));
+    return WAV_HEADER_BYTES + Math.round(sec * sr) * 2;
+  }
+
+  // src/client/browser-tts.ts
+  function scopeOf(scope) {
+    if (scope) return scope;
+    try {
+      return typeof window !== "undefined" ? window : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function browserVoiceUsable(scope) {
+    try {
+      const s = scopeOf(scope);
+      if (!s || !s.speechSynthesis || typeof s.speechSynthesis.speak !== "function") return false;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  function watchdogMs(text) {
+    const n = String(text || "").length;
+    return Math.min(3e4, Math.max(4e3, 1500 + n * 220));
+  }
+  function speakViaBrowser(text, opts) {
+    const src = String(text || "");
+    const s = scopeOf(opts && opts.scope);
+    const ms2 = opts && typeof opts.watchdog === "number" && opts.watchdog > 0 ? opts.watchdog : watchdogMs(src);
+    return new Promise((resolve) => {
+      let done = false;
+      let startTimer = null;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        try {
+          if (startTimer) clearTimeout(startTimer);
+        } catch (e) {
+        }
+        resolve();
+      };
+      const watch = setTimeout(finish, ms2);
+      const realFinish = () => {
+        try {
+          clearTimeout(watch);
+        } catch (e) {
+        }
+        ;
+        finish();
+      };
+      try {
+        const Synth = s && s.speechSynthesis;
+        const Utt = s && s.SpeechSynthesisUtterance;
+        if (!Synth || !Utt || typeof Synth.speak !== "function") {
+          realFinish();
+          return;
+        }
+        const u = new Utt(src);
+        u.lang = "zh-CN";
+        u.onend = realFinish;
+        u.onerror = realFinish;
+        try {
+          const vs = typeof Synth.getVoices === "function" ? Synth.getVoices() : null;
+          for (let i = 0; vs && i < vs.length; i++) {
+            if (vs[i] && /^zh/i.test(String(vs[i].lang || ""))) {
+              u.voice = vs[i];
+              break;
+            }
+          }
+        } catch (e) {
+        }
+        const busy = (() => {
+          try {
+            return !!(Synth.speaking || Synth.pending);
+          } catch (e) {
+            return false;
+          }
+        })();
+        const speak = () => {
+          try {
+            Synth.speak(u);
+          } catch (e) {
+            realFinish();
+          }
+        };
+        if (busy) {
+          try {
+            if (typeof Synth.cancel === "function") Synth.cancel();
+          } catch (e) {
+          }
+          startTimer = setTimeout(speak, 80);
+        } else speak();
+      } catch (e) {
+        realFinish();
+      }
+    });
+  }
+
   // src/client/voice.ts
   var WINDOW_MS = 6e3;
   var EARLY_STOP_QUIET = 700;
@@ -1494,7 +1694,14 @@
     let analyser = null;
     let rec = null;
     let timeBuf = null;
+    let byteBuf = null;
     let running = false;
+    let recMime = "";
+    let recFormat = "webm";
+    let levelOk = false;
+    let levelDead = false;
+    let levelProbeAt = 0;
+    let gestureHooks = null;
     let asrNoKey = false;
     let muted = false;
     let parts = [];
@@ -1519,18 +1726,97 @@
     let mutedUntil = 0;
     let speakToken = 0;
     const level = () => {
-      if (!analyser || !timeBuf) return -160;
-      analyser.getFloatTimeDomainData(timeBuf);
+      const an = analyser;
+      if (!an || !timeBuf) return -160;
+      let ok = false;
+      try {
+        if (typeof an.getFloatTimeDomainData === "function") {
+          an.getFloatTimeDomainData(timeBuf);
+          ok = true;
+        } else if (typeof an.getByteTimeDomainData === "function") {
+          if (!byteBuf || byteBuf.length !== timeBuf.length) byteBuf = new Uint8Array(timeBuf.length);
+          an.getByteTimeDomainData(byteBuf);
+          for (let i = 0; i < timeBuf.length; i++) timeBuf[i] = (byteBuf[i] - 128) / 128;
+          ok = true;
+        }
+      } catch (e) {
+        ok = false;
+      }
+      if (!ok) return -160;
       let sum = 0;
       for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
       const rms = Math.sqrt(sum / timeBuf.length);
-      return 20 * Math.log10(rms + 1e-8);
+      const db = 20 * Math.log10(rms + 1e-8);
+      if (db > -159) levelOk = true;
+      return db;
     };
     function micOn(on) {
       try {
         if (stream) stream.getAudioTracks().forEach((t) => {
           t.enabled = on;
         });
+      } catch (e) {
+      }
+    }
+    function releaseAudio() {
+      try {
+        if (rec && rec.state !== "inactive") rec.stop();
+      } catch (e) {
+      }
+      try {
+        if (actx) actx.close();
+      } catch (e) {
+      }
+      try {
+        if (stream) stream.getTracks().forEach((t) => {
+          t.stop();
+        });
+      } catch (e) {
+      }
+      rec = null;
+      actx = null;
+      analyser = null;
+      stream = null;
+      timeBuf = null;
+      byteBuf = null;
+    }
+    function unhookGestureResume() {
+      const g = gestureHooks;
+      if (!g) return;
+      gestureHooks = null;
+      try {
+        window.removeEventListener("pointerdown", g.resume, true);
+      } catch (e) {
+      }
+      try {
+        window.removeEventListener("touchstart", g.resume, true);
+      } catch (e) {
+      }
+      try {
+        window.removeEventListener("keydown", g.resume, true);
+      } catch (e) {
+      }
+    }
+    function hookGestureResume() {
+      if (gestureHooks) return;
+      const resume = () => {
+        try {
+          const c = actx;
+          if (c && c.state === "suspended") c.resume();
+          if (c && c.state !== "suspended") {
+            levelDead = false;
+            levelOk = false;
+            levelProbeAt = performance.now();
+          }
+        } catch (e) {
+        }
+        unhookGestureResume();
+      };
+      gestureHooks = { resume };
+      try {
+        window.addEventListener("pointerdown", resume, true);
+        window.addEventListener("touchstart", resume, true);
+        window.addEventListener("keydown", resume, true);
       } catch (e) {
       }
     }
@@ -1576,6 +1862,13 @@
       if (!running || !rec || rec.state !== "recording") return;
       try {
         const db = level();
+        if (!levelOk && !levelDead && levelProbeAt && performance.now() - levelProbeAt > 1200) {
+          levelDead = true;
+          try {
+            opts.onDiag && opts.onDiag({ stage: "analyser-dead", hint: "\u7535\u5E73\u4E0D\u53EF\u7528\uFF0C\u9759\u97F3\u5224\u5B9A\u5DF2\u964D\u7EA7\uFF08\u6539\u6309\u6BB5\u957F/\u4F53\u79EF\uFF09" });
+          } catch (e) {
+          }
+        }
         if (epMode === "ape") {
           const st = ape.step(db);
           lastApe = st;
@@ -1587,6 +1880,17 @@
             }
             try {
               opts.onDiag && opts.onDiag({ stage: "window-end", why: st.commitReason, floor: Math.round(st.floorDb) });
+            } catch (e) {
+            }
+            return;
+          }
+          if (levelDead && performance.now() - winStart >= WINDOW_MS) {
+            try {
+              rec.stop();
+            } catch (e) {
+            }
+            try {
+              opts.onDiag && opts.onDiag({ stage: "window-end", why: "no-level" });
             } catch (e) {
             }
             return;
@@ -1630,17 +1934,19 @@
         return;
       }
       stats.windows++;
-      if (epMode === "ape") {
-        const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150);
-        if (!okSpeech) {
+      if (!levelDead) {
+        if (epMode === "ape") {
+          const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150);
+          if (!okSpeech) {
+            stats.skippedSilent++;
+            scheduleNext(150);
+            return;
+          }
+        } else if (winPeak < SILENT_PEAK_DB) {
           stats.skippedSilent++;
           scheduleNext(150);
           return;
         }
-      } else if (winPeak < SILENT_PEAK_DB) {
-        stats.skippedSilent++;
-        scheduleNext(150);
-        return;
       }
       if (Date.now() < mutedUntil) {
         stats.skippedSilent++;
@@ -1655,8 +1961,8 @@
       stats.uploaded++;
       setStatus("recognizing");
       try {
-        const b64 = await blobToBase64(blob);
-        if (!b64) {
+        const wire = await prepareAudioForAsr(blob);
+        if (!wire || !wire.base64) {
           stats.asrFail++;
           stats.lastError = "b64-empty";
           return;
@@ -1668,7 +1974,9 @@
           res = await fetchWithTimeout(apiBase + "/asr", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ audio: b64, format: "webm" })
+            // format 必须带实际值：宿主按它决定 multipart 的 filename/Content-Type。
+            // 白名单是 webm/wav/mp3（src/host/routes/asr.ts），mp4 不在其中 → hostAsrFormat 已回落成 webm。
+            body: JSON.stringify({ audio: wire.base64, format: wire.format })
           }, ASR_TIMEOUT_MS, asrCtl ? asrCtl.signal : void 0);
         } finally {
           if (asrCtl) asrAborts.delete(asrCtl);
@@ -1691,7 +1999,7 @@
           return;
         }
         try {
-          lastSeg = { mode: epMode, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) };
+          lastSeg = { mode: epMode, fmt: wire.format, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) };
         } catch (e) {
         }
         const text = String(data.text || "").trim();
@@ -1850,29 +2158,6 @@
         if (ctl) ttsAborts.delete(ctl);
       });
     }
-    function speakViaBrowser(text) {
-      return new Promise((resolve) => {
-        try {
-          const Synth = window.speechSynthesis;
-          const Utt = window.SpeechSynthesisUtterance;
-          if (!Synth || !Utt) {
-            resolve();
-            return;
-          }
-          const u = new Utt(text);
-          u.lang = "zh-CN";
-          u.onend = () => resolve();
-          u.onerror = () => resolve();
-          try {
-            Synth.cancel();
-          } catch (e) {
-          }
-          Synth.speak(u);
-        } catch (e) {
-          resolve();
-        }
-      });
-    }
     function narrationPauseFor(text) {
       const t = String(text || "").trim();
       if (!t) return 200;
@@ -1950,14 +2235,7 @@
             if (w.ttsLost.length > 10) w.ttsLost.shift();
           } catch (e) {
           }
-          const canBrowser = !job.strict && (() => {
-            try {
-              const s = window.speechSynthesis;
-              return !!(s && s.getVoices && s.getVoices().length > 0);
-            } catch (e) {
-              return false;
-            }
-          })();
+          const canBrowser = !job.strict && browserVoiceUsable();
           if (canBrowser) speakViaBrowser(job.text).then(() => finishJob(job));
           else finishJob(job);
           return;
@@ -2042,14 +2320,7 @@
             }, 250);
             return;
           }
-          const canBrowser2 = !job.strict && (() => {
-            try {
-              const s = window.speechSynthesis;
-              return !!(s && s.getVoices && s.getVoices().length > 0);
-            } catch (e) {
-              return false;
-            }
-          })();
+          const canBrowser2 = !job.strict && browserVoiceUsable();
           if (canBrowser2) speakViaBrowser(job.text).then(() => finishJob(job));
           else finishJob(job);
         });
@@ -2075,6 +2346,84 @@
       const rest = sbuf.trim();
       if (rest) out.push(rest);
       return out;
+    }
+    function readBlobBuffer(blob) {
+      return new Promise((resolve) => {
+        try {
+          const fr = new FileReader();
+          fr.onload = () => resolve(fr.result || null);
+          fr.onerror = () => resolve(null);
+          fr.readAsArrayBuffer(blob);
+        } catch (e) {
+          resolve(null);
+        }
+      });
+    }
+    function transcodeToWav(blob) {
+      return new Promise((resolve) => {
+        const ctx = actx;
+        if (!ctx || typeof ctx.decodeAudioData !== "function") {
+          resolve(null);
+          return;
+        }
+        let settled = false;
+        const done = (wav) => {
+          if (settled) return;
+          settled = true;
+          resolve(wav);
+        };
+        const finish = (buf) => {
+          try {
+            if (!buf || !buf.numberOfChannels) {
+              done(null);
+              return;
+            }
+            const chans = [];
+            const n = Math.min(2, Number(buf.numberOfChannels) || 1);
+            for (let i = 0; i < n; i++) chans.push(buf.getChannelData(i));
+            const mono = downmixToMono(chans);
+            if (wavBytes(mono.length / (Number(buf.sampleRate) || 48e3), buf.sampleRate) > 6 * 1024 * 1024) {
+              done(null);
+              return;
+            }
+            done(new Blob([encodeWavPcm16(mono, buf.sampleRate)], { type: "audio/wav" }));
+          } catch (e) {
+            done(null);
+          }
+        };
+        readBlobBuffer(blob).then((ab) => {
+          if (!ab) {
+            done(null);
+            return;
+          }
+          try {
+            const ret = ctx.decodeAudioData(ab, finish, () => done(null));
+            if (ret && typeof ret.then === "function") ret.then(finish).catch(() => done(null));
+          } catch (e) {
+            done(null);
+          }
+        });
+        setTimeout(() => done(null), 3e3);
+      });
+    }
+    async function prepareAudioForAsr(blob) {
+      let src = blob;
+      let fmt = formatFromMime(blob.type || recMime);
+      if (fmt === "mp4") {
+        const wav = await transcodeToWav(blob);
+        if (wav) {
+          src = wav;
+          fmt = "wav";
+        } else {
+          try {
+            opts.onDiag && opts.onDiag({ stage: "mp4-no-transcode", hint: "mp4 \u6CA1\u80FD\u8F6C\u6210 wav\uFF0C\u6309\u539F\u5B57\u8282\u4E0A\u4F20" });
+          } catch (e) {
+          }
+        }
+      }
+      const b64 = await blobToBase64(src);
+      if (!b64) return null;
+      return { base64: b64, format: hostAsrFormat(fmt) };
     }
     async function blobToBase64(blob) {
       return new Promise((resolve) => {
@@ -2116,31 +2465,59 @@
       asrNoKey = false;
       if (running) return;
       running = true;
+      recMime = "";
+      recFormat = "webm";
+      levelOk = false;
+      levelDead = false;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        const nav = typeof navigator !== "undefined" ? navigator : null;
+        if (!nav || !nav.mediaDevices || typeof nav.mediaDevices.getUserMedia !== "function") {
+          throw { name: "NoGetUserMedia" };
+        }
+        stream = await nav.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
         });
         if (!running) {
-          try {
-            stream.getTracks().forEach((t) => t.stop());
-          } catch (e) {
-          }
-          ;
+          releaseAudio();
           return;
         }
         const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) throw { name: "NoAudioContext" };
         actx = new Ctx();
         try {
           await actx.resume();
         } catch (e) {
         }
-        const src = actx.createMediaStreamSource(stream);
+        try {
+          if (actx.state === "suspended") hookGestureResume();
+        } catch (e) {
+        }
+        const srcNode = actx.createMediaStreamSource(stream);
         analyser = actx.createAnalyser();
         analyser.fftSize = 1024;
         analyser.smoothingTimeConstant = 0;
-        timeBuf = new Float32Array(1024);
-        src.connect(analyser);
-        rec = new MediaRecorder(stream);
+        timeBuf = new Float32Array(analyser.fftSize || 1024);
+        try {
+          srcNode.connect(analyser);
+        } catch (e) {
+        }
+        levelProbeAt = performance.now();
+        const Rec = typeof MediaRecorder !== "undefined" ? MediaRecorder : null;
+        if (!Rec) throw { name: "NoMediaRecorder" };
+        const picked = pickRecorderMime(Rec);
+        recMime = picked.mimeType;
+        recFormat = picked.format;
+        try {
+          rec = recMime ? new Rec(stream, { mimeType: recMime }) : new Rec(stream);
+        } catch (e) {
+          rec = new Rec(stream);
+          recMime = "";
+          recFormat = "webm";
+        }
+        try {
+          opts.onDiag && opts.onDiag({ stage: "recorder", mime: recMime || "(default)", fmt: recFormat });
+        } catch (e) {
+        }
         rec.ondataavailable = (e) => {
           if (e.data && e.data.size > 0) parts.push(e.data);
         };
@@ -2149,7 +2526,8 @@
             parts = [];
             return;
           }
-          const blob = new Blob(parts, { type: "audio/webm" });
+          const blobType = String(rec && rec.mimeType || recMime || "audio/webm");
+          const blob = new Blob(parts, { type: blobType });
           parts = [];
           void onWindowDone(blob);
         };
@@ -2165,8 +2543,16 @@
         stats.lastError = "";
       } catch (e) {
         running = false;
-        stats.lastError = "getUserMedia: " + String(e && e.name || e);
+        stats.lastError = "start: " + String(e && e.name || e);
         setStatus("idle");
+        try {
+          unhookGestureResume();
+        } catch (e2) {
+        }
+        try {
+          releaseAudio();
+        } catch (e2) {
+        }
         try {
           opts.onDiag && opts.onDiag({ stage: "start-failed", err: stats.lastError });
         } catch (e2) {
@@ -2205,22 +2591,16 @@
       } catch (e) {
       }
       try {
-        if (rec && rec.state !== "inactive") rec.stop();
+        unhookGestureResume();
       } catch (e) {
       }
+      levelProbeAt = 0;
+      levelOk = false;
+      levelDead = false;
       try {
-        if (actx) actx.close();
+        releaseAudio();
       } catch (e) {
       }
-      try {
-        if (stream) stream.getTracks().forEach((t) => t.stop());
-      } catch (e) {
-      }
-      rec = null;
-      actx = null;
-      analyser = null;
-      stream = null;
-      timeBuf = null;
       setStatus("idle");
     }
     function speak(text, o) {
@@ -2278,11 +2658,10 @@
       }
       ttsAudio = null;
       ttsBusy = false;
-      if (typeof speechSynthesis !== "undefined") {
-        try {
-          speechSynthesis.cancel();
-        } catch (e) {
-        }
+      try {
+        const s = window.speechSynthesis;
+        if (s && typeof s.cancel === "function") s.cancel();
+      } catch (e) {
       }
       if (!muted) micOn(true);
       mutedUntil = Date.now() + ECHO_MUTE_MS;
@@ -4199,7 +4578,9 @@
         })() + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
         host.bubble(line, 15e3);
         try {
-          navigator.clipboard.writeText(JSON.stringify(st));
+          const clip = navigator.clipboard;
+          if (clip && typeof clip.writeText === "function") Promise.resolve(clip.writeText(JSON.stringify(st))).catch(() => {
+          });
         } catch (e) {
         }
       } catch (e) {
@@ -4778,6 +5159,98 @@
     const nx = vx * INERTIA_DECAY;
     const ny = vy * INERTIA_DECAY;
     return { vx: nx, vy: ny, done: Math.abs(nx) < INERTIA_STOP && Math.abs(ny) < INERTIA_STOP };
+  }
+  function pickInputMode(hasPointerEvent) {
+    return hasPointerEvent ? "pointer" : "touch";
+  }
+  function pointOf(e) {
+    const t = e && e.touches && e.touches[0] || e && e.changedTouches && e.changedTouches[0];
+    const s = t || e || {};
+    const x = Number(s.clientX);
+    const y = Number(s.clientY);
+    return { x: isFinite(x) ? x : 0, y: isFinite(y) ? y : 0 };
+  }
+  function bindDragInput(target, win, handlers) {
+    const mode = pickInputMode(!!(win && win.PointerEvent));
+    const add = (el, t, fn, opts) => {
+      try {
+        el.addEventListener(t, fn, opts);
+      } catch (e) {
+      }
+    };
+    const del = (el, t, fn) => {
+      try {
+        el.removeEventListener(t, fn);
+      } catch (e) {
+      }
+    };
+    const mark = (e) => {
+      try {
+        e.__chubbyDragHandled = true;
+      } catch (e2) {
+      }
+    };
+    const handled = (e) => {
+      try {
+        return !!(e && e.__chubbyDragHandled);
+      } catch (e2) {
+        return false;
+      }
+    };
+    const onDown = (e) => {
+      if (handled(e)) return;
+      const p = pointOf(e);
+      handlers.onDown(p.x, p.y);
+    };
+    const onMove = (e) => {
+      if (handled(e)) return;
+      const p = pointOf(e);
+      handlers.onMove(p.x, p.y);
+    };
+    const onTouchMove = (e) => {
+      try {
+        if (e.cancelable) e.preventDefault();
+      } catch (e2) {
+      }
+      const p = pointOf(e);
+      handlers.onMove(p.x, p.y);
+      mark(e);
+    };
+    const onEnd = (e) => {
+      if (handled(e)) return;
+      handlers.onEnd();
+    };
+    if (target && win) {
+      if (mode === "touch") {
+        add(target, "touchstart", onDown, { passive: false });
+        add(target, "touchmove", onTouchMove, { passive: false });
+        add(target, "mousedown", onDown);
+      }
+      add(win, mode === "touch" ? "touchmove" : "pointermove", onMove);
+      add(win, mode === "touch" ? "touchend" : "pointerup", onEnd);
+      add(win, mode === "touch" ? "touchcancel" : "pointercancel", onEnd);
+      if (mode === "touch") {
+        add(win, "mousemove", onMove);
+        add(win, "mouseup", onEnd);
+      }
+    }
+    const dispose = () => {
+      if (target && win) {
+        if (mode === "touch") {
+          del(target, "touchstart", onDown);
+          del(target, "touchmove", onTouchMove);
+          del(target, "mousedown", onDown);
+        }
+        del(win, mode === "touch" ? "touchmove" : "pointermove", onMove);
+        del(win, mode === "touch" ? "touchend" : "pointerup", onEnd);
+        del(win, mode === "touch" ? "touchcancel" : "pointercancel", onEnd);
+        if (mode === "touch") {
+          del(win, "mousemove", onMove);
+          del(win, "mouseup", onEnd);
+        }
+      }
+    };
+    return { mode, dispose };
   }
 
   // src/shared/tts.ts
@@ -6079,9 +6552,8 @@
             }
           };
         }, []);
-        function onPointerDown(e) {
-          if (e.button !== 0) return;
-          beginDrag(dragRef.current, e.clientX, e.clientY, posRef.current.x, posRef.current.y);
+        function dragBeginAt(x, y) {
+          beginDrag(dragRef.current, x, y, posRef.current.x, posRef.current.y);
           try {
             const el = stageRef.current;
             if (el && el.style) {
@@ -6090,18 +6562,14 @@
             }
           } catch (e2) {
           }
-          try {
-            e.currentTarget.setPointerCapture(e.pointerId);
-          } catch {
-          }
         }
-        function onPointerMove(e) {
+        function dragMoveTo(x, y) {
           const d = dragRef.current;
           if (!d.dragging) return;
-          const m = moveDrag(d, e.clientX, e.clientY);
+          const m = moveDrag(d, x, y);
           applyPos(posRef.current.x + m.x, posRef.current.y + m.y);
         }
-        function onPointerUp() {
+        function dragFinish() {
           const d = dragRef.current;
           if (!d.dragging) return;
           const v = endDrag(d);
@@ -6131,6 +6599,52 @@
           };
           requestAnimationFrame(step);
         }
+        function onPointerDown(e) {
+          if (typeof e.button === "number" && e.button !== 0) return;
+          dragBeginAt(e.clientX, e.clientY);
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+          }
+        }
+        function onPointerMove(e) {
+          try {
+            e.__chubbyDragHandled = true;
+          } catch (e2) {
+          }
+          dragMoveTo(e.clientX, e.clientY);
+        }
+        function onPointerUp(e) {
+          try {
+            if (e) e.__chubbyDragHandled = true;
+          } catch (e2) {
+          }
+          dragFinish();
+        }
+        R.useEffect(() => {
+          const el = stageRef.current;
+          const win = typeof window !== "undefined" ? window : null;
+          if (!el || !win) return;
+          const binding = bindDragInput(el, win, {
+            onDown: (x, y) => dragBeginAt(x, y),
+            onMove: (x, y) => {
+              if (dragRef.current.dragging) dragMoveTo(x, y);
+            },
+            onEnd: () => {
+              if (dragRef.current.dragging) dragFinish();
+            }
+          });
+          try {
+            window.__chubbyWhale.dragInput = binding.mode;
+          } catch (e) {
+          }
+          return () => {
+            try {
+              binding.dispose();
+            } catch (e) {
+            }
+          };
+        }, []);
         R.useEffect(() => {
           const tGreet = setTimeout(() => {
             try {
@@ -6283,10 +6797,18 @@
             } catch {
             }
           };
-          document.addEventListener("pointerdown", onDocDown, true);
+          document.addEventListener("pointerdown", onDocDown, true)(document).addEventListener("mousedown", onDocDown, true)(document).addEventListener("touchstart", onDocDown, true);
           return () => {
             try {
               document.removeEventListener("pointerdown", onDocDown, true);
+            } catch {
+            }
+            try {
+              document.removeEventListener("mousedown", onDocDown, true);
+            } catch {
+            }
+            try {
+              document.removeEventListener("touchstart", onDocDown, true);
             } catch {
             }
           };

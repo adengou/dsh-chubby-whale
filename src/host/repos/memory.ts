@@ -3,10 +3,10 @@
  *
  * 从 host/store.ts 拆出：这里只负责「聊天记忆」这一件事。
  * 写盘走 host/atomic.ts；读坏文件按 [store] 前缀记日志并备份 .bad-<时间戳>。
+ * 读入容错 UTF-8 BOM，写出统一 UTF-8 无 BOM（Windows / Linux / macOS 同一套行为）。
  */
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { writeJsonAtomic, isMissingFileError, quarantineFile } from '../atomic.js'
+import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } from '../atomic.js'
 
 /** 记忆里最多留多少条（40 条 = 20 轮） */
 const MEMORY_LIMIT = 40
@@ -26,7 +26,7 @@ export function createMemoryRepo(dataDir: string): MemoryRepo {
 
   function loadMemoryObj(): any {
     try {
-      const obj = JSON.parse(readFileSync(MEMORY, 'utf8'))
+      const obj = JSON.parse(readTextNoBom(MEMORY))
       if (Array.isArray(obj)) return { history: obj, summary: '' }
       if (obj && typeof obj === 'object') {
         return { history: Array.isArray(obj.history) ? obj.history : [], summary: String(obj.summary || '') }

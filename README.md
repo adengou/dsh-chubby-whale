@@ -1,6 +1,5 @@
 # dsh-chubby-whale（肥鲸）
 
-[![npm](https://img.shields.io/npm/v/dsh-chubby-whale.svg)](https://www.npmjs.com/package/dsh-chubby-whale)
 [![license](https://img.shields.io/npm/l/dsh-chubby-whale.svg)](LICENSE)
 [![Gitee](https://gitee.com/adengou/dsh-chubby-whale/badge/star.svg?theme=dark)](https://gitee.com/adengou/dsh-chubby-whale)
 
@@ -8,25 +7,20 @@ DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下�
 
 | 渠道 | 地址 |
 | --- | --- |
-| 主仓库（GitHub） | <https://github.com/adengou/dsh-chubby-whale> |
-| 镜像（Gitee） | <https://gitee.com/adengou/dsh-chubby-whale> |
-| npm | <https://www.npmjs.com/package/dsh-chubby-whale> |
+| 主仓库（Gitee） | <https://gitee.com/adengou/dsh-chubby-whale> |
 | 更新日志 | [CHANGELOG.md](CHANGELOG.md) |
 
 > 语音待命的信号处理设计与调参：见 [docs/耳朵算法.md](docs/耳朵算法.md)
-> 发版与三仓库对齐流程：见 [docs/发布流程.md](docs/发布流程.md)
+> 发版规范（只发 Gitee）：见 [docs/发布规范.md](docs/发布规范.md)
 
-## 安装（三种来源任选）
+## 安装（两种来源任选）
 
 ```powershell
-# ① 从 npm 装（推荐，最省事）
-dsh plugin --profile web add dsh-chubby-whale
-
-# ② 从 GitHub 装（跟最新代码）
-dsh plugin --profile web add "git+https://github.com/adengou/dsh-chubby-whale.git"
-
-# ③ 从 Gitee 装（国内最快）
+# ① 从 Gitee 装（推荐）
 dsh plugin --profile web add "git+https://gitee.com/adengou/dsh-chubby-whale.git"
+
+# ② 本地 link（开发调试）
+dsh plugin --profile web add "link:C:\Users\<你>\.dsh\plugins\dsh-chubby-whale"
 
 # 装完重启 dsh web
 dsh web

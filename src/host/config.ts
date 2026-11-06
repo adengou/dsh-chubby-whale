@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import type { DataSourceKind } from './ports.js'
 
 function readConfigJson(pluginDir: string): any {
-  try { return JSON.parse(readFileSync(join(pluginDir, 'config.json'), 'utf8')) } catch { return null }
+  try { return JSON.parse(String(readFileSync(join(pluginDir, 'config.json'), 'utf8')).replace(/^\uFEFF/, '')) } catch { return null }
 }
 
 function fromEnv(own: string, legacy: string): string {
