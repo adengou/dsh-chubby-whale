@@ -5465,7 +5465,7 @@
         ].filter(Boolean);
         const text = parts.join("，");
         const buckets = kindBucketText(d.byKind);
-        host.bubble(buckets ? text + "\n分桶：" + buckets : text, 6e3);
+        host.bubble(buckets ? text + "\n分桶（本版起）：" + buckets : text, 6e3);
       }).catch(() => host.bubble("鱼粮查不到"));
     });
     table.define("growth", (host) => {

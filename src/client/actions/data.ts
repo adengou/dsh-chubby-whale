@@ -182,7 +182,8 @@ export function formatStats(payload: any): string {
 
   return '统计卡\n缓存：tts ' + tts + ' 条｜chat ' + chat + ' 条｜asr ' + asr + ' 条'
     + '\n鱼粮：' + tokens + ' tokens' + (costCny > 0 ? ' · ≈ ¥' + costCny.toFixed(4) : '')
-    + (bucketLine ? '\n分桶：' + bucketLine : '')
+    // 「本版起」标注：分桶只记 1.1.70 之后的用量（历史已并进 chatTokens，拆不出来也不回填）
+    + (bucketLine ? '\n分桶（本版起）：' + bucketLine : '')
     + '\n成长：' + stage + '｜亲密度 ' + intimacy + '/100'
     + '\n人格要点：' + points
 }

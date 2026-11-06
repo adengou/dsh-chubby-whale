@@ -149,7 +149,7 @@ console.log('\n[4] 仓储：明细累加与跨天/跨月滚动')
   rmSync(dir, { recursive: true, force: true })
 }
 
-console.log('\n[4b] 分桶：按 kind 累计与跨天/跨月滚动')
+console.log('\n[4b] 分桶（本版起）：按 kind 累计与跨天/跨月滚动')
 {
   const repo = await import(pathToFileURL(join(ROOT, 'src/host/repos/fishfood.ts')).href)
   const KINDS = ['chat', 'story', 'summary', 'personality']
@@ -209,7 +209,7 @@ console.log('\n[4b] 分桶：按 kind 累计与跨天/跨月滚动')
   const rl = repo.createTokenRepo(dirL)
   rl.saveFishfood({ chatTokens: 900, storyTokens: 100, totalTokens: 1000, dayTokens: 1000, monthTokens: 1000 })
   const legacy = rl.addTokens('summary', 30)
-  eq('老文件补分桶：历史留在顶层、桶从本次记账起算', [legacy.chatTokens, bucketOf(legacy, 'summary').tokens, bucketOf(legacy, 'chat').tokens, legacy.totalTokens], [930, 30, 0, 1030])
+  eq('老文件补分桶（本版起）：历史留在顶层、桶从本次记账起算', [legacy.chatTokens, bucketOf(legacy, 'summary').tokens, bucketOf(legacy, 'chat').tokens, legacy.totalTokens], [930, 30, 0, 1030])
 
   rmSync(dir, { recursive: true, force: true })
   rmSync(dirM, { recursive: true, force: true })
@@ -332,18 +332,18 @@ console.log('\n[7] 客户端展示：分桶行（0 桶不显示）')
       },
     },
   })
-  ok('统计卡：鱼粮行后加「分桶：」行', withBuckets.indexOf('分桶：聊天 120（￥0.0012） · 说书 30；￥0.0012') >= 0, withBuckets)
-  const bucketLine = (withBuckets.split('\n').find((l) => l.indexOf('分桶：') === 0) || '')
+  ok('统计卡：鱼粮行后加「分桶（本版起）：」行', withBuckets.indexOf('分桶（本版起）：聊天 120（￥0.0012） · 说书 30；￥0.0012') >= 0, withBuckets)
+  const bucketLine = (withBuckets.split('\n').find((l) => l.indexOf('分桶（本版起）：') === 0) || '')
   ok('统计卡：0 桶（摘要/人格）不显示', bucketLine !== '' && bucketLine.indexOf('摘要') < 0 && bucketLine.indexOf('人格') < 0, bucketLine)
   const noBuckets = data.formatStats({ ok: true, fishfood: { total: 150 } })
-  ok('统计卡：老账本不显示分桶行', noBuckets.indexOf('分桶：') < 0 && noBuckets.indexOf('鱼粮：150 tokens') >= 0, noBuckets)
+  ok('统计卡：老账本不显示分桶行', noBuckets.indexOf('分桶（本版起）：') < 0 && noBuckets.indexOf('鱼粮：150 tokens') >= 0, noBuckets)
   const dirtyBuckets = data.formatStats({
     ok: true,
     fishfood: { total: 7, byKind: { summary: { tokens: '7', costCny: '0.0001' }, chat: { tokens: Number.NaN } } },
   })
-  ok('统计卡：坏值不清空整行（数字字符串照收、脏值当 0）', dirtyBuckets.indexOf('分桶：摘要 7（￥0.0001）；￥0.0001') >= 0, dirtyBuckets)
+  ok('统计卡：坏值不清空整行（数字字符串照收、脏值当 0）', dirtyBuckets.indexOf('分桶（本版起）：摘要 7（￥0.0001）；￥0.0001') >= 0, dirtyBuckets)
   const zeroBuckets = data.formatStats({ ok: true, fishfood: { total: 7, byKind: { chat: { tokens: 0, costCny: 0 } } } })
-  ok('统计卡：全 0 桶 → 连「分桶：」都不加', zeroBuckets.indexOf('分桶：') < 0, zeroBuckets)
+  ok('统计卡：全 0 桶 → 连「分桶（本版起）：」都不加', zeroBuckets.indexOf('分桶（本版起）：') < 0, zeroBuckets)
 
   // system.ts 的鱼粮指令：气泡里带分桶行；老账本不带，也不报错
   const { createActionTable } = await import(pathToFileURL(join(ROOT, 'src/client/actions.ts')).href)
@@ -373,8 +373,8 @@ console.log('\n[7] 客户端展示：分桶行（0 桶不显示）')
     await table.run('fishfood', host)
     await tick()
     const msg = bubbles[bubbles.length - 1] || ''
-    ok('鱼粮指令：显示「分桶：聊天 120（￥0.0012） · 说书 30；￥0.0012」',
-      msg.indexOf('分桶：聊天 120（￥0.0012） · 说书 30；￥0.0012') >= 0, msg)
+    ok('鱼粮指令：显示「分桶（本版起）：聊天 120（￥0.0012） · 说书 30；￥0.0012」',
+      msg.indexOf('分桶（本版起）：聊天 120（￥0.0012） · 说书 30；￥0.0012') >= 0, msg)
     ok('鱼粮指令：0 桶（摘要/人格）不显示', msg.indexOf('摘要') < 0 && msg.indexOf('人格') < 0, msg)
 
     globalThis.fetch = async () => ({ ok: true, async json() { return { ok: true, total: 3, chatTokens: 1, storyTokens: 2 } } })
@@ -382,7 +382,7 @@ console.log('\n[7] 客户端展示：分桶行（0 桶不显示）')
     await table.run('fishfood', host)
     await tick()
     const old = bubbles[bubbles.length - 1] || ''
-    ok('鱼粮指令：老账本不显示分桶行、正文照旧', old.indexOf('分桶：') < 0 && old.indexOf('鱼粮账本：共 3 tokens') >= 0, old)
+    ok('鱼粮指令：老账本不显示分桶行、正文照旧', old.indexOf('分桶（本版起）：') < 0 && old.indexOf('鱼粮账本：共 3 tokens') >= 0, old)
   } finally {
     globalThis.fetch = origFetch
   }
