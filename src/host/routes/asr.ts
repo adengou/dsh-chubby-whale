@@ -72,12 +72,16 @@ export function createAsrHandler(opts: AsrRouteDeps) {
           return
         }
       }
+      // 识别语言：默认 zh（不传会自动检测，短句常被识别成英文）
+      const asrLang = 'zh' // 固定中文：不传该参数时模型自动检测，短句常被识别成英文（"No, no"）
       // 构造 multipart
       const boundary = '----chubbywhale' + Math.random().toString(36).slice(2, 10)
       const mime = format === 'wav' ? 'audio/wav' : format === 'mp3' ? 'audio/mpeg' : 'audio/webm'
       const head = Buffer.from(
         '--' + boundary + '\r\n' +
         'Content-Disposition: form-data; name="model"\r\n\r\n' + ASR_MODEL + '\r\n' +
+        '--' + boundary + '\r\n' +
+        'Content-Disposition: form-data; name="language"\r\n\r\n' + asrLang + '\r\n' +
         '--' + boundary + '\r\n' +
         'Content-Disposition: form-data; name="file"; filename="audio.' + format + '"\r\n' +
         'Content-Type: ' + mime + '\r\n\r\n'

@@ -43,6 +43,19 @@ export function readSiliconFlowKey(pluginDir: string): string {
   return fromEnv('CHUBBY_WHALE_SILICONFLOW_KEY', 'SILICONFLOW_API_KEY')
 }
 
+/**
+ * 语音识别语言（硅基流动 Qwen3-ASR 的 language 参数）：默认 zh。
+ * 为什么默认 zh：不传该参数时模型自动检测，短句/带噪声的音频常被识别成英文（"No, no"），
+ * 主人的语音几乎都是中文，显式指定能显著减少误识别。
+ * config.json 可改：asrLanguage（zh / en / auto）
+ */
+export function readAsrLanguage(pluginDir: string): string {
+  const cfg = readConfigJson(pluginDir)
+  const v = cfg && typeof cfg.asrLanguage === 'string' ? cfg.asrLanguage.trim().toLowerCase() : ''
+  if (v === 'en' || v === 'auto') return v
+  return 'zh'
+}
+
 /** Key 就绪情况（给 /status 与启动日志用） */
 export function keyStatus(pluginDir: string): { deepseek: boolean; siliconflow: boolean } {
   return {
