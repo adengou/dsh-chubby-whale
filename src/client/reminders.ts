@@ -9,6 +9,7 @@
  *
  * 这里只做编排，副作用（取数、气泡、朗读、忙闲判断）全部由 host 注入，
  * 便于离线单测；卸载收尾顺序固定为：撤到点定时器 → 清队列 → 停轮询。
+ * start() 返回的清理函数做的就是这套完整收尾（调用方只拿得到这个返回值，见 client.ts 的 effect）。
  */
 
 import { getJson } from './http.js'
@@ -71,6 +72,12 @@ export function createReminderPoller(host: ReminderHost, opts?: ReminderPollerOp
   const queue: any[] = []
   let dueTimer: any = null
   let pollTimer: any = null
+  /**
+   * 轮询是否在跑：收尾后置 false，迟到的响应因此不会再把条目塞回队列、再排定时器。
+   * 只判「在跑/已收尾」而不做代次（epoch）比对，是因为到点接口在服务端就把条目标成
+   * fired 了：丢掉一个已经返回的响应 = 这条提醒永远不再出现，宁可让它入队播一次。
+   */
+  let alive = false
 
   /** 到点队列：一次只放一条，间隔 gapMs；忙时 retryMs 后重试 */
   function pump(): void {
@@ -107,20 +114,28 @@ export function createReminderPoller(host: ReminderHost, opts?: ReminderPollerOp
 
   function start(): () => void {
     stopPoll()
+    alive = true
     pollTimer = setInterval(() => {
       fetchJson(DUE_PATH).then((d: any) => {
+        // await 之后先校验收尾状态：卸载后迟到的响应既不入队，也不再排到点定时器
+        // （否则定时器会在组件销毁后继续冒泡/朗读）
+        if (!alive) return
         const due = (d && d.due) || []
         for (const it of due) {
-          if (it && it.text) queue.push(it)
+          // 正文为空也照收：下面统一用「时间到了」兜底，过滤掉的话空正文提醒永远不响
+          if (it && typeof it === 'object') queue.push(it)
         }
         pump()
       }).catch(() => { })
     }, intervalMs)
-    return stopPoll
+    // 返回给调用方的清理函数必须做完整收尾：client.ts 的 effect cleanup 只拿到这个返回值，
+    // 旧写法只停轮询，待播队列与到点定时器会活到卸载之后（dispose 因此成了死代码）
+    return () => { dispose() }
   }
 
   function dispose(): void {
     // 顺序敏感：先撤到点定时器，再清队列，最后停轮询（与原来 client.ts 的卸载顺序一致）
+    alive = false
     if (dueTimer !== null) {
       clearT(dueTimer)
       dueTimer = null

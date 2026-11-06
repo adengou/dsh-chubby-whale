@@ -2859,18 +2859,24 @@
           resolve(null);
           return;
         }
-        const url = URLRef.createObjectURL(file);
-        const img = new ImageRef();
+        let url = "";
         const done = (v) => {
           try {
-            URLRef.revokeObjectURL(url);
+            if (url) URLRef.revokeObjectURL(url);
           } catch (e) {
           }
+          url = "";
           resolve(v);
         };
-        img.onload = () => done(img);
-        img.onerror = () => done(null);
-        img.src = url;
+        try {
+          url = URLRef.createObjectURL(file);
+          const img = new ImageRef();
+          img.onload = () => done(img);
+          img.onerror = () => done(null);
+          img.src = url;
+        } catch (e) {
+          done(null);
+        }
       } catch (e) {
         resolve(null);
       }
@@ -3045,7 +3051,12 @@
         const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime });
         const reply = String(reply0 && reply0.reply || "").trim() || "这条鱼看不懂这张图……";
         bubble("（看图）" + reply, 1e4);
-        if (speak) speak(reply);
+        if (speak) {
+          try {
+            speak(reply);
+          } catch (e2) {
+          }
+        }
         return { ok: true, kind: "image", message: VISION_PROMPT, reply };
       } catch (e) {
         return fail(e, "图片处理失败");
@@ -3063,7 +3074,12 @@
         const reply0 = await post({ message });
         const reply = String(reply0 && reply0.reply || "").trim() || "这份文档本鲸没看懂……";
         bubble("（文档）" + reply, 12e3);
-        if (speak) speak(reply);
+        if (speak) {
+          try {
+            speak(reply);
+          } catch (e2) {
+          }
+        }
         return { ok: true, kind: "text", message, reply };
       } catch (e) {
         return fail(e, "文档处理失败");
@@ -7270,6 +7286,7 @@
     const queue = [];
     let dueTimer = null;
     let pollTimer = null;
+    let alive = false;
     function pump() {
       if (dueTimer) return;
       if (queue.length === 0) return;
@@ -7302,19 +7319,24 @@
     }
     function start() {
       stopPoll();
+      alive = true;
       pollTimer = setInterval(() => {
         fetchJson(DUE_PATH).then((d) => {
+          if (!alive) return;
           const due = d && d.due || [];
           for (const it of due) {
-            if (it && it.text) queue.push(it);
+            if (it && typeof it === "object") queue.push(it);
           }
           pump();
         }).catch(() => {
         });
       }, intervalMs);
-      return stopPoll;
+      return () => {
+        dispose();
+      };
     }
     function dispose() {
+      alive = false;
       if (dueTimer !== null) {
         clearT(dueTimer);
         dueTimer = null;
@@ -7345,6 +7367,20 @@
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
     return hh + ":" + mm;
+  }
+  function formatClockWithDay(at, nowMs) {
+    const d = new Date(at);
+    if (isNaN(d.getTime())) return "--:--";
+    const clock = formatClock(d);
+    const baseMs = typeof nowMs === "number" && isFinite(nowMs) ? nowMs : Date.now();
+    const today = new Date(baseMs);
+    const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const startTarget = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const days = Math.round((startTarget - startToday) / (24 * 60 * 60 * 1e3));
+    if (days === 0) return clock;
+    if (days === 1) return "明天 " + clock;
+    if (days === -1) return "昨天 " + clock;
+    return d.getMonth() + 1 + "月" + d.getDate() + "日 " + clock;
   }
   function stampOf(item2) {
     const raw = item2.nextAt || item2.at;
@@ -7489,7 +7525,7 @@
       const dueMs = new Date(pick.nextAt || pick.at).getTime();
       const base = Number.isFinite(dueMs) ? Math.max(clock(), dueMs) : clock();
       const at = new Date(base + POSTPONE_MS);
-      const when = formatClock(at);
+      const when = formatClockWithDay(at, clock());
       const body = {
         text: pick.text,
         at: at.toISOString(),
