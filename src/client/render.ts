@@ -9,6 +9,7 @@
  * 三者都只依赖传入参数与 localStorage，不持有 React 状态、不产生副作用；
  * 调用点仍在原处（每次渲染调用一次），所以外提不改变 hooks 顺序与闭包语义。
  */
+import { isStoryAutoOn } from './story-auto.js'
 import { storyRate, poemRate } from './rates.js'
 import { VERSION } from './version.js'
 import { chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle, menuItemStyle, menuSubStyle, menuStyle } from './styles.js'
@@ -187,7 +188,7 @@ export function readMenuRuntime(): MenuRuntime {
   let ttsVoice = 'zh-CN-XiaoyiNeural'
   let chatLang = 'auto'
   try {
-    storyAuto = localStorage.getItem('chubby-story-auto') !== '0'
+    storyAuto = isStoryAutoOn()
     streamOn = localStorage.getItem('chubby-stream') !== 'off'
     ttsVoice = localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural'
     chatLang = localStorage.getItem('chubby-chatlang') || 'auto'

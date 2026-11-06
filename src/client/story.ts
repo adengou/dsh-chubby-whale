@@ -26,6 +26,7 @@
  *     TimeoutError（code 23）而不是 AbortError；只认 AbortError 会把「等超时」误报成「连不上」。
  */
 
+import { setStoryAuto } from './story-auto.js'
 import { getJson, postJson, clientHeaders, timeoutSignal } from './http.js'
 import { estimateSpeakMs } from './text.js'
 import { normalizeRate } from '../shared/tts.js'
@@ -282,7 +283,7 @@ export function createStoryController(host: StoryHost): StoryController {
             // 关掉必须落盘：菜单「连播」读的是 localStorage（actions/culture.ts 写、client/render.ts 读），
             // 只改 ref 会让菜单继续显示「开」，而下次「接着说」只讲一段就停 —— 两套状态对不上。
             refs.auto.current = false
-            try { localStorage.setItem('chubby-story-auto', '0') } catch (e) { }
+            setStoryAuto(false)
             // 人设台词（念完该说的话）后面补一句「为什么停了、怎么接着听」：
             // 人设库没有 storyDone 这个 key，poemDone 是唯一现成的收尾语气，借它的调子不借它的用途。
             host.bubble(host.persona.line('poemDone') + '（《'

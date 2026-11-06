@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.50";
+  var VERSION = "1.1.51";
 
   // src/client/styles.ts
   var W = 240;
@@ -3893,6 +3893,49 @@
     };
   }
 
+  // src/client/story-auto.ts
+  var STORY_AUTO_KEY = "chubby-story-auto";
+  function storage() {
+    try {
+      return typeof localStorage === "undefined" ? null : localStorage;
+    } catch (e) {
+      return null;
+    }
+  }
+  function isStoryAutoOn() {
+    const s = storage();
+    if (!s) return true;
+    let raw = null;
+    try {
+      raw = s.getItem(STORY_AUTO_KEY);
+    } catch (e) {
+      return true;
+    }
+    if (raw === null) return true;
+    const v = String(raw).trim().toLowerCase();
+    return !(v === "0" || v === "off" || v === "false");
+  }
+  function hasStoryAutoStorage() {
+    const s = storage();
+    if (!s) return false;
+    try {
+      s.getItem(STORY_AUTO_KEY);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  function setStoryAuto(on) {
+    const s = storage();
+    if (!s) return false;
+    try {
+      s.setItem(STORY_AUTO_KEY, on ? "1" : "0");
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // src/client/http.ts
   var API_BASE = "/api/chubby-whale";
   function apiUrl(path) {
@@ -4256,12 +4299,10 @@
       host.story.reset();
     });
     function storyAutoPref(host) {
-      try {
-        const s = localStorage.getItem("chubby-story-auto");
-        return s === null ? true : s !== "0";
-      } catch (e) {
+      if (!hasStoryAutoStorage()) {
         return host && host.storyState && host.storyState.auto ? !!host.storyState.auto.current : true;
       }
+      return isStoryAutoOn();
     }
     table.define("story-auto", (host) => {
       const next = !storyAutoPref(host);
@@ -4269,10 +4310,7 @@
         if (host.storyState && host.storyState.auto) host.storyState.auto.current = next;
       } catch (e) {
       }
-      try {
-        localStorage.setItem("chubby-story-auto", next ? "1" : "0");
-      } catch (e) {
-      }
+      setStoryAuto(next);
       host.bubble(next ? "连播：开——讲完这段自动接下一段" : "连播：关——讲完这段就停", 4e3);
     });
     table.definePrefix("narration-rate:", (host, suffix) => {
@@ -6339,10 +6377,7 @@
               }
             } else {
               refs.auto.current = false;
-              try {
-                localStorage.setItem("chubby-story-auto", "0");
-              } catch (e) {
-              }
+              setStoryAuto(false);
               host.bubble(host.persona.line("poemDone") + "（《" + String(d && d.book || refs.book.current || "这本") + "》讲完啦，连播已关；想接着听点「接着说」）", 8e3);
             }
           }
@@ -6612,7 +6647,7 @@
         host.bubble("（点播）接着说", 3e3);
         try {
           host.storyState.auto.current = true;
-          localStorage.setItem("chubby-story-auto", "on");
+          setStoryAuto(true);
         } catch (e) {
         }
         host.story.start(host.storyState.book.current || "");
@@ -7776,7 +7811,7 @@
     let ttsVoice = "zh-CN-XiaoyiNeural";
     let chatLang = "auto";
     try {
-      storyAuto = localStorage.getItem("chubby-story-auto") !== "0";
+      storyAuto = isStoryAutoOn();
       streamOn = localStorage.getItem("chubby-stream") !== "off";
       ttsVoice = localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
       chatLang = localStorage.getItem("chubby-chatlang") || "auto";
