@@ -25,10 +25,29 @@ deepFreeze(TTS_VOICES)
 /** 默认音色：晓伊（与菜单默认与 C# 版一致） */
 export const DEFAULT_VOICE = 'zh-CN-XiaoyiNeural'
 
+/**
+ * 白名单查表（小写名 → 规范写法）。
+ * 大小写不敏感是刻意的（2026-11-07）：手改 localStorage / 旧配置里出现
+ * "EN-US-ANANEURAL" 这类只差大小写的**合法**音色时，旧实现因为 indexOf 精确匹配
+ * 直接判成非法，把用户选的音色静默重置成晓伊。查表后返回的是白名单里的规范写法，
+ * 送给 edge-tts 的仍是大小写正确的名字。
+ * 这张表只在模块加载时构建一次、不导出，外部改不到。
+ */
+const VOICE_BY_KEY: Map<string, string> = (() => {
+  const m = new Map<string, string>()
+  for (const v of TTS_VOICES) m.set(v.toLowerCase(), v)
+  return m
+})()
+
 /** 音色名规范化：白名单外（含空值/坏值）一律回退 */
 export function normalizeVoiceName(name: unknown, fallback: string = DEFAULT_VOICE): string {
-  const n = str(name).trim()
-  return TTS_VOICES.indexOf(n) >= 0 ? n : fallback
+  // String(x) 本身会抛（Object.create(null)、自定义 toString 抛错）：
+  // 音色名从 localStorage / 菜单参数来，坏值只能回退，不能让整条朗读链崩在这里。
+  let n = ''
+  try { n = str(name).trim() } catch (e) { return fallback }
+  if (!n) return fallback
+  const hit = VOICE_BY_KEY.get(n.toLowerCase())
+  return hit || fallback
 }
 
 /** 读菜单里选过的音色（localStorage）；读不到或非法 → 默认晓伊 */

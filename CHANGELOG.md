@@ -4,6 +4,28 @@
 
 ## [未发布]
 
+## [1.1.63] - 2026-11-07
+
+### 修复（B91 共享层与语音子模块分身）
+- **`deepFreeze` 漏冻子树**：父对象已冻结时直接 return，子对象不再处理（`deepFreeze(Object.freeze({child}))` 后 child 仍可变）；Map 的键/值、Set 的元素、symbol 键上的值全都没冻。改为 WeakSet 遍历 + 容器/Map/Set 递归
+- **半角句号的打断词掐不掉朗读**：标点表缺 `｡`(U+FF61) 且归一化没做 NFKC → `isInterruptWord('停｡')===false`（「停。」是真）；零宽字符同症。现在先 NFKC → 去零宽 → 去空白标点 → 小写
+- **同一个字重复 7 次以上反而不判噪声**：`length<=6` 上限让「啊啊啊啊啊啊啊啊」被当成真话送模型（越像气口越危险）；上限去掉
+- **音色白名单大小写敏感 + `String()` 无兜底**：`EN-US-ANANEURAL` 被静默重置成晓伊，`Object.create(null)` 直接抛 TypeError
+- **硬超时只覆盖到响应头**：`finally` 里清定时器/摘监听，响应体永挂时 `await resp.arrayBuffer()` 永远 pending（无 AbortError）。现在超时/外部中断覆盖响应体读取阶段
+
+### 修复（B91 音频与模拟分身）
+- **8 秒内第二声「停/继续」被当重复吞掉**：`sim.isRepeat` 的「完全相等」分支绕过了 `minLen` 门槛（②③ 都有、① 没有）→ 喊不停说书、短命令重复请求被吞
+- **琴声 onDone 永久丢失**：`resume()` 在自动播放被拦时可能既不 resolve 也不 reject，`p.then(schedule, schedule)` 是唯一通路 → 不排程、`onDone` 不来（「弹完啦」气泡与朗读都不出）。加 1200ms 幂等看门狗，stop/换曲一并撤
+
+### 修复（主代理）
+- **诗名索引「本页永不再试」**：`started` 只置一次，失败后本页永不重试；而宿主是「文件补上就能恢复」。现在 60s 退避、最多 3 次，并加**在途闸**（`detectIntent` 同步循环连调也只发一个请求）
+- **`parseGrowth` 接受假值**：`{ok:'false'}`、`{ok:1}` 被当真，`{exp:null}`→0、`{exp:true}`→1；现在 `ok` 必须严格 `true`，`exp` 只认数字或非空数字串
+- **P0 打断不同时静琴**：`stopTts()` 只停朗读/说书，弹琴中提问会两路同时出声（违反并发纪律 §二）；补 `melody.stop()`
+
+### 测试
+- 新增 `test-shared-voice.mjs`(89)、`test-audio-sim.mjs`(169)、`test-poem-titles-retry.mjs`(10)，接入 `npm test`；`test-utils-pure` 补 3 条 look 断言
+- 全链 **3671 项 0 失败**（`node tools/test-count.mjs`：50 个套件，失败 0，未识别 0）
+
 ## [1.1.62] - 2026-11-07
 
 ### 修复（B90 人格与云端语音分身）
