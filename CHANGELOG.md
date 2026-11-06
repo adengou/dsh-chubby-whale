@@ -3,6 +3,25 @@
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
 ## [未发布]
+## [1.1.5] - 2026-11-06
+
+### 修复（成长/鱼粮/宠物，需重启生效）
+- `addExp` 部分截断时仍报 `capped:false`（调用方误以为全额入账）
+- 鱼粮跨天不滚动：线上 `day` 停在昨天，`/fishfood` 仍报旧 dayTokens 且缺字段
+- 亲密度负数/超 100 直达 `/state`、`/pet`
+- `pet.mood` 永久停在 happy（改为「6 小时内喂过→happy / 饥饿≥70→hungry / 否则 normal」推导，`lastSeen` 增量结算）
+- `/cache` 无 action 校验、清空失败被吞；`/clear-memory` 记忆清空失败时漏清聊天缓存
+
+### 修复（动画/拖拽/外观）
+- `start()` 无幂等导致 rAF 永久残留一条链（stop 后仍在跑）
+- canvas backing 写死 480×426：DPR=3 / 浏览器缩放时发糊，外接屏 DPR 切换不更新
+- 多点触控冲突：第二指会重置拖拽基线、驱动鱼、提前结束拖拽
+- 位置坏值（NaN/Infinity）会让鱼消失；`tierOf(Infinity)` 掉回 0 档
+- `setLook` 每次重拉成长都打断甩尾；爱心无上限（100 个不回收）；隐藏时仍每帧绘制 2MB 图
+
+### 新功能
+- 情绪跨端同步：服务端 `normal/happy/hungry` → 气泡 `idle/excited/hungry`
+
 ## [1.1.4] - 2026-11-06
 
 ### 修复（重要）

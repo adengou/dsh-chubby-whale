@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.4";
+  var VERSION = "1.1.5";
 
   // src/client/styles.ts
   var W = 240;
@@ -804,6 +804,24 @@
     return { ok: false, kind: "unsupported", error: "unsupported type" };
   }
 
+  // src/shared/growth.ts
+  var GROWTH_STAGES = [
+    { exp: 0, name: "初识" },
+    { exp: 200, name: "熟悉" },
+    { exp: 800, name: "亲密" },
+    { exp: 2500, name: "知心" },
+    { exp: 5e3, name: "家人" }
+  ];
+  deepFreeze(GROWTH_STAGES);
+  function growthStage(exp) {
+    let idx = 0;
+    for (let i = 0; i < GROWTH_STAGES.length; i++) {
+      if (exp >= GROWTH_STAGES[i].exp) idx = i;
+    }
+    const next = idx + 1 < GROWTH_STAGES.length ? GROWTH_STAGES[idx + 1].exp : 0;
+    return { index: idx, name: GROWTH_STAGES[idx].name, nextExp: next };
+  }
+
   // src/client/look.ts
   var TIER_EXP = [0, 200, 800];
   deepFreeze(TIER_EXP);
@@ -817,12 +835,11 @@
   deepFreeze(LOOKS);
   function tierOf(exp) {
     const e = Number(exp);
-    if (!isFinite(e) || e <= 0) return 0;
-    let idx = 0;
-    for (let i = 0; i < TIER_EXP.length; i++) {
-      if (e >= TIER_EXP[i]) idx = i;
+    if (Number.isNaN(e) || e <= 0) return 0;
+    for (let i = TIER_EXP.length - 1; i > 0; i--) {
+      if (e >= TIER_EXP[i]) return i;
     }
-    return idx;
+    return 0;
   }
   function lookFor(exp) {
     return LOOKS[tierOf(exp)];
@@ -839,11 +856,12 @@
     if (!isFinite(raw)) return null;
     const exp = Math.max(0, Math.floor(raw));
     const tier = tierOf(exp);
+    const host = growthStage(exp);
     const n = Number(d.nextExp);
     let nextExp = 0;
     if (isFinite(n) && n >= 0) nextExp = Math.floor(n);
-    else if (tier + 1 < TIER_EXP.length) nextExp = TIER_EXP[tier + 1];
-    const stage = typeof d.stage === "string" && d.stage ? d.stage : TIER_NAMES[tier];
+    else nextExp = host.nextExp;
+    const stage = typeof d.stage === "string" && d.stage ? d.stage : host.name;
     return { exp, stage, nextExp, tier };
   }
   function fetchGrowth(getJson2) {
@@ -875,6 +893,8 @@
   var HALO = { x: 240, y: 228, r0: 30, r1: 252 };
   var DOT_BREATH_MS = 620;
   var TAU = Math.PI * 2;
+  var MAINTAIN_EVERY = 30;
+  var HEART_MAX = 8;
   function pickDotIndexes(count) {
     const n = FIN_DOTS.length;
     const c = Math.max(2, Math.min(n, Math.round(Number(count)) || 2));
@@ -887,7 +907,7 @@
     const { canvas, imgSrc, cw, ch, sx, sy, state } = opts;
     const ctx = canvas && typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
     if (!ctx) {
-      const fallback = opts.look || lookFor(0);
+      let fallbackLook = opts.look || lookFor(0);
       return {
         start() {
         },
@@ -897,16 +917,19 @@
         },
         pushHeart() {
         },
-        setLook(_next) {
+        // 取不到上下文时动画无法重建，但外观数据仍要跟上成长（否则 getLook 永远停在初识档）
+        setLook(next) {
+          fallbackLook = next || lookFor(0);
         },
         getLook() {
-          return fallback;
+          return fallbackLook;
         }
       };
     }
     const img = new Image();
     img.src = imgSrc;
     let raf = 0;
+    let running = false;
     let last = performance.now();
     let blinkT = 0;
     let blinkClosed = false;
@@ -917,13 +940,87 @@
     let wagStart = -1;
     let splashes = [];
     const haloGrads = [];
+    let visible = true;
+    let maintCountdown = MAINTAIN_EVERY;
+    let usedDpr = 0;
+    function dprNow() {
+      try {
+        const d = typeof window !== "undefined" ? Number(window.devicePixelRatio) : 1;
+        return isFinite(d) && d > 0 ? d : 1;
+      } catch (e) {
+        return 1;
+      }
+    }
+    function syncCanvasSize() {
+      try {
+        let cssW = 0;
+        let cssH = 0;
+        if (typeof canvas.getBoundingClientRect === "function") {
+          const r = canvas.getBoundingClientRect();
+          cssW = Number(r && r.width) || 0;
+          cssH = Number(r && r.height) || 0;
+        }
+        if (!(cssW > 0)) cssW = cw / 2;
+        if (!(cssH > 0)) cssH = ch / 2;
+        const dpr = dprNow();
+        const pxW = Math.max(1, Math.min(cw * 2, Math.round(cssW * dpr)));
+        const pxH = Math.max(1, Math.min(ch * 2, Math.round(cssH * dpr)));
+        if (canvas.width !== pxW) canvas.width = pxW;
+        if (canvas.height !== pxH) canvas.height = pxH;
+        if (typeof ctx.setTransform === "function") ctx.setTransform(pxW / cw, 0, 0, pxH / ch, 0, 0);
+        if (dpr !== usedDpr) {
+          usedDpr = dpr;
+          haloGrads.length = 0;
+        }
+      } catch (e) {
+      }
+    }
+    function checkVisible() {
+      try {
+        if (typeof document !== "undefined" && document.hidden) return false;
+        if (canvas.isConnected === false) return false;
+        if (typeof canvas.getClientRects === "function") return canvas.getClientRects().length > 0;
+      } catch (e) {
+      }
+      return true;
+    }
+    function maintain() {
+      maintCountdown = MAINTAIN_EVERY;
+      visible = checkVisible();
+      if (visible) syncCanvasSize();
+    }
+    let watchingResize = false;
+    function onWindowResize() {
+      try {
+        visible = checkVisible();
+      } catch (e) {
+      }
+      if (visible) syncCanvasSize();
+    }
+    function watchResize() {
+      if (watchingResize) return;
+      watchingResize = true;
+      try {
+        if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("resize", onWindowResize);
+      } catch (e) {
+      }
+    }
+    function unwatchResize() {
+      if (!watchingResize) return;
+      watchingResize = false;
+      try {
+        if (typeof window !== "undefined" && typeof window.removeEventListener === "function") window.removeEventListener("resize", onWindowResize);
+      } catch (e) {
+      }
+    }
     function wagGap() {
       return Math.max(2500, look.tailEveryMs * (1 - WAG_JITTER + Math.random() * WAG_JITTER * 2));
     }
     function applyLook(next) {
+      const prev = look;
       look = next || lookFor(0);
-      dotIdx = pickDotIndexes(look.dots);
-      nextWagAt = performance.now() + wagGap();
+      if (look.dots !== prev.dots) dotIdx = pickDotIndexes(look.dots);
+      if (look.tailEveryMs !== prev.tailEveryMs) nextWagAt = performance.now() + wagGap();
       try {
         canvas.style.transform = "scale(" + look.scale + ")";
         canvas.style.transformOrigin = "50% 100%";
@@ -1058,8 +1155,15 @@
       ctx.restore();
     }
     function loop(t) {
-      const dt = Math.min(50, t - last);
+      if (!running) return;
+      const dt = Math.max(0, Math.min(50, t - last));
       last = t;
+      maintCountdown -= 1;
+      if (maintCountdown <= 0) maintain();
+      if (!visible) {
+        raf = requestAnimationFrame(loop);
+        return;
+      }
       ctx.clearRect(0, 0, cw, ch);
       if (t >= nextWagAt) {
         wagStart = t;
@@ -1103,15 +1207,26 @@
       raf = requestAnimationFrame(loop);
     }
     function start() {
+      if (running) return;
+      running = true;
+      last = performance.now();
+      maintCountdown = MAINTAIN_EVERY;
+      visible = true;
+      watchResize();
+      syncCanvasSize();
       raf = requestAnimationFrame(loop);
     }
     function stop() {
+      running = false;
+      unwatchResize();
       cancelAnimationFrame(raf);
+      raf = 0;
     }
     function talkFor(ms2) {
       state.talkUntil = performance.now() + ms2;
     }
     function pushHeart() {
+      if (state.hearts.length >= HEART_MAX) state.hearts.shift();
       state.hearts.push({ age: 0, dx: Math.random() - 0.5 });
     }
     function setLook(next) {
@@ -5433,10 +5548,24 @@
   }
 
   // src/client/stage.ts
+  function finiteOr0(v) {
+    const n = Number(v);
+    return isFinite(n) ? n : 0;
+  }
   function clampPos(x, y, w, h, viewW, viewH) {
+    const ww = Math.max(0, finiteOr0(w));
+    const hh = Math.max(0, finiteOr0(h));
+    const vw = Math.max(0, finiteOr0(viewW));
+    const vh = Math.max(0, finiteOr0(viewH));
+    const maxX = Math.max(0, vw - ww);
+    const maxY = Math.max(0, vh - hh);
+    const nx = Number(x);
+    const ny = Number(y);
+    const cx = isFinite(nx) ? nx : nx > 0 ? maxX : 0;
+    const cy = isFinite(ny) ? ny : ny > 0 ? maxY : 0;
     return {
-      x: Math.max(0, Math.min(viewW - w, x)),
-      y: Math.max(0, Math.min(viewH - h, y))
+      x: Math.max(0, Math.min(maxX, cx)),
+      y: Math.max(0, Math.min(maxY, cy))
     };
   }
   function homePos(w, h, viewW, viewH) {
@@ -5475,7 +5604,9 @@
   var INERTIA_DECAY = 0.9;
   var INERTIA_STOP = 0.2;
   function clampVelocity(v) {
-    return Math.max(-INERTIA_MAX, Math.min(INERTIA_MAX, v));
+    const n = Number(v);
+    if (!isFinite(n)) return n > 0 ? INERTIA_MAX : n < 0 ? -INERTIA_MAX : 0;
+    return Math.max(-INERTIA_MAX, Math.min(INERTIA_MAX, n));
   }
   function decayVelocity(vx, vy) {
     const nx = vx * INERTIA_DECAY;
@@ -5519,58 +5650,155 @@
         return false;
       }
     };
+    const swallow = (e) => {
+      try {
+        if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+      } catch (e2) {
+      }
+      try {
+        if (e && e.cancelable && typeof e.preventDefault === "function") e.preventDefault();
+      } catch (e2) {
+      }
+    };
+    const inside = (e) => {
+      try {
+        if (target && typeof target.contains === "function") return !!target.contains(e && e.target);
+      } catch (e2) {
+      }
+      return true;
+    };
+    let activeId = null;
+    const release = () => {
+      activeId = null;
+    };
+    const pointerIdOf = (e) => e && typeof e.pointerId === "number" ? e.pointerId : null;
+    const touchOf = (e, id) => {
+      const list = e && e.touches || [];
+      for (let i = 0; i < list.length; i++) if (list[i] && list[i].identifier === id) return list[i];
+      return null;
+    };
+    const onPointerDownCapture = (e) => {
+      if (activeId === null) {
+        const id = pointerIdOf(e);
+        if (id !== null && inside(e)) activeId = id;
+        return;
+      }
+      if (pointerIdOf(e) !== activeId && inside(e)) swallow(e);
+    };
+    const onPointerMoveCapture = (e) => {
+      if (activeId !== null && pointerIdOf(e) !== activeId && inside(e)) swallow(e);
+    };
+    const onPointerEndCapture = (e) => {
+      if (activeId === null) return;
+      if (pointerIdOf(e) === activeId) {
+        activeId = null;
+        return;
+      }
+      if (inside(e)) swallow(e);
+    };
+    const onTouchStart = (e) => {
+      if (activeId !== null) {
+        if (touchOf(e, activeId)) return;
+        activeId = null;
+      }
+      const list = e && e.changedTouches || e && e.touches || [];
+      const t = list[0];
+      if (!t) return;
+      activeId = typeof t.identifier === "number" ? t.identifier : null;
+      handlers.onDown(Number(t.clientX) || 0, Number(t.clientY) || 0);
+    };
+    const onTouchMove = (e) => {
+      if (activeId === null) return;
+      const t = touchOf(e, activeId);
+      if (!t) return;
+      try {
+        if (e.cancelable) e.preventDefault();
+      } catch (e2) {
+      }
+      handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0);
+      mark(e);
+    };
+    const onTouchEnd = (e) => {
+      if (activeId === null) return;
+      if (touchOf(e, activeId)) return;
+      activeId = null;
+      handlers.onEnd();
+    };
     const onDown = (e) => {
       if (handled(e)) return;
       const p = pointOf(e);
       handlers.onDown(p.x, p.y);
     };
+    const onMouseDown = (e) => {
+      activeId = null;
+      onDown(e);
+    };
     const onMove = (e) => {
       if (handled(e)) return;
-      const p = pointOf(e);
-      handlers.onMove(p.x, p.y);
-    };
-    const onTouchMove = (e) => {
-      try {
-        if (e.cancelable) e.preventDefault();
-      } catch (e2) {
+      if (mode === "touch") {
+        if (activeId !== null) {
+          const t = touchOf(e, activeId);
+          if (!t) return;
+          handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0);
+          return;
+        }
+        const p2 = pointOf(e);
+        handlers.onMove(p2.x, p2.y);
+        return;
       }
       const p = pointOf(e);
       handlers.onMove(p.x, p.y);
-      mark(e);
     };
     const onEnd = (e) => {
       if (handled(e)) return;
       handlers.onEnd();
     };
     if (target && win) {
-      if (mode === "touch") {
-        add(target, "touchstart", onDown, { passive: false });
+      if (mode === "pointer") {
+        add(win, "pointerdown", onPointerDownCapture, true);
+        add(win, "pointermove", onPointerMoveCapture, true);
+        add(win, "pointerup", onPointerEndCapture, true);
+        add(win, "pointercancel", onPointerEndCapture, true);
+        add(win, "pointermove", onMove);
+        add(win, "pointerup", onEnd);
+        add(win, "pointercancel", onEnd);
+        add(win, "blur", release);
+      } else {
+        add(target, "touchstart", onTouchStart, { passive: false });
         add(target, "touchmove", onTouchMove, { passive: false });
-        add(target, "mousedown", onDown);
-      }
-      add(win, mode === "touch" ? "touchmove" : "pointermove", onMove);
-      add(win, mode === "touch" ? "touchend" : "pointerup", onEnd);
-      add(win, mode === "touch" ? "touchcancel" : "pointercancel", onEnd);
-      if (mode === "touch") {
+        add(target, "mousedown", onMouseDown);
+        add(win, "touchmove", onMove);
+        add(win, "touchend", onTouchEnd);
+        add(win, "touchcancel", onTouchEnd);
         add(win, "mousemove", onMove);
         add(win, "mouseup", onEnd);
+        add(win, "blur", release);
       }
     }
     const dispose = () => {
       if (target && win) {
-        if (mode === "touch") {
-          del(target, "touchstart", onDown);
+        if (mode === "pointer") {
+          del(win, "pointerdown", onPointerDownCapture);
+          del(win, "pointermove", onPointerMoveCapture);
+          del(win, "pointerup", onPointerEndCapture);
+          del(win, "pointercancel", onPointerEndCapture);
+          del(win, "pointermove", onMove);
+          del(win, "pointerup", onEnd);
+          del(win, "pointercancel", onEnd);
+          del(win, "blur", release);
+        } else {
+          del(target, "touchstart", onTouchStart);
           del(target, "touchmove", onTouchMove);
-          del(target, "mousedown", onDown);
-        }
-        del(win, mode === "touch" ? "touchmove" : "pointermove", onMove);
-        del(win, mode === "touch" ? "touchend" : "pointerup", onEnd);
-        del(win, mode === "touch" ? "touchcancel" : "pointercancel", onEnd);
-        if (mode === "touch") {
+          del(target, "mousedown", onMouseDown);
+          del(win, "touchmove", onMove);
+          del(win, "touchend", onTouchEnd);
+          del(win, "touchcancel", onTouchEnd);
           del(win, "mousemove", onMove);
           del(win, "mouseup", onEnd);
+          del(win, "blur", release);
         }
       }
+      activeId = null;
     };
     return { mode, dispose };
   }

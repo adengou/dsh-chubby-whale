@@ -48,22 +48,31 @@ export function createGrowthRepo(dataDir) {
     }
     function addExp(amount, source) {
         const g = loadGrowth();
-        const exp0 = Math.max(0, Number(g.exp) || 0);
+        const exp0 = Math.max(0, Math.floor(Number(g.exp) || 0));
         const prev = growthStage(exp0);
         const srcName = String(source || 'chat'); // 老调用方不传来源：按 chat 记（照 C# 的 AddExp(reason) 必须有来源）
         const capSrc = Object.prototype.hasOwnProperty.call(EXP_SOURCE_CAP, srcName) ? EXP_SOURCE_CAP[srcName] : EXP_SOURCE_DEFAULT_CAP;
         // 老文件兜底：缺 dayKey / dayExp / src / src[source] 都按 0 算，不动其它字段
         const today = todayKey();
-        let dayExp = Number(g.dayExp) || 0;
-        let src = (g.src && typeof g.src === 'object') ? g.src : {};
+        let dayExp = Math.max(0, Math.floor(Number(g.dayExp) || 0));
+        let src = (g.src && typeof g.src === 'object' && !Array.isArray(g.src)) ? g.src : {};
         if (String(g.dayKey || '') !== today) { // 跨天：日计数重置、各来源额度清零
             dayExp = 0;
             src = {};
             for (const k of Object.keys(EXP_SOURCE_CAP))
                 src[k] = 0;
         }
+        // 请求量只认「非负整数」；NaN → 0，Infinity 按「要很多」处理（仍会被上限截断），
+        // 绝不让 exp 变成非有限数
+        const amountNum = Number(amount);
+        const requested = Number.isFinite(amountNum)
+            ? Math.max(0, Math.floor(amountNum))
+            : (amountNum > 0 ? Number.MAX_SAFE_INTEGER : 0);
+        let gain = requested;
+        // capped 的语义：这次请求「没拿满」就是被上限截了（哪怕只截了一部分）。
+        // 原实现只在额度已用完时置 true，被日上限/来源上限部分截断时仍报 false，调用方会误以为全额入账。
         let capped = false;
-        let gain = Math.floor(Number(amount) || 0);
+        let used = 0;
         if (gain > 0) {
             const roomDay = EXP_DAILY_CAP - dayExp;
             if (roomDay <= 0) {
@@ -72,24 +81,24 @@ export function createGrowthRepo(dataDir) {
                 console.error('[store] GROWTH-CAP-DAY source=' + srcName + ' exp=' + exp0 + ' dayExp=' + dayExp + ' cap=' + EXP_DAILY_CAP);
             }
             else {
-                if (gain > roomDay)
-                    gain = roomDay;
-                const used = Number(src[srcName]) || 0;
+                used = Math.max(0, Math.floor(Number(src[srcName]) || 0));
                 const roomSrc = capSrc - used;
                 if (roomSrc <= 0) {
                     capped = true;
                     gain = 0;
                     console.error('[store] GROWTH-CAP-SRC source=' + srcName + ' used=' + used + ' cap=' + capSrc + ' exp=' + exp0);
                 }
-                else if (gain > roomSrc) {
-                    gain = roomSrc;
+                else {
+                    gain = Math.min(gain, roomDay, roomSrc);
+                    if (gain < requested)
+                        capped = true;
                 }
             }
         }
-        const exp = exp0 + (gain > 0 ? gain : 0);
+        const exp = exp0 + gain;
         if (gain > 0) {
             dayExp += gain;
-            src[srcName] = (Number(src[srcName]) || 0) + gain;
+            src[srcName] = used + gain;
         }
         g.exp = exp;
         g.dayKey = today;
