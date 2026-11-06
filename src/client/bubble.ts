@@ -74,6 +74,18 @@ export type BubbleOptions = {
   viewport?: () => { w: number; h: number }
 }
 
+/**
+ * 清掉气泡元素上的自动收起计时器（**公开访问器**）。
+ * 为什么导出（2026-11-07 B96）：卸载清理（client/effects.ts）原来直接读 `el._t`，
+ * 等于跨模块摸 bubble 的私有槽位 —— 只要这里把字段改名，卸载清理会**静默失效**
+ * （气泡定时器留着，组件销毁后还改 DOM）。现在两边走同一个函数。
+ */
+export function clearBubbleTimer(el: any): void {
+  try {
+    if (el && el._t) { clearTimeout(el._t); el._t = null }
+  } catch (e) { }
+}
+
 export function createBubble(opts: BubbleOptions): Bubble {
   function viewport(): { w: number; h: number } {
     try {
@@ -82,11 +94,7 @@ export function createBubble(opts: BubbleOptions): Bubble {
     } catch (e) { return { w: 1024, h: 768 } }
   }
 
-  function clearTimer(el: any): void {
-    try {
-      if (el && el._t) { clearTimeout(el._t); el._t = null }
-    } catch (e) { }
-  }
+  const clearTimer = clearBubbleTimer
 
   function hide(): void {
     try {

@@ -12,6 +12,7 @@
  */
 
 import { clearI, clearT, evPrevent, evStop } from './util.js'
+import { clearBubbleTimer } from './bubble.js'
 
 export type Dispose = () => void
 
@@ -270,8 +271,8 @@ export function createUnmountCleanup(opts: {
     try { opts.stopTts() } catch (e) { }
     try { opts.stopMelody() } catch (e) { }
     try {
-      const el = opts.bubbleEl()
-      if (el && el._t) { clearTimeout(el._t); el._t = null }
+      // 走 bubble 的公开访问器（原来直接读 el._t，属跨模块摸私有槽位）
+      clearBubbleTimer(opts.bubbleEl())
     } catch (e) { }
   }
 }

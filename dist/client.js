@@ -6281,6 +6281,15 @@
     } catch (e) {
     }
   }
+  function clearBubbleTimer(el) {
+    try {
+      if (el && el._t) {
+        clearTimeout(el._t);
+        el._t = null;
+      }
+    } catch (e) {
+    }
+  }
   function createBubble(opts) {
     function viewport() {
       try {
@@ -6290,15 +6299,7 @@
         return { w: 1024, h: 768 };
       }
     }
-    function clearTimer(el) {
-      try {
-        if (el && el._t) {
-          clearTimeout(el._t);
-          el._t = null;
-        }
-      } catch (e) {
-      }
-    }
+    const clearTimer = clearBubbleTimer;
     function hide() {
       try {
         const el = opts.el();
@@ -8272,11 +8273,7 @@
       } catch (e) {
       }
       try {
-        const el = opts.bubbleEl();
-        if (el && el._t) {
-          clearTimeout(el._t);
-          el._t = null;
-        }
+        clearBubbleTimer(opts.bubbleEl());
       } catch (e) {
       }
     };
@@ -8806,7 +8803,7 @@
         }
         R.useEffect(() => {
           let saveTimer = null;
-          return bindResize(window, () => {
+          const off = bindResize(window, () => {
             applyPos(posRef.current.x, posRef.current.y);
             if (saveTimer) return;
             saveTimer = setTimeout(() => {
@@ -8814,6 +8811,17 @@
               savePos();
             }, 200);
           });
+          return () => {
+            try {
+              off();
+            } catch (e) {
+            }
+            try {
+              if (saveTimer) clearTimeout(saveTimer);
+            } catch (e) {
+            }
+            saveTimer = null;
+          };
         }, []);
         R.useEffect(() => () => {
           try {
@@ -9049,17 +9057,9 @@
           }
         }
         function onPointerMove(e) {
-          try {
-            e.__chubbyDragHandled = true;
-          } catch (e2) {
-          }
           dragMoveTo(e.clientX, e.clientY);
         }
-        function onPointerUp(e) {
-          try {
-            if (e) e.__chubbyDragHandled = true;
-          } catch (e2) {
-          }
+        function onPointerUp() {
           dragFinish();
         }
         R.useEffect(() => {
