@@ -4,6 +4,14 @@
  */
 /** 请求体超限的错误码（readBody 抛出，路由据此回 413） */
 const BODY_TOO_LARGE = 'BODY_TOO_LARGE';
+/**
+ * 超限后还愿意「读掉并丢弃」的字节数上限。
+ * 为什么需要：readBody 抛错后路由要写 413，但如果先 destroy 了连接，413 永远送不到客户端
+ * （客户端只看得到 ECONNRESET，实测见 scripts/test-host-http.mjs）。超一点点是常态
+ * （16KB 上限的请求多发了 1KB、2MB 的备份包多打了 200KB），把这点尾巴读空再抛，
+ * 413 才真的能回出去；超过预算（对方还在猛发）仍然立刻断连，不拿内存和带宽陪跑。
+ */
+const DRAIN_GRACE = 1024 * 1024;
 function bodyTooLarge() {
     const e = new Error('body too large');
     e.code = BODY_TOO_LARGE;
@@ -54,10 +62,12 @@ export function sendTooLarge(res) {
     catch { }
 }
 /**
- * 请求体超限时把连接断掉。
- * 为什么必须断：只从 for-await 里 throw 出去只是「不再消费」，客户端还在发的 body 会继续占着
+ * 超限且「丢弃预算」也用完时把连接断掉。
+ * 为什么此时必须断：只从 for-await 里 throw 出去只是「不再消费」，客户端还在发的 body 会继续占着
  * socket，HTTP 服务也走不到 keep-alive 复用，等于每个超大请求漏一条连接。
  * destroy 优先（客户端立刻收到 RST，剩余数据丢弃）；没有 destroy 就 resume 把剩下的读空丢掉。
+ * 注意：这条路径客户端收不到 413（连接先断了），所以只在明显超大时才用——
+ * 小额超限走 readBody 里的有限 drain，让 413 能送达。
  */
 function abortRequest(req) {
     // destroy/半截读取都可能触发 error（EPIPE/ECONNRESET），先挂空监听，避免冒成未捕获异常
@@ -80,26 +90,42 @@ function abortRequest(req) {
     catch { }
 }
 /**
- * 读请求体，超过 maxBytes 立刻中止并抛 BODY_TOO_LARGE。
- * 先看 content-length（有就直接拒，连读都不读），读的过程中累计超限也当场抛，不把整份大包收进内存。
- * 抛错前先 abortRequest 断连，否则超限后客户端仍在传的 body 会一直占着连接。
+ * 读请求体，超过 maxBytes 判超限并抛 BODY_TOO_LARGE。
+ * 两道保险：
+ *   · 先看 content-length：声明值已超限就**连读都不读**直接拒（既有语义，调用方据此“不读流、不落盘”）；
+ *   · 读的过程中累计超限（无 content-length / 声明偏小）也当场判超限，不把整份大包收进内存。
+ *
+ * 超限后不立刻 destroy：路由要写 413，先断连接的话客户端只看到 ECONNRESET（413 永远送不到）。
+ * 声明超限时函数直接返回、一个字节都不读，连接由 sendTooLarge 的 `connection: close` 收掉；
+ * 流式超限时先在 maxBytes + DRAIN_GRACE 的预算内把剩余数据读掉并丢弃，再把错误抛给路由；
+ * 预算用尽还不结束才 abortRequest 断连，避免超大/慢速的体占住连接与内存。
  */
 export async function readBody(req, maxBytes) {
     const declared = Number(req && req.headers && req.headers['content-length']);
     if (Number.isFinite(declared) && declared > maxBytes) {
-        abortRequest(req);
-        throw bodyTooLarge();
+        throw bodyTooLarge(); // 不读、不断连：让路由的 413 送得出去
     }
     const chunks = [];
     let total = 0;
+    let overflow = false;
     for await (const chunk of req) {
         const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         total += buf.length;
-        if (total > maxBytes) {
-            abortRequest(req); // 先把连接断掉，再抛给路由回 413
+        if (!overflow) {
+            if (total <= maxBytes) {
+                chunks.push(buf);
+                continue;
+            }
+            // 刚越线：半份数据对调用方没意义，先放掉，别继续涨内存
+            overflow = true;
+            chunks.length = 0;
+        }
+        if (total > maxBytes + DRAIN_GRACE) {
+            abortRequest(req); // 丢弃预算也用完：不陪跑，直接断连
             throw bodyTooLarge();
         }
-        chunks.push(buf);
     }
+    if (overflow)
+        throw bodyTooLarge(); // 已经读空，路由这时写 413 能送到客户端
     return Buffer.concat(chunks);
 }

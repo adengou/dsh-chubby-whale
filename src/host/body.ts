@@ -12,6 +12,16 @@ export type ReadJsonBodyResult =
   | { ok: false; tooLarge: true }
 
 /**
+ * 去掉文本开头的 UTF-8 BOM（U+FEFF）。
+ * Node 的 Buffer.toString('utf8') 不会再吞 BOM，而 JSON.parse 不容忍它（坑 15 / 坑 37 的同一个坑）：
+ * 带 BOM 的 `{"a":1}` 会落到「解析失败 → body={}」，客户端拿到的是「空请求」而不是自己的数据。
+ * 这里只在解析前剥一次，`raw` 仍是原始字节，调用方要原样留证不受影响。
+ */
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+/**
  * 带上限读请求体并解析 JSON。
  * - 超过 maxBytes：返回 {ok:false,tooLarge:true}（不抛），调用方回 413；
  * - 空体或 JSON 解析失败：body = {}（与既有路由一致，不把 400 当成错误路径）；
@@ -25,7 +35,7 @@ export async function readJsonBody(req: any, maxBytes: number): Promise<ReadJson
     if (isBodyTooLarge(err)) return { ok: false, tooLarge: true }
     throw err
   }
-  const text = raw.toString('utf8')
+  const text = stripBom(raw.toString('utf8'))
   let body: any = {}
   try { body = text ? JSON.parse(text) : {} } catch { body = {} }
   return { ok: true, raw, text, body }
