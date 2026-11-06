@@ -40,7 +40,7 @@ import { normalizeVoiceName, readStoredVoiceName } from './voice/voices.js'
 import { createVoiceStats, createStatusHolder, createDiagSnapshots } from './voice/status.js'
 import {
   ECHO_MUTE_MS, TTS_TIMEOUT_MS, TTS_WATCH_MS, TTS_ZOMBIE_MS, TTS_RETRY_MAX,
-  ttsRetryDelayMs, narrationPauseFor, prefetchTargets, buildTtsJobs, isStaleToken, capQueue,
+  ttsRetryDelayMs, narrationPauseFor, prefetchTargets, buildTtsJobs, isStaleToken, capQueue, capQueueDetailed,
   type TtsJob,
 } from './voice/tts-queue.js'
 import {
@@ -1077,8 +1077,16 @@ export function createVoice(opts: VoiceOptions): Voice {
     for (let i = 0; i < jobs.length; i++) ttsQ.push(jobs[i])
     // 队列上限：超出就丢最旧的待播段（正在播的那段已被 pumpTts 取走，不在数组里）。
     // 防断网/合成卡死时无限堆积；丢了多少进 qDropped，排障面板能看到。
-    const droppedQ = capQueue(ttsQ)
-    if (droppedQ > 0) stats.qDropped = (stats.qDropped || 0) + droppedQ
+    const droppedJobs = capQueueDetailed(ttsQ)
+    if (droppedJobs.length > 0) {
+      stats.qDropped = (stats.qDropped || 0) + droppedJobs.length
+      for (const d of droppedJobs) {
+        // 清掉预取引用：合成结果没人消费时让它随 GC 回收（原来要等刷新）
+        try { ttsPrefetch.delete(d.seq) } catch (e) { }
+        // 补结账：被丢的段永远不会播，onDone 不补的话叙述锁只能等时间窗自愈
+        try { if (d && typeof d.onDone === 'function') d.onDone() } catch (e) { }
+      }
+    }
     // 首块优先：入队即把队首（及后一块）压上合成，不等播放循环 —— 旧段还在播时，
     // 新段首块也能在旧段播完前合成好；播放仍交给 pumpTts 串行接管（命中预取直接开播）。
     prefetchUpcoming(!!(ttsQ[0] && ttsQ[0].narration))

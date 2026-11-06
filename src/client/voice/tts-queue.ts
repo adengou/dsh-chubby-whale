@@ -144,10 +144,19 @@ export const TTS_QUEUE_MAX = 200
  * 返回丢弃的段数；未超限返回 0。
  * 用一个纯函数而不是在 voice.ts 里手写 splice：可离线断言，边界（0/负数 max）也只有一处。
  */
-export function capQueue<T>(q: T[], max: number = TTS_QUEUE_MAX): number {
+/**
+ * 同 capQueue，但**返回被丢弃的段本身**（2026-11-07 B93）。
+ * 为什么需要：被丢的段如果带 onDone（单个 speak 被切成 >200 段时只可能发生在这），
+ * 就永远没有人结账 —— 叙述锁要等 8s~5min 时间窗自愈。调用方拿到被丢项才能补回调、
+ * 顺带把预取表里对应的合成 Promise 引用删掉（否则 ArrayBuffer 要等刷新才回收）。
+ */
+export function capQueueDetailed<T>(q: T[], max: number = TTS_QUEUE_MAX): T[] {
   const limit = Math.max(0, Math.floor(Number(max) || 0))
-  if (!Array.isArray(q) || q.length <= limit) return 0
+  if (!Array.isArray(q) || q.length <= limit) return []
   const drop = q.length - limit
-  q.splice(0, drop)
-  return drop
+  return q.splice(0, drop)
+}
+
+export function capQueue<T>(q: T[], max: number = TTS_QUEUE_MAX): number {
+  return capQueueDetailed(q, max).length
 }

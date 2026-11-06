@@ -1485,12 +1485,11 @@
     return typeof token === "number" && token !== current;
   }
   var TTS_QUEUE_MAX = 200;
-  function capQueue(q, max = TTS_QUEUE_MAX) {
+  function capQueueDetailed(q, max = TTS_QUEUE_MAX) {
     const limit = Math.max(0, Math.floor(Number(max) || 0));
-    if (!Array.isArray(q) || q.length <= limit) return 0;
+    if (!Array.isArray(q) || q.length <= limit) return [];
     const drop = q.length - limit;
-    q.splice(0, drop);
-    return drop;
+    return q.splice(0, drop);
   }
 
   // src/client/voice/recorder.ts
@@ -2558,8 +2557,20 @@
       });
       ttsSeq += segs.length;
       for (let i = 0; i < jobs.length; i++) ttsQ.push(jobs[i]);
-      const droppedQ = capQueue(ttsQ);
-      if (droppedQ > 0) stats.qDropped = (stats.qDropped || 0) + droppedQ;
+      const droppedJobs = capQueueDetailed(ttsQ);
+      if (droppedJobs.length > 0) {
+        stats.qDropped = (stats.qDropped || 0) + droppedJobs.length;
+        for (const d of droppedJobs) {
+          try {
+            ttsPrefetch.delete(d.seq);
+          } catch (e) {
+          }
+          try {
+            if (d && typeof d.onDone === "function") d.onDone();
+          } catch (e) {
+          }
+        }
+      }
       prefetchUpcoming(!!(ttsQ[0] && ttsQ[0].narration));
       pumpTts();
     }

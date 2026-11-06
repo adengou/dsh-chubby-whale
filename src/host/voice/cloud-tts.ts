@@ -204,6 +204,12 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
    * 重启后才有丢计数的风险（写盘成功时磁盘自然追平，不会重复计数）。
    */
   let memUsage: Usage | null = null
+  /**
+   * 在途预占字数（2026-11-07 B93）：判定与记账之间隔着 await fetch，并发 N 个请求
+   * 会一起通过判定，最多超额 (N-1)×单次字数。这里在发请求前先「预占」，判定时把预占算进去，
+   * 请求结束（成功或失败）在 finally 释放。预占只影响熔断判定，不影响 usage() 报告的已用量。
+   */
+  let reservedChars = 0
 
   /** 今天已用字数：磁盘与内存取大（磁盘可能是别的实例写的，内存是本进程的最低保障） */
   function usedChars(today: string): number {
@@ -214,7 +220,8 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
   }
 
   function budgetLeft(cfg: CloudVoiceConfig, today: string): number {
-    return cfg.dailyChars - usedChars(today)
+    // 已用量 + 在途预占：并发请求不会同时看到「还有额度」
+    return cfg.dailyChars - usedChars(today) - reservedChars
   }
 
   return {
@@ -240,6 +247,8 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
       }
       const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
       const timer = setTimeout(() => { try { ctl && ctl.abort() } catch { } }, timeoutMs)
+      // 先占额度再发请求：判定与记账之间的 await 期间，别的请求不能再用同一份额度
+      reservedChars += body.length
       try {
         const res = await fetch(CLOUD_TTS_URL, {
           method: 'POST',
@@ -287,6 +296,8 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
         return buf
       } finally {
         clearTimeout(timer)
+        // 释放预占：成功时已记进用量（磁盘/内存），失败时这份额度要还回去
+        reservedChars = Math.max(0, reservedChars - body.length)
       }
     },
   }
