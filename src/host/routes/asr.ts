@@ -135,7 +135,8 @@ export function createAsrHandler(opts: AsrRouteDeps) {
         if (timedOut) console.error('[asr] ASR-TIMEOUT ' + ASR_TIMEOUT + 'ms 无响应，已中止')
         else if (isAbortError(err)) console.error('[asr] ASR-ABORT 外呼被中止（非内部超时）')
         else console.error('[asr] ASR-NETWORK ' + String(err?.message || err))
-        sendJson(res, { ok: false, error: timedOut ? 'timeout' : String(err?.message || err), text: '' })
+        // 回包文案保持兼容：客户端只认 'timeout' 这个粗标签（据此降级/重试），细分只体现在日志与诊断里
+        sendJson(res, { ok: false, error: (timedOut || isAbortError(err)) ? 'timeout' : String(err?.message || err), text: '' })
         return
       }
       if (!r.ok) {
