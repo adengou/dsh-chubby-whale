@@ -16,7 +16,7 @@ import { createVoice, normalizeVoiceName, readStoredVoiceName } from './voice.js
 import type { Voice } from './voice.js'
 import type { NarrationLock } from './narration.js'
 import { bumpProgress } from './narration-progress.js'
-import { createWakeGate, normalizeWakeText } from './wake.js'
+import { createWakeGate, normalizeWakeText, loadCustomWakeWords } from './wake.js'
 
 export type VoiceBridgeHost = {
   /** 叙述锁：念诗/说书期间拾到的话不当作新发言（只放行明确的"停"） */
@@ -82,7 +82,7 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
   // 音色：菜单里的选择（localStorage）先记住；没建实例时也不丢
   let pendingVoice = readStoredVoiceName()
   // 唤醒门：命中唤醒词刷新 30 秒有效窗
-  const gate = createWakeGate()
+  const gate = createWakeGate({ words: loadCustomWakeWords() })
   const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 }
   // 识别没配 Key 的提示只弹一次（每次重开语音待命可以再弹一次）
   let asrNoKeyNotified = false

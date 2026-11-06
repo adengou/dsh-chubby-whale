@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.15";
+  var VERSION = "1.1.16";
 
   // src/client/styles.ts
   var W = 240;
@@ -199,6 +199,12 @@
     "使用统计": "Usage stats",
     "提醒管理…": "Manage reminders…",
     "唤醒恢复": "Wake recovery",
+    "唤醒词 ▸": "Wake word ▸",
+    "默认（大肥鱼/肥鲸等）": "Default (Da Fei Yu / Fei Jing)",
+    "大肥鱼": "Da Fei Yu",
+    "肥鲸": "Fei Jing",
+    "小鲸": "Xiao Jing",
+    "自定义…": "Custom…",
     "弹首曲子 ▸": "Play a song ▸",
     "停止弹奏": "Stop music",
     "跟她说两句": "Talk to her",
@@ -365,6 +371,13 @@
       sub("换个声音 ▸", [
         ...VOICE_ITEMS.map(([voice, label]) => item(voiceTick(voice) + label, "voice:" + voice)),
         item(voiceTick("auto") + "自动（按语言选音色）", "voice:auto")
+      ]),
+      sub("唤醒词 ▸", [
+        item("默认（大肥鱼/肥鲸等）", "wake-word:"),
+        item("大肥鱼", "wake-word:大肥鱼"),
+        item("肥鲸", "wake-word:肥鲸"),
+        item("小鲸", "wake-word:小鲸"),
+        item("自定义…", "wake-word:custom")
       ]),
       item("语音待命：" + (earOn ? "开" : "关"), "wake"),
       item("语音聊天：" + (voiceChatOn ? "开" : "关"), "chatmode"),
@@ -3277,6 +3290,30 @@
   // src/client/wake.ts
   var WAKE_WORDS = ["大肥鱼", "小蓝鱼", "肥鲸", "肥鱼", "小鱼", "蓝鱼", "鱼鱼", "肥肥"];
   deepFreeze(WAKE_WORDS);
+  var WAKE_WORD_KEY = "chubby-wake-word";
+  function loadCustomWakeWords() {
+    try {
+      if (typeof localStorage === "undefined") return void 0;
+      const v = String(localStorage.getItem(WAKE_WORD_KEY) || "").trim();
+      if (!v) return void 0;
+      return [v.slice(0, 12)];
+    } catch (e) {
+      return void 0;
+    }
+  }
+  function setCustomWakeWord(word) {
+    try {
+      const v = String(word == null ? "" : word).trim().slice(0, 12);
+      if (!v) {
+        localStorage.removeItem(WAKE_WORD_KEY);
+        return false;
+      }
+      localStorage.setItem(WAKE_WORD_KEY, v);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
   var WAKE_WINDOW_MS = 3e4;
   var TRAD_TO_SIMPLE = { "魚": "鱼", "飛": "飞", "藍": "蓝", "籃": "篮", "蘭": "兰", "鯨": "鲸" };
   function normalizeWakeText(text) {
@@ -3372,7 +3409,7 @@
   function createVoiceBridge(host) {
     let voice = null;
     let pendingVoice = readStoredVoiceName();
-    const gate = createWakeGate();
+    const gate = createWakeGate({ words: loadCustomWakeWords() });
     const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 };
     let asrNoKeyNotified = false;
     function wakeInfo() {
@@ -4992,6 +5029,25 @@
         host.previewVoice("主人，这个声音好听吗？");
       } catch (e) {
       }
+    });
+    table.definePrefix("wake-word:", (host, val) => {
+      const word = String(val == null ? "" : val).trim();
+      if (word === "custom") {
+        let input = null;
+        try {
+          input = typeof window !== "undefined" && typeof window.prompt === "function" ? window.prompt("唤醒词（1–12 字）", "大肥鱼") : null;
+        } catch (e) {
+        }
+        if (input == null) {
+          host.bubble("没改唤醒词");
+          return;
+        }
+        const on2 = setCustomWakeWord(String(input));
+        host.bubble(on2 ? "唤醒词：" + String(input).trim().slice(0, 12) : "唤醒词：默认（大肥鱼/肥鲸等）");
+        return;
+      }
+      const on = setCustomWakeWord(word);
+      host.bubble(on ? "唤醒词：" + word : "唤醒词：默认（大肥鱼/肥鲸等）");
     });
   }
 

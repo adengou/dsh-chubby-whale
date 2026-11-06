@@ -15,6 +15,34 @@ import { deepFreeze } from '../shared/immutable.js'
 export const WAKE_WORDS: string[] = ['大肥鱼', '小蓝鱼', '肥鲸', '肥鱼', '小鱼', '蓝鱼', '鱼鱼', '肥肥']
 deepFreeze(WAKE_WORDS)
 
+/** 自定义唤醒词的存储键（空/不存 = 用默认词表） */
+export const WAKE_WORD_KEY = 'chubby-wake-word'
+
+/** 读取自定义唤醒词：返回 undefined 表示用默认词表；返回 [词] 表示只用这一个词 */
+export function loadCustomWakeWords(): string[] | undefined {
+  try {
+    if (typeof localStorage === 'undefined') return undefined
+    const v = String(localStorage.getItem(WAKE_WORD_KEY) || '').trim()
+    if (!v) return undefined
+    // 长度上限：太长的词 ASR 基本识别不到，也避免存进奇怪内容
+    return [v.slice(0, 12)]
+  } catch (e) {
+    return undefined
+  }
+}
+
+/** 设置自定义唤醒词；传空串恢复默认词表。返回最终是否为自定义 */
+export function setCustomWakeWord(word: string): boolean {
+  try {
+    const v = String(word == null ? '' : word).trim().slice(0, 12)
+    if (!v) { localStorage.removeItem(WAKE_WORD_KEY); return false }
+    localStorage.setItem(WAKE_WORD_KEY, v)
+    return true
+  } catch (e) {
+    return false
+  }
+}
+
 /** 被唤醒后多久之内说话算"接着聊"（毫秒） */
 export const WAKE_WINDOW_MS = 30000
 

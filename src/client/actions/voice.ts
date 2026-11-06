@@ -8,6 +8,7 @@
 import { readEndpointMode, writeEndpointMode } from '../endpoint.js'
 import type { ActionHost, ActionTable } from '../actions.js'
 import { normalizeVoiceName } from '../voice.js'
+import { setCustomWakeWord } from '../wake.js'
 
 export function registerVoiceActions(table: ActionTable<ActionHost>): void {
   // —— 语音待命：开=建/启语音模块；关=停录音（实例留着复用）——
@@ -92,4 +93,18 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
     // 试听走宿主 /tts（strict）：不再用浏览器 speechSynthesis，失败静默
     try { host.previewVoice('主人，这个声音好听吗？') } catch (e) { }
   })
-}
+
+  // —— 唤醒词：默认 / 候选 / 自定义（存 localStorage，即时生效；语音随时可说，唤醒词只用来剥句子开头）——
+  table.definePrefix('wake-word:', (host, val) => {
+    const word = String(val == null ? '' : val).trim()
+    if (word === 'custom') {
+      let input: any = null
+      try { input = typeof window !== 'undefined' && typeof (window as any).prompt === 'function' ? (window as any).prompt('唤醒词（1–12 字）', '大肥鱼') : null } catch (e) { }
+      if (input == null) { host.bubble('没改唤醒词'); return }
+      const on = setCustomWakeWord(String(input))
+      host.bubble(on ? '唤醒词：' + String(input).trim().slice(0, 12) : '唤醒词：默认（大肥鱼/肥鲸等）')
+      return
+    }
+    const on = setCustomWakeWord(word)
+    host.bubble(on ? '唤醒词：' + word : '唤醒词：默认（大肥鱼/肥鲸等）')
+  })}
