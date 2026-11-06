@@ -11,7 +11,16 @@ import { clearT } from './util.js'
  *
  * 行为与旧实现一致：先停旧曲子再开新曲子；不支持的浏览器静默返回；
  * onDone 在最后一个音符播完后 300ms 触发。
+ *
+ * 2026-11-07 修（B91）：resume() 被自动播放策略扣住时可能**永不 settle**（既不 resolve
+ * 也不 reject）。旧实现只有 `p.then(schedule, schedule)` 一条路，于是这条链永远不排程、
+ * onDone 也永远不来 —— 调用方（菜单「弹首曲子」的气泡/收尾）就一直悬着。现在加 1200ms
+ * 看门狗：到点照样排程并按时触发 onDone，宁可无声也不要卡住上层；resume 正常落定时
+ * 看门狗立刻撤掉（不留残余计时器），stop/换曲也会把它一起撤掉。
  */
+
+/** resume 落定的等待上限（毫秒）：正常 resume 在 100ms 内落定，超过这个值就按"排不了程"处理 */
+const RESUME_GUARD_MS = 1200
 
 /** 音符表：覆盖 C3–E6（含升降号），与 data/melodies.json 实际用到的音名对齐 */
 export const NOTE_FREQ: Record<string, number> = {
@@ -51,6 +60,8 @@ export function createMelodyPlayer(): MelodyPlayer {
   let ctx: any = null
   let oscs: any[] = []
   let doneTimer: any = null
+  // 等 resume 落定的看门狗（见 play 里的注释）：stop/换曲时必须一起撤，否则停止后还会冒出排程
+  let resumeTimer: any = null
   // 播放代次：stop 或下一次 play 之后，旧曲排队中的 resume 回调必须作废
   let seq = 0
 
@@ -69,6 +80,7 @@ export function createMelodyPlayer(): MelodyPlayer {
     for (const o of oscs) { try { o.stop() } catch (e) { } }
     oscs = []
     clearT(doneTimer); doneTimer = null
+    clearT(resumeTimer); resumeTimer = null
   }
 
   function stop(): void {
@@ -135,11 +147,22 @@ export function createMelodyPlayer(): MelodyPlayer {
       // 自动播放策略下 ctx 常是 suspended，此时 currentTime 冻结：直接排程会让
       // onDone 按"估计时长"提前触发、开头几个音符还没出声。resume() 是异步的，
       // 等它落定（无论成功/失败）再排程；stop/下一次 play 由 seq 作废旧回调。
+      // 看门狗：resume() 在自动播放被拦时可能永不落定 —— 到点照样排程一次（runOnce 幂等），
+      // 至少让 onDone 按估算时长触发，别把调用方的收尾永久卡住。
+      let ran = false
+      const runOnce = (): void => {
+        if (ran) return
+        ran = true
+        clearT(resumeTimer); resumeTimer = null
+        schedule()
+      }
       try {
         const p = typeof c.resume === 'function' ? c.resume() : null
-        if (p && typeof p.then === 'function') p.then(schedule, schedule)
-        else schedule()
-      } catch (e) { schedule() }
+        if (p && typeof p.then === 'function') {
+          p.then(runOnce, runOnce)
+          resumeTimer = setTimeout(runOnce, RESUME_GUARD_MS)
+        } else runOnce()
+      } catch (e) { runOnce() }
     } catch (e) { }
   }
 

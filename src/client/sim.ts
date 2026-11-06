@@ -11,7 +11,8 @@
  *   · ASR 把一句话切成两段造成重叠 → 相似度高（通常 >0.8）
  *   · 不同问题（"今天天气" vs "讲个故事"）→ 相似度低（通常 <0.2）
  *
- * 纯函数、无副作用，可直接在 Node 里单测（scripts/test.mjs 已覆盖）。
+ * 纯函数、无副作用，可直接在 Node 里单测（scripts/test.mjs 已覆盖；
+ * B91 补充的短句/窗口/minLen 边界见 scripts/test-audio-sim.mjs）。
  */
 
 /** 归一化：去空白/标点/大小写差异，只留可比较的字符 */
@@ -58,9 +59,18 @@ export type RepeatOptions = {
 
 /**
  * 是否算"重复"（回声或同一句被切成两段）：
- *   ① 归一化后完全相等
+ *   ① 归一化后完全相等（且长度 ≥ minLen）
  *   ② 较短的一方被较长的一方完整包含（≥minLen 字）
- *   ③ bigram 相似度 ≥ threshold
+ *   ③ bigram 相似度 ≥ threshold（两边都要 ≥minLen）
+ *
+ * ① 为什么要和 ②③ 用同一道 minLen 门槛（2026-11-07 修）：
+ *   minLen 的承诺是"太短的字不参与比较"（太短容易误判），但旧实现里只有 ②③ 遵守，
+ *   ① 无条件下判 —— 于是 8 秒内把同一句两字/三字命令重说一遍就被判成重复吞掉：
+ *     · 「继续」「再来」这类短指令是主人的新请求，不是"同一句被切成两段"；
+ *     · 「停」「别」更严重：它们是打断词（text.ts 的 SHORT_ECHO_ALLOW、
+ *       echo-filter 的 interrupt 白名单都明确要求放行），第二声被吞 = 喊不停说书。
+ *   自己说的话被麦克风听回去仍会被 echo-filter 的整句/前缀/短词规则挡下（与本函数无关），
+ *   所以收紧这里不会放松回声防线；≥minLen 的完全重复照旧算重复。
  */
 export function isRepeat(text: string, opts: RepeatOptions): boolean {
   const threshold = opts.threshold === undefined ? 0.85 : opts.threshold
@@ -73,7 +83,7 @@ export function isRepeat(text: string, opts: RepeatOptions): boolean {
     if (now - Number(item && item.at || 0) > windowMs) continue
     const prev = normalizeText(item && item.text ? item.text : '')
     if (!prev) continue
-    if (cur === prev) return true
+    if (cur === prev && cur.length >= minLen) return true
     const shortOne = cur.length <= prev.length ? cur : prev
     const longOne = cur.length <= prev.length ? prev : cur
     if (shortOne.length >= minLen && longOne.indexOf(shortOne) >= 0) return true
