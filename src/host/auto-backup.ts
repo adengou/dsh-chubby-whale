@@ -13,6 +13,8 @@
  *   · 快照走 atomic.ts 的原子写：进程被杀不会留半截 JSON 假装是“一份备份”，
  *     再借裁剪把好的旧份挤掉；
  *   · setInterval 加 unref（不拖住进程退出）；启动时先备一份，之后每小时一次。
+ *   · 时钟异常先归一（2026-11-07 B99）：非有限数/超出 Date 范围的毫秒按“现在”处理，
+ *     否则文件名会变成 auto-NaN...，按字符串排序反而顶掉真正的新备份（见 normalizeNow）。
  *   · 同一定时器只允许一份（2026-11-07 B74）：装配层用 `ctx.effect` 登记清理器
  *     （**不是** `ctx.on('dispose')` —— cordis 没有该事件，卸载只派发 internal/plugin，
  *     详见 docs/坑.md 坑 11）。这里再按运行目录去重作为第二道防线：重复 start 先停旧的，
@@ -54,6 +56,25 @@ export const AUTO_BACKUP_DIR = 'backup'
 /** setInterval 允许的最大延时；超过会被 Node 折成 1ms（TimeoutOverflowWarning），变成疯狂写盘 */
 const MAX_TIMER_MS = 2147483647
 
+/** JS Date 能表示的最大毫秒（±8.64e15）；越界后 getFullYear() 等返回 NaN（Invalid Date） */
+const MAX_DATE_MS = 8.64e15
+
+/**
+ * 时间源归一：非有限数（时钟异常 / 注入的 now 给了 NaN）或超出 Date 表示范围的毫秒，
+ * 一律按“现在”处理。
+ *
+ * 为什么必须挡（审计修复 2026-11-07 B99）：stamp() 直接拿毫秒构造 Date，
+ * `nan` 会让 6 个时间字段全变 NaN、文件名成 `auto-NaNNaNNaN-NaNNaNNaN.json`。
+ * 这个文件名以字母 N 开头，按字符串排序时排在 `auto-2026...` **之后**，
+ * 于是裁剪把它当成“最新的一份”保留，反而把真正的新备份当旧份删掉；
+ * 快照里的 `at` 还会被 JSON.stringify 写成 null（autoBackupInfo 只能退回 mtime）。
+ * 时钟异常不该改变保留策略——宁可记成“现在”，也不让一份坏名字把整摞备份顶掉。
+ */
+function normalizeNow(ms: number): number {
+  const n = Number(ms)
+  return Number.isFinite(n) && Math.abs(n) <= MAX_DATE_MS ? n : Date.now()
+}
+
 /** 时间戳 → auto-YYYYMMDD-HHmmss（文件名安全，无冒号） */
 function stamp(ms: number): string {
   const d = new Date(ms)
@@ -88,7 +109,8 @@ export function backupOnce(opts: AutoBackupOpts): boolean {
       } catch { }
     }
     if (!any) return false
-    const nowMs = (opts.now || (() => Date.now()))()
+    // 时钟异常归一后再用：文件名与快照里的 at 必须共用同一个可信时间（见 normalizeNow）
+    const nowMs = normalizeNow((opts.now || (() => Date.now()))())
     const out = join(dir, stamp(nowMs) + '.json')
     // 同一秒内重复备份：覆盖同名文件即可（幂等）
     writeFileAtomic(out, JSON.stringify({ at: nowMs, files }))
