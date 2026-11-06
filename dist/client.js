@@ -1256,6 +1256,7 @@
       skippedSilent: 0,
       uploaded: 0,
       asrFail: 0,
+      asrBusyDropped: 0,
       asrRetry: 0,
       asrTexts: 0,
       heard: 0,
@@ -1770,6 +1771,10 @@
         return;
       }
       if (asrBusy) {
+        try {
+          stats.asrBusyDropped = (stats.asrBusyDropped || 0) + 1;
+        } catch (e) {
+        }
         try {
           opts.onDiag && opts.onDiag({ stage: "asr-busy-drop", hint: "上一段还在识别，这一段丢弃（不排队）" });
         } catch (e) {

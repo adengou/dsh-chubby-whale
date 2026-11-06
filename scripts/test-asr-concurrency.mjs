@@ -304,6 +304,7 @@ await agroup('B 单飞：识别在途时重复触发的第二段直接丢（忙�
   eq('第二段没有发出第二个 /asr', ASR.calls.length, 1)
   eq('第二段也没算成一次上传', v.stats.uploaded, 1)
   ok('留下 asr-busy-drop 诊断', diags.some((d) => d && d.stage === 'asr-busy-drop'))
+  eq('丢段次数计入 asrBusyDropped（诊断面板可见）', v.stats.asrBusyDropped, 1)
 
   await fulfil(ASR.calls[0], '第一句')
   ok('第一段结果照常送聊天', await waitFor(() => heard.length === 1, 1000))
