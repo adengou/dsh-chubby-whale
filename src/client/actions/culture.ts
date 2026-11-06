@@ -41,6 +41,17 @@ export function cancelRecite(): void {
   try { stopProgress() } catch (e) { }
 }
 
+/**
+ * 念诗的 per-call 收尾令牌：只有「最后一次开念」的 onDone 才有权清锁/收尾。
+ *
+ * client.ts 的 narrateOwner 挡的是「换使用方」（诗尾晚到会话说书已经接过锁）；同一使用方
+ * 连念两首时，两次 narrate 用的是同一个 ownerId —— 旧诗的 onDone 晚到或重复到达，仍会被
+ * 当成"自己人"，把新诗的叙述锁清掉、把新诗的进度停掉，还替新诗补一句「念完啦」。
+ * 参照 actions/content.ts 的 narrateGen：开念时领号，收尾先比号，过期一律作废；
+ * 同一次收尾也只放行一次（TTS 兜底与真 onDone 双回调不重复动锁）。
+ */
+let poemGen = 0
+
 /** 念诗：气泡 + 叙述锁 + 朗读 + 念完收尾（菜单「念首诗」与点播「背首诗」共用一份） */
 export function recitePoem(host: ReciteHost, poem: any): void {
   // 连点两次「念首诗」/「背首诗」：第二下直接忽略，不把两首诗排进队列
@@ -55,19 +66,28 @@ export function recitePoem(host: ReciteHost, poem: any): void {
   host.bubble('念诗·' + poem.title + '（' + author + '）' + (totalLines > 1 ? '· 共 ' + totalLines + ' 句' : ''), 15000)
   host.talkFor(6000)
   const speech = intro + collapsePoemBody(body)
+  const my = ++poemGen
   host.narrate(estimateSpeakMs(speech))
   host.say(host.persona.line('poemStart'), 4000)
   // 直接开念：原来延迟 600ms 等气泡先亮，但那 600ms 里点「停止说话」拦不住这次开念
   // （TTS 队列还没这一段，stopSpeaking 无从取消）。气泡是同步写进 DOM 的，而 TTS 合成还要几秒，
   // 先气泡后开口的顺序不会倒过来；开念后「停止说话」能当场清队列。
+  let released = false
+  const release = (): void => {
+    if (released) return
+    released = true
+    // 后来的念诗已经接过锁：同一使用方的 ownerId 没变，narrateOwner 那道闸挡不住，
+    // 所以旧诗的迟到/重复回调必须在这一层作废——不清新诗的锁、不停新诗的进度、
+    // 不替新诗说「念完啦」。
+    if (my !== poemGen) return
+    try { stopProgress() } catch (e) { }
+    host.clearNarrate()
+    host.say(host.persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' })
+  }
   try {
     host.speak(speech, {
       rate: poemRate(host.narrationRate()),
-      onDone: () => {
-        try { stopProgress() } catch (e) { }
-        host.clearNarrate()
-        host.say(host.persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' })
-      },
+      onDone: release,
     })
   } catch (e) { }
 }
