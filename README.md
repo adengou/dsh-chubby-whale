@@ -196,6 +196,30 @@ node tools/voice-bench.mjs --chat  # 语音链路测点（--chat 会花少量额
 
 `src/client.ts` 由 esbuild 单独打包成 IIFE（tsconfig 里 exclude），其余模块走 tsc。
 宿主侧改动要重启 dsh web 才生效，客户端改完 `Ctrl+F5` 即可；待生效清单见 `docs/待重启生效.md`。
+## 升级
+
+```bash
+# 从 npm 升到最新发布版（推荐；也可换成 git+https://… 两种 git 源）
+dsh plugin --profile web add "dsh-chubby-whale@latest"
+
+# 装完必须重启 dsh web：宿主代码只在启动时加载
+# （只刷新页面不够：客户端 dist/client.js 与宿主 dist/index.js 必须同一版本）
+```
+
+**怎么核对装的是哪一版**：
+
+- 插件菜单里会显示版本号；
+- 或直接读安装副本的 `package.json`：
+
+```bash
+node -e "console.log(require('~/.dsh/profiles/web/node_modules/dsh-chubby-whale/package.json').version)"
+```
+
+> 注意：`node_modules/dsh-chubby-whale` 若是**普通目录**（不是 link/junction），它不会自动跟随仓库变化，
+> 必须显式 `dsh plugin add` 升级后重启；是 link 时则仓库一改、重启即生效。
+> 发布包完整性可用 `node tools/check-installed.mjs --dir <安装目录>` 自检（文件集合、入口可达性、client.js 一致）。
+
+
 ## 数据热更新（改内容不用重启）
 
 `data/story/*.json`、`data/culture/*.json`、`data/poems.json` 都按**文件修改时间**自动失效：
