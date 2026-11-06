@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.3";
+  var VERSION = "1.1.4";
 
   // src/client/styles.ts
   var W = 240;
@@ -5043,6 +5043,42 @@
 
   // src/client/persona.ts
   var LS = "chubby-persona-v1";
+  var MOOD_FACES = deepFreeze({
+    idle: "🐳",
+    hungry: "🍚",
+    sleepy: "💤",
+    excited: "✨",
+    shy: "💗",
+    sulk: "💢",
+    guard: "🍙"
+  });
+  var LINE_WINDOW_MS = 6e4;
+  var activeState = null;
+  var activeMoodSource = null;
+  function currentMood() {
+    if (activeMoodSource) {
+      try {
+        return activeMoodSource();
+      } catch (e) {
+      }
+    }
+    return activeState ? activeState.mood : "idle";
+  }
+  function moodFace(mood) {
+    return MOOD_FACES[String(mood == null ? "" : mood)] || "";
+  }
+  function moodPrefix(mood) {
+    let on = true;
+    try {
+      const v = localStorage.getItem("chubby-mood-emoji");
+      if (v === "off" || v === "0" || v === "false") on = false;
+    } catch (e) {
+      on = true;
+    }
+    if (!on) return "";
+    const face = moodFace(mood == null ? currentMood() : mood);
+    return face ? face + " " : "";
+  }
   function loadState() {
     const base = { bowls: 0, stageIndex: 0, stageName: "刚认识", mood: "idle", lastFeedAt: 0, lastInteractAt: 0 };
     try {
@@ -5055,6 +5091,7 @@
         stageIndex: Number(s.stageIndex) || 0,
         lastFeedAt: Number(s.lastFeedAt) || 0,
         lastInteractAt: Number(s.lastInteractAt) || 0,
+        // 情绪不跨刷新持久化：每次启动从 idle 重新判定（饿/困按 lastFeedAt 与时间现算）
         mood: "idle"
       };
     } catch (e) {
@@ -5067,7 +5104,10 @@
     } catch (e) {
     }
   }
-  function createPersona() {
+  function createPersona(opts) {
+    const nowFn = opts && typeof opts.now === "function" ? opts.now : () => Date.now();
+    const rawWin = opts ? opts.lineWindowMs : void 0;
+    const lineWindowMs = typeof rawWin === "number" && isFinite(rawWin) && rawWin >= 0 ? rawWin : LINE_WINDOW_MS;
     const data = persona_default;
     const state = loadState();
     state.stageIndex = stageIndexOf(state.bowls);
@@ -5099,10 +5139,10 @@
       return arr[idx] || arr[0];
     }
     function touch() {
-      state.lastInteractAt = Date.now();
+      state.lastInteractAt = nowFn();
       saveState(state);
     }
-    function refreshMood(now = Date.now()) {
+    function refreshMood(now = nowFn()) {
       const hour = new Date(now).getHours();
       const sinceFeed = state.lastFeedAt ? now - state.lastFeedAt : Infinity;
       if (state.mood === "excited" || state.mood === "sulk" || state.mood === "shy" || state.mood === "guard") return state.mood;
@@ -5127,12 +5167,23 @@
         }
       }, holdMs);
     }
+    activeState = state;
+    activeMoodSource = () => refreshMood();
     const FALLBACK_LINE = "……本鲸在。";
+    const lastLine = /* @__PURE__ */ new Map();
     function line(event) {
       const lines = data.lines[event];
-      return pick(lines, event) || FALLBACK_LINE;
+      let text = pick(lines, event) || FALLBACK_LINE;
+      const prev = lastLine.get(event);
+      const now = nowFn();
+      if (prev && prev.text === text && now - prev.at < lineWindowMs) {
+        const alts = Array.isArray(lines) ? lines.filter((s) => s && s !== text) : [];
+        if (alts.length) text = alts[Math.floor(Math.random() * alts.length)];
+      }
+      lastLine.set(event, { text, at: now });
+      return text;
     }
-    function greeting(now = Date.now()) {
+    function greeting(now = nowFn()) {
       const h = new Date(now).getHours();
       if (h >= 23 || h < 5) return line("greetLate");
       if (h < 11) return line("greetMorning");
@@ -5142,7 +5193,7 @@
     function feed() {
       const before = state.stageIndex;
       state.bowls += 1;
-      state.lastFeedAt = Date.now();
+      state.lastFeedAt = nowFn();
       state.lastInteractAt = state.lastFeedAt;
       state.stageIndex = stageIndexOf(state.bowls);
       state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "刚认识";
@@ -5197,6 +5248,18 @@
   var BUBBLE_CSS = '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 "Microsoft YaHei",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}';
   var STATUS_TEXTS = ["在听…", "在想…", "识别中…", "在说…"];
   deepFreeze(STATUS_TEXTS);
+  function decorateText(text) {
+    const raw = String(text == null ? "" : text);
+    if (!raw) return raw;
+    try {
+      if (STATUS_TEXTS.indexOf(raw.trim()) >= 0) return raw;
+      if (/^\p{Extended_Pictographic}/u.test(raw)) return raw;
+      const prefix = moodPrefix();
+      return prefix ? prefix + raw : raw;
+    } catch (e) {
+      return raw;
+    }
+  }
   function ensureBubbleStyle(doc) {
     try {
       const d = doc || (typeof document !== "undefined" ? document : null);
@@ -5247,7 +5310,7 @@
         el.style.right = "auto";
         el.style.bottom = Math.max(70, v.h - p.y + 12) + "px";
         const te = opts.textEl();
-        if (te) te.textContent = text;
+        if (te) te.textContent = decorateText(text);
         el.classList.add("show");
         clearTimer(el);
         el._t = setTimeout(() => {

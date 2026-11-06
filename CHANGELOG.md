@@ -3,6 +3,19 @@
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
 ## [未发布]
+## [1.1.4] - 2026-11-06
+
+### 修复（重要）
+- **流式记账补全落地**：`index.ts` 装配注入 `loadState/saveState/addExp/saveMemorySummary`；`chat-stream.ts` 真正调用 `summarizeMemory`（带代际校验）；缓存命中补亲密度——此前三次落地被后续审计覆盖，客户端优先走流式时日常聊天仍不涨亲密、记忆不更新
+- **新增 58 项流式记账回归测试**（`scripts/test-stream-ledger.mjs`），含负向验证，防止再次退化
+
+### 新功能
+- 人格情绪可视化：mood → 气泡表情（idle 🐳 / hungry 🍚 / sleepy 💤 / excited ✨ / shy 💗 / sulk 💢 / guard 🍙），开关 `chubby-mood-emoji`（缺省开，实时生效）
+- 台词去重：同一场景 60 秒内不重复同一句（池只有一条时除外）
+
+### 测试
+- test.mjs 740 项（+58 流式记账 + 若干新增）；smoke-host 64 项
+
 ## [1.1.3] - 2026-11-06
 
 ### 修复（组件层）

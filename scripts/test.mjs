@@ -3305,6 +3305,18 @@ try {
   ok('能运行聊天限额与安全用例', false, String(e.message))
 }
 
+
+// ---------- 62 流式聊天记账（独立脚本 scripts/test-stream-ledger.mjs，B8 防退化） ----------
+console.log('\n[62] 流式聊天记账（成功 / 缓存命中 / 中断 / 每10次摘要 / 代际校验 / 与 /chat 对照）')
+try {
+  // 单独脚本也已纳入 package.json 的 test 链，可脱离 test.mjs 独立运行
+  const { runStreamLedger } = await import('./test-stream-ledger.mjs')
+  const result = await runStreamLedger(ok, { registerResolver: false })
+  if (!result || result.total === 0) ok('流式记账用例有断言', false)
+} catch (e) {
+  ok('能运行流式记账用例', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
