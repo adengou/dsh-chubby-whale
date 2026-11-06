@@ -7,12 +7,39 @@
  * 跨天/跨月判断在读取时也做一次（只改内存返回值、不写盘）：否则新的一天在
  * 「第一条新消息到来之前」读到的今日/本月计数仍是昨天的，面板与统计会显示旧值。
  * 所有 token 字段按非负整数累加，并在 Number.MAX_SAFE_INTEGER 封顶，防脏值/溢出。
+ *
+ * 分桶（2026-11-07 B98）：内部模型用量（kind='summary'/'personality'）与聊天共用 chatTokens 时
+ * 账本分不出「聊天 / 摘要 / 人格」各花了多少。这里额外按 kind 累计 byKind，四个桶各带
+ * 总量 / 当日 / 当月的 tokens 与金额。**顶层字段语义一个都不改**（老面板、老客户端、
+ * 备份导入还在读 chatTokens/storyTokens/totalTokens/dayTokens/monthTokens/costCny/...）。
+ * byKind 是「新账」：老 fishfood.json 没有它就按 0 处理，不回溯拆分历史（历史内部用量
+ * 早已并进 chatTokens，拆不出来，硬拆等于编数字）。
  */
 import { join } from 'node:path'
 import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } from '../atomic.js'
 
 /** JS 安全整数上限：超过后 +1 不再改变数值（显示与统计都失真），到这里就封顶 */
 const MAX_TOKEN = Number.MAX_SAFE_INTEGER
+
+/**
+ * 账本分桶的 kind（与 addTokens 收到的 kind 一一对应；别的 kind 按老口径并进 chat）。
+ * 只在本文件内部约束类型，**刻意不 export**：分桶是 fishfood.json 的数据形状，
+ * 不是新的模块接口（docs/模块接口清单.md 不该因本批次漂移）。
+ */
+type TokenKind = 'chat' | 'story' | 'summary' | 'personality'
+
+/** 单个桶：总量 / 当日 / 当月各记 tokens 与人民币估算（金额口径与顶层 costCny 相同） */
+type TokenBucket = {
+  tokens: number
+  costCny: number
+  dayTokens: number
+  dayCostCny: number
+  monthTokens: number
+  monthCostCny: number
+}
+
+/** 分桶顺序固定：写盘、出接口、展示都按这个来，别依赖对象键序 */
+const TOKEN_KINDS: TokenKind[] = ['chat', 'story', 'summary', 'personality']
 
 /** 一次用量的明细（都可缺省：老路径只有 total） */
 export type TokenDetail = {
@@ -26,7 +53,10 @@ export type TokenDetail = {
 export interface TokenRepo {
   loadFishfood(): any
   saveFishfood(obj: any): void
-  /** kind='story' 记说书 token，其余记聊天 token；同时累计总量/本月；detail 可选（拆分与金额） */
+  /**
+   * kind='story' 记说书 token，其余记聊天 token；同时累计总量/本月；detail 可选（拆分与金额）。
+   * 另按 kind 计入 byKind 分桶（chat/story/summary/personality），顶层字段口径不变。
+   */
   addTokens(kind: string, n: number, detail?: TokenDetail): any
 }
 
@@ -54,6 +84,55 @@ function cleanCost(value: any): number {
 function addCost(current: any, add: number): number {
   const base = cleanCost(current)
   return Math.round(Math.min(1e9, base + add) * 1e6) / 1e6
+}
+
+/** 空桶（四个桶的形状一致，缺数据就用它） */
+function emptyBucket(): TokenBucket {
+  return { tokens: 0, costCny: 0, dayTokens: 0, dayCostCny: 0, monthTokens: 0, monthCostCny: 0 }
+}
+
+/**
+ * kind → 桶名。老口径是「kind === 'story' 单独计，其余全进 chat」，分桶沿用**同一条判断**
+ * （不做 trim/小写化，刻意与顶层分支保持逐字一致）：只有 story/summary/personality 单列，
+ * 其它（含脏值/空值/未知 kind）都算 chat —— 这样 byKind.chat + byKind.story 恰好等于
+ * 新记账的 chatTokens + storyTokens，不会出现「桶里有一笔、顶层没有」的错位。
+ */
+function bucketKindOf(kind: any): TokenKind {
+  return kind === 'story' || kind === 'summary' || kind === 'personality' ? kind : 'chat'
+}
+
+/** 读一个桶并清洗：缺字段/脏值/老文件没有 byKind 一律给 0 桶，绝不返回 undefined */
+function readBucket(f: any, kind: TokenKind): TokenBucket {
+  const b = emptyBucket()
+  const all = f && typeof f === 'object' && f.byKind && typeof f.byKind === 'object' && !Array.isArray(f.byKind) ? f.byKind : null
+  const raw = all && all[kind] && typeof all[kind] === 'object' && !Array.isArray(all[kind]) ? all[kind] : null
+  if (!raw) return b
+  b.tokens = cleanToken(raw.tokens)
+  b.costCny = cleanCost(raw.costCny)
+  b.dayTokens = cleanToken(raw.dayTokens)
+  b.dayCostCny = cleanCost(raw.dayCostCny)
+  b.monthTokens = cleanToken(raw.monthTokens)
+  b.monthCostCny = cleanCost(raw.monthCostCny)
+  return b
+}
+
+/** 取（必要时创建）分桶容器，并把四个桶补齐成规范形状（脏桶就地清洗，不留下怪形状） */
+function ensureBuckets(f: any): any {
+  if (!f.byKind || typeof f.byKind !== 'object' || Array.isArray(f.byKind)) f.byKind = {}
+  for (const kind of TOKEN_KINDS) f.byKind[kind] = readBucket(f, kind)
+  return f.byKind
+}
+
+/** 跨天/跨月：各桶的当日/当月计数随顶层一起归零（桶的总量与累计金额不动） */
+function rollBuckets(f: any, scope: 'day' | 'month'): void {
+  const all = f && typeof f === 'object' && f.byKind && typeof f.byKind === 'object' && !Array.isArray(f.byKind) ? f.byKind : null
+  if (!all) return
+  for (const kind of TOKEN_KINDS) {
+    const raw = all[kind]
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    if (scope === 'day') { raw.dayTokens = 0; raw.dayCostCny = 0 }
+    else { raw.monthTokens = 0; raw.monthCostCny = 0 }
+  }
 }
 
 export function createTokenRepo(dataDir: string): TokenRepo {
@@ -91,10 +170,10 @@ export function createTokenRepo(dataDir: string): TokenRepo {
     const day = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
     const month = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0')
     const hadDay = typeof f.day === 'string' && f.day.length > 0
-    if (hadDay && f.day !== day) { f.chatTokens = 0; f.storyTokens = 0; f.dayTokens = 0; f.dayCostCny = 0 }
+    if (hadDay && f.day !== day) { f.chatTokens = 0; f.storyTokens = 0; f.dayTokens = 0; f.dayCostCny = 0; rollBuckets(f, 'day') }
     f.day = day
     const hadMonth = typeof f.month === 'string' && f.month.length > 0
-    if (hadMonth && f.month !== month) { f.monthTokens = 0; f.monthCostCny = 0 }
+    if (hadMonth && f.month !== month) { f.monthTokens = 0; f.monthCostCny = 0; rollBuckets(f, 'month') }
     f.month = month
   }
 
@@ -110,7 +189,8 @@ export function createTokenRepo(dataDir: string): TokenRepo {
     const f = loadFishfood()
     const add = cleanToken(n)
     if (add <= 0) return f                       // 没有可信用量：不写盘、不改计数（也不把 NaN 写进文件）
-    if (kind === 'story') f.storyTokens = addToken(f.storyTokens, add)
+    const kindOf = bucketKindOf(kind)
+    if (kindOf === 'story') f.storyTokens = addToken(f.storyTokens, add)
     else f.chatTokens = addToken(f.chatTokens, add)
     f.dayTokens = addToken(f.dayTokens, add)
     f.totalTokens = addToken(f.totalTokens, add)
@@ -128,6 +208,17 @@ export function createTokenRepo(dataDir: string): TokenRepo {
       f.costCny = addCost(f.costCny, cost)
       f.dayCostCny = addCost(f.dayCostCny, cost)
       f.monthCostCny = addCost(f.monthCostCny, cost)
+    }
+    // 分桶（B98）：按 kind 累加，桶内总量/当日/当月与顶层同步走；顶层字段保持原样。
+    // 先 ensureBuckets 再取本桶：老文件没有 byKind 时在这一步补齐四个 0 桶（只补形状，不补历史数字）。
+    const bucket = ensureBuckets(f)[kindOf]
+    bucket.tokens = addToken(bucket.tokens, add)
+    bucket.dayTokens = addToken(bucket.dayTokens, add)
+    bucket.monthTokens = addToken(bucket.monthTokens, add)
+    if (cost > 0) {
+      bucket.costCny = addCost(bucket.costCny, cost)
+      bucket.dayCostCny = addCost(bucket.dayCostCny, cost)
+      bucket.monthCostCny = addCost(bucket.monthCostCny, cost)
     }
     saveFishfood(f)
     return f

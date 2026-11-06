@@ -7,7 +7,9 @@
  *   {
  *     ok,
  *     cache: { tts, chat, asr },                       // 三个缓存目录的条目数
- *     fishfood: { chatTokens, storyTokens, total },    // total = chat + story（与 /fishfood 同口径）
+ *     fishfood: { chatTokens, storyTokens, total,       // total = chat + story（与 /fishfood 同口径）
+ *                 promptTokens, completionTokens, cacheHitTokens, costCny, dayCostCny,
+ *                 byKind: { chat, story, summary, personality } },  // B98 分桶：tokens/costCny + 当日/当月
  *     growth: { exp, stage, nextExp },                 // 与 /growth 同口径
  *     intimacy,                                        // state.json，0..100（与 /state 同口径）
  *     personality: { catchphrases, preferences, notes, selfNarrative },
@@ -64,6 +66,37 @@ function resolve<T>(v: Lazy<T> | undefined | null, fallback: T): T {
 function count(value: any): number {
   const n = Number(value)
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+}
+
+/** 金额清洗：非负、有限、6 位小数（与 /fishfood、repos/fishfood.ts 同一口径） */
+function money(value: any): number {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.round(Math.min(1e9, n) * 1e6) / 1e6
+}
+
+/** 鱼账本分桶键（与 host/repos/fishfood.ts 的 byKind 同名同序；改动要两边一起改） */
+const TOKEN_KINDS: string[] = ['chat', 'story', 'summary', 'personality']
+
+/**
+ * 分桶输出（2026-11-07 B98）：四个桶固定都出现，缺字段/脏值/老文件没有 byKind → 全 0 桶。
+ * 与 /fishfood 的 byKind 同口径；既有 fishfood 字段一个都不改。
+ */
+function kindBuckets(value: any): Record<string, any> {
+  const src = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const out: Record<string, any> = {}
+  for (const kind of TOKEN_KINDS) {
+    const b = src[kind] && typeof src[kind] === 'object' && !Array.isArray(src[kind]) ? src[kind] : {}
+    out[kind] = {
+      tokens: count(b.tokens),
+      costCny: money(b.costCny),
+      dayTokens: count(b.dayTokens),
+      dayCostCny: money(b.dayCostCny),
+      monthTokens: count(b.monthTokens),
+      monthCostCny: money(b.monthCostCny),
+    }
+  }
+  return out
 }
 
 /** 亲密度上限（与 host/repos/state.ts、host/routes/misc.ts 同一口径） */
@@ -126,6 +159,8 @@ export function createStatsHandler(opts: StatsHandlerDeps) {
         cacheHitTokens: count(fish.cacheHitTokens),
         costCny: Math.max(0, Math.round((Number(fish.costCny) || 0) * 1e6) / 1e6),
         dayCostCny: Math.max(0, Math.round((Number(fish.dayCostCny) || 0) * 1e6) / 1e6),
+        // 分桶（B98）：聊天 / 说书 / 摘要 / 人格，各带 tokens 与金额（含当日/当月）
+        byKind: kindBuckets(fish.byKind),
       },
       growth: { exp, stage: stage.name, nextExp: stage.nextExp },
       intimacy: intimacyOf(state.intimacy),

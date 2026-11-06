@@ -16,6 +16,9 @@ const BALANCE_TIMEOUT = 15 * 1000
 /** 亲密度上限（与 state.json 同口径） */
 const INTIMACY_MAX = 100
 
+/** 鱼账本分桶键（与 host/repos/fishfood.ts 的 byKind 同名同序；改动要两边一起改） */
+const TOKEN_KINDS: string[] = ['chat', 'story', 'summary', 'personality']
+
 /** 亲密度展示口径：非数字/负数归 0，超 100 截到 100（真源另在 repos/state.ts 清洗） */
 function cleanIntimacy(value: any): number {
   const n = Number(value)
@@ -131,6 +134,27 @@ export function createMiscHandlers(opts: {
     return Math.round(Math.min(1e9, n) * 1e6) / 1e6
   }
 
+  /**
+   * 分桶输出（2026-11-07 B98）：四个桶固定都出现，缺字段/脏值一律 0。
+   * 老 fishfood.json 没有 byKind → 全 0 桶（不是 null、不是缺字段），老客户端读不到也不报错。
+   */
+  function readKindBuckets(value: any): Record<string, any> {
+    const src = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+    const out: Record<string, any> = {}
+    for (const kind of TOKEN_KINDS) {
+      const b = src[kind] && typeof src[kind] === 'object' && !Array.isArray(src[kind]) ? src[kind] : {}
+      out[kind] = {
+        tokens: nonNegInt(b.tokens),
+        costCny: nonNegCost(b.costCny),
+        dayTokens: nonNegInt(b.dayTokens),
+        dayCostCny: nonNegCost(b.dayCostCny),
+        monthTokens: nonNegInt(b.monthTokens),
+        monthCostCny: nonNegCost(b.monthCostCny),
+      }
+    }
+    return out
+  }
+
   async function handleFishfood(_req: any, res: any): Promise<void> {
     try {
       // loadFishfood 读入时已做跨天/跨月滚动，这里拿到的今日/本月计数不会停在昨天
@@ -157,13 +181,16 @@ export function createMiscHandlers(opts: {
         dayCostCny: nonNegCost(f.dayCostCny),
         monthCostCny: nonNegCost(f.monthCostCny),
         monthTokens: nonNegInt(f.monthTokens),
+        // —— 分桶（B98）：聊天 / 说书 / 摘要 / 人格，各带 tokens 与金额（含当日/当月）——
+        // 缺 byKind 的老账本 → 四个 0 桶；上面那些既有字段一个都没动。
+        byKind: readKindBuckets(f.byKind),
         // 估算说明：金额随高峰/空闲单价变化，且只有拿到 usage 拆分才计（说明来自 shared/pricing.ts）
         costIsEstimate: true,
         priceSource: PRICING_SOURCE,
         priceCheckedAt: PRICING_CHECKED_AT,
       })
     } catch (err: any) {
-      sendError(res, err, { chatTokens: 0, storyTokens: 0, total: 0, dayTokens: 0 })
+      sendError(res, err, { chatTokens: 0, storyTokens: 0, total: 0, dayTokens: 0, byKind: readKindBuckets(null) })
     }
   }
 
