@@ -209,7 +209,25 @@ export function resetTtsInterpreterProbe(): void {
   probeCache.inflight = null
 }
 
-/** 只读快照：给统计快照用（不交给调用方改动内部缓存） */
+/**
+ * 只读快照：给统计快照用（不交给调用方改动内部缓存）。
+ * 必须返回**逐层拷贝**——直接把 probeCache.outcome 递出去的话，调用方改一下
+ * `outcome.interp.label` / `outcome.failed` 就等于改了「解释器是否可用」的判定结果
+ * （浅拷贝不够：interp/pending 里的对象还是同一个引用）。
+ * 缓存对象的身份（===）只对模块内部的 markInterpreterVerified 有意义，拷贝不影响它。
+ */
 export function peekProbeOutcome(): ProbeOutcome | null {
-  return probeCache.outcome
+  const o = probeCache.outcome
+  if (!o) return null
+  return {
+    interp: cloneInterp(o.interp),
+    failed: o.failed,
+    pending: cloneInterp(o.pending),
+    reason: o.reason,
+  }
+}
+
+function cloneInterp(i: PythonInterp | null): PythonInterp | null {
+  if (!i) return null
+  return { cmd: i.cmd, args: [...i.args], label: i.label }
 }

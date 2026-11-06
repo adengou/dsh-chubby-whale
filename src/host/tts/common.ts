@@ -28,8 +28,11 @@ export const STDERR_LOG_MAX = 500
 /** 一个探测候选：命令 + 固定参数（`py -3` 这种） + 日志里的显示名 */
 export type PythonInterp = { cmd: string; args: string[]; label: string }
 
-/** worker 排队中的一次请求：合成结果由 resolve/reject 决定，timer 是本次预算 */
-export type Pending = { resolve: (v: boolean) => void; reject: (e: any) => void; timer: any }
+/**
+ * worker 排队中的一次请求：合成结果只通过 resolve 回传（失败不抛异常），timer 是本次预算。
+ * 形状刻意不含 reject：worker 的失败要用返回值表达，抛异常会把调用方拖进退化路径之外的错误分支。
+ */
+export type Pending = { resolve: (v: boolean) => void; timer: any }
 
 /** 运行统计快照（测试与排障用；跨 engine 实例累计，reset 不清零） */
 export type TtsStatsSnapshot = {
