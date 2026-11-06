@@ -1533,6 +1533,25 @@
     let curSegId = 0;
     let tickTimer = null;
     let restartTimer = null;
+    let asrBusy = false;
+    let asrEpoch = 0;
+    const asrAborts = /* @__PURE__ */ new Set();
+    function abortAsrFlight() {
+      try {
+        for (const c of asrAborts) {
+          try {
+            c.abort();
+          } catch (e) {
+          }
+        }
+      } catch (e) {
+      }
+      try {
+        asrAborts.clear();
+      } catch (e) {
+      }
+      asrBusy = false;
+    }
     const echoFilter = createEchoFilter();
     const ttsQ = [];
     let ttsBusy = false;
@@ -1750,10 +1769,21 @@
         scheduleNext(150);
         return;
       }
+      if (asrBusy) {
+        try {
+          opts.onDiag && opts.onDiag({ stage: "asr-busy-drop", hint: "上一段还在识别，这一段丢弃（不排队）" });
+        } catch (e) {
+        }
+        scheduleNext(150);
+        return;
+      }
+      const myEpoch = asrEpoch;
+      asrBusy = true;
       stats.uploaded++;
       setStatus("recognizing");
       try {
         const wire = await prepareAudioForAsr(blob, { actx, recMime, onDiag: opts.onDiag });
+        if (myEpoch !== asrEpoch) return;
         if (!wire || !wire.base64) {
           stats.asrFail++;
           stats.lastError = "b64-empty";
@@ -1778,7 +1808,7 @@
         try {
           res = await uploadOnce();
         } catch (e1) {
-          if (ASR_RETRY_ONCE && e1 && e1.name === "AbortError" && running) {
+          if (ASR_RETRY_ONCE && e1 && e1.name === "AbortError" && running && myEpoch === asrEpoch) {
             stats.asrRetry = (stats.asrRetry || 0) + 1;
             try {
               opts.onDiag && opts.onDiag({ stage: "asr-retry", hint: "识别超时，重试一次" });
@@ -1791,6 +1821,7 @@
         }
         const data = await res.json();
         if (!running) return;
+        if (myEpoch !== asrEpoch) return;
         if (data && data.error === "NO_KEY") {
           stats.asrFail++;
           stats.lastError = "asr: NO_KEY";
@@ -1839,10 +1870,14 @@
           stats.echoDropped++;
         }
       } catch (e) {
+        if (myEpoch !== asrEpoch) return;
         stats.asrFail++;
         stats.lastError = e && e.name === "AbortError" ? "asr-ex: AbortError（超时/已停止）" : "asr-ex: " + String(e && e.name || e);
       } finally {
-        if (statusHolder.get() === "recognizing") setStatus("listening");
+        if (myEpoch === asrEpoch) {
+          asrBusy = false;
+          if (statusHolder.get() === "recognizing") setStatus("listening");
+        }
         if (!rec || rec.state === "inactive") scheduleNext(150);
       }
     }
@@ -1929,7 +1964,6 @@
     }
     const ttsPrefetch = /* @__PURE__ */ new Map();
     const ttsAborts = /* @__PURE__ */ new Set();
-    const asrAborts = /* @__PURE__ */ new Set();
     let ttsInflight = 0;
     let ttsSeq = 0;
     function synth(job) {
@@ -2234,6 +2268,8 @@
       asrNoKey = false;
       if (running) return;
       running = true;
+      asrEpoch++;
+      abortAsrFlight();
       recMime = "";
       recFormat = "webm";
       levelOk = false;
@@ -2329,19 +2365,8 @@
     }
     function stop() {
       running = false;
-      try {
-        for (const c of asrAborts) {
-          try {
-            c.abort();
-          } catch (e) {
-          }
-        }
-      } catch (e) {
-      }
-      try {
-        asrAborts.clear();
-      } catch (e) {
-      }
+      asrEpoch++;
+      abortAsrFlight();
       if (tickTimer) {
         clearTimeout(tickTimer);
         tickTimer = null;
@@ -2399,6 +2424,8 @@
       pumpTts();
     }
     function stopSpeaking() {
+      asrEpoch++;
+      abortAsrFlight();
       ttsSynthAt = 0;
       ttsProgressAt = 0;
       ttsCurJob = null;
