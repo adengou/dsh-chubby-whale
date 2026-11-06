@@ -17,6 +17,8 @@
  *
  * 健壮性：单次响应体积上限 16MB（声明超限不读流、流式超限提前 cancel），坏响应吃不掉宿主内存；
  * 超时（默认 15s，可注入）到点 abort，失败一律抛错交给路由回退，不记账。
+ * 断连（2026-11-07 B94）：synthesize 的第 2 个参数是可选中止信号（路由在客户端走了时给出），
+ * 与自己的超时用 AbortSignal.any 合并 —— 客户端一走就断开云端调用，不再等满 15s；同样不记账。
  *
  * 安全：API Key 只从本地 config.json 读，不进包、不进备份导出。
  */
@@ -179,9 +181,67 @@ export type CloudTtsDeps = {
 export type CloudTts = {
   /** 是否启用（有 Key 且开） */
   enabled: () => boolean
-  synthesize: (text: string) => Promise<Buffer>
+  /**
+   * 合成。第 2 个参数可选：调用方中止信号（客户端断连），会与内部超时合并。
+   * 失败/超时/中止都抛错（路由据此回退 edge-tts；中止时路由不会回退，见 routes/tts.ts）。
+   */
+  synthesize: (text: string, signal?: AbortSignal) => Promise<Buffer>
   /** 日用量快照（诊断面板用） */
   usage: () => { day: string; chars: number; limit: number }
+}
+
+/** 中止类错误：name='AbortError'，与 fetch/AbortSignal 同口径（路由按 client.gone() 认断连，不看 code） */
+function abortError(): Error {
+  const e: any = new Error('cloud-tts aborted by caller')
+  e.name = 'AbortError'
+  return e
+}
+
+/**
+ * 把「自己的超时」与「调用方中止」合成一个 signal：任一触发都断开这次云端外呼。
+ *
+ * 为什么要合：客户端 30s 硬超时 / 切页面 / 断网时会走 signal；只等自己的 15s 超时的话，
+ * 客户端早就走了、云端还在算（付费 + 占连接），这正是 B94 要治的浪费。
+ *
+ * 两条路：
+ *   · 有 AbortSignal.any（Node ≥20.3，项目 engines ≥22.3）直接用：内部按弱引用管理源 signal，
+ *     不往长期 signal 上留监听；
+ *   · 没有 any 时手写组合：两边的 reason 原样转发（超时仍是 TimeoutError/AbortError 口径），
+ *     监听在「触发」与「本次调用结束」时都摘掉。
+ *
+ * 为什么这里自带一份而不 import host/http.ts 的 combineSignals：cloud-tts 的依赖白名单只有
+ * node:fs / node:path / atomic（scripts/test-persona-cloud.mjs 的 [7] 钉着这条），不能再加。
+ */
+function combineAbort(base: AbortSignal | null, outer?: AbortSignal): { signal: AbortSignal | undefined; dispose: () => void } {
+  if (!outer) return { signal: base || undefined, dispose() { } }
+  if (!base) return { signal: outer, dispose() { } }
+  const AnySig: any = AbortSignal as any
+  if (typeof AnySig.any === 'function') {
+    try { return { signal: AnySig.any([base, outer]), dispose() { } } } catch { }
+  }
+  const ctl = new AbortController()
+  let hooked = false
+  function unhook(): void {
+    if (!hooked) return
+    hooked = false
+    try { outer!.removeEventListener('abort', onAbort) } catch { }
+    try { base!.removeEventListener('abort', onAbort) } catch { }
+  }
+  function onAbort(ev: any): void {
+    unhook()
+    const src: any = ev && (ev.target || ev.currentTarget)
+    try { if (src && src.reason !== undefined) ctl.abort(src.reason); else ctl.abort() } catch { }
+  }
+  // 传进来就已经中止的 signal 不会再发事件：先各自判一次，否则这次调用会一直等到超时
+  if (base.aborted || outer.aborted) {
+    const src = base.aborted ? base : outer
+    try { ctl.abort(src.reason) } catch { }
+    return { signal: ctl.signal, dispose() { } }
+  }
+  hooked = true
+  try { base.addEventListener('abort', onAbort) } catch { }
+  try { outer.addEventListener('abort', onAbort) } catch { }
+  return { signal: ctl.signal, dispose: unhook }
 }
 
 /**
@@ -234,11 +294,13 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
       const today = todayKey(clock())
       return { day: today, chars: usedChars(today), limit: cfg.dailyChars }
     },
-    async synthesize(text: string): Promise<Buffer> {
+    async synthesize(text: string, signal?: AbortSignal): Promise<Buffer> {
       const cfg = deps.config()
       if (!cfg.enabled || !cfg.apiKey) throw new Error('cloud-tts 未启用')
       const body = String(text || '').trim()
       if (!body) throw new Error('cloud-tts 空文本')
+      // 调用方在进来之前就放弃了：连熔断判定/预占都不必做（也不会发请求）
+      if (signal && signal.aborted) throw abortError()
       const today = todayKey(clock())
       // 日字数熔断：超了直接抛，路由回退 edge-tts
       if (budgetLeft(cfg, today) < body.length) {
@@ -247,6 +309,8 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
       }
       const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
       const timer = setTimeout(() => { try { ctl && ctl.abort() } catch { } }, timeoutMs)
+      // 自己的超时 + 调用方中止合成一个 signal：任一触发都断开这次云端外呼（B94）
+      const combo = combineAbort(ctl ? ctl.signal : null, signal)
       // 先占额度再发请求：判定与记账之间的 await 期间，别的请求不能再用同一份额度
       reservedChars += body.length
       try {
@@ -265,7 +329,7 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
               audio_params: { format: 'mp3', sample_rate: 24000 },
             },
           }),
-          signal: ctl ? ctl.signal : undefined,
+          signal: combo.signal,
         })
         if (!res.ok) {
           // 错误页也走体积上限：有的网关会回一整页 HTML，读满内存才知道是 500
@@ -296,6 +360,7 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
         return buf
       } finally {
         clearTimeout(timer)
+        combo.dispose()
         // 释放预占：成功时已记进用量（磁盘/内存），失败时这份额度要还回去
         reservedChars = Math.max(0, reservedChars - body.length)
       }
