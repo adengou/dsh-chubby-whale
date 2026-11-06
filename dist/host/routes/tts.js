@@ -9,7 +9,7 @@
  *       被中止的那次**不记失败、不进缓存、不进降级闸、不回包**，只留一行 TTS-CLIENT-ABORT 诊断。
  */
 import { hashKey } from '../../shared/hash.js';
-import { sendTooLarge } from '../http.js';
+import { sendTooLarge, watchClientGone } from '../http.js';
 import { readJsonBody } from '../body.js';
 import { sendJson, sendBuffer } from '../respond.js';
 import { normalizeRate, TTS_UNAVAILABLE } from '../../shared/tts.js';
@@ -39,69 +39,6 @@ function oneLine(err, max = 220) {
  */
 const LOG_CLIENT_ABORT_SYNTH = '[tts] TTS-CLIENT-ABORT 客户端已断开，合成已中止（不计入失败，不进降级闸）';
 const LOG_CLIENT_ABORT_REQUEST = '[tts] TTS-CLIENT-ABORT 客户端已断开，请求中止（未发起合成）';
-/**
- * 盯住「客户端是不是走了」。思路与 routes/asr.ts 的 watchClientGone 一致（B93 那条），返回的
- * signal 一路传给 TtsEngine / cloudTts —— 客户端一走，还在等 python worker / 云端的合成立刻放弃。
- *
- * 为什么不能只听 req 的 close（Node 24 本机实测，时间线取证见 scripts/test-asr-abort.mjs）：
- * 请求体读完时 req 就会发 close（此时 req.complete=true、响应还没写）——只看 close 会把
- * **每个正常请求**都误判成断连。真正的断连有三种形状：
- *   ① req 'aborted'：请求体还没收完客户端就断了；
- *   ② req 'close' 且 req.complete === false：①的兜底（老版本/某些客户端不发 aborted）；
- *   ③ res 'close' 且响应没写完（writableEnded 与 writableFinished 都为 false）：客户端发完了
- *      body、等不到音频先走了 —— 客户端 30s 硬超时就是这个形状。
- * 正常结束的 res 'close' 里 writableFinished=true，不会命中 ③，所以不会误中止正常请求。
- *
- * 为什么不与 asr.ts 抽成公共模块：路由的依赖白名单（check-imports 规则 A / check-boundaries B6）
- * 只允许依赖 respond/body/http/ports/shared，抽出去就要新开一个 host/ 层模块，超出 B94 的改动范围。
- */
-function watchClientGone(req, res) {
-    const ctl = new AbortController();
-    let gone = false;
-    const mark = () => {
-        if (gone)
-            return;
-        gone = true;
-        try {
-            ctl.abort();
-        }
-        catch { }
-    };
-    const onReqAborted = () => mark();
-    const onReqClose = () => { if (!req || req.complete === false)
-        mark(); };
-    const onResClose = () => { if (!res || !(res.writableEnded || res.writableFinished))
-        mark(); };
-    const on = (target, ev, fn) => {
-        // 测试里的假 req/res 未必是 EventEmitter：没有 on 就静默跳过（既有用例都是这种形状）
-        if (!target || typeof target.on !== 'function')
-            return;
-        try {
-            target.on(ev, fn);
-        }
-        catch { }
-    };
-    const off = (target, ev, fn) => {
-        if (!target || typeof target.removeListener !== 'function')
-            return;
-        try {
-            target.removeListener(ev, fn);
-        }
-        catch { }
-    };
-    on(req, 'aborted', onReqAborted);
-    on(req, 'close', onReqClose);
-    on(res, 'close', onResClose);
-    return {
-        signal: ctl.signal,
-        gone: () => gone,
-        dispose() {
-            off(req, 'aborted', onReqAborted);
-            off(req, 'close', onReqClose);
-            off(res, 'close', onResClose);
-        },
-    };
-}
 export function createTtsHandler(opts) {
     // 引擎必须由装配层构造并注入（src/index.ts），路由内**不再**自建：
     // createEdgeTtsEngine 持有常驻 python 子进程，而路由工厂只交出 handler 函数，

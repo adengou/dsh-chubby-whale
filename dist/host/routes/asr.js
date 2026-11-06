@@ -7,7 +7,7 @@
  */
 import { hashBytes } from '../../shared/hash.js';
 import { isInterruptWord, isNoiseText } from '../../shared/noise.js';
-import { fetchJson, isTimeoutError, sendTooLarge } from '../http.js';
+import { fetchJson, isAbortError, isTimeoutOnly, sendTooLarge, watchClientGone } from '../http.js';
 import { readJsonBody } from '../body.js';
 import { sendJson, sendError } from '../respond.js';
 const ASR_MODEL = 'Qwen/Qwen3-ASR-1.7B';
@@ -26,66 +26,6 @@ const ASR_TIMEOUT = 60 * 1000;
  */
 const LOG_CLIENT_ABORT_OUTBOUND = '[asr] ASR-CLIENT-ABORT 客户端已断开，上游外呼已中止（不计入 ASR 失败）';
 const LOG_CLIENT_ABORT_REQUEST = '[asr] ASR-CLIENT-ABORT 客户端已断开，请求中止（未发起外呼，不计入 ASR 失败）';
-/**
- * 盯住「客户端是不是走了」。返回的 signal 会被合进外呼超时（见 host/http.ts 的 fetchWithTimeout），
- * 客户端一走，还在等上游的那次付费外呼就立刻中止。
- *
- * 为什么不能只听 req 的 close（Node 24 本机实测，时间线见 scripts/test-asr-abort.mjs）：
- * 请求体读完时 req 就会发 close（此时 req.complete=true、res.writableEnded=false、响应还没写）——
- * 只看 close 会把**每个正常请求**都误判成断连。真正的断连有三种形状：
- *   ① req 'aborted'：请求体还没收完客户端就断了（Node 24 实测会发，虽已标记废弃）；
- *   ② req 'close' 且 req.complete === false：①的兜底（老版本/某些客户端不发 aborted）；
- *   ③ res 'close' 且响应没写完（writableEnded 与 writableFinished 都为 false）：客户端发完了
- *      body、等不到结果先走了 —— 客户端 30s 硬超时就是这个形状（宿主还在跑 60s 的那次）。
- * 正常结束的 res 'close' 里 writableFinished=true，不会命中 ③，所以不会误中止正常请求。
- */
-function watchClientGone(req, res) {
-    const ctl = new AbortController();
-    let gone = false;
-    const mark = () => {
-        if (gone)
-            return;
-        gone = true;
-        try {
-            ctl.abort();
-        }
-        catch { }
-    };
-    const onReqAborted = () => mark();
-    const onReqClose = () => { if (!req || req.complete === false)
-        mark(); };
-    const onResClose = () => { if (!res || !(res.writableEnded || res.writableFinished))
-        mark(); };
-    const on = (target, ev, fn) => {
-        // 测试里的假 req/res 未必是 EventEmitter：没有 on 就静默跳过（既有用例都是这种形状）
-        if (!target || typeof target.on !== 'function')
-            return;
-        try {
-            target.on(ev, fn);
-        }
-        catch { }
-    };
-    const off = (target, ev, fn) => {
-        if (!target || typeof target.removeListener !== 'function')
-            return;
-        try {
-            target.removeListener(ev, fn);
-        }
-        catch { }
-    };
-    on(req, 'aborted', onReqAborted);
-    on(req, 'close', onReqClose);
-    on(res, 'close', onResClose);
-    return {
-        signal: ctl.signal,
-        gone: () => gone,
-        dispose() {
-            off(req, 'aborted', onReqAborted);
-            off(req, 'close', onReqClose);
-            off(res, 'close', onResClose);
-        },
-    };
-}
 export function createAsrHandler(opts) {
     return async function handleAsr(req, res) {
         // 先挂上断连观察器：从读 body 到外呼返回的整段都在它的看护下，结束时必须 dispose（finally）
@@ -182,12 +122,18 @@ export function createAsrHandler(opts) {
                     console.error(LOG_CLIENT_ABORT_OUTBOUND);
                     return;
                 }
-                // 超时/网络错误：用户看到的仍是 ok:false + 空文本，日志里留标签
-                if (isTimeoutError(err))
+                // 超时/中止/网络错误：用户看到的仍是 ok:false + 空文本，日志里留标签。
+                // 分类口径（2026-11-07 B95）：isTimeoutError 把 AbortError 与 TimeoutError 混为一类，
+                // 排障时会把「被我们自己中止」误读成「上游太慢」；改用只认内部超时的 isTimeoutOnly，
+                // 外部中止单独留 ASR-ABORT（正常客户端断连在上面 gone() 分支就 return 了）。
+                const timedOut = isTimeoutOnly(err);
+                if (timedOut)
                     console.error('[asr] ASR-TIMEOUT ' + ASR_TIMEOUT + 'ms 无响应，已中止');
+                else if (isAbortError(err))
+                    console.error('[asr] ASR-ABORT 外呼被中止（非内部超时）');
                 else
                     console.error('[asr] ASR-NETWORK ' + String(err?.message || err));
-                sendJson(res, { ok: false, error: isTimeoutError(err) ? 'timeout' : String(err?.message || err), text: '' });
+                sendJson(res, { ok: false, error: timedOut ? 'timeout' : String(err?.message || err), text: '' });
                 return;
             }
             if (!r.ok) {
