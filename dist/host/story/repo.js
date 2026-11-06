@@ -32,6 +32,15 @@ export function createStoryRepo(opts) {
             return 0;
         }
     }
+    /** 缓存写入后统一按 LRU 修剪，避免超上限 */
+    function trimCache() {
+        while (bookCache.size > BOOK_CACHE_MAX) {
+            const oldest = bookCache.keys().next().value;
+            if (oldest === undefined)
+                break;
+            bookCache.delete(oldest);
+        }
+    }
     async function listBooks() {
         try {
             const files = await readdir(STORY_DIR);
@@ -84,7 +93,10 @@ export function createStoryRepo(opts) {
                     worker.terminate();
             }
             catch { } };
-            const fail = (err) => {
+            /** cacheNegative：只给「文件解析不了」这种确定性失败记缓存，
+             *  让后续请求直接返回空、不再每次重起 Worker。文件修好时 mtime 变，缓存自动失效重读。
+             *  超时 / Worker 崩溃可能是机器一时繁忙或资源紧张，不记（否则这本书在重启前永远读不到）。 */
+            const fail = (err, cacheNegative = false) => {
                 if (done)
                     return;
                 done = true;
@@ -99,6 +111,10 @@ export function createStoryRepo(opts) {
                 }
                 stopWorker();
                 console.error('STORY-LOAD-FAIL book=' + book + ' err=' + String(err?.message || err));
+                if (cacheNegative && mt > 0) {
+                    bookCache.set(book, { chunks: [], mtimeMs: mt });
+                    trimCache();
+                }
                 resolve([]);
             };
             try {
@@ -115,17 +131,12 @@ export function createStoryRepo(opts) {
                         const list = normalizeStoryChunks(book, msg.chunks);
                         bookCache.set(book, { chunks: list, mtimeMs: mt });
                         // LRU：超上限就丢最早的那本（Map 保持插入顺序）
-                        while (bookCache.size > BOOK_CACHE_MAX) {
-                            const oldest = bookCache.keys().next().value;
-                            if (oldest === undefined)
-                                break;
-                            bookCache.delete(oldest);
-                        }
+                        trimCache();
                         stopWorker();
                         resolve(list);
                     }
                     else
-                        fail(msg?.error || 'parse failed');
+                        fail(msg?.error || 'parse failed', true);
                 });
                 w.once('error', (err) => fail(err));
                 // Worker 崩了（线程里未捕获异常、被 OOM 杀掉）不会发 message 也不会发 error，只有 exit；

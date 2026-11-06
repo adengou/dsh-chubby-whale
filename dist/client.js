@@ -6359,6 +6359,267 @@
     return { dot, bindHotkey, trigger };
   }
 
+  // src/client/hooks.ts
+  function readLocalFlag(key, fallback = true) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw === null ? fallback : raw !== "off";
+    } catch (e) {
+      return fallback;
+    }
+  }
+  function createHooks(R) {
+    function useLazyRef(factory) {
+      const ref = R.useRef(null);
+      if (!ref.current) ref.current = factory();
+      return ref;
+    }
+    function usePersistentBool(key, fallback = true) {
+      const initial = readLocalFlag(key, fallback);
+      const ref = R.useRef(initial);
+      const [value, setValue] = R.useState(initial);
+      const set = (v) => {
+        ref.current = v;
+        setValue(v);
+      };
+      return { value, set, ref };
+    }
+    return { useLazyRef, usePersistentBool };
+  }
+
+  // src/client/effects.ts
+  function bindFileDropCapture(opts) {
+    const win = opts.win;
+    if (!win || !win.addEventListener) return () => {
+    };
+    const onDragOverCapture = (e) => {
+      if (!opts.hitTest(e.clientX, e.clientY)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onDropCapture = (e) => {
+      if (!opts.hitTest(e.clientX, e.clientY)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const dt = e.dataTransfer;
+      const file = dt && dt.files && dt.files[0];
+      try {
+        opts.onFile(file);
+      } catch (e2) {
+      }
+    };
+    win.addEventListener("dragover", onDragOverCapture, true);
+    win.addEventListener("drop", onDropCapture, true);
+    return () => {
+      try {
+        win.removeEventListener("dragover", onDragOverCapture, true);
+      } catch (e) {
+      }
+      try {
+        win.removeEventListener("drop", onDropCapture, true);
+      } catch (e) {
+      }
+    };
+  }
+  function bindOutsideClose(opts) {
+    const doc = opts.doc;
+    if (!doc || !doc.addEventListener) return () => {
+    };
+    const onDocDown = (e) => {
+      try {
+        const t = e && e.target;
+        if (t && t.closest && t.closest("[data-menu-root]")) return;
+        opts.onOutside();
+      } catch (e2) {
+      }
+    };
+    doc.addEventListener("pointerdown", onDocDown, true);
+    doc.addEventListener("mousedown", onDocDown, true);
+    doc.addEventListener("touchstart", onDocDown, true);
+    return () => {
+      try {
+        doc.removeEventListener("pointerdown", onDocDown, true);
+      } catch (e) {
+      }
+      try {
+        doc.removeEventListener("mousedown", onDocDown, true);
+      } catch (e) {
+      }
+      try {
+        doc.removeEventListener("touchstart", onDocDown, true);
+      } catch (e) {
+      }
+    };
+  }
+  function bindResize(win, onResize) {
+    if (!win || !win.addEventListener) return () => {
+    };
+    win.addEventListener("resize", onResize);
+    return () => {
+      try {
+        win.removeEventListener("resize", onResize);
+      } catch (e) {
+      }
+    };
+  }
+  function startGreeting(opts) {
+    const tGreet = setTimeout(opts.greet, opts.greetMs ?? 3e3);
+    if (opts.hungryNow) setTimeout(opts.hungry, opts.hungryMs ?? 6e3);
+    return () => {
+      try {
+        clearTimeout(tGreet);
+      } catch (e) {
+      }
+    };
+  }
+  function startWatchdog(tick, intervalMs = 2e3) {
+    const t = setInterval(tick, intervalMs);
+    return () => {
+      try {
+        clearInterval(t);
+      } catch (e) {
+      }
+    };
+  }
+  function createUnmountCleanup(opts) {
+    return () => {
+      try {
+        const p = opts.reminderPoller();
+        if (p) p.dispose();
+      } catch (e) {
+      }
+      opts.stopTts();
+      opts.stopMelody();
+      try {
+        const el = opts.bubbleEl();
+        if (el && el._t) {
+          clearTimeout(el._t);
+          el._t = null;
+        }
+      } catch (e) {
+      }
+    };
+  }
+
+  // src/client/render.ts
+  function renderMenuItems(items, ctx) {
+    const out = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.type === "sep") {
+        out.push(ctx.h("div", { key: "sep" + i, style: { height: 1, background: "#1f4a85", margin: "4px 0" } }));
+        continue;
+      }
+      if (it.type === "sub") {
+        const open = ctx.subOpen === it.label;
+        out.push(ctx.h("div", {
+          key: "sub" + i,
+          style: { padding: "6px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", color: "#cfe9ff", fontSize: 13 },
+          onClick: () => ctx.onToggleSub(open ? "" : it.label)
+        }, ctx.h("span", null, ctx.tr(it.label, ctx.lang)), ctx.h("span", null, open ? "\u25BE" : "\u25B8")));
+        if (open) out.push(ctx.h("div", { key: "subitems" + i, style: { paddingLeft: 14, borderLeft: "1px solid #1f4a85", marginLeft: 8 } }, renderMenuItems(it.items, ctx)));
+        continue;
+      }
+      out.push(ctx.h("div", {
+        key: "item" + i,
+        style: { padding: "6px 14px", cursor: "pointer", color: "#cfe9ff", fontSize: 13, whiteSpace: "nowrap" },
+        onClick: () => ctx.onAction(it.action)
+      }, ctx.tr(it.label, ctx.lang)));
+    }
+    return out;
+  }
+  function readMenuRuntime() {
+    return {
+      storyAuto: (() => {
+        try {
+          return localStorage.getItem("chubby-story-auto") !== "0";
+        } catch (e) {
+          return true;
+        }
+      })(),
+      streamOn: (() => {
+        try {
+          return localStorage.getItem("chubby-stream") !== "off";
+        } catch (e) {
+          return true;
+        }
+      })(),
+      storyRate: (() => {
+        try {
+          const s = localStorage.getItem("chubby-story-rate") || "-35%";
+          return /^-\d{1,2}%$/.test(s) ? s : "-35%";
+        } catch (e) {
+          return "-35%";
+        }
+      })(),
+      poemRate: (() => {
+        try {
+          const s = localStorage.getItem("chubby-poem-rate") || "-25%";
+          return /^-\d{1,2}%$/.test(s) ? s : "-25%";
+        } catch (e) {
+          return "-25%";
+        }
+      })(),
+      ttsVoice: (() => {
+        try {
+          return localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
+        } catch (e) {
+          return "zh-CN-XiaoyiNeural";
+        }
+      })(),
+      chatLang: (() => {
+        try {
+          return localStorage.getItem("chubby-chatlang") || "auto";
+        } catch (e) {
+          return "auto";
+        }
+      })()
+    };
+  }
+  function renderMenuHeader(ctx) {
+    const { h, lang } = ctx;
+    return h(
+      "div",
+      { style: { padding: "8px 14px", borderBottom: "1px solid #1f4a85", color: "#9FD8FF", fontSize: 12, display: "flex", justifyContent: "space-between" } },
+      h("span", null, (lang === "en" ? "Fat Whale \xB7 v" : "\u80A5\u9CB8 \xB7 v") + VERSION),
+      h("span", {
+        style: { color: "#FFD166", cursor: "pointer" },
+        title: lang === "en" ? "Click to refresh balance" : "\u70B9\u4E00\u4E0B\u5237\u65B0\u4F59\u989D",
+        onClick: ctx.onRefresh
+      }, ctx.balanceText || "--")
+    );
+  }
+  function renderChatPanel(ctx) {
+    const { h, lang } = ctx;
+    return h(
+      "div",
+      { style: chatPanelStyle(ctx.open) },
+      h(
+        "div",
+        { style: headStyle },
+        h("span", null, lang === "en" ? "Fat Whale \xB7 Chat" : "\u80A5\u9CB8 \xB7 \u804A\u5929"),
+        h("span", { style: { cursor: "pointer", color: "#9FD8FF", padding: "0 4px" }, onClick: ctx.onClose }, "\u2715")
+      ),
+      h(
+        "div",
+        { ref: ctx.bodyRef, style: bodyStyle },
+        ctx.messages.length === 0 ? h("div", { style: msgStyle("fish") }, "\u4E3B\u4EBA\uFF0C\u70B9\u6211\u8BF4\u8BDD\uFF0C\u672C\u9CB8\u5728\u53F3\u4E0B\u89D2\u5F85\u7740\uFF5E") : ctx.messages.map((m, i) => h("div", { key: i, style: msgStyle(m.who) }, m.text))
+      ),
+      h(
+        "div",
+        { style: inputRowStyle },
+        h("input", {
+          style: inputStyle,
+          placeholder: lang === "en" ? "Say something\u2026" : "\u8DDF\u80A5\u9CB8\u8BF4\u4E24\u53E5\u2026",
+          value: ctx.input,
+          onChange: (e) => ctx.onInputChange(e.target.value),
+          onKeyDown: (e) => ctx.onKeyDown(e)
+        }),
+        h("button", { style: sendStyle, onClick: () => ctx.onSend() }, ctx.busy ? "\u2026" : lang === "en" ? "Send" : "\u53D1\u9001")
+      )
+    );
+  }
+
   // src/client.ts
   window.__ModuleLoader__.load({
     id: "dsh-chubby-whale",
@@ -6389,6 +6650,7 @@
       } catch (e) {
       }
       const h = R.createElement;
+      const hookApi = createHooks(R);
       const actions = createActionTable();
       registerCultureActions(actions);
       registerContentActions(actions);
@@ -6476,36 +6738,18 @@
         const talkRef = R.useRef({ talkUntil: 0, hearts: [] });
         const voiceModeRef = R.useRef(false);
         const wokeRef = R.useRef({ at: 0 });
-        const voiceOnRef = R.useRef((() => {
-          try {
-            return localStorage.getItem("chubby-voice") !== "off";
-          } catch (e) {
-            return true;
-          }
-        })());
-        const [voiceOn, setVoiceOn] = R.useState((() => {
-          try {
-            return localStorage.getItem("chubby-voice") !== "off";
-          } catch (e) {
-            return true;
-          }
-        })());
-        const earOnRef = R.useRef((() => {
-          try {
-            return localStorage.getItem("chubby-ear") !== "off";
-          } catch (e) {
-            return true;
-          }
-        })());
-        const [earOn, setEarOn] = R.useState(earOnRef.current);
-        const voiceChatOnRef = R.useRef((() => {
-          try {
-            return localStorage.getItem("chubby-voicechat") !== "off";
-          } catch (e) {
-            return true;
-          }
-        })());
-        const [voiceChatOn, setVoiceChatOn] = R.useState(voiceChatOnRef.current);
+        const voiceOnState = hookApi.usePersistentBool("chubby-voice");
+        const voiceOnRef = voiceOnState.ref;
+        const voiceOn = voiceOnState.value;
+        const setVoiceOn = voiceOnState.set;
+        const earOnState = hookApi.usePersistentBool("chubby-ear");
+        const earOnRef = earOnState.ref;
+        const earOn = earOnState.value;
+        const setEarOn = earOnState.set;
+        const voiceChatOnState = hookApi.usePersistentBool("chubby-voicechat");
+        const voiceChatOnRef = voiceChatOnState.ref;
+        const voiceChatOn = voiceChatOnState.value;
+        const setVoiceChatOn = voiceChatOnState.set;
         const earCtlRef = R.useRef({ stop: () => {
         }, boot: () => {
         } });
@@ -6538,7 +6782,25 @@
             return true;
           }
         })());
-        const reminderPollerRef = R.useRef(null);
+        const reminderPollerRef = hookApi.useLazyRef(() => createReminderPoller({
+          getJson: (path, init) => getJson(path, init),
+          bubble: (text, ms2) => showBubble(text, ms2),
+          talkFor: (ms2) => {
+            try {
+              animRef.current?.talkFor(ms2);
+            } catch (e) {
+            }
+          },
+          speak: (text) => {
+            try {
+              speakText(text);
+            } catch (e) {
+            }
+          },
+          isSpeaking: () => ttsPlaying,
+          isNarrating: () => storyNarratingRef.current,
+          isBusy: () => busyLock.isBusy()
+        }));
         const [scale, setScale] = R.useState(1);
         const [hidden, setHidden] = R.useState(false);
         const [menu, setMenu] = R.useState(null);
@@ -6557,49 +6819,45 @@
         const [messages, setMessages] = R.useState([]);
         const [input, setInput] = R.useState("");
         const [busy, setBusy] = R.useState(false);
-        const busyLockRef = R.useRef(null);
-        if (!busyLockRef.current) busyLockRef.current = createBusyLock();
+        const busyLockRef = hookApi.useLazyRef(createBusyLock);
         const busyLock = busyLockRef.current;
         const bodyRef = R.useRef(null);
         const bubbleRef = R.useRef(null);
         const bubbleTextRef = R.useRef(null);
-        const bridgeRef = R.useRef(null);
-        if (!bridgeRef.current) {
-          bridgeRef.current = createVoiceBridge({
-            narration,
-            narrating: () => storyNarratingRef.current,
-            stopSpeaking: () => stopTts(),
-            bubble: showBubble,
-            // 喊名字的应答要"出声"，不能只弹字：桥里拿不到 say 时会退化成纯气泡
-            say: (text, ms2, opts) => sayLine(text, ms2, opts),
-            sendText: (text, opts) => sendText(text, opts),
-            onVoiceHeard: () => {
+        const bridgeRef = hookApi.useLazyRef(() => createVoiceBridge({
+          narration,
+          narrating: () => storyNarratingRef.current,
+          stopSpeaking: () => stopTts(),
+          bubble: showBubble,
+          // 喊名字的应答要"出声"，不能只弹字：桥里拿不到 say 时会退化成纯气泡
+          say: (text, ms2, opts) => sayLine(text, ms2, opts),
+          sendText: (text, opts) => sendText(text, opts),
+          onVoiceHeard: () => {
+            try {
+              voiceModeRef.current = true;
+            } catch (e) {
+            }
+          },
+          onSpeaking: (playing) => {
+            ttsPlaying = playing;
+            if (playing) {
               try {
-                voiceModeRef.current = true;
-              } catch (e) {
-              }
-            },
-            onSpeaking: (playing) => {
-              ttsPlaying = playing;
-              if (playing) {
-                try {
-                  lastSpeakingAt = Date.now();
-                } catch (e) {
-                }
-              }
-            },
-            // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
-            voiceChat: () => voiceChatOnRef.current,
-            // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
-            speaking: () => ttsPlaying,
-            diag: (patch) => {
-              try {
-                Object.assign(window.__chubbyWhale || (window.__chubbyWhale = {}), patch);
+                lastSpeakingAt = Date.now();
               } catch (e) {
               }
             }
-          });
-        }
+          },
+          // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
+          voiceChat: () => voiceChatOnRef.current,
+          // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
+          speaking: () => ttsPlaying,
+          diag: (patch) => {
+            try {
+              Object.assign(window.__chubbyWhale || (window.__chubbyWhale = {}), patch);
+            } catch (e) {
+            }
+          }
+        }));
         const bridge = bridgeRef.current;
         R.useEffect(() => {
           try {
@@ -6649,35 +6907,18 @@
           savePos();
         }
         R.useEffect(() => {
-          const onResize = () => {
+          return bindResize(window, () => {
             applyPos(posRef.current.x, posRef.current.y);
             savePos();
-          };
-          window.addEventListener("resize", onResize);
-          return () => {
-            try {
-              window.removeEventListener("resize", onResize);
-            } catch {
-            }
-          };
+          });
         }, []);
         R.useEffect(() => {
-          return () => {
-            try {
-              if (reminderPollerRef.current) reminderPollerRef.current.dispose();
-            } catch {
-            }
-            stopTts();
-            melody.stop();
-            try {
-              const el = bubbleRef.current;
-              if (el && el._t) {
-                clearTimeout(el._t);
-                el._t = null;
-              }
-            } catch {
-            }
-          };
+          return createUnmountCleanup({
+            reminderPoller: () => reminderPollerRef.current,
+            stopTts: () => stopTts(),
+            stopMelody: () => melody.stop(),
+            bubbleEl: () => bubbleRef.current
+          });
         }, []);
         const bubble = createBubble({
           el: () => bubbleRef.current,
@@ -6719,46 +6960,27 @@
           };
         }, []);
         R.useEffect(() => {
-          const insideFish = (x, y) => {
-            try {
-              const el = stageRef.current;
-              if (!el) return false;
-              const r = el.getBoundingClientRect();
-              const pad = 12;
-              return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
-            } catch (e) {
-              return false;
+          return bindFileDropCapture({
+            win: window,
+            hitTest: (x, y) => {
+              try {
+                const el = stageRef.current;
+                if (!el) return false;
+                const r = el.getBoundingClientRect();
+                const pad = 12;
+                return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+              } catch (e) {
+                return false;
+              }
+            },
+            onFile: (file) => {
+              try {
+                handleFileDrop(file, { showBubble, speakText }).catch(() => {
+                });
+              } catch (e2) {
+              }
             }
-          };
-          const onDragOverCapture = (e) => {
-            if (!insideFish(e.clientX, e.clientY)) return;
-            e.preventDefault();
-            e.stopPropagation();
-          };
-          const onDropCapture = (e) => {
-            if (!insideFish(e.clientX, e.clientY)) return;
-            e.preventDefault();
-            e.stopPropagation();
-            const dt = e.dataTransfer;
-            const file = dt && dt.files && dt.files[0];
-            try {
-              handleFileDrop(file, { showBubble, speakText }).catch(() => {
-              });
-            } catch (e2) {
-            }
-          };
-          window.addEventListener("dragover", onDragOverCapture, true);
-          window.addEventListener("drop", onDropCapture, true);
-          return () => {
-            try {
-              window.removeEventListener("dragover", onDragOverCapture, true);
-            } catch (e) {
-            }
-            try {
-              window.removeEventListener("drop", onDropCapture, true);
-            } catch (e) {
-            }
-          };
+          });
         }, []);
         function dragBeginAt(x, y) {
           beginDrag(dragRef.current, x, y, posRef.current.x, posRef.current.y);
@@ -6854,32 +7076,39 @@
           };
         }, []);
         R.useEffect(() => {
-          const tGreet = setTimeout(() => {
-            try {
-              if (greetedOnce) return;
-              greetedOnce = true;
-              const g = persona.greeting();
-              if (g) sayLine(g, 5e3);
-            } catch (e) {
-            }
-          }, 3e3);
-          try {
-            const st = persona.state;
-            if (st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1e3) setTimeout(() => {
+          const stopGreet = startGreeting({
+            greet: () => {
+              try {
+                if (greetedOnce) return;
+                greetedOnce = true;
+                const g = persona.greeting();
+                if (g) sayLine(g, 5e3);
+              } catch (e) {
+              }
+            },
+            hungry: () => {
               try {
                 sayLine(persona.line("hungry"), 4e3);
               } catch (e) {
               }
-            }, 6e3);
-          } catch (e) {
-          }
+            },
+            // 打了招呼再看是不是饿了：饿着就补一句（对应人设的 hungry 场景）
+            hungryNow: (() => {
+              try {
+                const st = persona.state;
+                return !!(st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1e3);
+              } catch (e) {
+                return false;
+              }
+            })()
+          });
           try {
             const w = window.__chubbyWhale || (window.__chubbyWhale = {});
             w.persona = persona;
             w.sayLine = sayLine;
           } catch (e) {
           }
-          const tStatus = setInterval(() => {
+          const stopWatch = startWatchdog(() => {
             try {
               try {
                 if (narration.expire()) {
@@ -6900,13 +7129,7 @@
               }
             } catch (e) {
             }
-          }, 2e3);
-          const clearStatus = () => {
-            try {
-              clearInterval(tStatus);
-            } catch (e) {
-            }
-          };
+          });
           const tF = setTimeout(() => {
             try {
               prefetchFiller();
@@ -6914,15 +7137,12 @@
             }
           }, 3e3);
           return () => {
-            try {
-              clearTimeout(tGreet);
-            } catch (e) {
-            }
+            stopGreet();
             try {
               clearTimeout(tF);
             } catch (e) {
             }
-            clearStatus();
+            stopWatch();
             try {
               const el = bubbleRef.current;
               if (el) el.classList.remove("show");
@@ -6996,30 +7216,13 @@
         }
         R.useEffect(() => {
           if (!menu) return;
-          const onDocDown = (e) => {
-            try {
-              const t = e && e.target;
-              if (t && t.closest && t.closest("[data-menu-root]")) return;
+          return bindOutsideClose({
+            doc: document,
+            onOutside: () => {
               setMenu(null);
               setSubOpen("");
-            } catch {
             }
-          };
-          document.addEventListener("pointerdown", onDocDown, true)(document).addEventListener("mousedown", onDocDown, true)(document).addEventListener("touchstart", onDocDown, true);
-          return () => {
-            try {
-              document.removeEventListener("pointerdown", onDocDown, true);
-            } catch {
-            }
-            try {
-              document.removeEventListener("mousedown", onDocDown, true);
-            } catch {
-            }
-            try {
-              document.removeEventListener("touchstart", onDocDown, true);
-            } catch {
-            }
-          };
+          });
         }, [menu]);
         const story = createStoryController({
           clientId: CLIENT_ID,
@@ -7044,27 +7247,6 @@
           },
           refs: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef }
         });
-        if (!reminderPollerRef.current) {
-          reminderPollerRef.current = createReminderPoller({
-            getJson: (path, init) => getJson(path, init),
-            bubble: (text, ms2) => showBubble(text, ms2),
-            talkFor: (ms2) => {
-              try {
-                animRef.current?.talkFor(ms2);
-              } catch (e) {
-              }
-            },
-            speak: (text) => {
-              try {
-                speakText(text);
-              } catch (e) {
-              }
-            },
-            isSpeaking: () => ttsPlaying,
-            isNarrating: () => storyNarratingRef.current,
-            isBusy: () => busyLock.isBusy()
-          });
-        }
         const reminderPoller = reminderPollerRef.current;
         const actionHost = {
           bubble: (text, ms2) => showBubble(text, ms2),
@@ -7412,30 +7594,14 @@
         }, []);
         const recoverProps = recover.dot(hidden);
         function renderItems(items) {
-          const out = [];
-          for (let i = 0; i < items.length; i++) {
-            const it = items[i];
-            if (it.type === "sep") {
-              out.push(h("div", { key: "sep" + i, style: { height: 1, background: "#1f4a85", margin: "4px 0" } }));
-              continue;
-            }
-            if (it.type === "sub") {
-              const open = subOpen === it.label;
-              out.push(h("div", {
-                key: "sub" + i,
-                style: { padding: "6px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", color: "#cfe9ff", fontSize: 13 },
-                onClick: () => setSubOpen(open ? "" : it.label)
-              }, h("span", null, tr(it.label, lang)), h("span", null, open ? "\u25BE" : "\u25B8")));
-              if (open) out.push(h("div", { key: "subitems" + i, style: { paddingLeft: 14, borderLeft: "1px solid #1f4a85", marginLeft: 8 } }, renderItems(it.items)));
-              continue;
-            }
-            out.push(h("div", {
-              key: "item" + i,
-              style: { padding: "6px 14px", cursor: "pointer", color: "#cfe9ff", fontSize: 13, whiteSpace: "nowrap" },
-              onClick: () => runAction(it.action)
-            }, tr(it.label, lang)));
-          }
-          return out;
+          return renderMenuItems(items, {
+            h,
+            tr,
+            lang,
+            subOpen,
+            onToggleSub: (next) => setSubOpen(next),
+            onAction: (action) => runAction(action)
+          });
         }
         return h(
           R.Fragment,
@@ -7473,98 +7639,38 @@
           menu ? h(
             "div",
             { style: menuStyle(menu), "data-menu-root": "1" },
-            h(
-              "div",
-              { style: { padding: "8px 14px", borderBottom: "1px solid #1f4a85", color: "#9FD8FF", fontSize: 12, display: "flex", justifyContent: "space-between" } },
-              // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
-              h("span", null, (lang === "en" ? "Fat Whale \xB7 v" : "\u80A5\u9CB8 \xB7 v") + VERSION),
-              h("span", {
-                style: { color: "#FFD166", cursor: "pointer" },
-                title: lang === "en" ? "Click to refresh balance" : "\u70B9\u4E00\u4E0B\u5237\u65B0\u4F59\u989D",
-                onClick: () => {
-                  try {
-                    refreshMenuStats(true);
-                  } catch (e) {
-                  }
-                }
-              }, balanceText || "--")
-            ),
-            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, chatCacheOn, storyAuto: (() => {
+            // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
+            renderMenuHeader({ h, lang, balanceText, onRefresh: () => {
               try {
-                return localStorage.getItem("chubby-story-auto") !== "0";
+                refreshMenuStats(true);
               } catch (e) {
-                return true;
               }
-            })(), narrationRate: narrationRate(), chatRate: chatRate(), streamOn: (() => {
-              try {
-                return localStorage.getItem("chubby-stream") !== "off";
-              } catch (e) {
-                return true;
-              }
-            })(), storyRate: (() => {
-              try {
-                const s = localStorage.getItem("chubby-story-rate") || "-35%";
-                return /^-\d{1,2}%$/.test(s) ? s : "-35%";
-              } catch (e) {
-                return "-35%";
-              }
-            })(), poemRate: (() => {
-              try {
-                const s = localStorage.getItem("chubby-poem-rate") || "-25%";
-                return /^-\d{1,2}%$/.test(s) ? s : "-25%";
-              } catch (e) {
-                return "-25%";
-              }
-            })(), ttsVoice: (() => {
-              try {
-                return localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
-              } catch (e) {
-                return "zh-CN-XiaoyiNeural";
-              }
-            })(), chatLang: (() => {
-              try {
-                return localStorage.getItem("chubby-chatlang") || "auto";
-              } catch (e) {
-                return "auto";
-              }
-            })(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }))
+            } }),
+            renderItems(buildMenu(VERSION, Object.assign({ voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())))
           ) : null,
-          h(
-            "div",
-            { style: chatPanelStyle(chatOpen) },
-            h(
-              "div",
-              { style: headStyle },
-              h("span", null, lang === "en" ? "Fat Whale \xB7 Chat" : "\u80A5\u9CB8 \xB7 \u804A\u5929"),
-              h("span", { style: { cursor: "pointer", color: "#9FD8FF", padding: "0 4px" }, onClick: () => setChatOpen(false) }, "\u2715")
-            ),
-            h(
-              "div",
-              { ref: bodyRef, style: bodyStyle },
-              messages.length === 0 ? h("div", { style: msgStyle("fish") }, "\u4E3B\u4EBA\uFF0C\u70B9\u6211\u8BF4\u8BDD\uFF0C\u672C\u9CB8\u5728\u53F3\u4E0B\u89D2\u5F85\u7740\uFF5E") : messages.map((m, i) => h("div", { key: i, style: msgStyle(m.who) }, m.text))
-            ),
-            h(
-              "div",
-              { style: inputRowStyle },
-              h("input", {
-                style: inputStyle,
-                placeholder: lang === "en" ? "Say something\u2026" : "\u8DDF\u80A5\u9CB8\u8BF4\u4E24\u53E5\u2026",
-                value: input,
-                onChange: (e) => setInput(e.target.value),
-                onKeyDown: (e) => {
-                  if (e.nativeEvent && e.nativeEvent.isComposing) return;
-                  if (e.key === "Enter" && input.trim()) {
-                    sendText(input);
-                    setInput("");
-                  }
-                }
-              }),
-              h("button", { style: sendStyle, onClick: () => {
-                if (input.trim()) sendText(input);
+          // 聊天面板：结构与事件接线都在 client/render.ts，发送/输入法判断留在闭包里
+          renderChatPanel({
+            h,
+            lang,
+            open: chatOpen,
+            messages,
+            input,
+            busy,
+            bodyRef,
+            onClose: () => setChatOpen(false),
+            onInputChange: (v) => setInput(v),
+            onKeyDown: (e) => {
+              if (e.nativeEvent && e.nativeEvent.isComposing) return;
+              if (e.key === "Enter" && input.trim()) {
+                sendText(input);
                 setInput("");
-              } }, busy ? "\u2026" : lang === "en" ? "Send" : "\u53D1\u9001")
-            )
-          )
+              }
+            },
+            onSend: () => {
+              if (input.trim()) sendText(input);
+              setInput("");
+            }
+          })
         );
       }
       return {

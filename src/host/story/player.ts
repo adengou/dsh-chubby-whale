@@ -53,11 +53,25 @@ export interface StoryPlayer {
   reloadProgress(): void
 }
 
+/** 连播队列最多留几个客户端：一本 30MB 书的段引用不算大，但标签页数量不该无上限 */
+const QUEUE_MAX_CLIENTS = 16
+/** 客户端超过这么久没再请求，视为标签页已关：队列快照丢掉，免得长期占内存 */
+const QUEUE_TTL_MS = 30 * 60 * 1000
+
+interface ClientQueue {
+  /** 本书剩余未读段（连播顺序） */
+  queue: StoryChunk[]
+  /** 队列所属书名 */
+  book: string
+  /** 最近一次请求时间：TTL 清理与 LRU 驱逐都按它排 */
+  lastSeen: number
+}
+
 export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string }): StoryPlayer {
   const repo = opts.repo
   const progress = loadProgress()
-  // 每个客户端一条连播队列：{ queue: 本书剩余未读段, book: 书名 }
-  const clientQueues = new Map<string, { queue: StoryChunk[]; book: string }>()
+  // 每个客户端一条连播队列；Map 的插入顺序即 LRU 顺序（命中时移到末尾）
+  const clientQueues = new Map<string, ClientQueue>()
 
   function loadProgress(): Record<string, any> {
     try {
@@ -190,16 +204,29 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
     return null
   }
 
-  function stateFor(id: string): { queue: StoryChunk[]; book: string } {
+  /**
+   * 取某个客户端的连播状态：命中时就地标记「刚用过」并移到 Map 末尾（LRU）。
+   * 新建时先清超时未归的客户端，再按上限踢最久没用的——以前的实现按插入顺序踢最早的那个，
+   * 活跃客户端反而会被刚打开的新标签页挤掉队列，连播无故从头挑段。
+   */
+  function stateFor(id: string): ClientQueue {
+    const now = Date.now()
     let st = clientQueues.get(id)
-    if (!st) {
-      st = { queue: [], book: '' }
+    if (st) {
+      st.lastSeen = now
+      clientQueues.delete(id)
       clientQueues.set(id, st)
-      if (clientQueues.size > 16) {
-        for (const k of clientQueues.keys()) {
-          if (k !== id) { clientQueues.delete(k); break }
-        }
-      }
+      return st
+    }
+    st = { queue: [], book: '', lastSeen: now }
+    clientQueues.set(id, st)
+    for (const [k, v] of clientQueues) {
+      if (k !== id && now - v.lastSeen > QUEUE_TTL_MS) clientQueues.delete(k)
+    }
+    while (clientQueues.size > QUEUE_MAX_CLIENTS) {
+      const oldest = clientQueues.keys().next().value as string | undefined
+      if (oldest === undefined || oldest === id) break
+      clientQueues.delete(oldest)
     }
     return st
   }
@@ -251,8 +278,12 @@ export function createStoryPlayer(opts: { repo: StoryRepo; progressFile: string 
   async function reset(bookHint: string, clientId: string): Promise<StoryReset> {
     const list = await repo.listBooks()
     const want = String(bookHint || '').trim()
-    const book = resolveBook(list, want) || want
-    if (!book) return { ok: false, error: 'no book' }
+    if (!want) return { ok: false, error: 'no book' }
+    // 只重置书单里真实存在的书。以前这里是 `resolveBook(list, want) || want`：
+    // 任何字符串都会被当成书名写进 _current，误传一次就把「讲到哪本」污染成不存在的书
+    // （下一次 next 只能回退到书单第一本，进度指针等于被静默重置）。
+    const book = resolveBook(list, want)
+    if (!book) return { ok: false, error: 'unknown book' }
     for (const k of Object.keys(progress)) {
       if (k !== '_current' && k.startsWith(book + '|')) delete progress[k]
     }

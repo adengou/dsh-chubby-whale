@@ -41,6 +41,15 @@ export function createStoryRepo(opts: { dataDir: string; workerPath: string }): 
     try { return statSync(p).mtimeMs } catch { return 0 }
   }
 
+  /** 缓存写入后统一按 LRU 修剪，避免超上限 */
+  function trimCache(): void {
+    while (bookCache.size > BOOK_CACHE_MAX) {
+      const oldest = bookCache.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      bookCache.delete(oldest)
+    }
+  }
+
   async function listBooks(): Promise<string[]> {
     try {
       const files = await readdir(STORY_DIR)
@@ -86,13 +95,20 @@ export function createStoryRepo(opts: { dataDir: string; workerPath: string }): 
       let worker: any = null
       let timer: any = null
       const stopWorker = (): void => { try { if (worker) worker.terminate() } catch { } }
-      const fail = (err: any): void => {
+      /** cacheNegative：只给「文件解析不了」这种确定性失败记缓存，
+       *  让后续请求直接返回空、不再每次重起 Worker。文件修好时 mtime 变，缓存自动失效重读。
+       *  超时 / Worker 崩溃可能是机器一时繁忙或资源紧张，不记（否则这本书在重启前永远读不到）。 */
+      const fail = (err: any, cacheNegative = false): void => {
         if (done) return
         done = true
         // 超时/崩溃/解析失败都要把另外两样收干净，别留一个 30s 定时器或活着的线程
         if (timer) { try { clearTimeout(timer) } catch { } ; timer = null }
         stopWorker()
         console.error('STORY-LOAD-FAIL book=' + book + ' err=' + String(err?.message || err))
+        if (cacheNegative && mt > 0) {
+          bookCache.set(book, { chunks: [], mtimeMs: mt })
+          trimCache()
+        }
         resolve([])
       }
       try {
@@ -108,10 +124,10 @@ export function createStoryRepo(opts: { dataDir: string; workerPath: string }): 
             const list = normalizeStoryChunks(book, msg.chunks)
             bookCache.set(book, { chunks: list, mtimeMs: mt })
             // LRU：超上限就丢最早的那本（Map 保持插入顺序）
-            while (bookCache.size > BOOK_CACHE_MAX) { const oldest = bookCache.keys().next().value as string | undefined; if (oldest === undefined) break; bookCache.delete(oldest) }
+            trimCache()
             stopWorker()
             resolve(list)
-          } else fail(msg?.error || 'parse failed')
+          } else fail(msg?.error || 'parse failed', true)
         })
         w.once('error', (err: any) => fail(err))
         // Worker 崩了（线程里未捕获异常、被 OOM 杀掉）不会发 message 也不会发 error，只有 exit；

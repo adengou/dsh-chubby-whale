@@ -16,6 +16,8 @@ import { poemKeyOf } from '../../shared/poem.js'
 export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string; dataPort: DataPort }) {
   const SEEN_FILE = join(opts.runtimeDir || opts.dataDir || '.', 'poem-seen.json')
   let seen: Set<string> | null = null
+  /** 上一次真正念出来的诗（去重键）：一轮念完清空池子时用它挡住「刚念完又立刻同一首」 */
+  let lastKey = ''
 
   /**
    * 拉全部诗：先取第 0 片拿到 total，再顺序取其余片。
@@ -86,6 +88,7 @@ export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string;
         if (hit) {
           const sn0 = loadSeen()
           sn0.add(poemKeyOf(hit))
+          lastKey = poemKeyOf(hit)
           saveSeen()
           sendJson(res, {
             ok: true,
@@ -99,13 +102,16 @@ export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string;
       const sn = loadSeen()
       let pool = list.filter((p: any) => !sn.has(poemKeyOf(p)))
       if (pool.length === 0) {
-        // 一轮念完：清空记忆重来
+        // 一轮念完：清空记忆重来。诗库不止一首时先排除刚念过的那首，
+        // 否则新一轮第一首有 1/n 概率与上一首完全相同（两首诗库时最明显）。
         sn.clear()
         saveSeen()
-        pool = list.slice()
+        pool = list.filter((p: any) => poemKeyOf(p) !== lastKey)
+        if (pool.length === 0) pool = list.slice()
       }
       const p = pool[Math.floor(Math.random() * pool.length)]
       sn.add(poemKeyOf(p))
+      lastKey = poemKeyOf(p)
       saveSeen()
       sendJson(res, {
         ok: true,
