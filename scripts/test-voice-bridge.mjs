@@ -205,6 +205,52 @@ console.log('\n[3] voice-bridge：打断词直通与只喊名字')
   nb.heard('大肥鱼，念首诗')
   ok('叙述中喊唤醒词也不当新发言', nb.log.sends.length === 0)
 
+  // 叙述期停止判定（B99）：原来 NARR_STOP_RE 对任意子串放行，
+  // 正常说话里带「停下/别念/算了/打住」就把说书掐掉；现在停止小句要收在段末。
+  // ① 真·停止（含补到句末的停止小句、段内就是 shared 整句指令的）→ 必须停。
+  const NARR_STOP_ROWS = [
+    '先别念了',
+    '先不要念了',        // 原来漏判（没有「不念」连写）
+    '别读了吧',          // 原来漏判（只认「别念」，不认「别读」）
+    '我不想听了',        // 原来漏判（没有停止词）
+    '行了行了，别念了，我要睡了',  // 长句里的停止小句独立成段 → 仍要停
+    '能不能先停一下',
+    '停一下吧',          // 补语 + 语气助词
+    '先停一停吧',
+    '别念了行不行',      // 反问尾也算（别念了行吗 / 好不好）
+    '好了，安静',        // 段内就是 shared 的整句打断词
+    '大肥鱼，别念了',
+    '大肥鱼停',          // 没有标点：整句按段末判，仍要停
+  ]
+  for (const t of NARR_STOP_ROWS) {
+    const sb = makeBridge({ narration: makeNarration(true), narrating: true })
+    await sb.bridge.start()
+    sb.heard(t)
+    ok('叙述中「' + t + '」→ 停朗读 + 清叙述锁', sb.log.stops === 1 && sb.narration._st.cleared === 1 && sb.log.sends.length === 0,
+      '停 ' + sb.log.stops + ' / 清锁 ' + sb.narration._st.cleared)
+  }
+  // ② 含停止词但其实是正文/闲聊（停止词后面接实词）→ 不能停，也不能送聊天，按 narrDrop 丢弃。
+  const NARR_CHAT_ROWS = [
+    '他停下脚步，回头看了我一眼',
+    '别念旧情',
+    '我算了算，今天才吃了三碗白饭',
+    '不念书的人多了去了',
+    '他打住了话头，接着往下说',
+    '别念错字啊',
+    '前面路口停一下车',
+    '他停下来了吗',
+    '这个字念不对',
+  ]
+  for (const t of NARR_CHAT_ROWS) {
+    const cb2 = makeBridge({ narration: makeNarration(true), narrating: true })
+    await cb2.bridge.start()
+    const drop0 = win.__chubbyWhale.narrDrop || 0
+    cb2.heard(t)
+    ok('叙述中「' + t + '」→ 不停（按闲聊丢弃）',
+      cb2.log.stops === 0 && cb2.narration._st.cleared === 0 && (win.__chubbyWhale.narrDrop || 0) === drop0 + 1 && cb2.log.sends.length === 0,
+      '停 ' + cb2.log.stops + ' / narrDrop +' + ((win.__chubbyWhale.narrDrop || 0) - drop0))
+  }
+
   // 语音聊天关闭：只听不接话
   const cb = makeBridge({ voiceChat: () => false })
   await cb.bridge.start()
