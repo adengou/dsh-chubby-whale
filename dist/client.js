@@ -5423,8 +5423,110 @@
   }
 
   // src/client/story.ts
+  var REQUEST_TIMEOUT_MS = 25e3;
+  var REQUEST_DEADLINE_MS = 3e4;
+  var SPEAK_GUARD_EXTRA_MS = 2e4;
+  var SPEAK_GUARD_RATIO = 0.2;
+  var SPEAK_GUARD_MAX_MS = 2 * 60 * 1e3;
+  var sharedStates = /* @__PURE__ */ new WeakMap();
+  function sharedStateOf(refs) {
+    const key = refs && refs.busy ? refs.busy : null;
+    if (!key) return { gen: 0, guard: null };
+    let s = sharedStates.get(key);
+    if (!s) {
+      s = { gen: 0, guard: null };
+      sharedStates.set(key, s);
+    }
+    return s;
+  }
+  function isAbortError(err) {
+    return !!err && (err.name === "AbortError" || err.code === 20 || err.code === 2);
+  }
+  function storyErrorText(raw) {
+    const e = String(raw == null ? "" : raw).trim();
+    if (!e) return "接口没应";
+    if (e === "no books") return "书单是空的";
+    if (e === "no book") return "没给书名";
+    if (e === "no readable book") return "书都读不出来";
+    if (e === "unknown book") return "书单里没有这本";
+    return e;
+  }
   function createStoryController(host) {
     const refs = host.refs;
+    const shared = sharedStateOf(refs);
+    function bumpGen() {
+      shared.gen += 1;
+      return shared.gen;
+    }
+    function stillMine(token) {
+      return token === shared.gen && !!refs.busy.current;
+    }
+    function release(token) {
+      if (token !== shared.gen) return;
+      refs.busy.current = false;
+      refs.narrating.current = false;
+    }
+    function clearGuard() {
+      if (!shared.guard) return;
+      try {
+        clearTimeout(shared.guard);
+      } catch (e) {
+      }
+      shared.guard = null;
+    }
+    function armGuard(token, ms2) {
+      clearGuard();
+      const t = setTimeout(() => {
+        shared.guard = null;
+        if (token !== shared.gen) return;
+        if (!refs.busy.current) return;
+        bumpGen();
+        refs.busy.current = false;
+        refs.narrating.current = false;
+        try {
+          host.clearNarrate();
+        } catch (e) {
+        }
+        host.bubble("这段没念完，先停在这儿啦～", 5e3);
+      }, Math.max(5e3, Number(ms2) || 0));
+      try {
+        if (t && typeof t.unref === "function") t.unref();
+      } catch (e) {
+      }
+      shared.guard = t;
+    }
+    function beginRound() {
+      clearGuard();
+      const token = bumpGen();
+      refs.busy.current = true;
+      refs.narrating.current = false;
+      return token;
+    }
+    function armDeadline(token, message) {
+      return setTimeout(() => {
+        if (token !== shared.gen || !refs.busy.current) return;
+        bumpGen();
+        refs.busy.current = false;
+        refs.narrating.current = false;
+        host.bubble(message, 5e3);
+      }, REQUEST_DEADLINE_MS);
+    }
+    function requestStory(path, post, texts, onData) {
+      const token = beginRound();
+      const deadline = armDeadline(token, texts.slow);
+      const init = { headers: clientHeaders(host.clientId), signal: timeoutSignal(REQUEST_TIMEOUT_MS) };
+      const p = post ? postJson(path, void 0, init) : getJson(path, init);
+      p.then((d) => {
+        clearTimeout(deadline);
+        if (!stillMine(token)) return;
+        onData(d, token);
+      }).catch((err) => {
+        clearTimeout(deadline);
+        if (!stillMine(token)) return;
+        release(token);
+        host.bubble(isAbortError(err) ? texts.slow : texts.fail, 5e3);
+      });
+    }
     const titleOf = (d) => {
       const total = Number(d && d.total) || 1;
       const piece = Number(d && d.piece) || 1;
@@ -5432,10 +5534,19 @@
       return "正在讲《" + String(d && d.book || "") + "》" + (d && d.title ? "｜" + d.title : "") + seg;
     };
     function playPiece(d) {
+      clearGuard();
+      const token = bumpGen();
       const text = String(d && d.text || "");
+      const speakMs = estimateSpeakMs(text);
       if (d && d.book) refs.book.current = String(d.book);
       host.bubble(titleOf(d), 12e3);
       host.talkFor(8e3);
+      if (!text.trim()) {
+        refs.busy.current = false;
+        refs.narrating.current = false;
+        host.bubble("这一段没取到正文，先停在这里～", 5e3);
+        return;
+      }
       if (host.isVoiceOff()) {
         refs.busy.current = false;
         refs.narrating.current = false;
@@ -5443,66 +5554,96 @@
         return;
       }
       refs.busy.current = true;
-      host.narrate(estimateSpeakMs(text));
-      host.speak(text, {
-        // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
-        // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
-        rate: normalizeRate(storyRate(), host.narrationRate()),
-        onDone: () => {
-          refs.busy.current = false;
-          refs.narrating.current = false;
-          if (d && d.isLast === false) {
-            if (refs.auto.current) {
-              host.bubble("这一段讲完啦，接着往后讲…", 4e3);
-              setTimeout(() => {
-                try {
-                  next();
-                } catch (e) {
-                }
-              }, 800);
-            } else {
-              host.bubble("这段讲完啦～点菜单「接着说」听下一段", 6e3);
+      refs.narrating.current = true;
+      try {
+        host.narrate(speakMs);
+      } catch (e) {
+      }
+      try {
+        host.speak(text, {
+          // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
+          // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
+          rate: normalizeRate(storyRate(), host.narrationRate()),
+          onDone: () => {
+            if (token !== shared.gen) return;
+            clearGuard();
+            refs.busy.current = false;
+            refs.narrating.current = false;
+            try {
+              host.clearNarrate();
+            } catch (e) {
             }
-          } else {
-            refs.auto.current = false;
-            host.bubble(host.persona.line("poemDone"), 6e3);
+            if (d && d.isLast === false) {
+              if (refs.auto.current) {
+                host.bubble("这一段讲完啦，接着往后讲…", 4e3);
+                Promise.resolve().then(() => {
+                  if (token !== shared.gen) return;
+                  if (!refs.auto.current) return;
+                  if (refs.busy.current) return;
+                  next();
+                });
+              } else {
+                host.bubble("这段讲完啦～点菜单「接着说」听下一段", 6e3);
+              }
+            } else {
+              refs.auto.current = false;
+              host.bubble(host.persona.line("poemDone"), 6e3);
+            }
           }
+        });
+        if (speakMs <= SPEAK_GUARD_MAX_MS) {
+          armGuard(token, speakMs + Math.max(SPEAK_GUARD_EXTRA_MS, Math.round(speakMs * SPEAK_GUARD_RATIO)));
         }
-      });
+      } catch (e) {
+        refs.busy.current = false;
+        refs.narrating.current = false;
+        try {
+          host.clearNarrate();
+        } catch (e2) {
+        }
+        host.bubble("这段没念出来，先停在这里～", 5e3);
+      }
     }
     function start(hint) {
       if (refs.busy.current) {
         host.bubble("正讲着呢，听完这段再说～", 3e3);
         return;
       }
-      const headers = clientHeaders(host.clientId);
       const query = hint ? "?book=" + encodeURIComponent(hint) + "&hint=" + encodeURIComponent(hint) : "";
-      getJson("/story/start" + query, { headers }).then((d) => {
+      requestStory("/story/start" + query, false, {
+        slow: "说书等太久啦（网络慢或书太大），再点一次试试～",
+        fail: "说书连不上"
+      }, (d, token) => {
         if (!d || !d.ok) {
-          host.bubble("说书没开成：" + (d && d.error || "没读到书"), 5e3);
+          release(token);
+          host.bubble("说书没开成：" + storyErrorText(d && d.error), 5e3);
           return;
         }
         playPiece(d);
-      }).catch(() => host.bubble("说书连不上"));
+      });
     }
     function next() {
       if (refs.busy.current) {
         host.bubble("正讲着呢，听完这段再说～", 3e3);
         return;
       }
-      const headers = clientHeaders(host.clientId);
-      getJson("/story/next", { headers }).then((d) => {
+      requestStory("/story/next", false, {
+        slow: "说书等太久啦（网络慢或书太大），再点一次试试～",
+        fail: "说书连不上"
+      }, (d, token) => {
         if (!d || !d.ok) {
-          host.bubble("说书卡住了", 4e3);
+          release(token);
+          host.bubble("说书卡住了：" + storyErrorText(d && d.error), 4e3);
           return;
         }
         if (d.done) {
+          release(token);
           host.bubble("一轮都讲完啦，本鱼从头再讲～", 5e3);
           start("");
           return;
         }
         playPiece(d);
-      }).catch(() => host.bubble("说书连不上"));
+      });
     }
     function reset() {
       const book = refs.book.current;
@@ -5510,15 +5651,24 @@
         host.bubble("还没讲书呢", 3e3);
         return;
       }
-      const headers = clientHeaders(host.clientId);
-      postJson("/story/reset?book=" + encodeURIComponent(book), void 0, { headers }).then((d) => {
+      if (refs.busy.current) {
+        host.bubble("正讲着呢，先「歇会儿」再从头讲～", 4e3);
+        return;
+      }
+      const path = "/story/reset?book=" + encodeURIComponent(book);
+      requestStory(path, true, {
+        slow: "重置等太久啦，稍后再试～",
+        fail: "说书连不上"
+      }, (d, token) => {
         if (!d || !d.ok) {
-          host.bubble("没重置成：" + (d && d.error || "接口没应"), 4e3);
+          release(token);
+          host.bubble("没重置成：" + storyErrorText(d && d.error), 4e3);
           return;
         }
+        release(token);
         refs.book.current = String(d.book || book);
         host.bubble("这本书从头讲～", 3e3);
-      }).catch(() => host.bubble("说书连不上"));
+      });
     }
     return { playPiece, start, next, reset };
   }
@@ -5770,21 +5920,42 @@
       return null;
     }
   }
+  var CHAT_TIMEOUT_MS = 3e4;
+  var STREAM_HEADER_TIMEOUT_MS = 4e3;
+  var STREAM_RETRYABLE_STATUS = [404, 405, 408, 425, 429, 501, 502, 503, 504];
+  function streamHttpRetryable(status) {
+    if (!status) return true;
+    return STREAM_RETRYABLE_STATUS.indexOf(status) >= 0;
+  }
+  function newAbortController() {
+    try {
+      return typeof AbortController !== "undefined" ? new AbortController() : null;
+    } catch (e) {
+      return null;
+    }
+  }
   function createChatSender(host) {
     let activeStream = null;
+    let activeChat = null;
     function clearActive(ctl) {
       if (activeStream && activeStream.ctl === ctl) activeStream = null;
     }
     function abortStream() {
       const s = activeStream;
-      if (!s) return false;
+      const c = activeChat;
+      if (!s && !c) return false;
       activeStream = null;
+      activeChat = null;
       try {
         host.epoch.next();
       } catch (e) {
       }
       try {
-        s.ctl && s.ctl.abort();
+        if (s && s.ctl) s.ctl.abort();
+      } catch (e) {
+      }
+      try {
+        if (c && c.ctl) c.ctl.abort();
       } catch (e) {
       }
       try {
@@ -5793,7 +5964,12 @@
       } catch (e) {
       }
       const d = diag();
-      if (d) d.streamAborted = (d.streamAborted || 0) + 1;
+      if (s) {
+        if (d) d.streamAborted = (d.streamAborted || 0) + 1;
+      }
+      if (c) {
+        if (d) d.chatAborted = (d.chatAborted || 0) + 1;
+      }
       return true;
     }
     async function tryStream(text, opts, myEpoch) {
@@ -5804,20 +5980,15 @@
       const isCurrent = () => host.epoch.isCurrent(myEpoch);
       let spokeAny = false;
       let full = "";
-      let ctl = null;
-      try {
-        ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
-      } catch (e) {
-        ctl = null;
-      }
+      const ctl = newAbortController();
       activeStream = { ctl };
       let gotHeaders = false;
       const firstTimer = setTimeout(() => {
         try {
-          if (!spokeAny && !gotHeaders && ctl) ctl.abort();
+          if (!gotHeaders && ctl) ctl.abort();
         } catch (e) {
         }
-      }, 4e3);
+      }, STREAM_HEADER_TIMEOUT_MS);
       let bubbleAt = 0;
       const sb = createSentenceBuffer(40);
       const speakSegs = (segs) => {
@@ -5841,11 +6012,37 @@
       };
       try {
         const res = await postRaw("/chat-stream", { message: text, lang: resolveChatLang(), voice: !!(opts && opts.voice) }, { signal: ctl ? ctl.signal : void 0 });
+        gotHeaders = true;
+        clearTimeout(firstTimer);
         if (!isCurrent()) return dropStale();
         if (!res.ok || !res.body) {
-          clearTimeout(firstTimer);
           clearActive(ctl);
-          return false;
+          const status = Number(res && res.status) || 0;
+          if (streamHttpRetryable(status)) return false;
+          let tip = "";
+          try {
+            const j = await res.json();
+            tip = String(j && j.reply || "");
+          } catch (e) {
+          }
+          if (!tip) tip = "主人，本鲸这边没接上（HTTP " + status + "），等会儿再试一次？";
+          if (isCurrent()) {
+            try {
+              host.setMessages((m) => [...m, { who: "fish", text: tip }]);
+            } catch (e) {
+            }
+            try {
+              host.bubble(tip, 6e3);
+            } catch (e) {
+            }
+            try {
+              host.speakReply(tip);
+            } catch (e) {
+            }
+          }
+          const d = diag();
+          if (d) d.streamHttpFail = status;
+          return true;
         }
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -5866,7 +6063,6 @@
             }
             if (typeof obj.delta === "string" && obj.delta) {
               full += obj.delta;
-              clearTimeout(firstTimer);
               speakSegs(sb.push(obj.delta));
               const nowT = Date.now();
               if (nowT - bubbleAt > 400) {
@@ -5878,23 +6074,45 @@
               if (!isCurrent()) return dropStale();
               const reply = String(obj.reply || full || "").trim();
               full = reply || full;
-              if (reply) {
-                if (host.replyDeduper.allow(reply)) {
-                  speakSegs(sb.flush());
-                  host.busy.end();
-                  host.setBusy(false);
-                  host.setMessages((m) => [...m, { who: "fish", text: reply }]);
-                  host.bubble(reply, 6e3);
-                  host.talkFor(1500);
-                  host.scrollBody();
-                  const d = diag();
-                  if (d) d.lastChat = { stage: "stream-done", firstDeltaMs: obj.firstDeltaMs || 0, ms: obj.ms || 0, cached: !!obj.cached, reply: reply.slice(0, 40) };
-                }
-              }
-              clearTimeout(firstTimer);
               clearActive(ctl);
+              speakSegs(sb.flush());
               host.busy.end();
               host.setBusy(false);
+              if (reply) {
+                const fresh = host.replyDeduper.allow(reply);
+                try {
+                  host.setMessages((m) => [...m, { who: "fish", text: reply }]);
+                } catch (e) {
+                }
+                if (fresh) {
+                  try {
+                    host.bubble(reply, 6e3);
+                  } catch (e) {
+                  }
+                }
+                try {
+                  host.talkFor(1500);
+                } catch (e) {
+                }
+                try {
+                  host.scrollBody();
+                } catch (e) {
+                }
+                const d = diag();
+                if (d) d.lastChat = { stage: "stream-done", firstDeltaMs: obj.firstDeltaMs || 0, ms: obj.ms || 0, cached: !!obj.cached, reply: reply.slice(0, 40) };
+              } else {
+                const tip = host.persona.line("error");
+                try {
+                  host.setMessages((m) => [...m, { who: "fish", text: tip }]);
+                } catch (e) {
+                }
+                try {
+                  host.bubble(tip, 6e3);
+                } catch (e) {
+                }
+                const d = diag();
+                if (d) d.lastChat = { stage: "stream-empty", at: Date.now() };
+              }
               return true;
             }
           }
@@ -5905,10 +6123,30 @@
         speakSegs(sb.flush());
         host.busy.end();
         host.setBusy(false);
-        if (full) {
-          host.setMessages((m) => [...m, { who: "fish", text: full }]);
-          host.bubble(full, 6e3);
-          host.scrollBody();
+        const tail = full.trim();
+        if (tail) {
+          try {
+            host.setMessages((m) => [...m, { who: "fish", text: tail }]);
+          } catch (e) {
+          }
+          try {
+            host.bubble(tail, 6e3);
+          } catch (e) {
+          }
+          try {
+            host.scrollBody();
+          } catch (e) {
+          }
+        } else {
+          const tip = host.persona.line("error");
+          try {
+            host.setMessages((m) => [...m, { who: "fish", text: tip }]);
+          } catch (e) {
+          }
+          try {
+            host.bubble(tip, 6e3);
+          } catch (e) {
+          }
         }
         return true;
       } catch (e) {
@@ -5917,10 +6155,21 @@
         clearActive(ctl);
         host.busy.end();
         host.setBusy(false);
+        const d = diag();
+        if (d) d.streamFallback = String(e && e.message || e);
         if (spokeAny) {
           speakSegs(sb.flush());
-          const d = diag();
-          if (d) d.streamFallback = String(e && e.message || e);
+          const partial = full.trim();
+          if (partial) {
+            try {
+              host.setMessages((m) => [...m, { who: "fish", text: partial }]);
+            } catch (e2) {
+            }
+          }
+          try {
+            host.bubble(partial ? "网络断了一下，本鲸先念到这儿～" : "网络断了一下，本鲸没说完～", 5e3);
+          } catch (e2) {
+          }
           return true;
         }
         return false;
@@ -5932,9 +6181,9 @@
       abortStream();
       const d0 = diag();
       if (d0) d0.lastChat = { stage: "entry", busy: host.busy.isBusy(), tts: !!host.ttsPlaying(), at: Date.now() };
-      if (host.busy.isBusy() && d0) d0.lastChat.stage = "blocked-busy";
       if (host.busy.isBusy() && host.busy.age() < 35e3) {
-        if (opts && opts.voice) host.bubble("本鲸还在想上一句呢，稍等～", 2500);
+        if (d0) d0.lastChat.stage = "blocked-busy";
+        host.bubble("本鲸还在想上一句呢，稍等～", 2500);
         return;
       }
       if (host.narrating.current || host.ttsPlaying()) {
@@ -5948,16 +6197,24 @@
         } catch (e) {
         }
       }
-      if (host.route(text)) {
+      let localHit = false;
+      try {
+        localHit = host.route(text);
+      } catch (e) {
+        localHit = false;
+      }
+      if (localHit) {
         host.setInput("");
         return;
       }
       const myEpoch = host.epoch.next();
+      host.setInput("");
       try {
-        if (await tryStream(text, opts, myEpoch)) {
-          host.setInput("");
-          return;
-        }
+        host.setMessages((m) => [...m, { who: "me", text }]);
+      } catch (e) {
+      }
+      try {
+        if (await tryStream(text, opts, myEpoch)) return;
       } catch (e) {
       }
       try {
@@ -5968,8 +6225,6 @@
         }
       } catch (e) {
       }
-      host.setInput("");
-      host.setMessages((m) => [...m, { who: "me", text }]);
       try {
         if (opts && opts.voice && !host.ttsPlaying() && Math.random() < 0.25) host.say(host.persona.line("waiting"), 3e3);
       } catch (e) {
@@ -5978,42 +6233,78 @@
       host.setBusy(true);
       host.talkFor(1200);
       host.scrollBody();
+      const d1 = diag();
       let data = null;
+      const ctl = newAbortController();
+      activeChat = { ctl };
+      let timeoutTimer = null;
       try {
+        if (ctl) {
+          timeoutTimer = setTimeout(() => {
+            try {
+              ctl.abort();
+            } catch (e) {
+            }
+          }, CHAT_TIMEOUT_MS);
+        }
         const tChat = performance.now();
-        data = await postJson("/chat", { message: text, voice: true, lang: resolveChatLang() }, {
-          // 30 秒上限：请求卡住时别让状态永远停在「在想…」
-          signal: timeoutSignal(3e4)
+        data = await postJson("/chat", {
+          message: text,
+          // voice 表示「输入来自语音识别」（后端据此追加 ASR 纠错说明）。
+          // 原来这里写死 true，打字也会被当成语音，且与流式的缓存键对不上。
+          voice: !!(opts && opts.voice),
+          lang: resolveChatLang()
+        }, {
+          signal: ctl ? ctl.signal : timeoutSignal(CHAT_TIMEOUT_MS)
         });
         try {
           host.recordChatLatency(Math.round(performance.now() - tChat));
         } catch (e) {
         }
         if (!host.epoch.isCurrent(myEpoch)) return;
-        const reply = data?.reply || "主人……本鲸走神了。";
-        const d1 = diag();
+        const reply = data && data.reply ? String(data.reply) : data && data.ok === false ? "主人，本鲸这边没接上（" + String(data.error || "接口没应") + "），等会儿再问一次？" : "主人……本鲸走神了。";
         if (d1) d1.lastChat = { stage: "fetched", reply: String(reply).slice(0, 40), at: Date.now() };
         host.setMessages((m) => [...m, { who: "fish", text: reply }]);
         if (host.voiceMode.current) {
           host.bubble("（说）" + reply, 8e3);
         }
         if (data && data.upgraded) host.bubble("本鲸又长大一点啦！", 4e3);
-      } catch {
-        host.setMessages((m) => [...m, { who: "fish", text: host.persona.line("error") }]);
-      } finally {
-        host.busy.end();
-        host.setBusy(false);
-        host.talkFor(1500);
+      } catch (err) {
+        if (!host.epoch.isCurrent(myEpoch)) return;
+        const timedOut = !!err && (err.name === "AbortError" || err.code === 20 || err.code === 2);
+        const tip = timedOut ? "主人，本鲸等太久啦（网络慢），再问一次？" : host.persona.line("error");
+        if (d1) d1.lastChat = { stage: timedOut ? "timeout" : "error", error: String(err && err.message || err).slice(0, 60), at: Date.now() };
         try {
-          if (data && data.reply && host.epoch.isCurrent(myEpoch)) {
-            const rp = String(data.reply);
-            const d2 = diag();
-            if (d2) d2.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now() };
-            host.speakReply(rp);
-          }
-        } catch {
+          host.setMessages((m) => [...m, { who: "fish", text: tip }]);
+        } catch (e) {
         }
-        host.scrollBody();
+        try {
+          host.bubble(tip, 5e3);
+        } catch (e) {
+        }
+      } finally {
+        if (timeoutTimer) {
+          try {
+            clearTimeout(timeoutTimer);
+          } catch (e) {
+          }
+        }
+        if (activeChat && activeChat.ctl === ctl) activeChat = null;
+        if (host.epoch.isCurrent(myEpoch)) {
+          host.busy.end();
+          host.setBusy(false);
+          host.talkFor(1500);
+          try {
+            if (data && data.reply) {
+              const rp = String(data.reply);
+              const d2 = diag();
+              if (d2) d2.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now() };
+              host.speakReply(rp);
+            }
+          } catch (e) {
+          }
+          host.scrollBody();
+        }
       }
     }
     return { send, abortStream };

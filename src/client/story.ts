@@ -68,6 +68,10 @@ const REQUEST_TIMEOUT_MS = 25000
 const REQUEST_DEADLINE_MS = 30000
 /** 朗读兜底：估算时长之外再留这么久；TTS 不回 onDone 时不至于让说书永久占线 */
 const SPEAK_GUARD_EXTRA_MS = 20000
+/** 长段（TTS 分段多、合成排队久）的兜底余量按估算时长再放 20%，免得误判「没念完」 */
+const SPEAK_GUARD_RATIO = 0.2
+/** 只给短段设兜底：几十分钟的长段如果估算偏小，误判反而会在还在念的时候把占线放掉 */
+const SPEAK_GUARD_MAX_MS = 2 * 60 * 1000
 
 /**
  * 控制器共享状态（按 refs.busy 这个稳定对象取）。
@@ -95,6 +99,7 @@ function storyErrorText(raw: any): string {
   const e = String(raw == null ? '' : raw).trim()
   if (!e) return '接口没应'
   if (e === 'no books') return '书单是空的'
+  if (e === 'no book') return '没给书名'
   if (e === 'no readable book') return '书都读不出来'
   if (e === 'unknown book') return '书单里没有这本'
   return e
@@ -261,7 +266,9 @@ export function createStoryController(host: StoryHost): StoryController {
           }
         },
       })
-      armGuard(token, speakMs + SPEAK_GUARD_EXTRA_MS)
+      if (speakMs <= SPEAK_GUARD_MAX_MS) {
+        armGuard(token, speakMs + Math.max(SPEAK_GUARD_EXTRA_MS, Math.round(speakMs * SPEAK_GUARD_RATIO)))
+      }
     } catch (e) {
       // speak 本身抛错（音频上下文坏了等）：别留占线
       refs.busy.current = false
