@@ -24,6 +24,14 @@ export interface TtsSynthRequest {
   voice: string
   rate?: string
   pitch?: string
+  /**
+   * 可选：调用方中止信号（路由在客户端断连时给出 —— 切页面 / 30s 硬超时 / 断网重发）。
+   *
+   * 引擎收到后必须只停**当前这一次**合成：立刻放弃等待、清理临时产物，绝不再回退重跑；
+   * 常驻 worker 等共享资源不因此杀掉（取舍见 host/tts-engine.ts 的注释）。
+   * 不传时行为与改动前完全一致（B94）。
+   */
+  signal?: AbortSignal
 }
 
 /** TTS 引擎端口：路由只要"能合成成 mp3 字节"这一件事 */
@@ -170,8 +178,12 @@ export interface ChatStreamRouteDeps {
 export interface TtsRouteDeps {
   cache?: CachePort
   engine: TtsEngine
-  /** 云端 TTS（火山豆包语音）：有 Key 时优先，失败由路由回退 engine（edge-tts） */
-  cloudTts?: { synthesize: (text: string) => Promise<Buffer>; enabled: () => boolean }
+  /**
+   * 云端 TTS（火山豆包语音）：有 Key 时优先，失败由路由回退 engine（edge-tts）。
+   * synthesize 的第 2 个参数是可选中止信号：实现侧会与自己的 15s 超时合并（AbortSignal.any），
+   * 客户端走了就不再等云端（B94）。
+   */
+  cloudTts?: { synthesize: (text: string, signal?: AbortSignal) => Promise<Buffer>; enabled: () => boolean }
 }
 
 /** /asr 的依赖：只要求能拿到硅基流动 Key */

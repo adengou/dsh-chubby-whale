@@ -5,6 +5,8 @@
  * 语速由请求体 rate 决定（说书 -15%，普通聊天 +0%），服务端不再写死。
  * 音色：先过 `^[a-zA-Z0-9-]+$` 字符集，再用 shared/voices.ts 的白名单（与客户端菜单同一份）；
  *       白名单外一律回落默认音色（不 400，避免破坏旧调用方），响应头 x-tts-voice: fallback 便于排障。
+ * 断连（2026-11-07 B94）：客户端走了（切页面 / 30s 硬超时 / 断网重发）立刻中止正在跑的合成 ——
+ *       被中止的那次**不记失败、不进缓存、不进降级闸、不回包**，只留一行 TTS-CLIENT-ABORT 诊断。
  */
 import { hashKey } from '../../shared/hash.js'
 import { sendTooLarge } from '../http.js'
@@ -36,6 +38,66 @@ function oneLine(err: any, max = 220): string {
   return String((err && err.message) || err || '').replace(/\s+/g, ' ').trim().slice(0, max)
 }
 
+/**
+ * 客户端已经走了的日志标签：与真正的合成失败/超时分开，排障时一眼能分清。
+ * 分两条是因为时机差一步：合成发出后断开（中止合成）/ 请求体还没读完就断开（根本没发起合成）。
+ */
+const LOG_CLIENT_ABORT_SYNTH = '[tts] TTS-CLIENT-ABORT 客户端已断开，合成已中止（不计入失败，不进降级闸）'
+const LOG_CLIENT_ABORT_REQUEST = '[tts] TTS-CLIENT-ABORT 客户端已断开，请求中止（未发起合成）'
+
+/** 断连观察器：signal 只在中止时 abort；gone() 供 handler 区分「客户端走了」与「合成真失败」 */
+type ClientWatch = { signal: AbortSignal; gone: () => boolean; dispose: () => void }
+
+/**
+ * 盯住「客户端是不是走了」。思路与 routes/asr.ts 的 watchClientGone 一致（B93 那条），返回的
+ * signal 一路传给 TtsEngine / cloudTts —— 客户端一走，还在等 python worker / 云端的合成立刻放弃。
+ *
+ * 为什么不能只听 req 的 close（Node 24 本机实测，时间线取证见 scripts/test-asr-abort.mjs）：
+ * 请求体读完时 req 就会发 close（此时 req.complete=true、响应还没写）——只看 close 会把
+ * **每个正常请求**都误判成断连。真正的断连有三种形状：
+ *   ① req 'aborted'：请求体还没收完客户端就断了；
+ *   ② req 'close' 且 req.complete === false：①的兜底（老版本/某些客户端不发 aborted）；
+ *   ③ res 'close' 且响应没写完（writableEnded 与 writableFinished 都为 false）：客户端发完了
+ *      body、等不到音频先走了 —— 客户端 30s 硬超时就是这个形状。
+ * 正常结束的 res 'close' 里 writableFinished=true，不会命中 ③，所以不会误中止正常请求。
+ *
+ * 为什么不与 asr.ts 抽成公共模块：路由的依赖白名单（check-imports 规则 A / check-boundaries B6）
+ * 只允许依赖 respond/body/http/ports/shared，抽出去就要新开一个 host/ 层模块，超出 B94 的改动范围。
+ */
+function watchClientGone(req: any, res: any): ClientWatch {
+  const ctl = new AbortController()
+  let gone = false
+  const mark = (): void => {
+    if (gone) return
+    gone = true
+    try { ctl.abort() } catch { }
+  }
+  const onReqAborted = (): void => mark()
+  const onReqClose = (): void => { if (!req || req.complete === false) mark() }
+  const onResClose = (): void => { if (!res || !(res.writableEnded || res.writableFinished)) mark() }
+  const on = (target: any, ev: string, fn: () => void): void => {
+    // 测试里的假 req/res 未必是 EventEmitter：没有 on 就静默跳过（既有用例都是这种形状）
+    if (!target || typeof target.on !== 'function') return
+    try { target.on(ev, fn) } catch { }
+  }
+  const off = (target: any, ev: string, fn: () => void): void => {
+    if (!target || typeof target.removeListener !== 'function') return
+    try { target.removeListener(ev, fn) } catch { }
+  }
+  on(req, 'aborted', onReqAborted)
+  on(req, 'close', onReqClose)
+  on(res, 'close', onResClose)
+  return {
+    signal: ctl.signal,
+    gone: () => gone,
+    dispose(): void {
+      off(req, 'aborted', onReqAborted)
+      off(req, 'close', onReqClose)
+      off(res, 'close', onResClose)
+    },
+  }
+}
+
 export function createTtsHandler(opts: TtsRouteDeps) {
   // 引擎必须由装配层构造并注入（src/index.ts），路由内**不再**自建：
   // createEdgeTtsEngine 持有常驻 python 子进程，而路由工厂只交出 handler 函数，
@@ -57,6 +119,10 @@ export function createTtsHandler(opts: TtsRouteDeps) {
   } catch { }
 
   return async function handleTts(req: any, res: any): Promise<void> {
+    // 先挂断连观察器：从读 body 到合成返回的整段都在它的看护下，结束时必须 dispose（finally）
+    const client = watchClientGone(req, res)
+    // 诊断用：断连时区分「还没开始合成」与「合成跑到一半被中止」（两种浪费规模不一样）
+    let phase: 'request' | 'synth' = 'request'
     try {
       const parsed = await readJsonBody(req, TTS_MAX_BODY)
       if (!parsed.ok) {
@@ -115,21 +181,43 @@ export function createTtsHandler(opts: TtsRouteDeps) {
         sendJson(res, { ok: false, code: TTS_UNAVAILABLE, error: 'tts degraded' }, 501)
         return
       }
+      // 客户端可能在读 body / 查缓存这段时间就走了（切页面、硬超时）：一帧都别合成。
+      // 这里必须早于下面的合成调用 —— 否则就是 B94 要治的「人走了还在跑付费合成」。
+      if (client.gone()) {
+        console.error(LOG_CLIENT_ABORT_REQUEST)
+        return
+      }
+      phase = 'synth'
       // 云端优先（火山豆包语音 2.0）：有 Key 且启用时先走云端；任何失败都回退 edge-tts（免费兜底）
       let buf: Buffer
       const cloud = opts.cloudTts
       if (cloud && cloud.enabled()) {
         try {
-          buf = await cloud.synthesize(msg)
+          // signal 传进云端：实现侧和自己的 15s 超时用 AbortSignal.any 合并，客户端一走了就断开
+          buf = await cloud.synthesize(msg, client.signal)
           // 云端不接收 voice（用配置里的 speaker），所以「音色被替换」在云端路径上不成立：
           // 成功出云端时把 fallback 头摘掉，别让排障的人以为客户端音色真的生效了（2026-11-07 B93）。
           if (voiceFallback) delete audioHeaders['x-tts-voice']
         } catch (ce: any) {
+          // 客户端已经走了：这次云端失败是**我们自己**中止的（signal），不是云端故障。
+          // 绝不能再回退 edge-tts 重跑一遍 —— 那样等于「客户端断了，宿主还把两套合成各跑一次」。
+          if (client.gone()) {
+            console.error(LOG_CLIENT_ABORT_SYNTH)
+            return
+          }
           console.warn('[tts] CLOUD-FAIL 回退 edge-tts：' + String(ce?.message || ce).slice(0, 200))
-          buf = await engine.synthesize({ text: msg, voice, rate, pitch })
+          buf = await engine.synthesize({ text: msg, voice, rate, pitch, signal: client.signal })
         }
       } else {
-        buf = await engine.synthesize({ text: msg, voice, rate, pitch })
+        buf = await engine.synthesize({ text: msg, voice, rate, pitch, signal: client.signal })
+      }
+      // 合成期间客户端走了：这次结果**作废** —— 不写缓存、不记成功、不回包。
+      // 为什么不「顺手缓存」：abort 语义下引擎只保证「不再等」，产物可能是半截的（见
+      // host/tts-engine.ts 的取舍说明）；缓存半截音频比丢一次合成更糟，而且断连请求不该在
+      // 缓存里留下「看起来合成成功」的痕迹。代价是极端情况下丢掉一次本来可复用的结果。
+      if (client.gone()) {
+        console.error(LOG_CLIENT_ABORT_SYNTH)
+        return
       }
       // 任意一次成功即视为恢复：清零连败计数与降级窗口
       failGuard.streak = 0
@@ -138,6 +226,14 @@ export function createTtsHandler(opts: TtsRouteDeps) {
       sendBuffer(res, buf, 'audio/mpeg', audioHeaders)
     } catch (err: any) {
       try {
+        // 客户端已经走了（请求体没收完就断 / 合成被我们自己中止）：这次不算合成失败。
+        // 口径与 routes/asr.ts 一致：不记失败（不动连败计数与降级窗口）、不回包（连接已断，
+        // 写了也只是往死 socket 上叠一次写），只留一行专用诊断。否则断连几次就会把降级闸
+        // 推到 501，让还在线的主人改走浏览器朗读 —— 这是 B94 明确要防的误伤。
+        if (client.gone()) {
+          console.error(phase === 'synth' ? LOG_CLIENT_ABORT_SYNTH : LOG_CLIENT_ABORT_REQUEST)
+          return
+        }
         // 合成不可用（没装 python/edge-tts）→ 501，客户端据此改用浏览器 speechSynthesis；其余 → 500。
         // 连败闸门：连续失败到阈值（或依赖确定不可用）就进入静默窗口，期间不再逐段打堆栈。
         const wasUnavailable = Boolean(err && err.code === TTS_UNAVAILABLE)
@@ -159,6 +255,10 @@ export function createTtsHandler(opts: TtsRouteDeps) {
           error: detail,
         }, degraded ? 501 : 500)
       } catch { }
+    } finally {
+      // 结束就摘监听：req/res 是每请求对象，不摘也不会串到下一个请求，但已经结束的 handler
+      // 没必要继续响应 'close'/'aborted'（多一次无意义的 abort，排障时也容易看花眼）
+      client.dispose()
     }
   }
 }
