@@ -54,7 +54,15 @@ export function createTtsHandler(opts) {
                 return;
             }
             const body = parsed.body;
-            const msg = typeof body?.text === 'string' ? body.text.trim().slice(0, MAX_TEXT) : '';
+            const rawText = typeof body?.text === 'string' ? body.text.trim() : '';
+            // 超长不再静默截断（2026-11-07 B92 审计）：原来 slice(0, MAX_TEXT) 会回 200，
+            // 但引擎只收到前 6000 字 —— 调用方听到的是半句话、却没有任何信号。
+            // 客户端本来就按句切分后再请求，这里超限基本只可能是外部直调：明确回 413 更诚实。
+            if (rawText.length > MAX_TEXT) {
+                sendJson(res, { ok: false, error: 'text too large', limit: MAX_TEXT }, 413);
+                return;
+            }
+            const msg = rawText;
             const voiceIn = typeof body?.voice === 'string' ? body.voice : '';
             const isZh = /[\u4e00-\u9fa5]/.test(msg);
             let voice = (voiceIn && /^[a-zA-Z0-9-]+$/.test(voiceIn)) ? voiceIn : '';

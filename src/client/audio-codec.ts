@@ -140,6 +140,44 @@ export function encodeWavPcm16(samples: Float32Array | number[] | null | undefin
 }
 
 /**
+ * 把超采样率降到可接受范围（默认 96k）。
+ *
+ * 为什么需要（2026-11-07 B92 分身取证）：Chrome 的 `AudioContext.sampleRate` 跟随输出设备，
+ * 192kHz 设备上 `decodeAudioData` 出来的采样就是 192k；而 `encodeWavPcm16` 会把头部采样率夹到 96k——
+ * 「头写 96k、数据是 192k」等于把音频写成半速，ASR 端整段识别必然错。
+ * 这里先按整数倍抽取（块内平均，等价于简单低通）降到 ≤maxRate，再写头，头与数据就一致了。
+ * 语音识别用不到 48k 以上的频段，块平均不会伤到内容。
+ */
+export function capSampleRate(
+  samples: Float32Array | number[] | null | undefined,
+  sampleRate: number,
+  maxRate = 96000,
+): { samples: Float32Array; sampleRate: number } {
+  const src: any = samples || []
+  const n = Math.max(0, src.length >>> 0)
+  const rate = Math.round(Number(sampleRate) || 48000)
+  const cap = Math.max(8000, Math.round(Number(maxRate) || 96000))
+  if (rate <= cap || n === 0) {
+    const same = src instanceof Float32Array ? src : Float32Array.from(src as number[])
+    return { samples: same, sampleRate: rate }
+  }
+  // 整数倍抽取：192k→96k（2 倍）、176.4k→88.2k（2 倍）、384k→96k（4 倍）
+  const factor = Math.max(2, Math.ceil(rate / cap))
+  const outLen = Math.floor(n / factor)
+  const out = new Float32Array(outLen)
+  for (let i = 0; i < outLen; i++) {
+    let sum = 0
+    const base = i * factor
+    for (let k = 0; k < factor; k++) {
+      const v = Number(src[base + k])
+      sum += isFinite(v) ? v : 0
+    }
+    out[i] = sum / factor
+  }
+  return { samples: out, sampleRate: Math.round(rate / factor) }
+}
+
+/**
  * WAV 能装下多少字节（调用方按它估算上传体积，避免超过宿主上限）。
  * 采样数向上取整：与 encodeWavPcm16 的实际 data 长度（n×2）保持同一口径，
  * 不用 round 是为了体积检查宁多算 2 字节，也别放过刚好卡线的情况。

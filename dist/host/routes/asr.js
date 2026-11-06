@@ -2,7 +2,8 @@
  * host/routes/asr.ts —— 语音识别路由（硅基流动 Qwen3-ASR）
  * POST JSON { audio: base64, format: 'webm'|'wav'|'mp3' } → { text }
  * Key 由入口注入（getKey），路由不再自己读 config.json / 环境变量。
- * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB；外呼超时 60 秒
+ * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB → 同样 413（口径统一，2026-11-07）
+ * 外呼超时 60 秒
  */
 import { hashBytes } from '../../shared/hash.js';
 import { isInterruptWord, isNoiseText } from '../../shared/noise.js';
@@ -49,9 +50,13 @@ export function createAsrHandler(opts) {
                 return;
             }
             const buf = Buffer.from(audioB64, 'base64');
-            // 解码后再判音频上限（8MB）
+            // 解码后再判音频上限（8MB）。
+            // 必须与上面「请求体超限」同一口径回 413：同一个路由对「太大」给出 200/413 两种状态码，
+            // 客户端虽只看 ok 字段、表现不变，但代理、网关、访问日志只认状态码——200 会被记成
+            // 「识别成功」，排障时查不出来（2026-11-07 B92 实测：8MB+1 字节走的正是这条分支）。
             if (buf.length > ASR_MAX_AUDIO) {
-                sendJson(res, { ok: false, error: 'audio too large', text: '' });
+                console.error('[asr] AUDIO-TOO-LARGE ' + buf.length + ' bytes > ' + ASR_MAX_AUDIO);
+                sendJson(res, { ok: false, error: 'audio too large', text: '' }, 413);
                 return;
             }
             const key = opts.getKey();
@@ -61,7 +66,12 @@ export function createAsrHandler(opts) {
             }
             // 用完整音频字节做 key（只取前 4000 字符容易撞 key）
             // key 里带模型名：换 ASR 模型后不会命中旧文本
-            const ck = hashBytes(Buffer.concat([Buffer.from('v1|' + ASR_MODEL + '|'), buf]));
+            // key 里还必须带 format：同一份字节在 multipart 里声明的 Content-Type / filename 不同，
+            // 上游的解码方式就不同。原来只按「模型 + 字节」缓存，实测同一份字节先用 format=wav
+            // 识别成功，再以 format=webm 上传会直接命中上一次的文本（cached:true）——A 容器的结果
+            // 顶了 B 容器的请求。v1 前缀的旧条目没有 format，刻意升到 v2 让它们自然失效（7 天 TTL 内
+            // 最多少几次命中，不会读出别人的文本）。
+            const ck = hashBytes(Buffer.concat([Buffer.from('v2|' + ASR_MODEL + '|' + format + '|'), buf]));
             if (opts.cache) {
                 const hit = await opts.cache.getJson(ck, 'json', ASR_CACHE_MAX_AGE);
                 if (hit && typeof hit.text === 'string') {

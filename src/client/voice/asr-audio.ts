@@ -10,7 +10,7 @@
  * 行为与拆分前逐字一致（含 3 秒转码兜底、6MB 体积上限、失败回退原字节）。
  */
 import {
-  formatFromMime, hostAsrFormat, downmixToMono, encodeWavPcm16, wavBytes,
+  capSampleRate, formatFromMime, hostAsrFormat, downmixToMono, encodeWavPcm16, wavBytes,
   type RecFormat,
 } from '../audio-codec.js'
 import { clearT } from '../util.js'
@@ -65,8 +65,13 @@ export function transcodeToWav(blob: Blob, actx: any, maxWavBytes = 6 * 1024 * 1
         const n = Math.min(2, Number(buf.numberOfChannels) || 1)
         for (let i = 0; i < n; i++) chans.push(buf.getChannelData(i))
         const mono = downmixToMono(chans)
-        if (wavBytes(mono.length / (Number(buf.sampleRate) || 48000), buf.sampleRate) > maxWavBytes) { done(null); return }
-        done(new Blob([encodeWavPcm16(mono, buf.sampleRate)], { type: 'audio/wav' }))
+        // 设备可能是 192kHz（AudioContext 跟随输出设备）：先降到 ≤96k，
+        // 否则 encodeWavPcm16 会把头部夹成 96k 而数据仍是 192k —— 半速音频，识别必错。
+        const capped = capSampleRate(mono, buf.sampleRate)
+        const samples = capped.samples
+        const rate = capped.sampleRate
+        if (wavBytes(samples.length / rate, rate) > maxWavBytes) { done(null); return }
+        done(new Blob([encodeWavPcm16(samples, rate)], { type: 'audio/wav' }))
       } catch (e) { done(null) }
     }
     readBlobBuffer(blob).then((ab) => {
