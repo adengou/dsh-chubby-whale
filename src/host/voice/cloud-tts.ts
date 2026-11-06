@@ -12,6 +12,11 @@
  *
  * 成本控制：按「日合成字数」熔断（默认 5000 字/天，可在 config.cloudVoice.dailyChars 改）；
  * 超限直接抛错 -> 路由回退 edge-tts（免费）-> 客户端始终有声。
+ * 日用量落盘 ~/.dsh-chubby-whale/cloud-usage.json（重启/跨进程接着算）；写盘失败时进程内
+ * 计数兜底并留 CLOUD-USAGE-FAIL，熔断不会因为一次 IO 失败就失效。
+ *
+ * 健壮性：单次响应体积上限 16MB（声明超限不读流、流式超限提前 cancel），坏响应吃不掉宿主内存；
+ * 超时（默认 15s，可注入）到点 abort，失败一律抛错交给路由回退，不记账。
  *
  * 安全：API Key 只从本地 config.json 读，不进包、不进备份导出。
  */
@@ -27,6 +32,20 @@ export const CLOUD_TTS_RESOURCE_ID = 'seed-tts-2.0'
 export const CLOUD_TTS_DEFAULT_SPEAKER = 'zh_female_vv_uranus_bigtts'
 /** 合成请求超时（云端 HTTP 单次，通常 0.2–0.5s） */
 const CLOUD_TTS_TIMEOUT_MS = 15000
+
+/**
+ * 单次响应体积上限（字节，按 JSON 文本算：base64 比音频大约 4/3）。
+ *
+ * 为什么必须有：原来直接 `await res.text()`，chunked 流有多大就收多大——服务端 bug、
+ * 中间层塞回一个错误页/HTML、或响应被劫持时，宿主进程的内存没有任何护栏
+ * （实测 8MB 的假响应照收不误，再大也一样）。
+ *
+ * 上限怎么定：/tts 路由侧单段文本最多 6000 字（host/routes/tts.ts 的 MAX_TEXT），
+ * 按 24kHz mp3 估算约 5–10MB base64；正常请求（客户端按 ≤80 字分段）只有几十~一百多 KB。
+ * 取 16MB 既装得下最长的合法请求，又给坏响应一个硬天花板；超限一律抛错让路由回退
+ * edge-tts（免费兜底，客户端仍有声），不拿宿主内存赌对方一定守规矩。
+ */
+const CLOUD_TTS_MAX_BYTES = 16 * 1024 * 1024
 
 export type CloudVoiceConfig = {
   /** 是否启用（有 Key 且未显式关闭） */
@@ -90,8 +109,54 @@ function readUsage(runtimeDir: string): Usage {
   }
 }
 
-function saveUsage(runtimeDir: string, u: Usage): void {
-  try { writeJsonAtomic(join(runtimeDir, 'cloud-usage.json'), u) } catch { }
+/**
+ * 写日用量；失败返回 false（调用方记一行日志，绝不把异常抛进聊天链路）。
+ * 返回布尔而不是吞掉：熔断的全部依据就是这份计数，写不进去必须留痕。
+ */
+function saveUsage(runtimeDir: string, u: Usage): boolean {
+  try { writeJsonAtomic(join(runtimeDir, 'cloud-usage.json'), u); return true } catch { return false }
+}
+
+/**
+ * 带体积上限地读完响应文本（成功与失败两条路都走这里）。
+ *   · 声明了 content-length 且已超限：一个字节都不读，直接判超限；
+ *   · 没声明或声明偏小：边读边累计，超限立刻 cancel 掉流再抛（不把整份坏响应收进内存）；
+ *   · 没有 body 流（离线测试里的假响应）时退回 res.text()，按 UTF-8 字节数补判上限。
+ */
+async function readResponseText(res: any, maxBytes: number): Promise<string> {
+  const declared = Number(res && res.headers && typeof res.headers.get === 'function'
+    ? res.headers.get('content-length') : NaN)
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new Error('cloud-tts 响应超限 ' + declared + ' > ' + maxBytes + ' 字节')
+  }
+  const body = res && res.body
+  if (!body || typeof body.getReader !== 'function') {
+    const text = String(await res.text())
+    const bytes = Buffer.byteLength(text, 'utf8')
+    if (bytes > maxBytes) throw new Error('cloud-tts 响应超限 ' + bytes + ' > ' + maxBytes + ' 字节')
+    return text
+  }
+  const reader = body.getReader()
+  const chunks: Buffer[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const step = await reader.read()
+      if (!step || step.done) break
+      if (!step.value) continue
+      const buf = Buffer.from(step.value as any)
+      total += buf.length
+      if (total > maxBytes) throw new Error('cloud-tts 响应超限 >' + maxBytes + ' 字节')
+      chunks.push(buf)
+    }
+  } catch (err) {
+    // 读取中途出错（含超时 abort / 超限）：把流放掉，别让连接挂着
+    try { if (typeof reader.cancel === 'function') await reader.cancel() } catch { }
+    throw err
+  } finally {
+    try { if (typeof reader.releaseLock === 'function') reader.releaseLock() } catch { }
+  }
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 export type CloudTtsDeps = {
@@ -103,6 +168,12 @@ export type CloudTtsDeps = {
   log?: (msg: string) => void
   /** 当前时间（测试注入） */
   now?: () => Date
+  /**
+   * 单次合成超时（毫秒；可选，缺省 CLOUD_TTS_TIMEOUT_MS）。
+   * 抽成注入项而不是写死：超时→abort→回退 edge-tts 这条链要能离线验证，
+   * 否则只能等 15 秒真实超时（与本模块「只经注入依赖工作」的口径一致）。
+   */
+  timeoutMs?: number
 }
 
 export type CloudTts = {
@@ -120,11 +191,30 @@ export type CloudTts = {
 export function createCloudTts(deps: CloudTtsDeps): CloudTts {
   const log = deps.log || ((): void => { })
   const clock = deps.now || ((): Date => new Date())
+  const timeoutRaw = Number(deps.timeoutMs)
+  const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : CLOUD_TTS_TIMEOUT_MS
 
-  function budgetLeft(cfg: CloudVoiceConfig): number {
+  /**
+   * 进程内兜底计数。
+   *
+   * 为什么需要：日用量原本只认磁盘上的 cloud-usage.json，而写盘失败（只读目录、磁盘满、
+   * 杀软占着句柄）被静默吞掉——实测把 cloud-usage.json 换成目录后，dailyChars=150 的额度
+   * 连跑 3 次 100 字的合成全部放行、usage() 还是 0，熔断彻底失效（花的是真金白银）。
+   * 现在成功一次就同时记内存与磁盘，取两者的最大值：磁盘写失败时进程内仍能挡住超额，
+   * 重启后才有丢计数的风险（写盘成功时磁盘自然追平，不会重复计数）。
+   */
+  let memUsage: Usage | null = null
+
+  /** 今天已用字数：磁盘与内存取大（磁盘可能是别的实例写的，内存是本进程的最低保障） */
+  function usedChars(today: string): number {
     const u = readUsage(deps.runtimeDir)
-    const today = todayKey(clock())
-    return u.day === today ? cfg.dailyChars - u.chars : cfg.dailyChars
+    const fromDisk = u.day === today ? u.chars : 0
+    const fromMem = memUsage && memUsage.day === today ? memUsage.chars : 0
+    return Math.max(fromDisk, fromMem)
+  }
+
+  function budgetLeft(cfg: CloudVoiceConfig, today: string): number {
+    return cfg.dailyChars - usedChars(today)
   }
 
   return {
@@ -134,21 +224,22 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
     },
     usage(): { day: string; chars: number; limit: number } {
       const cfg = deps.config()
-      const u = readUsage(deps.runtimeDir)
-      return { day: u.day, chars: u.chars, limit: cfg.dailyChars }
+      const today = todayKey(clock())
+      return { day: today, chars: usedChars(today), limit: cfg.dailyChars }
     },
     async synthesize(text: string): Promise<Buffer> {
       const cfg = deps.config()
       if (!cfg.enabled || !cfg.apiKey) throw new Error('cloud-tts 未启用')
       const body = String(text || '').trim()
       if (!body) throw new Error('cloud-tts 空文本')
+      const today = todayKey(clock())
       // 日字数熔断：超了直接抛，路由回退 edge-tts
-      if (budgetLeft(cfg) < body.length) {
+      if (budgetLeft(cfg, today) < body.length) {
         log('[tts] CLOUD-BUDGET 日字数超限（' + cfg.dailyChars + '），回退 edge-tts')
         throw new Error('cloud-tts 日预算用尽')
       }
       const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
-      const timer = setTimeout(() => { try { ctl && ctl.abort() } catch { } }, CLOUD_TTS_TIMEOUT_MS)
+      const timer = setTimeout(() => { try { ctl && ctl.abort() } catch { } }, timeoutMs)
       try {
         const res = await fetch(CLOUD_TTS_URL, {
           method: 'POST',
@@ -168,11 +259,12 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
           signal: ctl ? ctl.signal : undefined,
         })
         if (!res.ok) {
-          const t = await res.text().catch(() => '')
+          // 错误页也走体积上限：有的网关会回一整页 HTML，读满内存才知道是 500
+          const t = await readResponseText(res, CLOUD_TTS_MAX_BYTES).catch(() => '')
           throw new Error('cloud-tts HTTP ' + res.status + ' ' + t.slice(0, 200))
         }
-        // 响应是 chunked 行流；text() 会全部拼好后按行解析
-        const raw = await res.text()
+        // 响应是 chunked 行流；整段读完后按行解析（半行不会跨包被判成坏帧）
+        const raw = await readResponseText(res, CLOUD_TTS_MAX_BYTES)
         const parts: Buffer[] = []
         for (const line of raw.split('\n')) {
           const s = line.trim()
@@ -186,10 +278,12 @@ export function createCloudTts(deps: CloudTtsDeps): CloudTts {
         }
         const buf = Buffer.concat(parts)
         if (!buf.length) throw new Error('cloud-tts 没有返回音频')
-        // 记账（成功才记）
-        const u = readUsage(deps.runtimeDir)
-        const today = todayKey(clock())
-        saveUsage(deps.runtimeDir, { day: today, chars: (u.day === today ? u.chars : 0) + body.length })
+        // 记账（成功才记）：内存与磁盘同时记，磁盘写失败也不能让熔断瞎掉
+        const used = usedChars(today) + body.length
+        memUsage = { day: today, chars: used }
+        if (!saveUsage(deps.runtimeDir, memUsage)) {
+          log('[tts] CLOUD-USAGE-FAIL 日用量写盘失败（进程内计数仍生效，重启后会丢）：day=' + today + ' chars=' + used)
+        }
         return buf
       } finally {
         clearTimeout(timer)

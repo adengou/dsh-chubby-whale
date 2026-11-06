@@ -26,5 +26,12 @@ const STAGE_TONE = {
 };
 /** 组装系统提示词：基础人设 + 当前成长阶段语气（未知阶段回落空串） */
 export function buildSystemPrompt(stageName) {
-    return SYSTEM_PROMPT + (STAGE_TONE[String(stageName || '')] || '');
+    const key = String(stageName || '');
+    // 只认自有键：STAGE_TONE 是普通对象字面量，`STAGE_TONE['constructor']` / `'__proto__'` /
+    // `'toString'` 会命中原型链，把函数源码或 "[object Object]" 拼进系统提示词
+    // （实测 buildSystemPrompt('constructor') 末尾多出 "function Object() { [native code] }"，
+    //  '__proto__' 多出 "[object Object]"）。未知阶段仍回落空串，已知阶段名行为不变。
+    // 与 host/repos/growth.ts 里 EXP_SOURCE_CAP 的 hasOwnProperty 口径一致。
+    const tone = key && Object.prototype.hasOwnProperty.call(STAGE_TONE, key) ? STAGE_TONE[key] : '';
+    return SYSTEM_PROMPT + tone;
 }
