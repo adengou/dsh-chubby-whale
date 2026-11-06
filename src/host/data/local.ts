@@ -8,14 +8,26 @@
  * 与改造前行为一致：按文件 mtime 缓存，改数据不重启；读坏只记一条日志并返回空，
  * 绝不把异常抛给路由。新增的 DataPort 只是把这些读盘逻辑收进一个实现里。
  *
+ * 缓存所有权（2026-11-06 审计补）：
+ *   · 所有读口**每一条返回路径**都交出拷贝（数组 .slice()、条目浅拷贝、对联连 cats 一起），
+ *     调用方 push/splice/改字段都碰不到缓存里的那份——此前只有「缓存命中」分支拷贝，
+ *     首次读（写缓存那条路径）把缓存数组本体递了出去；
+ *   · 失败按「确定性」分两类：坏 JSON / 缺文件是确定结果，可以记空缓存；
+ *     其它读错误（EISDIR/EACCES/EBUSY…）常常是杀毒、索引、升级替换文件的瞬时占用，
+ *     **不写缓存**，否则一次瞬时失败会把这一类数据在进程存活期内永久锁成空
+ *     （与 host/story/repo.ts 的 cacheNegative 同一条纪律）。
+ *
  * 跨平台：路径一律 join；读入容错 UTF-8 BOM（数据文件被 Windows 工具改写过也不至于整类失效）。
  */
 import { readFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { stripBom } from '../atomic.js'
-import type { CultureKind, DailyItem, DataPort, DuilianData, PoemChunk, StoryBookMeta } from '../ports.js'
-import type { StoryChunk, StoryRepo } from '../story/repo.js'
+import type {
+  CultureKind, DailyItem, DataPort, DuilianData, DuilianItem, PoemChunk, StoryBookMeta, StoryChunk,
+} from '../ports.js'
+// 只借说书仓储的接口类型（本地实现把仓储注入进来）；StoryChunk 等数据结构一律走端口层
+import type { StoryRepo } from '../story/repo.js'
 import {
   normalizeCultureItems, normalizeDaily, normalizeDuilian, normalizePoemItems,
 } from './normalize.js'
@@ -52,21 +64,37 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     try { return statSync(p).mtimeMs } catch { return 0 }
   }
 
-  async function loadJsonArray(file: string, logTag: string): Promise<any[]> {
+  /**
+   * 读 + 解析一个 JSON 文件（BOM 容错）。
+   * cacheable=false 专指「这次失败是瞬时的」：调用方不要把它写进缓存，下次重新读。
+   * 缺文件（ENOENT/ENOTDIR）与坏 JSON（SyntaxError）都是确定性结果，可以记空缓存
+   * ——缺文件时 mtime=0，本来也命中不了缓存。
+   */
+  async function loadJsonFile(file: string, logTag: string): Promise<{ raw: any; ok: boolean; cacheable: boolean }> {
     try {
-      const data = JSON.parse(stripBom(await readFile(file, 'utf8')))
-      const arr = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : null)
-      if (!arr) {
-        console.error(logTag + ' file=' + file + ' err=bad structure')
-        return []
-      }
-      return arr
+      return { raw: JSON.parse(stripBom(await readFile(file, 'utf8'))), ok: true, cacheable: true }
     } catch (err: any) {
-      if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
+      const missing = Boolean(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))
+      if (!missing) {
         console.error(logTag + ' file=' + file + ' err=' + String(err?.message || err))
       }
-      return []
+      // JSON.parse 的失败一定是 SyntaxError（内容坏）；其余错误码（EISDIR/EPERM/EBUSY/EIO…）按瞬时处理
+      return { raw: null, ok: false, cacheable: missing || err instanceof SyntaxError }
     }
+  }
+
+  /** 条目浅拷贝：缓存里的对象不交给调用方，改字段也碰不到缓存 */
+  function cloneItems(arr: any[]): any[] {
+    return arr.map((x: any) => (x && typeof x === 'object' ? { ...x } : x))
+  }
+
+  /** 对联拷贝：items 与 cats 都是缓存本体，连分类桶和条目一起复制 */
+  function cloneDuilian(d: DuilianData): DuilianData {
+    const cats: Record<string, DuilianItem[]> = {}
+    for (const k of Object.keys(d.cats)) cats[k] = (d.cats[k] || []).map((x: DuilianItem) => ({ ...x }))
+    const out: DuilianData = { total: d.total, items: d.items.map((x: DuilianItem) => ({ ...x })), cats }
+    if (d.note) out.note = d.note
+    return out
   }
 
   async function readStoryIndex(): Promise<StoryBookMeta[]> {
@@ -93,12 +121,17 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     const file = join(CULTURE_DIR, CULTURE_FILES[kind])
     const mt = fileMtime(file)
     const cached = cultureCache.get(kind)
-    // 返回浅拷贝：调用方 push/splice 改的是自己那份，不会把缓存里的数组改掉
-    if (cached && mt > 0 && cached.mtimeMs === mt) return cached.value.slice()
-    const raw = await loadJsonArray(file, 'CULTURE-LOAD-FAIL')
-    const out = normalizeCultureItems(kind, raw)
+    // 返回拷贝：调用方 push/splice/改条目改的都是自己那份，不会把缓存里的数据改掉
+    if (cached && mt > 0 && cached.mtimeMs === mt) return cloneItems(cached.value)
+    const loaded = await loadJsonFile(file, 'CULTURE-LOAD-FAIL')
+    const data = loaded.raw
+    const arr = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : null)
+    if (loaded.ok && !arr) console.error('CULTURE-LOAD-FAIL file=' + file + ' err=bad structure')
+    const out = normalizeCultureItems(kind, arr || [])
+    // 瞬时读错误不写缓存（否则一次占用会把这一整类锁成空），下次请求重新读盘
+    if (!loaded.cacheable) return out
     cultureCache.set(kind, { value: out, mtimeMs: mt })
-    return out
+    return cloneItems(out)
   }
 
   async function readPoemsChunk(index: number): Promise<PoemChunk> {
@@ -106,53 +139,36 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     // 本地只有一整册：只有第 0 片有内容，其余片返回空（云端回退时不会重复喂同一批诗）
     if (i !== 0) return { index: i, total: 1, items: [] }
     const mt = fileMtime(POEMS_FILE)
-    if (!(poemsCache && mt > 0 && poemsCache.mtimeMs === mt)) {
-      let raw: any = null
-      try {
-        const data = JSON.parse(stripBom(await readFile(POEMS_FILE, 'utf8')))
-        raw = Array.isArray(data) ? data : (Array.isArray(data?.poems) ? data.poems : null)
-        if (!raw) console.error('POEM-LOAD-FAIL file=' + POEMS_FILE + ' err=bad structure')
-      } catch (err: any) {
-        if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
-          console.error('POEM-LOAD-FAIL file=' + POEMS_FILE + ' err=' + String(err?.message || err))
-        }
-      }
-      poemsCache = { value: normalizePoemItems(raw || []), mtimeMs: mt }
-    }
-    return { index: 0, total: 1, items: poemsCache.value.slice() }
+    if (poemsCache && mt > 0 && poemsCache.mtimeMs === mt) return { index: 0, total: 1, items: cloneItems(poemsCache.value) }
+    const loaded = await loadJsonFile(POEMS_FILE, 'POEM-LOAD-FAIL')
+    const raw = Array.isArray(loaded.raw) ? loaded.raw : (Array.isArray(loaded.raw?.poems) ? loaded.raw.poems : null)
+    if (loaded.ok && !raw) console.error('POEM-LOAD-FAIL file=' + POEMS_FILE + ' err=bad structure')
+    const items = normalizePoemItems(raw || [])
+    if (!loaded.cacheable) return { index: 0, total: 1, items }
+    poemsCache = { value: items, mtimeMs: mt }
+    return { index: 0, total: 1, items: cloneItems(items) }
   }
 
   async function readDuilian(): Promise<DuilianData> {
     const mt = fileMtime(DUILIAN_FILE)
-    if (duilianCache && mt > 0 && duilianCache.mtimeMs === mt) return { ...duilianCache.value }
-    let raw: any = null
-    try {
-      raw = JSON.parse(stripBom(await readFile(DUILIAN_FILE, 'utf8')))
-    } catch (err: any) {
-      if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
-        console.error('DUILIAN-LOAD-FAIL file=' + DUILIAN_FILE + ' err=' + String(err?.message || err))
-      }
-    }
-    const out = normalizeDuilian(raw)
+    // { ...value } 只拷了顶层：items / cats 还是缓存本体，这里连条目一起复制
+    if (duilianCache && mt > 0 && duilianCache.mtimeMs === mt) return cloneDuilian(duilianCache.value)
+    const loaded = await loadJsonFile(DUILIAN_FILE, 'DUILIAN-LOAD-FAIL')
+    const out = normalizeDuilian(loaded.raw)
+    if (!loaded.cacheable) return out
     duilianCache = { value: out, mtimeMs: mt }
-    return out
+    return cloneDuilian(out)
   }
 
   async function readDaily(): Promise<DailyItem[]> {
     const mt = fileMtime(DAILY_FILE)
-    if (dailyCache && mt > 0 && dailyCache.mtimeMs === mt) return dailyCache.value.slice()
-    let raw: any = null
-    try {
-      raw = JSON.parse(stripBom(await readFile(DAILY_FILE, 'utf8')))
-    } catch (err: any) {
-      // data/daily.json 是可选文件：没有它属于正常态，不刷日志；读坏要留痕
-      if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
-        console.error('DAILY-LOAD-FAIL file=' + DAILY_FILE + ' err=' + String(err?.message || err))
-      }
-    }
-    const out = normalizeDaily(raw)
+    if (dailyCache && mt > 0 && dailyCache.mtimeMs === mt) return cloneItems(dailyCache.value)
+    // data/daily.json 是可选文件：没有它属于正常态，不刷日志；读坏要留痕（loadJsonFile 负责）
+    const loaded = await loadJsonFile(DAILY_FILE, 'DAILY-LOAD-FAIL')
+    const out = normalizeDaily(loaded.raw)
+    if (!loaded.cacheable) return out
     dailyCache = { value: out, mtimeMs: mt }
-    return out
+    return cloneItems(out)
   }
 
   return { readStoryIndex, readStoryBook, readCulture, readPoemsChunk, readDuilian, readDaily }

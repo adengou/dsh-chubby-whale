@@ -7,9 +7,14 @@
  * 保证切换数据源后路由拿到的结构完全一致（前端协议不变）。
  *
  * 本文件不碰磁盘、不碰网络，只做纯函数转换。
+ *
+ * 返回值的所有权：**每个 normalizer 的返回值都不与入参共享可变对象**（条目一律新建）。
+ * 这条约束是给云端实现用的：它缓存的是 manifest 文件的原始 parse 结果，
+ * 若这里直接把条目对象递出去，路由拿到手的就是云端缓存本体，改一下下次读到的就是被改过的值（坑 27）。
  */
-import type { StoryChunk } from '../story/repo.js'
-import type { CultureKind, DailyItem, DuilianData, DuilianItem } from '../ports.js'
+import type {
+  CultureKind, DailyItem, DuilianData, DuilianItem, StoryChunk,
+} from '../ports.js'
 import { poemKeyOf } from '../../shared/poem.js'
 
 /** 说书段落：与 host/story/repo.ts 原 normalizeBook 完全一致；index 用原数组序号（进度 key） */
@@ -72,7 +77,10 @@ export function cultureKeyOf(kind: CultureKind, item: any): string {
   return (String(item?.book || '') + '|' + String(item?.title || '')).trim()
 }
 
-/** 文化条目：只保留对象、丢弃空键、按 cultureKeyOf 去重（保留第一条） */
+/**
+ * 文化条目：只保留对象、丢弃空键、按 cultureKeyOf 去重（保留第一条）。
+ * 条目浅拷贝后返回：本地/云端都把原始 parse 结果留在自己的缓存里，不交给路由（见文件头）。
+ */
 export function normalizeCultureItems(kind: CultureKind, raw: any): any[] {
   const arr = Array.isArray(raw) ? raw : []
   const out: any[] = []
@@ -82,7 +90,7 @@ export function normalizeCultureItems(kind: CultureKind, raw: any): any[] {
     const k = cultureKeyOf(kind, it)
     if (!k || keys.has(k)) continue
     keys.add(k)
-    out.push(it)
+    out.push({ ...it })
   }
   return out
 }

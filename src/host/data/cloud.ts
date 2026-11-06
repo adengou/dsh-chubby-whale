@@ -14,13 +14,17 @@
  *     JSON.parse 一次，其余请求共享同一次结果；失败不缓存，下次重新拉；
  *   · 网络失败静默回退本地：同一个故障周期只 console.error 一次，60 秒冷却期内
  *     直接走本地，不反复卡网络；恢复后打一条 recovered 日志。错误绝不抛给路由。
+ *   · 数据缺失（清单里没这个文件 / 规范化后为空 / 索引非法）**不算链路故障**：
+ *     回退本地，但不进冷却、不刷错误日志（同一 op 只留一条）。否则一本云端缺书
+ *     就会把诗词、文化、每日一起拖去本地兜底——局部数据问题被放大成全局降级。
  *
  * 跨平台：这里只有 URL 路径（一律 '/'，不是文件系统路径，无需 join）；
  * 响应体读入容错 UTF-8 BOM，避免 CDN/镜像加 BOM 后整类数据解析失败。
  */
 import { stripBom } from '../atomic.js'
-import type { CultureKind, DailyItem, DataPort, DuilianData, PoemChunk, StoryBookMeta } from '../ports.js'
-import type { StoryChunk } from '../story/repo.js'
+import type {
+  CultureKind, DailyItem, DataPort, DuilianData, PoemChunk, StoryBookMeta, StoryChunk,
+} from '../ports.js'
 import {
   normalizeCultureItems, normalizeDaily, normalizeDuilian, normalizePoemItems, normalizeStoryChunks,
 } from './normalize.js'
@@ -32,6 +36,26 @@ const FETCH_TIMEOUT_MS = 10000
 const MANIFEST_TTL_MS = 30000
 /** 失败冷却：这段时间内不再尝试网络，直接回退本地 */
 const FAIL_COOLDOWN_MS = 60000
+/** 数据缺失日志的去重表上限：书名列来自外部（云端清单/路由参数），不设上限会被刷爆 */
+const MISS_LOG_MAX = 64
+
+/**
+ * 「数据本身不可用」：清单里没有这个文件、规范化后为空、索引非法。
+ *
+ * 必须与网络故障分开：它重试也不会好，而且判定完全在本地（清单/缓存里就能算出来，
+ * 不打网络）。若也进 60 秒冷却，一个读口的局部数据问题会连累其它读口一起降级。
+ */
+class DataUnavailable extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'DataUnavailable'
+  }
+}
+
+/** 抛「数据缺失」（不带冷却）；调用点都在 withFallback 内，由它负责静默回退本地 */
+function dataUnavailable(message: string): never {
+  throw new DataUnavailable(message)
+}
 
 type FetchLike = (url: string, init?: any) => Promise<any>
 
@@ -79,6 +103,14 @@ export function createCloudDataPort(opts: {
   let manifestAt = 0
   let degradedUntil = 0
   let failLogged = false
+  /** 数据缺失的日志去重：同一 op 只留一条，清单换代时清空（上限见 MISS_LOG_MAX） */
+  const missLogged = new Set<string>()
+
+  function logUnavailable(op: string, why: string): void {
+    if (missLogged.has(op) || missLogged.size >= MISS_LOG_MAX) return
+    missLogged.add(op)
+    console.warn('[chubby-whale] cloud data unavailable op=' + op + ' why=' + why + ' fallback=local')
+  }
 
   function manifestFiles(m: any): ManifestFile[] {
     return Array.isArray(m && m.files) ? m.files : []
@@ -108,6 +140,8 @@ export function createCloudDataPort(opts: {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
     try {
+      // unref：dsh web 关停/重启时，这个 10 秒超时不该把进程退出拖住
+      try { if (typeof (timer as any).unref === 'function') (timer as any).unref() } catch { }
       const res = await doFetch(base + encodePath(path), {
         signal: controller.signal,
         headers: { accept: 'application/json' },
@@ -153,6 +187,7 @@ export function createCloudDataPort(opts: {
         manifest = m
         manifestSig = sig
         fileCache.clear()
+        missLogged.clear()
         console.log('[chubby-whale] cloud data manifest ' + (m.version || 'v?') + ' @ ' + (m.generatedAt || '?'))
       } else {
         // 版本没变：清单对象刷新到最新，但已缓存的数据文件继续用
@@ -190,7 +225,7 @@ export function createCloudDataPort(opts: {
    */
   async function readFile(path: string): Promise<any> {
     const m = await ensureManifest()
-    if (!hasFile(m, path)) throw new Error('not in manifest: ' + path)
+    if (!hasFile(m, path)) dataUnavailable('not in manifest: ' + path)
     if (fileCache.has(path)) {
       cacheBookTouch(path)
       return fileCache.get(path)
@@ -208,7 +243,8 @@ export function createCloudDataPort(opts: {
 
   /**
    * 云端调用 + 失败回退。
-   * 同一个故障周期只打一次 CLOUD-DATA-FAIL；冷却期内直接走本地。
+   * 链路故障：同一个故障周期只打一次 CLOUD-DATA-FAIL，60 秒冷却期内直接走本地。
+   * 数据缺失（DataUnavailable）：静默回退本地、不进冷却、同一 op 只留一条 warn（见文件头）。
    */
   async function withFallback<T>(op: string, remote: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
     if (Date.now() < degradedUntil) return fallback()
@@ -221,6 +257,12 @@ export function createCloudDataPort(opts: {
       }
       return out
     } catch (err: any) {
+      // 数据缺失不是链路故障：重试不会好，而且判定在本地（清单/缓存里就能算出来，不打网络），
+      // 这里绝不设冷却——否则一本云端缺书会让诗词/文化/每日一起降级 60 秒
+      if (err instanceof DataUnavailable) {
+        logUnavailable(op, String(err.message || err))
+        return fallback()
+      }
       if (!failLogged) {
         console.error('CLOUD-DATA-FAIL op=' + op + ' err=' + String(err?.message || err) + ' fallback=local')
         failLogged = true
@@ -245,7 +287,7 @@ export function createCloudDataPort(opts: {
         if (Array.isArray(b.chapters)) meta.chapters = b.chapters
         out.push(meta)
       }
-      if (out.length === 0) throw new Error('story index empty')
+      if (out.length === 0) dataUnavailable('story index empty')
       return out
     }, () => local.readStoryIndex())
   }
@@ -255,10 +297,10 @@ export function createCloudDataPort(opts: {
     // 对应本地 repo.loadBook 的 inflight；这里只做校验、规范化与失败回退。
     return withFallback('readStoryBook:' + book, async () => {
       const name = String(book || '').trim()
-      if (!name) throw new Error('empty book name')
+      if (!name) dataUnavailable('empty book name')
       const raw = await readFile('story/' + name + '.json')
       const chunks = normalizeStoryChunks(name, raw)
-      if (chunks.length === 0) throw new Error('story book empty')
+      if (chunks.length === 0) dataUnavailable('story book empty')
       return chunks
     }, () => local.readStoryBook(book))
   }
@@ -267,7 +309,7 @@ export function createCloudDataPort(opts: {
     return withFallback('readCulture:' + kind, async () => {
       const m = await ensureManifest()
       const files = cultureFiles(m, kind)
-      if (files.length === 0) throw new Error('no cloud file for ' + kind)
+      if (files.length === 0) dataUnavailable('no cloud file for ' + kind)
       const items: any[] = []
       for (const file of files) {
         const raw = await readFile(file)
@@ -275,7 +317,7 @@ export function createCloudDataPort(opts: {
         for (const it of arr) items.push(it)
       }
       const out = normalizeCultureItems(kind, items)
-      if (out.length === 0) throw new Error('culture data empty: ' + kind)
+      if (out.length === 0) dataUnavailable('culture data empty: ' + kind)
       return out
     }, () => local.readCulture(kind))
   }
@@ -283,13 +325,13 @@ export function createCloudDataPort(opts: {
   async function readPoemsChunk(index: number): Promise<PoemChunk> {
     const i = Number(index) || 0
     return withFallback('readPoemsChunk:' + i, async () => {
-      if (!Number.isInteger(i) || i < 0) throw new Error('bad chunk index')
+      if (!Number.isInteger(i) || i < 0) dataUnavailable('bad chunk index: ' + String(index))
       const m = await ensureManifest()
       const path = 'poems/poems-' + String(i).padStart(2, '0') + '.json'
-      if (!hasFile(m, path)) throw new Error('not in manifest: ' + path)
+      if (!hasFile(m, path)) dataUnavailable('not in manifest: ' + path)
       const raw = await readFile(path)
       const items = normalizePoemItems(raw && raw.items)
-      if (items.length === 0) throw new Error('poem chunk empty')
+      if (items.length === 0) dataUnavailable('poem chunk empty')
       return {
         index: Number.isFinite(Number(raw && raw.index)) ? Number(raw.index) : i,
         total: Number(raw && raw.total) || poemFiles(m).length || 1,
@@ -302,7 +344,7 @@ export function createCloudDataPort(opts: {
     return withFallback('readDuilian', async () => {
       const raw = await readFile('duilian.json')
       const out = normalizeDuilian(raw)
-      if (out.items.length === 0) throw new Error('duilian empty')
+      if (out.items.length === 0) dataUnavailable('duilian empty')
       return out
     }, () => local.readDuilian())
   }
@@ -311,7 +353,7 @@ export function createCloudDataPort(opts: {
     return withFallback('readDaily', async () => {
       const raw = await readFile('daily.json')
       const out = normalizeDaily(raw)
-      if (out.length === 0) throw new Error('daily empty')
+      if (out.length === 0) dataUnavailable('daily empty')
       return out
     }, () => local.readDaily())
   }

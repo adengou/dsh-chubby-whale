@@ -63,7 +63,10 @@ export function cultureKeyOf(kind, item) {
         return String(item?.name || '').trim();
     return (String(item?.book || '') + '|' + String(item?.title || '')).trim();
 }
-/** 文化条目：只保留对象、丢弃空键、按 cultureKeyOf 去重（保留第一条） */
+/**
+ * 文化条目：只保留对象、丢弃空键、按 cultureKeyOf 去重（保留第一条）。
+ * 条目浅拷贝后返回：本地/云端都把原始 parse 结果留在自己的缓存里，不交给路由（见文件头）。
+ */
 export function normalizeCultureItems(kind, raw) {
     const arr = Array.isArray(raw) ? raw : [];
     const out = [];
@@ -75,7 +78,7 @@ export function normalizeCultureItems(kind, raw) {
         if (!k || keys.has(k))
             continue;
         keys.add(k);
-        out.push(it);
+        out.push({ ...it });
     }
     return out;
 }
