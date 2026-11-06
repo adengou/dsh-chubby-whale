@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.57";
+  var VERSION = "1.1.58";
 
   // src/client/styles.ts
   var W = 240;
@@ -787,6 +787,7 @@
     const ms2 = opts && typeof opts.watchdog === "number" && opts.watchdog > 0 ? opts.watchdog : watchdogMs(src);
     return new Promise((resolve) => {
       let done = false;
+      let timedOut = false;
       let startTimer = null;
       let voiceTimer = null;
       let onVoices = null;
@@ -815,9 +816,18 @@
         } catch (e) {
         }
         onVoices = null;
+        if (timedOut) {
+          try {
+            if (synthRef && typeof synthRef.cancel === "function") synthRef.cancel();
+          } catch (e) {
+          }
+        }
         resolve();
       };
-      const watch = setTimeout(finish, ms2);
+      const watch = setTimeout(() => {
+        timedOut = true;
+        finish();
+      }, ms2);
       const realFinish = () => {
         clearT(watch);
         finish();
@@ -884,8 +894,8 @@
               if (typeof Synth.cancel === "function") Synth.cancel();
             } catch (e) {
             }
-            startTimer = setTimeout(speak, 80);
-          } else speak();
+          }
+          startTimer = setTimeout(speak, 80);
         };
         let waiting = false;
         try {
@@ -2859,18 +2869,24 @@
           resolve(null);
           return;
         }
-        const url = URLRef.createObjectURL(file);
-        const img = new ImageRef();
+        let url = "";
         const done = (v) => {
           try {
-            URLRef.revokeObjectURL(url);
+            if (url) URLRef.revokeObjectURL(url);
           } catch (e) {
           }
+          url = "";
           resolve(v);
         };
-        img.onload = () => done(img);
-        img.onerror = () => done(null);
-        img.src = url;
+        try {
+          url = URLRef.createObjectURL(file);
+          const img = new ImageRef();
+          img.onload = () => done(img);
+          img.onerror = () => done(null);
+          img.src = url;
+        } catch (e) {
+          done(null);
+        }
       } catch (e) {
         resolve(null);
       }
@@ -3045,7 +3061,12 @@
         const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime });
         const reply = String(reply0 && reply0.reply || "").trim() || "这条鱼看不懂这张图……";
         bubble("（看图）" + reply, 1e4);
-        if (speak) speak(reply);
+        if (speak) {
+          try {
+            speak(reply);
+          } catch (e2) {
+          }
+        }
         return { ok: true, kind: "image", message: VISION_PROMPT, reply };
       } catch (e) {
         return fail(e, "图片处理失败");
@@ -3063,7 +3084,12 @@
         const reply0 = await post({ message });
         const reply = String(reply0 && reply0.reply || "").trim() || "这份文档本鲸没看懂……";
         bubble("（文档）" + reply, 12e3);
-        if (speak) speak(reply);
+        if (speak) {
+          try {
+            speak(reply);
+          } catch (e2) {
+          }
+        }
         return { ok: true, kind: "text", message, reply };
       } catch (e) {
         return fail(e, "文档处理失败");
@@ -3573,6 +3599,11 @@
   function escapeRe(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
+  function isDefaultWords(words) {
+    if (!words || words.length !== WAKE_WORDS.length) return false;
+    for (let i = 0; i < WAKE_WORDS.length; i++) if (words[i] !== WAKE_WORDS[i]) return false;
+    return true;
+  }
   function stripWakeWords(input, words = WAKE_WORDS) {
     const raw = str(input);
     const norm = normalizeWakeText(raw);
@@ -3581,11 +3612,12 @@
     const hits = sorted.filter((w) => {
       const nw = normalizeWakeText(w);
       if (!nw) return false;
+      if (nw.length === 1) return norm === nw;
       if (nw.length >= 3) return norm.indexOf(nw) >= 0;
       return norm.startsWith(nw) || norm.length <= 4 && norm.indexOf(nw) >= 0;
     });
     if (!hits.length) {
-      if (norm.length <= 12) {
+      if (isDefaultWords(words) && norm.length <= 12) {
         for (const re of WAKE_FUZZY) {
           const m = norm.match(re);
           if (m) {
@@ -3642,6 +3674,14 @@
   }
 
   // src/client/voice-bridge.ts
+  var STOP_PHRASES = ["停下", "停一下", "别说了", "别讲了", "别念了", "别吵", "安静", "够了"];
+  var NARR_STOP_RE = /停|别念|不念|够了|算了|打住/;
+  var HAS_CONTENT_RE = /[\u4e00-\u9fa5a-z0-9]/i;
+  function isStopCommand(norm) {
+    if (!norm) return false;
+    if (isInterruptWord(norm)) return true;
+    return STOP_PHRASES.indexOf(norm) >= 0;
+  }
   function bump(key) {
     try {
       const w = typeof window !== "undefined" ? window : null;
@@ -3675,6 +3715,7 @@
     }
     const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 };
     let asrNoKeyNotified = false;
+    let unloadHandler = null;
     function wakeInfo() {
       syncWakeWords();
       const now = Date.now();
@@ -3683,7 +3724,8 @@
         awake: remainingMs > 0,
         remainingMs,
         windowMs: gate.windowMs,
-        words: gate.words,
+        // 给出去的是副本：调用方（菜单/诊断）拿到的是可写数组，不能顺着它改门里的词表
+        words: gate.words.slice(),
         hits: wakeStats.hits,
         passed: wakeStats.passed,
         dropped: wakeStats.dropped,
@@ -3695,6 +3737,47 @@
         host.diag({ wake: wakeInfo() });
       } catch (e) {
       }
+    }
+    function stopNarration(notice) {
+      try {
+        host.stopSpeaking();
+      } catch (e) {
+      }
+      try {
+        host.narration.clear();
+      } catch (e) {
+      }
+      try {
+        host.bubble(notice, 2500);
+      } catch (e) {
+      }
+    }
+    function tryInterrupt(text) {
+      let spoken = "";
+      try {
+        const probe = stripWakeWords(text, gate.words);
+        spoken = normalizeWakeText(probe.hit ? probe.text : text);
+      } catch (e) {
+        return false;
+      }
+      if (!isStopCommand(spoken)) return false;
+      let speaking = false;
+      try {
+        speaking = host.speaking ? !!host.speaking() : true;
+      } catch (e) {
+        speaking = false;
+      }
+      if (!speaking) return false;
+      try {
+        host.stopSpeaking();
+      } catch (e) {
+      }
+      try {
+        host.bubble("好，不说了", 2e3);
+      } catch (e) {
+      }
+      bump("wakeBreak");
+      return true;
     }
     function build() {
       const make = host.makeVoice || ((o) => createVoice(o));
@@ -3708,38 +3791,18 @@
           }
           try {
             if (host.narration.active()) {
-              if (/停|别念|不念|够了|算了|打住/.test(String(text || ""))) {
-                try {
-                  host.stopSpeaking();
-                } catch (e) {
-                }
-                host.narration.clear();
-                host.bubble("好，不念了", 2500);
-              } else {
-                bump("narrDrop");
+              let narrStop = false;
+              try {
+                narrStop = NARR_STOP_RE.test(String(text || "")) || isStopCommand(normalizeWakeText(text));
+              } catch (e) {
               }
+              if (narrStop) stopNarration("好，不念了");
+              else bump("narrDrop");
               return;
             }
           } catch (e) {
           }
-          try {
-            if (/^(停|停下|停一下|别说了|别讲了|别念了|别吵|闭嘴|安静|打住|够了)$/.test(normalizeWakeText(text))) {
-              const speaking = host.speaking ? !!host.speaking() : true;
-              if (speaking) {
-                try {
-                  host.stopSpeaking();
-                } catch (e) {
-                }
-                try {
-                  host.bubble("好，不说了", 2e3);
-                } catch (e) {
-                }
-                bump("wakeBreak");
-                return;
-              }
-            }
-          } catch (e) {
-          }
+          if (tryInterrupt(text)) return;
           try {
             if (host.voiceChat && !host.voiceChat()) {
               wakeStats.dropped++;
@@ -3756,14 +3819,16 @@
           }
           const said = r.hit ? r.text : String(text || "").trim();
           wakeStats.passed++;
-          if (!said) {
-            try {
-              if (host.say) host.say("本鲸在呢～", 3200);
-              else host.bubble("本鲸在呢～", 3200);
-            } catch (e) {
+          if (!HAS_CONTENT_RE.test(said)) {
+            if (r.hit) {
               try {
-                host.bubble("本鲸在呢～", 3200);
-              } catch (e2) {
+                if (host.say) host.say("本鲸在呢～", 3200);
+                else host.bubble("本鲸在呢～", 3200);
+              } catch (e) {
+                try {
+                  host.bubble("本鲸在呢～", 3200);
+                } catch (e2) {
+                }
               }
             }
             pushWake();
@@ -3815,16 +3880,30 @@
         host.diag({ voice: v, wake: wakeInfo() });
       } catch (e) {
       }
+      bindUnload();
+      return v;
+    }
+    function bindUnload() {
+      if (unloadHandler) return;
       try {
-        if (typeof window !== "undefined") window.addEventListener("beforeunload", () => {
+        if (typeof window === "undefined" || !window.addEventListener) return;
+        unloadHandler = () => {
           try {
-            v.stop();
+            if (voice) voice.stop();
           } catch (e) {
           }
-        });
+        };
+        window.addEventListener("beforeunload", unloadHandler);
+      } catch (e) {
+        unloadHandler = null;
+      }
+    }
+    function unbindUnload() {
+      try {
+        if (unloadHandler && typeof window !== "undefined" && window.removeEventListener) window.removeEventListener("beforeunload", unloadHandler);
       } catch (e) {
       }
-      return v;
+      unloadHandler = null;
     }
     function ensure() {
       return voice || build();
@@ -3847,6 +3926,10 @@
           } catch (e) {
           }
         }
+        try {
+          gate.reset();
+        } catch (e) {
+        }
       },
       dispose() {
         if (voice) {
@@ -3856,6 +3939,7 @@
           }
         }
         voice = null;
+        unbindUnload();
         try {
           gate.reset();
         } catch (e) {
@@ -7270,6 +7354,7 @@
     const queue = [];
     let dueTimer = null;
     let pollTimer = null;
+    let alive = false;
     function pump() {
       if (dueTimer) return;
       if (queue.length === 0) return;
@@ -7302,19 +7387,24 @@
     }
     function start() {
       stopPoll();
+      alive = true;
       pollTimer = setInterval(() => {
         fetchJson(DUE_PATH).then((d) => {
+          if (!alive) return;
           const due = d && d.due || [];
           for (const it of due) {
-            if (it && it.text) queue.push(it);
+            if (it && typeof it === "object") queue.push(it);
           }
           pump();
         }).catch(() => {
         });
       }, intervalMs);
-      return stopPoll;
+      return () => {
+        dispose();
+      };
     }
     function dispose() {
+      alive = false;
       if (dueTimer !== null) {
         clearT(dueTimer);
         dueTimer = null;
@@ -7345,6 +7435,20 @@
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
     return hh + ":" + mm;
+  }
+  function formatClockWithDay(at, nowMs) {
+    const d = new Date(at);
+    if (isNaN(d.getTime())) return "--:--";
+    const clock = formatClock(d);
+    const baseMs = typeof nowMs === "number" && isFinite(nowMs) ? nowMs : Date.now();
+    const today = new Date(baseMs);
+    const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const startTarget = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const days = Math.round((startTarget - startToday) / (24 * 60 * 60 * 1e3));
+    if (days === 0) return clock;
+    if (days === 1) return "明天 " + clock;
+    if (days === -1) return "昨天 " + clock;
+    return d.getMonth() + 1 + "月" + d.getDate() + "日 " + clock;
   }
   function stampOf(item2) {
     const raw = item2.nextAt || item2.at;
@@ -7489,7 +7593,7 @@
       const dueMs = new Date(pick.nextAt || pick.at).getTime();
       const base = Number.isFinite(dueMs) ? Math.max(clock(), dueMs) : clock();
       const at = new Date(base + POSTPONE_MS);
-      const when = formatClock(at);
+      const when = formatClockWithDay(at, clock());
       const body = {
         text: pick.text,
         at: at.toISOString(),

@@ -318,15 +318,19 @@ export function apply(ctx, rawConfig) {
         // 导入记忆/人格后作废旧聊天缓存（服务端保证，不依赖客户端补刀）
         clearChatCache: () => chatCache.clear(),
     });
-    // 可视化汇总：全部读现有 store / cache / 人格，不新增持久化
-    // 运行数据自动定时备份（每小时一份、保留 7 份；失败静默；插件 dispose 时停）
+    // 运行数据自动定时备份（每小时一份、保留 7 份；失败静默；卸载时停）
+    //
+    // 这里**不能**用 ctx.on('dispose')：cordis 卸载只派发 internal/plugin，全仓没有 dispose 事件，
+    // 订阅了也永远不触发，旧定时器会一直写到进程退出（2026-11-07 分身取证：cordis/lib/index.js:969、1079）。
+    // 改用 ctx.effect 把「停备份」登记成当前 fiber 的清理器，卸载/热重载时由框架调用。
     try {
         const stopAutoBackup = startAutoBackup({ runtimeDir: RUNTIME_DIR });
-        if (ctx && typeof ctx.on === 'function')
-            ctx.on('dispose', () => { try {
+        if (ctx && typeof ctx.effect === 'function') {
+            ctx.effect(() => () => { try {
                 stopAutoBackup();
             }
-            catch { } });
+            catch { } }, 'chubby-whale: auto-backup');
+        }
     }
     catch { }
     // 只读配置视图：主人能在菜单里看到当前生效的设置（绝不回 Key 内容，也不写盘）

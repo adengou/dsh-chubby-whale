@@ -11,10 +11,40 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { isMissingFileError, stripBom } from './atomic.js'
 import type { DataSourceKind } from './ports.js'
 
+/**
+ * 读本插件 config.json。
+ *
+ * 降级口径（2026-11-07 B74 加固）：
+ *   · 没有文件（ENOENT/ENOTDIR）是常态（Key 全走环境变量），静默按“未配置”处理；
+ *   · 坏 JSON / 数组 / 标量 / null 一律按“未配置”处理，且**只提示一次**（readApiKey 在每次聊天都会被调用，
+ *     不能让坏文件把日志刷满）；旧实现是全静默，用户只会看到“Key 没了、语音没反应”，
+ *     照坑 35 的教训，“没反应”比“报错”更糟；
+ *   · 配置对象必须是普通对象：数组/字符串没有对应字段，照原样返回只会让 cfg.deepseekKey 取到原型链上的怪值。
+ */
 function readConfigJson(pluginDir: string): any {
-  try { return JSON.parse(String(readFileSync(join(pluginDir, 'config.json'), 'utf8')).replace(/^\uFEFF/, '')) } catch { return null }
+  const file = join(pluginDir, 'config.json')
+  let text: string
+  try {
+    text = String(readFileSync(file, 'utf8'))
+  } catch (err: any) {
+    if (!isMissingFileError(err)) warnConfig('config.json 读取失败（' + file + '）：' + String((err && err.message) || err))
+    return null
+  }
+  let parsed: any
+  try {
+    parsed = JSON.parse(stripBom(text))
+  } catch (err: any) {
+    warnConfig('config.json 不是合法 JSON（' + file + '），已按未配置处理：' + String((err && err.message) || err))
+    return null
+  }
+  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    warnConfig('config.json 应为对象（实际 ' + shortValue(parsed) + '），已按未配置处理')
+    return null
+  }
+  return parsed
 }
 
 function fromEnv(own: string, legacy: string): string {
@@ -209,6 +239,13 @@ export function sanitizePluginConfig(raw: any): any {
   }
   const out: any = {}
   for (const [key, value] of Object.entries(raw)) {
+    // 原型链保留字一律拒收（2026-11-07 B74）：`out[key] = value` 对 `__proto__` 会**改掉 out 的原型**，
+    // 于是 {"__proto__":{"dataSource":"cloud"}} 这种“未知键”会通过原型链让 config.dataSource 读到 cloud，
+    // 甚至让 config.enabled 读到 false —— 配置笔误/恶意键都能把插件静默改状态，与导入侧拒收 __proto__ 同一口径。
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      warnConfig('配置键 ' + key + ' 已忽略（原型链保留字，不允许写入配置对象）')
+      continue
+    }
     if (key === 'enabled') {
       if (typeof value === 'boolean') out.enabled = value
       else warnConfig('config.enabled 应为布尔值（实际 ' + shortValue(value) + '），已忽略')

@@ -101,6 +101,13 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/** 传入的词表是不是"默认词表"（谐音容错只服务默认表，见 stripWakeWords） */
+function isDefaultWords(words: string[]): boolean {
+  if (!words || words.length !== WAKE_WORDS.length) return false
+  for (let i = 0; i < WAKE_WORDS.length; i++) if (words[i] !== WAKE_WORDS[i]) return false
+  return true
+}
+
 /**
  * 从一句话里剥掉唤醒词。
  * 命中判定走"归一化后包含"（容忍标点/空格把词隔开），
@@ -116,6 +123,8 @@ export function stripWakeWords(input: unknown, words: string[] = WAKE_WORDS): { 
   const hits = sorted.filter((w) => {
     const nw = normalizeWakeText(w)
     if (!nw) return false
+    // 单字唤醒词（自定义允许 1 字）：只认整句。否则「好的」会被剥成「的」送进模型。
+    if (nw.length === 1) return norm === nw
     // 三字以上（大肥鱼）：句中出现即可
     if (nw.length >= 3) return norm.indexOf(nw) >= 0
     // 两个字（小鱼/鱼鱼/肥鱼/蓝鱼/肥肥）：只认句首，或整句极短，
@@ -123,8 +132,10 @@ export function stripWakeWords(input: unknown, words: string[] = WAKE_WORDS): { 
     return norm.startsWith(nw) || (norm.length <= 4 && norm.indexOf(nw) >= 0)
   })
   if (!hits.length) {
-    // 字面没命中 → 试谐音容错（整句要短，避免长句里恰好含「大X鱼」被误唤醒）
-    if (norm.length <= 12) {
+    // 字面没命中 → 试谐音容错（整句要短，避免长句里恰好含「大X鱼」被误唤醒）。
+    // 只对默认词表生效：loadCustomWakeWords() 的约定是「返回 [词] 表示只用这一个词」，
+    // 换成自定义词后还认「大肥鱼」的谐音，等于旧词照样能叫醒、还会把正文剥掉。
+    if (isDefaultWords(words) && norm.length <= 12) {
       for (const re of WAKE_FUZZY) {
         const m = norm.match(re)
         if (m) {

@@ -154,7 +154,8 @@ export async function handleFileDrop(file: any, deps?: DropDeps): Promise<DropRe
       const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime })
       const reply = String((reply0 && reply0.reply) || '').trim() || '这条鱼看不懂这张图……'
       bubble('（看图）' + reply, 10000)
-      if (speak) speak(reply)
+      // 朗读是附加动作：TTS 回调抛错不能把「已经识别成功」改判成失败（结果对象是调用方的唯一依据）
+      if (speak) { try { speak(reply) } catch (e2) { } }
       return { ok: true, kind: 'image', message: VISION_PROMPT, reply }
     } catch (e: any) {
       return fail(e, '图片处理失败')
@@ -174,7 +175,7 @@ export async function handleFileDrop(file: any, deps?: DropDeps): Promise<DropRe
       const reply0 = await post({ message })
       const reply = String((reply0 && reply0.reply) || '').trim() || '这份文档本鲸没看懂……'
       bubble('（文档）' + reply, 12000)
-      if (speak) speak(reply)
+      if (speak) { try { speak(reply) } catch (e2) { } }
       return { ok: true, kind: 'text', message, reply }
     } catch (e: any) {
       return fail(e, '文档处理失败')

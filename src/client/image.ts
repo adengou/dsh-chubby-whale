@@ -78,15 +78,22 @@ function decodeImage(file: any): Promise<any | null> {
         resolve(null)
         return
       }
-      const url = URLRef.createObjectURL(file)
-      const img = new ImageRef()
+      // objectURL 的释放必须覆盖「创建之后抛错」这条路：旧写法把 createObjectURL 与
+      // new Image / 赋值放在同一个 try 里，一旦这两步抛错就直接 resolve(null)，
+      // 刚建好的 Blob URL 永远不会被 revoke（一次拖图就留一份到页面卸载）。
+      let url = ''
       const done = (v: any) => {
-        try { URLRef.revokeObjectURL(url) } catch (e) { }
+        try { if (url) URLRef.revokeObjectURL(url) } catch (e) { }
+        url = ''
         resolve(v)
       }
-      img.onload = () => done(img)
-      img.onerror = () => done(null)
-      img.src = url
+      try {
+        url = URLRef.createObjectURL(file)
+        const img = new ImageRef()
+        img.onload = () => done(img)
+        img.onerror = () => done(null)
+        img.src = url
+      } catch (e) { done(null) }
     } catch (e) {
       resolve(null)
     }

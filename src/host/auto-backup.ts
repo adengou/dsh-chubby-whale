@@ -8,12 +8,21 @@
  *   · 只读运行数据文件、写到 RUNTIME_DIR/backup/ 目录（不进插件包、不碰 data/）；
  *   · 一份备份 = 一个 JSON（{ at, files: { 文件名: 内容 } }），失败静默（绝不因备份失败影响插件）；
  *   · 保留策略按文件名（auto-时间戳）排序删旧，最多 keep 份；
+ *     诊断口径（autoBackupInfo.lastAt）也从文件名取时间——两处同一真源（坑 28），
+ *     备份目录被整体拷贝/恢复过（mtime 变成恢复时间）时不会与裁剪口径打架；
+ *   · 快照走 atomic.ts 的原子写：进程被杀不会留半截 JSON 假装是“一份备份”，
+ *     再借裁剪把好的旧份挤掉；
  *   · setInterval 加 unref（不拖住进程退出）；启动时先备一份，之后每小时一次。
+ *   · 同一定时器只允许一份（2026-11-07 B74）：index.ts 用 `ctx.on('dispose')` 兜清理，
+ *     而 cordis 没有该事件（详见 docs/坑.md 坑 11，cordis 卸载只发 internal/plugin），
+ *     热重载/禁用再启用时旧定时器不会被停掉；这里按运行目录去重，重复 start 先停旧的，
+ *     至少保证不会一次比一次多出定时器、也不会在插件停用后继续叠写备份。
  *
  * 兼容：宿主侧改动要重启 dsh web 才生效；备份目录只增不减（除旧份）。
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { writeFileAtomic } from './atomic.js'
 
 /** 需要备份的运行数据文件（都在 RUNTIME_DIR 根下） */
 export const AUTO_BACKUP_FILES = [
@@ -42,11 +51,25 @@ export type AutoBackupOpts = {
 /** 备份目录名 */
 export const AUTO_BACKUP_DIR = 'backup'
 
+/** setInterval 允许的最大延时；超过会被 Node 折成 1ms（TimeoutOverflowWarning），变成疯狂写盘 */
+const MAX_TIMER_MS = 2147483647
+
 /** 时间戳 → auto-YYYYMMDD-HHmmss（文件名安全，无冒号） */
 function stamp(ms: number): string {
   const d = new Date(ms)
   const p = (n: number): string => (n < 10 ? '0' + n : String(n))
   return 'auto-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds())
+}
+
+/** 从备份文件名反解时间（与裁剪同一口径）；解析不出返回 0 */
+function stampMs(name: string): number {
+  const m = /^auto-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.json$/.exec(name)
+  if (!m) return 0
+  const t = new Date(
+    Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+    Number(m[4]), Number(m[5]), Number(m[6]),
+  ).getTime()
+  return Number.isFinite(t) ? t : 0
 }
 
 /** 立即备份一次，返回是否写成功（失败静默，不抛） */
@@ -68,7 +91,7 @@ export function backupOnce(opts: AutoBackupOpts): boolean {
     const nowMs = (opts.now || (() => Date.now()))()
     const out = join(dir, stamp(nowMs) + '.json')
     // 同一秒内重复备份：覆盖同名文件即可（幂等）
-    writeFileSync(out, JSON.stringify({ at: nowMs, files }), 'utf8')
+    writeFileAtomic(out, JSON.stringify({ at: nowMs, files }))
     // 保留最近 keep 份（按文件名排序 = 时间顺序）
     const keep = Math.max(1, Number(opts.keep) || 7)
     let list: string[] = []
@@ -93,24 +116,43 @@ export function autoBackupInfo(runtimeDir: string): { lastAt: number; count: num
     if (!existsSync(dir)) return { lastAt: 0, count: 0 }
     const list = readdirSync(dir).filter((f) => /^auto-.*\.json$/.test(f))
     let lastAt = 0
+    let lastMtime = 0
     for (const f of list) {
-      try { const st = statSync(join(dir, f)); if (st.mtimeMs > lastAt) lastAt = st.mtimeMs } catch { }
+      // 口径与裁剪一致：时间优先取文件名里的时间戳；文件名不合规（手工放进去的）才退回 mtime
+      const named = stampMs(f)
+      if (named > lastAt) lastAt = named
+      if (named > 0) continue
+      try { const st = statSync(join(dir, f)); if (st.mtimeMs > lastMtime) lastMtime = st.mtimeMs } catch { }
     }
-    return { lastAt, count: list.length }
+    return { lastAt: lastAt || lastMtime, count: list.length }
   } catch {
     return { lastAt: 0, count: 0 }
   }
 }
 
+/** 运行目录 → 停止函数：同一定时器只留一份（见文件头 2026-11-07 说明） */
+const activeBackupTimers = new Map<string, () => void>()
+
 /**
  * 启动自动备份：立即备一份，之后每 intervalMs 一份。
  * 返回停止函数（插件 dispose 时调用，别让定时器挂着）。
+ * 同一运行目录重复调用会先停掉上一份定时器，不会叠加；停止函数可安全重复调用。
  * 定时器 unref：不拖住宿主进程退出。
  */
 export function startAutoBackup(opts: AutoBackupOpts): () => void {
-  const intervalMs = Math.max(60_000, Number(opts.intervalMs) || 3600_000)
+  const key = resolve(opts.runtimeDir)
+  const prev = activeBackupTimers.get(key)
+  if (prev) {
+    try { prev() } catch { }
+  }
+  const intervalMs = Math.min(MAX_TIMER_MS, Math.max(60_000, Number(opts.intervalMs) || 3600_000))
   try { backupOnce(opts) } catch { }
   const timer: any = setInterval(() => { try { backupOnce(opts) } catch { } }, intervalMs)
   try { if (typeof timer.unref === 'function') timer.unref() } catch { }
-  return () => { try { clearInterval(timer) } catch { } }
+  const stop = (): void => {
+    try { clearInterval(timer) } catch { }
+    if (activeBackupTimers.get(key) === stop) activeBackupTimers.delete(key)
+  }
+  activeBackupTimers.set(key, stop)
+  return stop
 }

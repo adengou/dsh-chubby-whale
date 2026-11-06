@@ -7,20 +7,53 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { writeJsonAtomic } from './atomic.js';
+import { stripBom, writeJsonAtomic } from './atomic.js';
 import { sendJson } from './respond.js';
 import { isBodyTooLarge, readBody, sendTooLarge } from './http.js';
 /** /cache-toggle 请求体上限：只需一个 {"enabled":true}，16KB 足够，超限回 413 */
 const CACHE_TOGGLE_MAX_BODY = 16 * 1024;
 export function createPrefs(runtimeDir) {
     const PREFS_FILE = join(runtimeDir, 'prefs.json');
+    /** 坏文件只提示一次：chatCacheEnabled 每次聊天都会被调用，不能让坏文件把日志刷满 */
+    let warnedBadFile = false;
+    function warnBadFile(msg) {
+        if (warnedBadFile)
+            return;
+        warnedBadFile = true;
+        console.error('[prefs] ' + msg);
+    }
+    /**
+     * 读偏好。降级口径（2026-11-07 B74 加固）：
+     *   · 没有文件是常态（首次运行），静默返回 {}（chatCache 缺省 true）；
+     *   · 坏 JSON / 数组 / 标量一律返回 {}，并提示一次；
+     *     旧实现把数组原样返回，setChatCache 往数组上挂 chatCache 属性后 JSON.stringify 不保留它，
+     *     于是“关了缓存”永远写不进去、每次读回来还是 true——用户看到的开关像坏了一样。
+     */
     function load() {
+        let text;
         try {
-            return JSON.parse(String(readFileSync(PREFS_FILE, 'utf8')).replace(/^\uFEFF/, ''));
+            text = String(readFileSync(PREFS_FILE, 'utf8'));
         }
-        catch {
+        catch (err) {
+            const code = err && err.code;
+            if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+                warnBadFile('READ-FAIL ' + String(PREFS_FILE) + ' err=' + String((err && err.message) || err));
+            }
             return {};
         }
+        let parsed;
+        try {
+            parsed = JSON.parse(stripBom(text));
+        }
+        catch (err) {
+            warnBadFile('READ-FAIL ' + String(PREFS_FILE) + ' 坏 JSON，已按默认值处理 err=' + String((err && err.message) || err));
+            return {};
+        }
+        if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            warnBadFile('READ-FAIL ' + String(PREFS_FILE) + ' 形状不是对象，已按默认值处理');
+            return {};
+        }
+        return parsed;
     }
     function save(p) {
         // 原子写：写坏一次就整份偏好丢失（与 store 同一套工具）
