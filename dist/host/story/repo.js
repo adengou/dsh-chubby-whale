@@ -14,6 +14,10 @@ import { normalizeStoryChunks } from '../data/normalize.js';
 const BOOK_CACHE_MAX = 2;
 /** 单本书解析超时：30 秒 */
 const READ_TIMEOUT_MS = 30000;
+/** 书名上限：与路由/数据源投影一致（最长书名 4 字，64 已留余量） */
+const BOOK_NAME_MAX = 64;
+/** 书名里不允许出现：路径分隔符、控制字符、上跳片段（`..`）——book 最终要拼进 join()，不能当路径用 */
+const BAD_BOOK_NAME_RE = /[\\/\u0000-\u001F\u007F]|\.\./;
 export function createStoryRepo(opts) {
     const STORY_DIR = join(opts.dataDir, 'story');
     const bookCache = new Map();
@@ -31,6 +35,20 @@ export function createStoryRepo(opts) {
         catch {
             return 0;
         }
+    }
+    /**
+     * 书名 → 安全文件名（空串表示非法）。
+     * book 来自书单（本地 readdir / 云端 index.json），最终拼进 join(STORY_DIR, book + '.json')；
+     * 云端清单属于外部数据，若原样透传，`../x` 就能读出 data/story 以外的 JSON。
+     * 这里作为文件系统边界的最后一道校验，非法名一律当坏书（返回空数组），不抛错。
+     */
+    function safeBookName(book) {
+        const name = String(book == null ? '' : book).trim();
+        if (!name || name.length > BOOK_NAME_MAX)
+            return '';
+        if (BAD_BOOK_NAME_RE.test(name))
+            return '';
+        return name;
     }
     /** 缓存写入后统一按 LRU 修剪，避免超上限 */
     function trimCache() {
@@ -58,26 +76,32 @@ export function createStoryRepo(opts) {
      * 清洗规则与云端数据源共用，见 host/data/normalize.ts。
      */
     function loadBook(book) {
-        const file = join(STORY_DIR, book + '.json');
+        const name = safeBookName(book);
+        if (!name) {
+            // 外部输入只留 80 字并去掉换行：别让坏请求写出几千字的日志行或伪造日志
+            console.error('STORY-LOAD-FAIL book=' + String(book == null ? '' : book).slice(0, 80).replace(/[\r\n]/g, ' ') + ' err=bad book name');
+            return Promise.resolve([]);
+        }
+        const file = join(STORY_DIR, name + '.json');
         const mt = fileMtime(file);
-        const cached = bookCache.get(book);
+        const cached = bookCache.get(name);
         if (cached && mt > 0 && cached.mtimeMs === mt) {
             // 命中：顺手 touch 一下，保持 LRU 顺序
-            bookCache.delete(book);
-            bookCache.set(book, cached);
+            bookCache.delete(name);
+            bookCache.set(name, cached);
             // 浅拷贝返回：调用方排序/切分不会改到缓存里的数组
             return Promise.resolve(cached.chunks.slice());
         }
-        const running = inflight.get(book);
+        const running = inflight.get(name);
         // 文件没被改过才复用；mtime 变了说明数据刚更新，得重新读，不能拿旧书糊弄
         if (running && running.mtimeMs === mt)
             return running.promise;
-        const task = readBook(book, file, mt);
-        inflight.set(book, { mtimeMs: mt, promise: task });
+        const task = readBook(name, file, mt);
+        inflight.set(name, { mtimeMs: mt, promise: task });
         const release = () => {
-            const cur = inflight.get(book);
+            const cur = inflight.get(name);
             if (cur && cur.promise === task)
-                inflight.delete(book); // 只摘自己这条，别误删后来者
+                inflight.delete(name); // 只摘自己这条，别误删后来者
         };
         task.then(release, release);
         return task;
@@ -133,7 +157,8 @@ export function createStoryRepo(opts) {
                         // LRU：超上限就丢最早的那本（Map 保持插入顺序）
                         trimCache();
                         stopWorker();
-                        resolve(list);
+                        // 冷读也返回浅拷贝：首个调用方若对返回数组 push/sort，不能改到缓存里的那份
+                        resolve(list.slice());
                     }
                     else
                         fail(msg?.error || 'parse failed', true);

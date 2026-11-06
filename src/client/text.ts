@@ -7,6 +7,8 @@
  * 全部是可直接在 node 里单测的纯函数。
  */
 
+import { deepFreeze } from '../shared/immutable.js'
+
 /** 正文换行/连续空白压成单空格（照 C# Culture.Collapse） */
 export function collapseText(raw: any): string {
   return String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim()
@@ -27,8 +29,14 @@ export function collapsePoemBody(raw: any): string {
 export function taleParts(rawTitle: string): { title: string; book: string } {
   const t = String(rawTitle || '').trim()
   const i = t.indexOf('·')
-  if (i > 0 && i < t.length - 1) return { book: t.slice(0, i), title: t.slice(i + 1) }
-  return { title: t, book: '' }
+  if (i < 0) return { title: t, book: '' }
+  // 书名与标题都可能缺失：host 用 (book || '') + '·' + (title || '') 拼接，
+  // 任一边为空就会留下前导/尾随的「·」。两边各自 trim，缺一边时当纯标题，
+  // 避免气泡显示「讲民间故事··标题」、或把孤零零的「·」念出来。
+  const book = t.slice(0, i).trim()
+  const title = t.slice(i + 1).trim()
+  if (book && title) return { book, title }
+  return { title: title || book, book: '' }
 }
 
 /** 去标点与空白后的归一文本：判断「是不是同一句话」用 */
@@ -130,7 +138,7 @@ export type SentenceBuffer = {
 
 /**
  * 流式切句器：句末标点（。！？!?；;换行）处切开；没标点就攒到 maxLen 字。
- * 与原来 tryStreamChat 里的 flush 逐字等价：每段 trim 后非空才返回，
+ * 与原来 tryStreamChat 里的 flush 正文逐字等价（空白本就 trim 掉）：每段 trim 后非空才返回，
  * 顺序保持原文顺序。
  */
 export function createSentenceBuffer(maxLen = 40): SentenceBuffer {
@@ -139,6 +147,11 @@ export function createSentenceBuffer(maxLen = 40): SentenceBuffer {
   function take(force: boolean): string[] {
     const out: string[] = []
     for (;;) {
+      if (!tail) break
+      // 先剥前导空白：否则以换行开头的增量（模型回复很常见）永远只匹配到那个换行本身
+      // （m[0].length 为 1，不满足 >= 2），整段要攒到 maxLen 才吐，流式第一句明显延迟。
+      // 这些空白本来也会被每段 trim 掉，剥掉不改变最终念出的正文。
+      tail = tail.replace(/^\s+/, '')
       if (!tail) break
       const m = tail.match(/[\s\S]*?[。！？!?；;\n]/)
       if (m && m[0].length >= 2) {
@@ -165,5 +178,5 @@ export function createSentenceBuffer(maxLen = 40): SentenceBuffer {
       return take(true)
     },
   }
-}import { deepFreeze } from '../shared/immutable.js'
+}
 

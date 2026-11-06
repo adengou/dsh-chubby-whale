@@ -29,11 +29,15 @@ export const DEFAULT_POEM_RATE = '-25%'
 /**
  * 读「-xx%」形态的语速偏好（说书 / 念诗共用这一份读取口径）：
  * 读不到、浏览器禁存储、格式不对 → 回默认值。
+ *
+ * 校验边界：只收 -1%～-99%，且拒绝 -0% / -01% / -00% 这类写法——
+ * 它们虽然能被正则放过，但换算成 TTS 语速是 0 或非规范值，念出来要么原速要么报错。
+ * -100% 同样拒绝（三位数，且等于完全停住，不是可用的朗读档位）。
  */
 function readPercentRate(key: string, fallback: string): string {
   try {
-    const s = localStorage.getItem(key)
-    if (s && /^-\d{1,2}%$/.test(s)) return s
+    const s = String(localStorage.getItem(key) || '').trim()
+    if (/^-(?:[1-9]\d?)%$/.test(s)) return s
   } catch (e) { }
   return fallback
 }

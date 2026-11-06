@@ -492,8 +492,8 @@
   var DEFAULT_POEM_RATE = "-25%";
   function readPercentRate(key, fallback) {
     try {
-      const s = localStorage.getItem(key);
-      if (s && /^-\d{1,2}%$/.test(s)) return s;
+      const s = String(localStorage.getItem(key) || "").trim();
+      if (/^-(?:[1-9]\d?)%$/.test(s)) return s;
     } catch (e) {
     }
     return fallback;
@@ -1414,8 +1414,11 @@
   function taleParts(rawTitle) {
     const t = String(rawTitle || "").trim();
     const i = t.indexOf("·");
-    if (i > 0 && i < t.length - 1) return { book: t.slice(0, i), title: t.slice(i + 1) };
-    return { title: t, book: "" };
+    if (i < 0) return { title: t, book: "" };
+    const book = t.slice(0, i).trim();
+    const title = t.slice(i + 1).trim();
+    if (book && title) return { book, title };
+    return { title: title || book, book: "" };
   }
   function normalizePlain(text) {
     return String(text == null ? "" : text).replace(/[\s。，！？,.!?、…~～]/g, "");
@@ -1513,6 +1516,8 @@
     function take(force) {
       const out = [];
       for (; ; ) {
+        if (!tail) break;
+        tail = tail.replace(/^\s+/, "");
         if (!tail) break;
         const m = tail.match(/[\s\S]*?[。！？!?；;\n]/);
         if (m && m[0].length >= 2) {
@@ -3621,12 +3626,16 @@
     return postRaw(path, body, init).then((r) => r.json());
   }
   function delJson(path, init) {
-    return fetch(apiUrl(path), Object.assign({ method: "DELETE" }, init || {})).then((r) => r.json());
+    const o = Object.assign({}, init || {});
+    o.method = "DELETE";
+    return fetch(apiUrl(path), o).then((r) => r.json());
   }
   function timeoutSignal(ms2) {
     try {
+      const n = Number(ms2);
+      if (!Number.isFinite(n) || n <= 0) return void 0;
       const AS = typeof AbortSignal !== "undefined" ? AbortSignal : null;
-      if (AS && typeof AS.timeout === "function") return AS.timeout(Number(ms2) || 0);
+      if (AS && typeof AS.timeout === "function") return AS.timeout(n);
     } catch (e) {
     }
     return void 0;
@@ -5505,6 +5514,9 @@
 
   // src/client/busy.ts
   var BUSY_STALE_MS = 35e3;
+  function toTime(v, fallback) {
+    return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  }
   function createBusyLock(opts) {
     const staleMs = Math.max(1e3, Number(opts && opts.staleMs) || BUSY_STALE_MS);
     let busy = false;
@@ -5512,7 +5524,7 @@
     return {
       begin(now) {
         busy = true;
-        beganAt = typeof now === "number" ? now : Date.now();
+        beganAt = toTime(now, Date.now());
       },
       end() {
         busy = false;
@@ -5522,11 +5534,11 @@
       },
       age(now) {
         if (!busy) return 0;
-        const t = typeof now === "number" ? now : Date.now();
+        const t = toTime(now, Date.now());
         return Math.max(0, t - beganAt);
       },
       watchdog(now) {
-        const t = typeof now === "number" ? now : Date.now();
+        const t = toTime(now, Date.now());
         if (!busy) return false;
         if (t - beganAt <= staleMs) return false;
         busy = false;
@@ -5544,8 +5556,10 @@
       current() {
         return cur;
       },
+      // 0 是「还没开过纪元」的哨兵，不能当成有效令牌：
+      // 否则任何拿初始值 0 去比对的旧回调都会被误判为「当前」，失去作废保护。
       isCurrent(e) {
-        return e === cur;
+        return e > 0 && e === cur;
       }
     };
   }

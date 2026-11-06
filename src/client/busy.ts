@@ -24,6 +24,11 @@ export type BusyLock = {
   watchdog: (now?: number) => boolean
 }
 
+/** 把时间参数收敛成有限数：测试/日志注入 NaN、±Infinity 时不至于把锁卡死 */
+function toTime(v: unknown, fallback: number): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+}
+
 export function createBusyLock(opts?: { staleMs?: number }): BusyLock {
   const staleMs = Math.max(1000, Number(opts && opts.staleMs) || BUSY_STALE_MS)
   let busy = false
@@ -31,7 +36,8 @@ export function createBusyLock(opts?: { staleMs?: number }): BusyLock {
   return {
     begin(now?: number): void {
       busy = true
-      beganAt = typeof now === 'number' ? now : Date.now()
+      // 只认有限数：Infinity 会让 t - beganAt 永远大于 staleMs，watchdog 再也解不了锁
+      beganAt = toTime(now, Date.now())
     },
     end(): void {
       busy = false
@@ -41,11 +47,11 @@ export function createBusyLock(opts?: { staleMs?: number }): BusyLock {
     },
     age(now?: number): number {
       if (!busy) return 0
-      const t = typeof now === 'number' ? now : Date.now()
+      const t = toTime(now, Date.now())
       return Math.max(0, t - beganAt)
     },
     watchdog(now?: number): boolean {
-      const t = typeof now === 'number' ? now : Date.now()
+      const t = toTime(now, Date.now())
       if (!busy) return false
       if (t - beganAt <= staleMs) return false
       busy = false
@@ -66,6 +72,8 @@ export function createEpoch(): Epoch {
   return {
     next(): number { cur += 1; return cur },
     current(): number { return cur },
-    isCurrent(e: number): boolean { return e === cur },
+    // 0 是「还没开过纪元」的哨兵，不能当成有效令牌：
+    // 否则任何拿初始值 0 去比对的旧回调都会被误判为「当前」，失去作废保护。
+    isCurrent(e: number): boolean { return e > 0 && e === cur },
   }
 }
