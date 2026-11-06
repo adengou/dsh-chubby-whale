@@ -9,6 +9,7 @@
 import type { ActionHost, ActionTable } from '../actions.js'
 import { getJson } from '../http.js'
 import { estimateSpeakMs } from '../text.js'
+import { beginOnce } from './culture.js'
 
 /** 今日一句：text 必填，source 可能为空 */
 export type DailyLine = { text: string; source: string }
@@ -93,6 +94,7 @@ export function registerContentActions(table: ActionTable<ActionHost>): void {
 
   // —— 今日一句：text + ——source，失败静默给一句提示 ——
   table.define('daily-line', (host) => {
+    if (!beginOnce('daily')) { host.bubble('刚念过啦，稍等～', 2000); return }
     getJson('/daily', { cache: 'no-store' })
       .then((d: any) => {
         const line = pickDaily(d)
@@ -105,6 +107,7 @@ export function registerContentActions(table: ActionTable<ActionHost>): void {
 
   // —— 今日简报：先日期天气、再待办，两段之间空一行 ——
   table.define('briefing-card', (host) => {
+    if (!beginOnce('briefing')) { host.bubble('刚播过啦，稍等～', 2000); return }
     getJson('/briefing', { cache: 'no-store' })
       .then((d: any) => {
         const card = parseBriefing(d)

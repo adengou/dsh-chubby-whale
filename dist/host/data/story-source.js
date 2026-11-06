@@ -51,7 +51,15 @@ export function createStorySource(port) {
             try {
                 const chunks = await port.readStoryBook(name);
                 // DataPort 承诺返回数组，但假实现/未来实现可能违约：非数组按空书处理，别让 player 的 .length 崩
-                return Array.isArray(chunks) ? chunks : [];
+                if (!Array.isArray(chunks))
+                    return [];
+                // 段内 book 统一投影成「书单书名」（= 本次请求的 name）。
+                // 三言二拍这类合辑的数据里，段内 book 是子书名（喻世明言/醒世恒言/初刻拍案惊奇…）；
+                // player 把这个字段放进响应的 book，客户端据此记「当前书」并发 /story/reset?book=<book>，
+                // 子书名不在书单里 → reset 只能回 unknown book，「从头讲这本书」失效。
+                // 书单名（文件名 / 云端 index 的 book）才是可点播、可重置、能拼进 join() 的键；
+                // 段内 book 只是内容分组，不该作为播放器对外的书名。只在不同时复制，正常书零开销。
+                return chunks.map((c) => (c && typeof c === 'object' && String(c.book || '') !== name ? { ...c, book: name } : c));
             }
             catch (err) {
                 console.error('STORY-LOAD-FAIL book=' + name + ' err=' + String(err?.message || err));

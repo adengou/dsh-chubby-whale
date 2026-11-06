@@ -15,7 +15,7 @@ import { detectIntent } from './intent.js'
 import { collapseText } from './text.js'
 import type { Persona } from './persona.js'
 import type { StoryController, StoryRefs } from './story.js'
-import { recitePoem } from './actions/culture.js'
+import { beginOnce, recitePoem } from './actions/culture.js'
 
 export type LocalRouteHost = {
   persona: Persona
@@ -59,6 +59,19 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
       return true
     }
 
+    // 报书名 / 报书单：本地列书单，不进模型（「报书名」是点播指令里唯一不带书名的那种）
+    if (/^(报|说|列)(一下|下)?(书名|书单)$/.test(t0)) {
+      host.bubble('（点播）本鲸数数书单…', 3000)
+      getJson('/story/books', { cache: 'no-store' }).then((d: any) => {
+        const books = (d && d.ok && Array.isArray(d.books))
+          ? d.books.map((b: any) => String(b || '').trim()).filter(Boolean)
+          : []
+        if (!books.length) { host.bubble('书单没取到，稍后再试', 4000); return }
+        host.bubble('书单有 ' + books.length + ' 本：' + books.join('、') + '（说个书名本鲸就开讲）', 12000)
+      }).catch(() => host.bubble('书单没取到，稍后再试', 4000))
+      return true
+    }
+
     const hit = detectIntent(rawText)
     if (!hit) return false
 
@@ -69,7 +82,11 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     }
 
     if (hit.kind === 'culture') {
+      // 映射照 intent 的原意：成语 → chengyu（带出处的小故事，/culture?type=chengyu），
+      // 典故 → idiom（/culture?type=idiom）。两者是不同数据池，别在这里对调：
+      // 「讲个成语」拿到 chengyu.json 的典故故事，与菜单「成语辨析」（idioms.json）分工不同。
       const type = hit.sub
+      if (!beginOnce('route:' + type)) { host.bubble('正在讲呢，稍等～', 2000); return true }
       host.bubble(type === 'chengyu' ? '（点播）讲个成语' : '（点播）讲个典故', 3000)
       getJson('/culture?type=' + type).then((d: any) => {
         const it = (d && d.ok && d.item) ? d.item : null

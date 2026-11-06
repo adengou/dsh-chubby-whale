@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.28";
+  var VERSION = "1.1.29";
 
   // src/client/styles.ts
   var W = 240;
@@ -251,6 +251,7 @@
     "名胜": "Landmarks",
     "景观": "Scenery",
     "书房": "Study",
+    "书院": "Academy",
     "寿联": "Birthday couplet",
     "中药": "Herbs",
     "叠字": "Repeated characters",
@@ -425,6 +426,7 @@
           item("谐趣", "culture-couplet:谐趣"),
           item("名胜", "culture-couplet:名胜"),
           item("景观", "culture-couplet:景观"),
+          item("书院", "culture-couplet:书院"),
           item("书房", "culture-couplet:书房"),
           item("寿联", "culture-couplet:寿联"),
           item("中药", "culture-couplet:中药"),
@@ -3985,8 +3987,19 @@
   }
 
   // src/client/actions/culture.ts
-  var reciteEpoch = 0;
+  var recentStarts = /* @__PURE__ */ new Map();
+  function beginOnce(key, gapMs = 1500) {
+    const now = Date.now();
+    const last = recentStarts.get(key) || 0;
+    if (now - last < gapMs) return false;
+    recentStarts.set(key, now);
+    return true;
+  }
   function recitePoem(host, poem) {
+    if (!beginOnce("poem")) {
+      host.bubble("正在念呢，稍等～", 2e3);
+      return;
+    }
     const body = String(poem.text || "");
     const author = String(poem.author || "佚名");
     const lines = body.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
@@ -4001,24 +4014,20 @@
     const speech = intro + collapsePoemBody(body);
     host.narrate(estimateSpeakMs(speech));
     host.say(host.persona.line("poemStart"), 4e3);
-    const myEpoch = ++reciteEpoch;
-    setTimeout(() => {
-      if (myEpoch !== reciteEpoch) return;
-      try {
-        host.speak(speech, {
-          rate: poemRate(host.narrationRate()),
-          onDone: () => {
-            try {
-              stopProgress();
-            } catch (e) {
-            }
-            host.clearNarrate();
-            host.say(host.persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
+    try {
+      host.speak(speech, {
+        rate: poemRate(host.narrationRate()),
+        onDone: () => {
+          try {
+            stopProgress();
+          } catch (e) {
           }
-        });
-      } catch (e) {
-      }
-    }, 600);
+          host.clearNarrate();
+          host.say(host.persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
+        }
+      });
+    } catch (e) {
+    }
   }
   function finishSpeech(host, doneText) {
     host.bubble(doneText, 5e3);
@@ -4099,6 +4108,10 @@
       host.bubble("说书语速：" + rate, 4e3);
     });
     table.define("culture-tale", (host) => {
+      if (!beginOnce("tale")) {
+        host.bubble("正在讲呢，稍等～", 2e3);
+        return;
+      }
       getJson("/culture?type=minsu").then((d) => {
         if (!(d && d.ok && d.item)) {
           host.bubble("故事没讲成");
@@ -4115,6 +4128,10 @@
       }).catch(() => host.bubble("故事没讲成"));
     });
     table.define("culture-allusion", (host) => {
+      if (!beginOnce("allusion")) {
+        host.bubble("正在讲呢，稍等～", 2e3);
+        return;
+      }
       getJson("/culture?type=chengyu").then((d) => {
         if (!(d && d.ok && d.item)) {
           host.bubble("典故没讲成");
@@ -4130,6 +4147,10 @@
       }).catch(() => host.bubble("典故没讲成"));
     });
     table.define("culture-idiom", (host) => {
+      if (!beginOnce("idiom")) {
+        host.bubble("正在讲呢，稍等～", 2e3);
+        return;
+      }
       getJson("/culture?type=idiom").then((d) => {
         if (!(d && d.ok && d.item)) {
           host.bubble("没查到");
@@ -4266,6 +4287,10 @@
       host.story.start(book);
     });
     table.define("daily-line", (host) => {
+      if (!beginOnce("daily")) {
+        host.bubble("刚念过啦，稍等～", 2e3);
+        return;
+      }
       getJson("/daily", { cache: "no-store" }).then((d) => {
         const line = pickDaily(d);
         if (!line) {
@@ -4277,6 +4302,10 @@
       }).catch(() => host.bubble("今天那句还没准备好", 3500));
     });
     table.define("briefing-card", (host) => {
+      if (!beginOnce("briefing")) {
+        host.bubble("刚播过啦，稍等～", 2e3);
+        return;
+      }
       getJson("/briefing", { cache: "no-store" }).then((d) => {
         const card = parseBriefing(d);
         if (!card) {
@@ -6366,6 +6395,18 @@
         host.story.start(host.storyState.book.current || "");
         return true;
       }
+      if (/^(报|说|列)(一下|下)?(书名|书单)$/.test(t0)) {
+        host.bubble("（点播）本鲸数数书单…", 3e3);
+        getJson("/story/books", { cache: "no-store" }).then((d) => {
+          const books = d && d.ok && Array.isArray(d.books) ? d.books.map((b) => String(b || "").trim()).filter(Boolean) : [];
+          if (!books.length) {
+            host.bubble("书单没取到，稍后再试", 4e3);
+            return;
+          }
+          host.bubble("书单有 " + books.length + " 本：" + books.join("、") + "（说个书名本鲸就开讲）", 12e3);
+        }).catch(() => host.bubble("书单没取到，稍后再试", 4e3));
+        return true;
+      }
       const hit = detectIntent(rawText);
       if (!hit) return false;
       if (hit.kind === "poem") {
@@ -6375,6 +6416,10 @@
       }
       if (hit.kind === "culture") {
         const type = hit.sub;
+        if (!beginOnce("route:" + type)) {
+          host.bubble("正在讲呢，稍等～", 2e3);
+          return true;
+        }
         host.bubble(type === "chengyu" ? "（点播）讲个成语" : "（点播）讲个典故", 3e3);
         getJson("/culture?type=" + type).then((d) => {
           const it = d && d.ok && d.item ? d.item : null;

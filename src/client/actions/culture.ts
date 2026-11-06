@@ -16,16 +16,33 @@ import { setNarrationRate, setChatRate, poemRate } from '../rates.js'
 /** 念诗需要的最小能力集（菜单动作与点播路由共用） */
 export type ReciteHost = Pick<ActionHost, 'bubble' | 'talkFor' | 'narrate' | 'clearNarrate' | 'say' | 'speak' | 'persona' | 'narrationRate'>
 
-/** 念诗代际：每次开念 or 主动取消都 +1；延迟回调里比对，防止「停止说话」后仍开念 */
-let reciteEpoch = 0
+/**
+ * 同入口连点防重：同一个入口（念诗/民间故事/典故/成语/每日内容）在 gapMs 内只放行一次。
+ * 没有这道闸时，连点两下会排两段同样的朗读进 TTS 队列，听起来就是「叠加播放」。
+ * 故意只挡「连点」：窗口 1.5 秒，听完一段后再点不受影响。
+ */
+const recentStarts = new Map<string, number>()
+export function beginOnce(key: string, gapMs = 1500): boolean {
+  const now = Date.now()
+  const last = recentStarts.get(key) || 0
+  if (now - last < gapMs) return false
+  recentStarts.set(key, now)
+  return true
+}
 
-/** 取消待开念的念诗（停止说话/歇会儿时调用） */
+/**
+ * 取消念诗：清掉念诗进度（下一次开念不会带着上一首的「第 x/N 句」）。
+ * 说明：开念已改为同步调用 speak()，所以「停止说话」直接清 TTS 队列就能拦住；
+ * 这个导出保留给「停止说话/歇会儿」接线用（当前 actions/system.ts 只 import、尚未调用）。
+ */
 export function cancelRecite(): void {
-  reciteEpoch++
+  try { stopProgress() } catch (e) { }
 }
 
 /** 念诗：气泡 + 叙述锁 + 朗读 + 念完收尾（菜单「念首诗」与点播「背首诗」共用一份） */
 export function recitePoem(host: ReciteHost, poem: any): void {
+  // 连点两次「念首诗」/「背首诗」：第二下直接忽略，不把两首诗排进队列
+  if (!beginOnce('poem')) { host.bubble('正在念呢，稍等～', 2000); return }
   const body = String(poem.text || '')
   const author = String(poem.author || '佚名')
   const lines = body.split(/\r?\n/).map((x) => x.trim()).filter(Boolean)
@@ -38,21 +55,19 @@ export function recitePoem(host: ReciteHost, poem: any): void {
   const speech = intro + collapsePoemBody(body)
   host.narrate(estimateSpeakMs(speech))
   host.say(host.persona.line('poemStart'), 4000)
-  // 延迟 600ms 让「念诗·标题」气泡先亮；回调里校验代际——停止说话时 cancelRecite() 会让它作废
-  const myEpoch = ++reciteEpoch
-  setTimeout(() => {
-    if (myEpoch !== reciteEpoch) return
-    try {
-      host.speak(speech, {
-        rate: poemRate(host.narrationRate()),
-        onDone: () => {
-          try { stopProgress() } catch (e) { }
-          host.clearNarrate()
-          host.say(host.persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' })
-        },
-      })
-    } catch (e) { }
-  }, 600)
+  // 直接开念：原来延迟 600ms 等气泡先亮，但那 600ms 里点「停止说话」拦不住这次开念
+  // （TTS 队列还没这一段，stopSpeaking 无从取消）。气泡是同步写进 DOM 的，而 TTS 合成还要几秒，
+  // 先气泡后开口的顺序不会倒过来；开念后「停止说话」能当场清队列。
+  try {
+    host.speak(speech, {
+      rate: poemRate(host.narrationRate()),
+      onDone: () => {
+        try { stopProgress() } catch (e) { }
+        host.clearNarrate()
+        host.say(host.persona.line('poemDone'), 6000, { rate: '-8%', pitch: '+15Hz' })
+      },
+    })
+  } catch (e) { }
 }
 
 import { pickCouplet } from '../duilian.js'
@@ -116,6 +131,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
 
   // —— 民间故事：标题 + 出处 + 整篇完整念（不截断；长故事靠 TTS 队列逐块念完），叙述语速 ——
   table.define('culture-tale', (host) => {
+    if (!beginOnce('tale')) { host.bubble('正在讲呢，稍等～', 2000); return }
     getJson('/culture?type=minsu').then((d: any) => {
       if (!(d && d.ok && d.item)) { host.bubble('故事没讲成'); return }
       const tp = taleParts(d.item.title)
@@ -131,6 +147,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
 
   // —— 典故 ——
   table.define('culture-allusion', (host) => {
+    if (!beginOnce('allusion')) { host.bubble('正在讲呢，稍等～', 2000); return }
     getJson('/culture?type=chengyu').then((d: any) => {
       if (!(d && d.ok && d.item)) { host.bubble('典故没讲成'); return }
       const body = collapseText(d.item.text)
@@ -145,6 +162,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
 
   // —— 成语辨析（一律叙述语速，不按长度改）——
   table.define('culture-idiom', (host) => {
+    if (!beginOnce('idiom')) { host.bubble('正在讲呢，稍等～', 2000); return }
     getJson('/culture?type=idiom').then((d: any) => {
       if (!(d && d.ok && d.item)) { host.bubble('没查到'); return }
       host.bubble('成语辨析·' + d.item.title, 8000)
