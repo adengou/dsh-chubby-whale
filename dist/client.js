@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.5";
+  var VERSION = "1.1.6";
 
   // src/client/styles.ts
   var W = 240;
@@ -7348,6 +7348,7 @@
       } catch (e) {
       }
       const h = R.createElement;
+      const BUBBLE_TEXT_STYLE = { overflowWrap: "anywhere", wordBreak: "break-word" };
       const hookApi = createHooks(R);
       const actions = createActionTable();
       registerCultureActions(actions);
@@ -7415,19 +7416,45 @@
       } });
       const latDiag = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 };
       const melody = createMelodyPlayer();
+      let lastRenderErr = "";
       function WhaleOverlay(props) {
+        const [retryTick, setRetryTick] = R.useState(0);
         try {
-          return WhaleBody(props || {});
+          const tree = WhaleBody(props || {});
+          lastRenderErr = "";
+          return tree;
         } catch (e) {
+          const msg = String(e && e.stack || e);
           try {
-            window.__chubbyWhale.renderError = String(e && e.stack || e);
+            window.__chubbyWhale.renderError = msg;
           } catch (e2) {
           }
-          try {
-            console.error("[chubby-whale] 渲染异常已被就地拦下：", e);
-          } catch (e2) {
+          if (msg !== lastRenderErr) {
+            lastRenderErr = msg;
+            try {
+              console.error("[chubby-whale] 渲染异常已被就地拦下：", e);
+            } catch (e2) {
+            }
           }
-          return null;
+          return h("div", {
+            key: "chubby-render-error-" + retryTick,
+            style: recoverDotStyle,
+            title: "本鲸打了个喷嚏，点一下再试（还不行就刷新页面）",
+            onClick: (ev) => {
+              try {
+                ev.stopPropagation();
+              } catch (e2) {
+              }
+              try {
+                ev.preventDefault();
+              } catch (e2) {
+              }
+              try {
+                setRetryTick((n) => n + 1);
+              } catch (e2) {
+              }
+            }
+          }, "⚠");
         }
       }
       function WhaleBody(props) {
@@ -7504,6 +7531,10 @@
         }));
         const [scale, setScale] = R.useState(1);
         const [hidden, setHidden] = R.useState(false);
+        const hiddenRef = R.useRef(false);
+        hiddenRef.current = hidden;
+        const skipInputClearRef = R.useRef(false);
+        const chatRootRef = R.useRef(null);
         const [menu, setMenu] = R.useState(null);
         const [subOpen, setSubOpen] = R.useState("");
         const [storyBooks, setStoryBooks] = R.useState([]);
@@ -7517,6 +7548,8 @@
           }
         })());
         const [chatOpen, setChatOpen] = R.useState(false);
+        const chatOpenRef = R.useRef(false);
+        chatOpenRef.current = chatOpen;
         const [messages, setMessages] = R.useState([]);
         const [input, setInput] = R.useState("");
         const [busy, setBusy] = R.useState(false);
@@ -7660,10 +7693,57 @@
         }
         function restoreIdleStatus() {
         }
-        const reminderManager = createReminderManager({ bubble: showBubble });
+        const reminderManagerRef = hookApi.useLazyRef(() => createReminderManager({ bubble: showBubble }));
+        const reminderManager = reminderManagerRef.current;
         const recover = createRecover({ recover: () => setHidden(false) });
+        function isTypingTarget(t) {
+          try {
+            if (!t) return false;
+            const tag = String(t.tagName || "").toUpperCase();
+            if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+            return !!t.isContentEditable;
+          } catch (e) {
+            return false;
+          }
+        }
         R.useEffect(() => {
-          const unbind = recover.bindHotkey(window);
+          const wrapped = /* @__PURE__ */ new Map();
+          const target = {
+            addEventListener(type, fn, capture) {
+              if (type !== "keydown" || typeof fn !== "function") {
+                try {
+                  window.addEventListener(type, fn, capture);
+                } catch (e) {
+                }
+                return;
+              }
+              const guard = (e) => {
+                if (isTypingTarget(e && e.target)) return;
+                fn(e);
+              };
+              wrapped.set(fn, guard);
+              try {
+                window.addEventListener(type, guard, capture);
+              } catch (e) {
+              }
+            },
+            removeEventListener(type, fn, capture) {
+              const guard = wrapped.get(fn);
+              if (guard) {
+                wrapped.delete(fn);
+                try {
+                  window.removeEventListener(type, guard, capture);
+                } catch (e) {
+                }
+                return;
+              }
+              try {
+                window.removeEventListener(type, fn, capture);
+              } catch (e) {
+              }
+            }
+          };
+          const unbind = recover.bindHotkey(target);
           return () => {
             try {
               unbind();
@@ -7676,6 +7756,7 @@
             win: window,
             hitTest: (x, y) => {
               try {
+                if (hiddenRef.current) return false;
                 const el = stageRef.current;
                 if (!el) return false;
                 const r = el.getBoundingClientRect();
@@ -7693,6 +7774,60 @@
               }
             }
           });
+        }, []);
+        R.useEffect(() => {
+          const onPaste = (e) => {
+            try {
+              if (!chatOpenRef.current) return;
+              const root = chatRootRef.current;
+              const t = e && e.target;
+              if (!root || !t || typeof root.contains !== "function" || !root.contains(t)) return;
+              const dt = e.clipboardData;
+              let file = null;
+              const items = dt && dt.items;
+              if (items && typeof items.length === "number") {
+                for (let i = 0; i < items.length; i++) {
+                  const it = items[i];
+                  if (!it || it.kind !== "file" || !/^image\//.test(String(it.type || ""))) continue;
+                  const f = typeof it.getAsFile === "function" ? it.getAsFile() : null;
+                  if (f) {
+                    file = f;
+                    break;
+                  }
+                }
+              }
+              if (!file && dt && dt.files && dt.files.length) {
+                const f = dt.files[0];
+                if (f && /^image\//.test(String(f.type || ""))) file = f;
+              }
+              if (!file) return;
+              try {
+                e.preventDefault();
+              } catch (e2) {
+              }
+              try {
+                e.stopPropagation();
+              } catch (e2) {
+              }
+              handleFileDrop(file, { showBubble, speakText }).catch(() => {
+                try {
+                  showBubble("图片没处理成，再贴一次试试", 4e3);
+                } catch (e2) {
+                }
+              });
+            } catch (e2) {
+            }
+          };
+          try {
+            window.addEventListener("paste", onPaste, true);
+          } catch (e) {
+          }
+          return () => {
+            try {
+              window.removeEventListener("paste", onPaste, true);
+            } catch (e) {
+            }
+          };
         }, []);
         function dragBeginAt(x, y) {
           beginDrag(dragRef.current, x, y, posRef.current.x, posRef.current.y);
@@ -7939,6 +8074,32 @@
             }
           });
         }, [menu]);
+        R.useEffect(() => {
+          if (!menu) return;
+          const onKeyDown = (e) => {
+            if (!e || e.key !== "Escape" && e.key !== "Esc") return;
+            try {
+              e.stopPropagation();
+            } catch (e2) {
+            }
+            try {
+              e.preventDefault();
+            } catch (e2) {
+            }
+            setMenu(null);
+            setSubOpen("");
+          };
+          try {
+            window.addEventListener("keydown", onKeyDown, true);
+          } catch (e) {
+          }
+          return () => {
+            try {
+              window.removeEventListener("keydown", onKeyDown, true);
+            } catch (e) {
+            }
+          };
+        }, [menu]);
         const story = createStoryController({
           clientId: CLIENT_ID,
           persona,
@@ -8126,6 +8287,10 @@
             if (el) el.scrollTop = el.scrollHeight;
           }, 0);
         }
+        R.useEffect(() => {
+          if (!chatOpen) return;
+          scrollBody();
+        }, [chatOpen, messages]);
         const localRouter = createLocalRouter({
           persona,
           narrationRate,
@@ -8138,7 +8303,7 @@
           story,
           storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef }
         });
-        const chat = createChatSender({
+        const chatRef = hookApi.useLazyRef(() => createChatSender({
           persona,
           bubble: showBubble,
           say: sayLine,
@@ -8152,7 +8317,14 @@
             } catch (e) {
             }
           },
-          setInput: (v) => setInput(v),
+          // 语音回合不动输入框（主人可能正在打字）；打字/语音的来源由 sendText 填标记，用一次即复位
+          setInput: (v) => {
+            if (skipInputClearRef.current) {
+              skipInputClearRef.current = false;
+              return;
+            }
+            setInput(v);
+          },
           setMessages: (v) => setMessages(v),
           setBusy: (v) => setBusy(v),
           scrollBody: () => scrollBody(),
@@ -8172,10 +8344,21 @@
             } catch (e) {
             }
           }
-        });
+        }));
+        const chat = chatRef.current;
         function sendText(rawText, opts) {
           try {
-            if (reminderManager.intercept(String(rawText == null ? "" : rawText))) return Promise.resolve(true);
+            if (reminderManager.intercept(String(rawText == null ? "" : rawText))) {
+              try {
+                setInput("");
+              } catch (e2) {
+              }
+              return Promise.resolve(true);
+            }
+          } catch (e) {
+          }
+          try {
+            skipInputClearRef.current = !!(opts && opts.voice);
           } catch (e) {
           }
           return chat.send(rawText, opts).then((ok) => ok !== false);
@@ -8190,8 +8373,8 @@
           }
         }, []);
         R.useEffect(() => {
+          const w = window.__chubbyWhale || (window.__chubbyWhale = {});
           try {
-            const w = window.__chubbyWhale || (window.__chubbyWhale = {});
             w.say = (t) => {
               try {
                 sendText(String(t || ""), { voice: true });
@@ -8208,6 +8391,15 @@
             w.look = () => lookRef.current;
           } catch (e) {
           }
+          return () => {
+            try {
+              if (w.say) delete w.say;
+              if (w.sayStop) delete w.sayStop;
+              if (w.busyNow) delete w.busyNow;
+              if (w.look) delete w.look;
+            } catch (e) {
+            }
+          };
         }, []);
         R.useEffect(() => {
           return reminderPoller.start();
@@ -8343,7 +8535,7 @@
             },
             h("canvas", { ref: canvasRef, width: CW, height: CH, style: canvasStyle })
           ),
-          h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef })),
+          h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "○") : null,
           menu ? h(
             "div",
@@ -8357,34 +8549,38 @@
             } }),
             renderItems(buildMenu(VERSION, Object.assign({ voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())))
           ) : null,
-          // 聊天面板：结构与事件接线都在 client/render.ts，发送/输入法判断留在闭包里
-          renderChatPanel({
-            h,
-            lang,
-            open: chatOpen,
-            messages,
-            input,
-            busy,
-            bodyRef,
-            onClose: () => setChatOpen(false),
-            onInputChange: (v) => setInput(v),
-            onKeyDown: (e) => {
-              if (e.nativeEvent && e.nativeEvent.isComposing) return;
-              if (e.key === "Enter" && input.trim()) {
+          // 聊天面板：结构与事件接线都在 client/render.ts，发送/输入法判断留在闭包里。
+          // 外面包一层 display:contents 的根节点：粘贴处理要靠它判断事件是否发生在面板内，
+          // contents 不生成布局盒子，不影响面板自身的 fixed 定位。
+          h(
+            "div",
+            { ref: chatRootRef, style: { display: "contents" } },
+            renderChatPanel({
+              h,
+              lang,
+              open: chatOpen,
+              messages,
+              input,
+              busy,
+              bodyRef,
+              onClose: () => setChatOpen(false),
+              onInputChange: (v) => setInput(v),
+              onKeyDown: (e) => {
+                const ne = e && e.nativeEvent;
+                if (ne && (ne.isComposing || ne.keyCode === 229)) return;
+                if (e.key === "Enter" && input.trim()) {
+                  const v = input;
+                  void sendText(v);
+                }
+              },
+              // 清空输入框由 chat.send 在真的发出后负责（占线被拒时保留主人的话）
+              onSend: () => {
                 const v = input;
-                void sendText(v).then((ok) => {
-                  if (ok) setInput("");
-                });
+                if (!v.trim()) return;
+                void sendText(v);
               }
-            },
-            onSend: () => {
-              const v = input;
-              if (!v.trim()) return;
-              void sendText(v).then((ok) => {
-                if (ok) setInput("");
-              });
-            }
-          })
+            })
+          )
         );
       }
       return {
