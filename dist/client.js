@@ -3888,7 +3888,19 @@
   }
 
   // src/client/voice-bridge.ts
-  var NARR_STOP_RE = /停|别念|不念|够了|算了|打住/;
+  var NARR_SEG_RE = /[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]+/;
+  var NARR_STOP_CLAUSE_RE = /(?:停|打住|够了|算了|(?:不|别)(?:要|用|再)?(?:念|说|讲|读|播|出声)|不想(?:再)?(?:听|看))(?:下来|下去|住|一停|一下|一会|一会儿|下)?(?:了|啦|吧|呀|啊|嘛|呗|哦|哟|哈|哇|呢)*(?:行不行|行吗|好不好|可以吗|好吗|好么)?$/;
+  function isNarrationStop(text) {
+    const raw = String(text || "");
+    if (!raw) return false;
+    for (const seg of raw.split(NARR_SEG_RE)) {
+      const norm = normalizeWakeText(seg);
+      if (!norm) continue;
+      if (isStopCommand(norm)) return true;
+      if (NARR_STOP_CLAUSE_RE.test(norm)) return true;
+    }
+    return false;
+  }
   var HAS_CONTENT_RE = /[\u4e00-\u9fa5a-z0-9]/i;
   function isStopCommand(norm) {
     if (!norm) return false;
@@ -4005,7 +4017,7 @@
             if (host.narration.active()) {
               let narrStop = false;
               try {
-                narrStop = NARR_STOP_RE.test(String(text || "")) || isStopCommand(normalizeWakeText(text));
+                narrStop = isNarrationStop(String(text || ""));
               } catch (e) {
               }
               if (narrStop) stopNarration("好，不念了");
