@@ -569,7 +569,25 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, li
       R.useEffect(() => {
         // 饭团：进门先打个招呼（按当前时段挑台词），3 秒后出现，不抢首屏
         const stopGreet = startGreeting({
-          greet: () => { try { if (greetedOnce) return; greetedOnce = true; const g = persona.greeting(); if (g) sayLine(g, 5000) } catch (e) { } },
+          greet: () => {
+    try {
+      if (greetedOnce) return
+      greetedOnce = true
+      const g = persona.greeting()
+      if (g) sayLine(g, 5000)
+      // 今日一句：开场问候之后补一句当天的诗（/daily 失败静默；chubby-daily-greet=off 可关）
+      try {
+        const off = (() => { try { return typeof localStorage !== 'undefined' && localStorage.getItem('chubby-daily-greet') === 'off' } catch (e) { return false } })()
+        if (!off) {
+          getJson('/daily', { cache: 'no-store' }).then((d: any) => {
+            try {
+              if (d && d.ok && d.text) sayLine('今天这句——' + String(d.text) + (d.source ? '（' + String(d.source) + '）' : ''), 9000)
+            } catch (e) { }
+          }).catch(() => { })
+        }
+      } catch (e) { }
+    } catch (e) { }
+  },
           hungry: () => { try { sayLine(persona.line('hungry'), 4000) } catch (e) { } },
           // 打了招呼再看是不是饿了：饿着就补一句（对应人设的 hungry 场景）
           hungryNow: (() => { try { const st: any = (persona as any).state; return !!(st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1000) } catch (e) { return false } })(),
