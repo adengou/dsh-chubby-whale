@@ -62,24 +62,44 @@
     boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
     zIndex: 10003
   };
-  var menuStyle = (menu) => ({
-    position: "fixed",
-    // 窄视口（<220px）时 innerWidth-220 为负会把菜单甩出左边；夹到 8px 保底
-    left: (menu ? Math.max(8, Math.min(menu.x, window.innerWidth - 220)) : 0) + "px",
-    top: (menu ? Math.max(8, Math.min(menu.y, window.innerHeight - 520)) : 0) + "px",
-    width: 210,
-    maxHeight: typeof window !== "undefined" ? Math.max(200, Math.min(480, window.innerHeight - 32)) : 480,
-    overflowY: "auto",
-    paddingBottom: 10,
-    background: "rgba(12,28,52,0.98)",
-    border: "1px solid #2E6BB8",
-    borderRadius: 10,
-    boxShadow: "0 12px 32px rgba(0,0,0,0.5)",
-    zIndex: 10001,
-    font: '13px/1.5 "Microsoft YaHei", sans-serif',
-    display: menu ? "block" : "none",
-    color: "#cfe9ff"
-  });
+  function viewportSize() {
+    try {
+      if (typeof window === "undefined") return { w: 0, h: 0 };
+      const w = Number(window.innerWidth);
+      const h = Number(window.innerHeight);
+      return { w: isFinite(w) && w > 0 ? w : 0, h: isFinite(h) && h > 0 ? h : 0 };
+    } catch (e) {
+      return { w: 0, h: 0 };
+    }
+  }
+  function finiteOr(v, fallback) {
+    const n = Number(v);
+    return isFinite(n) ? n : fallback;
+  }
+  var menuStyle = (menu) => {
+    const vp = viewportSize();
+    const mx = finiteOr(menu && menu.x, 8);
+    const my = finiteOr(menu && menu.y, 8);
+    return {
+      position: "fixed",
+      // 窄视口（<220px）时 innerWidth-220 为负会把菜单甩出左边；夹到 8px 保底
+      left: (menu ? Math.max(8, Math.min(mx, vp.w > 0 ? vp.w - 220 : 8)) : 0) + "px",
+      top: (menu ? Math.max(8, Math.min(my, vp.h > 0 ? vp.h - 520 : 8)) : 0) + "px",
+      width: 210,
+      // 无 window 时用固定上限；有 window 时至少 200，避免窄视口把菜单压没
+      maxHeight: vp.h > 0 ? Math.max(200, Math.min(480, vp.h - 32)) : 480,
+      overflowY: "auto",
+      paddingBottom: 10,
+      background: "rgba(12,28,52,0.98)",
+      border: "1px solid #2E6BB8",
+      borderRadius: 10,
+      boxShadow: "0 12px 32px rgba(0,0,0,0.5)",
+      zIndex: 10001,
+      font: '13px/1.5 "Microsoft YaHei", sans-serif',
+      display: menu ? "block" : "none",
+      color: "#cfe9ff"
+    };
+  };
   var menuItemStyle = (active) => ({
     padding: "6px 14px",
     cursor: "pointer",
@@ -95,21 +115,28 @@
     display: "flex",
     justifyContent: "space-between"
   });
-  var chatPanelStyle = (open) => ({
-    position: "fixed",
-    right: 236,
-    bottom: 146,
-    width: 340,
-    background: "linear-gradient(180deg, rgba(18,40,74,0.98), rgba(10,24,46,0.98))",
-    border: "1px solid rgba(93,160,240,0.55)",
-    borderRadius: 18,
-    boxShadow: "0 18px 48px rgba(0,0,0,0.55)",
-    font: '14px/1.6 "Microsoft YaHei", sans-serif',
-    color: "#dbeaff",
-    overflow: "hidden",
-    zIndex: 1e4,
-    display: open ? "block" : "none"
-  });
+  var CHAT_PANEL_W = 340;
+  var CHAT_PANEL_H = 380;
+  var chatPanelStyle = (open) => {
+    const vp = viewportSize();
+    const right = vp.w > 0 ? Math.min(236, Math.max(8, vp.w - CHAT_PANEL_W - 8)) : 236;
+    const bottom = vp.h > 0 ? Math.min(146, Math.max(8, vp.h - CHAT_PANEL_H)) : 146;
+    return {
+      position: "fixed",
+      right,
+      bottom,
+      width: CHAT_PANEL_W,
+      background: "linear-gradient(180deg, rgba(18,40,74,0.98), rgba(10,24,46,0.98))",
+      border: "1px solid rgba(93,160,240,0.55)",
+      borderRadius: 18,
+      boxShadow: "0 18px 48px rgba(0,0,0,0.55)",
+      font: '14px/1.6 "Microsoft YaHei", sans-serif',
+      color: "#dbeaff",
+      overflow: "hidden",
+      zIndex: 1e4,
+      display: open ? "block" : "none"
+    };
+  };
   var headStyle = {
     display: "flex",
     justifyContent: "space-between",
@@ -3395,16 +3422,12 @@
       }
       ctx.restore();
     }
-    function loop(t) {
-      if (!running) return;
+    function drawFrame(t) {
       const dt = Math.max(0, Math.min(50, t - last));
       last = t;
       maintCountdown -= 1;
       if (maintCountdown <= 0) maintain();
-      if (!visible) {
-        raf = requestAnimationFrame(loop);
-        return;
-      }
+      if (!visible) return;
       ctx.clearRect(0, 0, cw, ch);
       if (t >= nextWagAt) {
         wagStart = t;
@@ -3413,38 +3436,67 @@
       }
       const wagP = wagStart >= 0 && t >= wagStart && t <= wagStart + WAG_MS ? (t - wagStart) / WAG_MS : -1;
       ctx.save();
-      if (wagP >= 0) {
-        const env = Math.sin(Math.PI * wagP);
-        const angle = Math.sin(wagP * Math.PI * 6) * 0.012 * env;
-        const bob = Math.sin(wagP * Math.PI * 4) * 1.6 * env;
-        ctx.translate(cw / 2, ch);
-        ctx.rotate(angle);
-        ctx.translate(0, bob);
-        ctx.translate(-cw / 2, -ch);
+      try {
+        if (wagP >= 0) {
+          const env = Math.sin(Math.PI * wagP);
+          const angle = Math.sin(wagP * Math.PI * 6) * 0.012 * env;
+          const bob = Math.sin(wagP * Math.PI * 4) * 1.6 * env;
+          ctx.translate(cw / 2, ch);
+          ctx.rotate(angle);
+          ctx.translate(0, bob);
+          ctx.translate(-cw / 2, -ch);
+        }
+        drawHalo(t);
+        if (img.complete && img.naturalWidth > 0) {
+          ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch);
+        }
+        drawFinDots(t);
+        blinkT += dt;
+        if (!blinkClosed && blinkT > blinkGap) {
+          blinkClosed = true;
+          blinkT = 0;
+        }
+        if (blinkClosed && blinkT > 150) {
+          blinkClosed = false;
+          blinkT = 0;
+          blinkGap = 3200 + Math.random() * 1800;
+        }
+        if (blinkClosed) {
+          drawEye(EYE_L, true);
+          drawEye(EYE_R, true);
+        }
+        if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0);
+        drawSplashes(dt);
+      } finally {
+        ctx.restore();
       }
-      drawHalo(t);
-      if (img.complete && img.naturalWidth > 0) {
-        ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch);
-      }
-      drawFinDots(t);
-      blinkT += dt;
-      if (!blinkClosed && blinkT > blinkGap) {
-        blinkClosed = true;
-        blinkT = 0;
-      }
-      if (blinkClosed && blinkT > 150) {
-        blinkClosed = false;
-        blinkT = 0;
-        blinkGap = 3200 + Math.random() * 1800;
-      }
-      if (blinkClosed) {
-        drawEye(EYE_L, true);
-        drawEye(EYE_R, true);
-      }
-      if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0);
-      drawSplashes(dt);
-      ctx.restore();
       drawHearts(dt / 1e3);
+    }
+    const FRAME_ERROR_LIMIT = 300;
+    let frameErrors = 0;
+    function loop(t) {
+      if (!running) return;
+      try {
+        drawFrame(t);
+        frameErrors = 0;
+      } catch (e) {
+        frameErrors += 1;
+        if (frameErrors === 1) {
+          try {
+            console.warn("[chubby-whale] canvas 绘制异常，已继续排帧重试：", e);
+          } catch (e2) {
+          }
+        }
+        if (frameErrors >= FRAME_ERROR_LIMIT) {
+          try {
+            console.warn("[chubby-whale] canvas 连续 " + FRAME_ERROR_LIMIT + " 帧绘制异常，停止动画（已画出的画面保留）");
+          } catch (e2) {
+          }
+          stop();
+          return;
+        }
+      }
+      if (!running) return;
       raf = requestAnimationFrame(loop);
     }
     function start() {
@@ -5999,9 +6051,9 @@
       } catch (e) {
       }
     };
-    const del = (el, t, fn) => {
+    const del = (el, t, fn, opts) => {
       try {
-        el.removeEventListener(t, fn);
+        el.removeEventListener(t, fn, opts);
       } catch (e) {
       }
     };
@@ -6143,10 +6195,10 @@
     const dispose = () => {
       if (target && win) {
         if (mode === "pointer") {
-          del(win, "pointerdown", onPointerDownCapture);
-          del(win, "pointermove", onPointerMoveCapture);
-          del(win, "pointerup", onPointerEndCapture);
-          del(win, "pointercancel", onPointerEndCapture);
+          del(win, "pointerdown", onPointerDownCapture, true);
+          del(win, "pointermove", onPointerMoveCapture, true);
+          del(win, "pointerup", onPointerEndCapture, true);
+          del(win, "pointercancel", onPointerEndCapture, true);
           del(win, "pointermove", onMove);
           del(win, "pointerup", onEnd);
           del(win, "pointercancel", onEnd);
