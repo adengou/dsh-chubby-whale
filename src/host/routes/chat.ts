@@ -14,15 +14,14 @@ import { sendJson, sendError } from '../respond.js'
 import type { ChatRouteDeps } from '../ports.js'
 import { DEFAULT_CHAT_MODEL } from '../config.js'
 import {
-  CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, SUMMARY_MAX_TOKENS,
+  CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS,
   chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, summarizeMemory,
 } from '../chat-core.js'
 
 // 兼容旧导入方（scripts/selftest.mjs、chat-stream 历史版本）：纯函数仍从本模块可导出
 export { HISTORY_IN_PROMPT, normalizeChatText, detectLang, recentHistory, chatCacheKey } from '../chat-core.js'
 
-const CHAT_TIMEOUT = 30 * 1000                 // 主聊天：30 秒
-const SUMMARY_TIMEOUT = 20 * 1000              // 长期记忆摘要：20 秒
+const CHAT_TIMEOUT = 30 * 1000                 // 主聊天：30 秒（记忆摘要的超时在 chat-core.summarizeMemory 里）
 const CHAT_MAX_BODY = 6 * 1024 * 1024          // 6MB（图片 base64 约 4MB * 1.34）
 const NET_FALLBACK = '主人，本鲸一时想不起来话（网络或接口有点问题）……'
 /** 图片超限文案：与 host/routes/chat-stream.ts 的同一句保持一致（路由之间不横向 import，各持一份） */
@@ -151,9 +150,19 @@ export function createChatHandler(opts: ChatRouteDeps) {
         console.error('[chat] MEMORY-APPEND-ERR ' + String(err?.message || err))
       }
       // 亲密度 +1
-      const st = opts.loadState()
-      st.intimacy = Math.min(100, (Number(st.intimacy) || 0) + 1)
-      opts.saveState(st)
+      // 端口读写必须自己 try 住（与 /chat-stream 同口径）：loadState/saveState 抛错时，
+      // 不能把「已经花掉 token 换来的回复」吞成一条内部错误——模型调用、token、记忆写回都已完成，
+      // 这时回 ok:false 会让客户端把同一条消息重发一次，记忆里出现重复问答。
+      // 状态失败只让 intimacy 回 0，回复照常返回。
+      let intimacy = 0
+      try {
+        const st = opts.loadState()
+        st.intimacy = Math.min(100, (Number(st.intimacy) || 0) + 1)
+        opts.saveState(st)
+        intimacy = Number(st.intimacy) || 0
+      } catch (err: any) {
+        console.error('[chat] STATE-ERR ' + String(err?.message || err))
+      }
       // 成长 +1（来源 chat，受日上限与来源上限约束，可能升级）
       // 既有口径：空回复（content/reasoning 都空、已回退到兜底文案）同样计 1 次经验、1 次 L2。
       // 审计已确认这是取舍而非漏判；要改成「空回复不计」属行为变更，本次未动。
@@ -176,7 +185,7 @@ export function createChatHandler(opts: ChatRouteDeps) {
         convo = lines.join('\n')
       }
       const saveSummary = opts.saveMemorySummary
-      sendJson(res, { ok: true, reply: reply || '主人……本鲸刚刚走神了。', intimacy: st.intimacy, upgraded })
+      sendJson(res, { ok: true, reply: reply || '主人……本鲸刚刚走神了。', intimacy, upgraded })
       // 缓存落盘放在回包之后：cache.setJson 内部还要 await 磁盘写 + prune 目录扫描，
       // 放在回包前会把主人可见的延迟拖上几十~几百毫秒。缓存本身已在 setJson 开头同步进内存，
       // 并发请求照样能命中，不损失命中率。
