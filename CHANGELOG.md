@@ -3,6 +3,21 @@
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
 ## [未发布]
+## [1.1.1] - 2026-11-06
+
+### 修复
+- 语音停止/看门狗复位时未 revoke objectURL（每次停止漏一段音频 Blob，真实内存泄漏）
+- `pumpTts` 合成→播放链只有 `.then` 没有 `.catch`（异常会把 ttsBusy 卡到 20 秒并吞掉 onDone）
+- `cache-toggle` 失败后菜单勾选与宿主状态相反（改为回滚并以宿主为准）
+- `growth` 的 `/state` 失败会连环拖垮 `/growth`（单独 catch）
+
+### 重构
+- `feed` 重复上报抽 `syncFeed`；念诗/典故/成语收尾抽 `finishSpeech`
+
+### 文档
+- `docs/耳朵算法.md` 按代码校对：判停 700ms、录音上限 6000ms、回声 12 条/15 秒/前 6 字、垫音已移除（改气泡即时反馈）、APE 参数以实现为准
+- `docs/坑.md` 补坑 36–40
+
 
 ## [1.1.0] - 2026-11-06
 
