@@ -4,6 +4,31 @@
 
 ## [未发布]
 
+## [1.1.62] - 2026-11-07
+
+### 修复（B90 人格与云端语音分身）
+- **阶段语气查表走原型链**：`STAGE_TONE[命名]` 用普通对象查表，`constructor`/`__proto__`/`toString` 都会命中——`buildSystemPrompt('constructor')` 会把 `function Object() { [native code] }` 拼进系统提示词。改为 `hasOwnProperty` 判定
+- **云端 TTS 响应无体积上限**：11MB 假响应会被完整收下并解码（错误分支同样无上限），设计稿要求「每段带大小上限」。现在 16MB 上限，声明超限不读流、流式超限提前 cancel
+- **云端成本熔断 fail-open**：`saveUsage` 的 `catch {}` 静默吞掉写盘失败，且预算只读磁盘 → 用量文件坏掉后每天字数限制彻底失效（实测连跑 3 次全部放行、`usage()` 恒 0）。现在写失败留 `CLOUD-USAGE-FAIL`，`usedChars = max(磁盘, 进程内)`
+
+### 修复（B90 客户端粘合层分身）
+- **点播路由劫持追问**：「换个说法 / 换个故事 / 换个声音 / 再来个人」被正则当成念诗，还会 abort 在途聊天；而纯函数层测试明确断言「换个故事」应交模型——两层口径冲突
+- **带句末标点的整句指令失效**：「接着说。」「报书名！」「继续。」不再被识别
+- **典故/成语播报与主人原话相反**：数据池叫 `chengyu` 就念「讲个成语」，讲典故反而说成语
+- **APE 判停两类输入崩坏**：`NaN` 进噪声底后段落永不 commit；`-Infinity`/首帧 `-160` 哨兵让噪声底永远回不来（每段等满 6s）；`steadyWindowFrames<8` 时永远判不出平稳
+- **气泡状态字收不起来**：`dismissStatus` 用未 trim 的文本比对（「在想… 」带尾随空白就永远在）
+- **`useLazyRef` 对假值反复重建**：工厂返回 `0/''/false/null` 时每次都重建（违反「只建一次」契约）
+
+### 修复（主代理）
+- **动作描写超过 60 字会被念出来**：`stripStageDirections` 的 `{1,60}` 上限去掉（否定字符类无回溯风险）
+- **超长无标点一次念几百字**：`createSentenceBuffer` 的 `maxLen` 从「只做阈值」改为「也做硬上限」，按阈值切段且不劈代理对（`test-utils-pure` 契约同步）
+- **语速读侧不 trim**：写侧有 trim、读侧没有，手改的 ` -10% ` 静默回默认
+- **客户端情绪定时器不清理**：`setMood` 的回落定时器无 dispose、`holdMs` 为 NaN/负数会被 `setTimeout` 当 0；`bowls` 负数原样保留（成长档位按负经验算）；`pet.setMood` 无白名单（任意字符串写进 `pet_state.json`）
+
+### 测试
+- 新增 `test-persona-cloud.mjs`(139+4 变异体)、`test-client-glue.mjs`(113+6 变异体)，均接入 `npm test`
+- 全链 **3400 项 0 失败**（`node tools/test-count.mjs`：47 个套件，失败 0，未识别 0）
+
 ## [1.1.61] - 2026-11-07
 
 ### 修复（B89 宿主 HTTP 层分身）
