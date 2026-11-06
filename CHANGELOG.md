@@ -4,6 +4,27 @@
 
 ## [未发布]
 
+## [1.1.64] - 2026-11-07
+
+### 修复（B92 客户端朗读播放路径分身）
+- **`pitch` 选项完全失效**：`buildTtsJobs` 既不收也不复制 `pitch`，而 `voice.ts` 拼 `/tts` 请求体时读 `job.pitch` → 永远是空串；念诗明明传了 `+15Hz`（音高从未生效）
+- **没开麦克风却显示「在听」**：`pumpTts` 队列空时无条件 `setStatus('listening')`，而 `stopSpeaking` 是 `running ? listening : idle`；试听/说书走 `ensure()` 不开麦，念完状态就变成「在听」
+- **纯朗读实例没有看门狗**：旧实现只在 `start()` 里装 `setInterval`，而 `ensure()` 建的实例从不 `start()` → 音频元素不播也不报错时 `ttsBusy` 永久为真，之后每句只排队（表现「朗读全哑、只能刷新页面」）
+- **诊断计数虚高**：`ttsRequests++` 在冷却分支之前，走系统语音的段也被算成一次 `/tts` 请求
+- **打断整句被 dup 闸门吞**：`isRepeat(minLen:4)` 对 ≥4 字整句生效 —— 说书时连说两遍「停下来吧」「不要说了」，第二声被判重复丢弃；而 `voice-bridge` 的停止正则本应能停。现在打断整句跳过 short/dup 闸门（不去放宽 `sim.ts`，避免削弱短句去重）
+
+### 修复（B92 宿主语音路由分身）
+- **`/asr` 解码后超限回 200**：同一路由「请求体超限」走 413、「解码后超限」却回 200，代理/日志会把超限记成识别成功；统一 413
+- **`/asr` 缓存键缺 `format`**：同一份字节先以 `wav` 识别、再以 `webm` 上传会直接命中旧文本（实测 `fetch=1`、`cached:true`）；键升 v2 并加入 format，旧条目自然失效
+
+### 修复（主代理）
+- **设备 192kHz 导致半速音频**：`AudioContext.sampleRate` 跟随输出设备，192k 设备上数据是 192k 而 WAV 头被夹到 96k → ASR 整段识别必错。新增 `capSampleRate`（整数倍块平均）先降采样，**头与数据同采样率**
+- **`/tts` 静默截断**：6001 字回 HTTP 200 但引擎只收到 6000 字（听到半句、无任何信号）；改为 413 `{error:'text too large', limit:6000}`，正好 6000 仍正常
+
+### 测试
+- 新增 `test-voice-routes.mjs`(23)、`test-voice-tts.mjs`(99)，接入 `npm test`；`test-audio-sim` 补 6 条采样率断言
+- 全链 **3799 项 0 失败**（`node tools/test-count.mjs`：52 个套件，失败 0，未识别 0）
+
 ## [1.1.63] - 2026-11-07
 
 ### 修复（B91 共享层与语音子模块分身）
