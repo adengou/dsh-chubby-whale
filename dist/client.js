@@ -141,153 +141,178 @@
   });
 
   // src/client/menu.ts
-  var MELODIES = ["\u5C0F\u661F\u661F", "\u4E24\u53EA\u8001\u864E", "\u751F\u65E5\u5FEB\u4E50", "\u6B22\u4E50\u9882", "\u94C3\u513F\u54CD\u53EE\u5F53", "\u4F26\u6566\u5927\u6865", "\u65AF\u5361\u5E03\u7F57\u96C6\u5E02", "\u601D\u541B\u9EEF\u7136", "\u7EFF\u8896\u5B50", "\u81F4\u7231\u4E3D\u4E1D", "\u53CB\u8C0A\u5929\u957F\u5730\u4E45"];
+  function item(label, action) {
+    return { type: "item", label, action };
+  }
+  function sub(label, items) {
+    return { type: "sub", label, items };
+  }
+  function sep() {
+    return { type: "sep" };
+  }
+  function rateSub(prefix, action, current, opts) {
+    return sub(prefix + current + " ▸", opts.map(([rate, text]) => item((rate === current ? "✓ " : "") + text, action + rate)));
+  }
+  var MELODIES = ["小星星", "两只老虎", "生日快乐", "欢乐颂", "铃儿响叮当", "伦敦大桥", "斯卡布罗集市", "思君黯然", "绿袖子", "致爱丽丝", "友谊天长地久"];
   deepFreeze(MELODIES);
   var SONG_EN = {
-    "\u5C0F\u661F\u661F": "Twinkle Twinkle Little Star",
-    "\u4E24\u53EA\u8001\u864E": "Two Tigers",
-    "\u751F\u65E5\u5FEB\u4E50": "Happy Birthday",
-    "\u6B22\u4E50\u9882": "Ode to Joy",
-    "\u94C3\u513F\u54CD\u53EE\u5F53": "Jingle Bells",
-    "\u4F26\u6566\u5927\u6865": "London Bridge",
-    "\u65AF\u5361\u5E03\u7F57\u96C6\u5E02": "Scarborough Fair",
-    "\u601D\u541B\u9EEF\u7136": "Longing for You",
-    "\u7EFF\u8896\u5B50": "Greensleeves",
-    "\u81F4\u7231\u4E3D\u4E1D": "Fur Elise",
-    "\u53CB\u8C0A\u5929\u957F\u5730\u4E45": "Auld Lang Syne"
+    "小星星": "Twinkle Twinkle Little Star",
+    "两只老虎": "Two Tigers",
+    "生日快乐": "Happy Birthday",
+    "欢乐颂": "Ode to Joy",
+    "铃儿响叮当": "Jingle Bells",
+    "伦敦大桥": "London Bridge",
+    "斯卡布罗集市": "Scarborough Fair",
+    "思君黯然": "Longing for You",
+    "绿袖子": "Greensleeves",
+    "致爱丽丝": "Fur Elise",
+    "友谊天长地久": "Auld Lang Syne"
   };
   deepFreeze(SONG_EN);
   var EN_MAP = {
-    "\u6295\u5582\u4E00\u7897": "Feed a bowl",
-    "\u9009\u672C\u4E66 \u25B8": "Choose a book \u25B8",
-    "\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5": "Book list unavailable, try again later",
-    "\u6B63\u5728\u7FFB\u4E66\u5355\u2026": "Loading book list\u2026",
-    "\u4ECA\u65E5\u4E00\u53E5": "Daily quote",
-    "\u4ECA\u65E5\u7B80\u62A5": "Today's briefing",
-    "\u6570\u636E\u5BFC\u51FA\u2026": "Export data\u2026",
-    "\u6570\u636E\u5BFC\u5165\u2026": "Import data\u2026",
-    "\u4F7F\u7528\u7EDF\u8BA1": "Usage stats",
-    "\u63D0\u9192\u7BA1\u7406\u2026": "Manage reminders\u2026",
-    "\u5524\u9192\u6062\u590D": "Wake recovery",
-    "\u5F39\u9996\u66F2\u5B50 \u25B8": "Play a song \u25B8",
-    "\u505C\u6B62\u5F39\u594F": "Stop music",
-    "\u8DDF\u5979\u8BF4\u4E24\u53E5": "Talk to her",
-    "\u6362\u4E2A\u58F0\u97F3 \u25B8": "Change voice \u25B8",
-    "\u804A\u5929\u8BED\u8A00 \u25B8": "Chat language \u25B8",
-    "\u754C\u9762\u8BED\u8A00 \u25B8": "Interface language \u25B8",
-    "\u770B\u5F20\u56FE\u2026": "Look at a picture\u2026",
-    "\u505C\u6B62\u8BF4\u8BDD": "Stop talking",
-    "\u8BA9\u5979\u6B47\u4F1A\u513F": "Let her rest",
-    "\u56DE\u7897\u91CC\u5F85\u7740": "Back in the bowl",
-    "\u957F\u5927\u4E00\u70B9": "Grow bigger",
-    "\u53D8\u5C0F\u4E00\u70B9": "Shrink",
-    "\u8BB0\u4E2A\u996D\u70B9\u2026": "Add a meal reminder\u2026",
-    "\u63D0\u9192\u6E05\u5355\u2026": "Reminders\u2026",
-    "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94": "Endpoint detection: classic / adaptive",
-    "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09": "Hearing self-test",
-    "\u6587\u5316\u6C14 \u25B8": "Culture \u25B8",
-    "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09": "Storytelling",
-    "\u7A0D\u5FEB -25%": "A bit faster -25%",
-    "\u9002\u4E2D -30%": "Medium -30%",
-    "\u504F\u6162 -35%\uFF08\u9ED8\u8BA4\uFF09": "Slower -35% (default)",
-    "\u6B63\u5E38 -10%": "Normal -10%",
-    "\u504F\u6162 -20%\uFF08\u9ED8\u8BA4\uFF09": "Slow -20% (default)",
-    "\u5F88\u6162 -25%": "Very slow -25%",
-    "\u66F4\u6162 -30%": "Even slower -30%",
-    "\u7A0D\u5FEB -15%": "A bit faster -15%",
-    "\u9002\u4E2D -20%": "Medium -20%",
-    "\u504F\u6162 -25%\uFF08\u9ED8\u8BA4\uFF09": "Slower -25% (default)",
-    "\u5F88\u6162 -30%": "Very slow -30%",
-    "\u5F88\u6162 -40%": "Very slow -40%",
-    "\u63A5\u7740\u8BF4": "Continue story",
-    "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66": "Restart this book",
-    "\u5FF5\u9996\u8BD7": "Recite a poem",
-    "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B": "Folk tale",
-    "\u8BB2\u4E2A\u5178\u6545": "Classic allusion",
-    "\u6210\u8BED\u8FA8\u6790": "Idiom",
-    "\u51FA\u4E2A\u5BF9\u8054 \u25B8": "Couplets \u25B8",
-    "\u968F\u673A\u4E00\u526F": "Random pair",
-    "\u6625\u8054": "Spring couplet",
-    "\u683C\u8A00": "Motto",
-    "\u8C10\u8DA3": "Witty",
-    "\u540D\u80DC": "Landmarks",
-    "\u666F\u89C2": "Scenery",
-    "\u4E66\u623F": "Study",
-    "\u5BFF\u8054": "Birthday couplet",
-    "\u4E2D\u836F": "Herbs",
-    "\u53E0\u5B57": "Repeated characters",
-    "\u6570\u5B57": "Numerals",
-    "\u6E05\u9664\u8BB0\u5FC6\u2026": "Clear memory\u2026",
-    "\u6E05\u7A7A\u804A\u5929\u7F13\u5B58\u2026": "Clear chat cache\u2026",
-    "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09": "Let it go (exit)",
-    "\u9C7C\u7CAE\u8D26\u672C": "Token ledger",
+    "投喂一碗": "Feed a bowl",
+    "选本书 ▸": "Choose a book ▸",
+    "书单没取到，稍后再试": "Book list unavailable, try again later",
+    "正在翻书单…": "Loading book list…",
+    "今日一句": "Daily quote",
+    "今日简报": "Today's briefing",
+    "数据导出…": "Export data…",
+    "数据导入…": "Import data…",
+    "使用统计": "Usage stats",
+    "提醒管理…": "Manage reminders…",
+    "唤醒恢复": "Wake recovery",
+    "弹首曲子 ▸": "Play a song ▸",
+    "停止弹奏": "Stop music",
+    "跟她说两句": "Talk to her",
+    "换个声音 ▸": "Change voice ▸",
+    "聊天语言 ▸": "Chat language ▸",
+    "界面语言 ▸": "Interface language ▸",
+    "看张图…": "Look at a picture…",
+    "停止说话": "Stop talking",
+    "让她歇会儿": "Let her rest",
+    "回碗里待着": "Back in the bowl",
+    "长大一点": "Grow bigger",
+    "变小一点": "Shrink",
+    "记个饭点…": "Add a meal reminder…",
+    "提醒清单…": "Reminders…",
+    "端点检测：经典/自适应": "Endpoint detection: classic / adaptive",
+    "耳朵自检（听力诊断）": "Hearing self-test",
+    "文化气 ▸": "Culture ▸",
+    "说书（连载）": "Storytelling",
+    "稍快 -25%": "A bit faster -25%",
+    "适中 -30%": "Medium -30%",
+    "偏慢 -35%（默认）": "Slower -35% (default)",
+    "正常 -10%": "Normal -10%",
+    "偏慢 -20%（默认）": "Slow -20% (default)",
+    "很慢 -25%": "Very slow -25%",
+    "更慢 -30%": "Even slower -30%",
+    "稍快 -15%": "A bit faster -15%",
+    "适中 -20%": "Medium -20%",
+    "偏慢 -25%（默认）": "Slower -25% (default)",
+    "很慢 -30%": "Very slow -30%",
+    "很慢 -40%": "Very slow -40%",
+    "接着说": "Continue story",
+    "从头讲这本书": "Restart this book",
+    "念首诗": "Recite a poem",
+    "讲个民间故事": "Folk tale",
+    "讲个典故": "Classic allusion",
+    "成语辨析": "Idiom",
+    "出个对联 ▸": "Couplets ▸",
+    "随机一副": "Random pair",
+    "春联": "Spring couplet",
+    "格言": "Motto",
+    "谐趣": "Witty",
+    "名胜": "Landmarks",
+    "景观": "Scenery",
+    "书房": "Study",
+    "寿联": "Birthday couplet",
+    "中药": "Herbs",
+    "叠字": "Repeated characters",
+    "数字": "Numerals",
+    "清除记忆…": "Clear memory…",
+    "清空聊天缓存…": "Clear chat cache…",
+    "让它游走（退出）": "Let it go (exit)",
+    "鱼粮账本": "Token ledger",
     "English": "English",
-    "\u4E2D\u6587": "Chinese",
+    "中文": "Chinese",
     // 动态 label（音色勾选/聊天缓存开关/自动）需要的英文键
-    "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00": "Chat cache: on",
-    "\u804A\u5929\u7F13\u5B58\uFF1A\u5173": "Chat cache: off",
-    "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09": "Auto (by language)",
-    "\u81EA\u52A8": "Auto",
-    "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaoyi (CN F)",
-    "\u97F3\u8272\uFF1A\u6653\u6653\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaoxiao (CN F)",
-    "\u97F3\u8272\uFF1A\u6653\u8FB0\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaochen (CN F)",
-    "\u97F3\u8272\uFF1A\u4E91\u5E0C\uFF08\u4E2D\xB7\u7537\uFF09": "Voice: Yunxi (CN M)",
-    "\u97F3\u8272\uFF1A\u4E91\u626C\uFF08\u4E2D\xB7\u7537\uFF09": "Voice: Yunyang (CN M)",
-    "\u97F3\u8272\uFF1AAna\uFF08\u82F1\xB7\u5973\uFF09": "Voice: Ana (EN F)",
-    "\u97F3\u8272\uFF1AJenny\uFF08\u82F1\xB7\u5973\uFF09": "Voice: Jenny (EN F)",
-    "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09": "Voice: Sonia (EN-GB F)"
+    "聊天缓存：开": "Chat cache: on",
+    "聊天缓存：关": "Chat cache: off",
+    "自动（按语言选音色）": "Auto (by language)",
+    "自动": "Auto",
+    "音色：晓伊（中·女）": "Voice: Xiaoyi (CN F)",
+    "音色：晓晓（中·女）": "Voice: Xiaoxiao (CN F)",
+    "音色：晓辰（中·女）": "Voice: Xiaochen (CN F)",
+    "音色：云希（中·男）": "Voice: Yunxi (CN M)",
+    "音色：云扬（中·男）": "Voice: Yunyang (CN M)",
+    "音色：Ana（英·女）": "Voice: Ana (EN F)",
+    "音色：Jenny（英·女）": "Voice: Jenny (EN F)",
+    "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)"
   };
   deepFreeze(EN_MAP);
   var STAGE_EN = {
-    "\u521D\u8BC6": "New",
-    "\u719F\u6089": "Familiar",
-    "\u4EB2\u5BC6": "Close",
-    "\u77E5\u5FC3": "Confidant",
-    "\u5BB6\u4EBA": "Family"
+    "初识": "New",
+    "熟悉": "Familiar",
+    "亲密": "Close",
+    "知心": "Confidant",
+    "家人": "Family"
   };
   deepFreeze(STAGE_EN);
   var TOGGLE_EN = {
-    "\u8BED\u97F3\u6717\u8BFB\uFF1A": ["Voice output: on", "Voice output: off"],
-    "\u8BED\u97F3\u5F85\u547D\uFF1A": ["Voice standby: on", "Voice standby: off"],
-    "\u8BED\u97F3\u804A\u5929\uFF1A": ["Voice chat: on", "Voice chat: off"],
-    "\u6D41\u5F0F\u56DE\u590D\uFF1A": ["Streaming replies: on", "Streaming replies: off"]
+    "语音朗读：": ["Voice output: on", "Voice output: off"],
+    "语音待命：": ["Voice standby: on", "Voice standby: off"],
+    "语音聊天：": ["Voice chat: on", "Voice chat: off"],
+    "流式回复：": ["Streaming replies: on", "Streaming replies: off"]
   };
   function tr(label, lang) {
     if (lang !== "en") return label;
     const exact = EN_MAP[label];
     if (exact) return exact;
-    if (label.startsWith("\u2713 ")) {
+    if (label.startsWith("✓ ")) {
       const base = label.slice(2);
       const en = tr(base, lang);
-      return en === base ? label : "\u2713 " + en;
+      return en === base ? label : "✓ " + en;
     }
-    if (label.startsWith("\u5F39\u300A") && label.endsWith("\u300B")) {
+    if (label.startsWith("弹《") && label.endsWith("》")) {
       const song = label.slice(2, label.length - 1);
       return SONG_EN[song] ? 'Play "' + SONG_EN[song] + '"' : "Play a song";
     }
-    if (label.startsWith("\u6210\u957F\uFF1A")) {
+    if (label.startsWith("成长：")) {
       const rest = label.slice(3);
       const m = rest.match(/^(初识|熟悉|亲密|知心|家人)([\s\S]*)$/);
       if (!m) return "Growth: " + rest;
       const tail = String(m[2] || "").replace(/（/g, "(").replace(/）/g, ")");
       return "Growth: " + (STAGE_EN[m[1]] || m[1]) + tail;
     }
-    if (label.startsWith("\u7248\u672C\uFF1Av")) return "Version: v" + label.slice(4);
-    if (label.startsWith("\u4F59\u989D\uFF1A")) return "Balance: " + label.slice(3);
+    if (label.startsWith("版本：v")) return "Version: v" + label.slice(4);
+    if (label.startsWith("余额：")) return "Balance: " + label.slice(3);
     for (const prefix of Object.keys(TOGGLE_EN)) {
       if (label.startsWith(prefix)) {
         const pair = TOGGLE_EN[prefix];
-        return label.slice(prefix.length) === "\u5F00" ? pair[0] : pair[1];
+        return label.slice(prefix.length) === "开" ? pair[0] : pair[1];
       }
     }
-    if (label.startsWith("\u8BF4\u4E66\u8BED\u901F\uFF1A")) return label.replace("\u8BF4\u4E66\u8BED\u901F\uFF1A", "Story speed: ");
-    if (label.startsWith("\u8FDE\u64AD\uFF1A")) return label.indexOf("\u5F00") >= 0 ? "Auto-continue: on" : "Auto-continue: off";
-    if (label.startsWith("\u5FF5\u8BD7\u8BED\u901F\uFF1A")) return label.replace("\u5FF5\u8BD7\u8BED\u901F\uFF1A", "Poem speed: ");
-    if (label.startsWith("\u53D9\u8FF0\u8BED\u901F\uFF1A")) return label.replace("\u53D9\u8FF0\u8BED\u901F\uFF1A", "Narration speed: ");
-    if (label.startsWith("\u804A\u5929\u8BED\u901F\uFF1A")) return label.replace("\u804A\u5929\u8BED\u901F\uFF1A", "Chat speed: ");
+    if (label.startsWith("说书语速：")) return label.replace("说书语速：", "Story speed: ");
+    if (label.startsWith("连播：")) return label.indexOf("开") >= 0 ? "Auto-continue: on" : "Auto-continue: off";
+    if (label.startsWith("念诗语速：")) return label.replace("念诗语速：", "Poem speed: ");
+    if (label.startsWith("叙述语速：")) return label.replace("叙述语速：", "Narration speed: ");
+    if (label.startsWith("聊天语速：")) return label.replace("聊天语速：", "Chat speed: ");
     return label;
   }
   var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
+  var VOICE_ITEMS = [
+    ["zh-CN-XiaoyiNeural", "音色：晓伊（中·女）"],
+    ["zh-CN-XiaoxiaoNeural", "音色：晓晓（中·女）"],
+    ["zh-CN-XiaochenNeural", "音色：晓辰（中·女）"],
+    ["zh-CN-YunxiNeural", "音色：云希（中·男）"],
+    ["zh-CN-YunyangNeural", "音色：云扬（中·男）"],
+    ["en-US-AnaNeural", "音色：Ana（英·女）"],
+    ["en-US-JennyNeural", "音色：Jenny（英·女）"],
+    ["en-GB-SoniaNeural", "音色：Sonia（英·女·英式）"]
+  ];
+  var STORY_RATE_ITEMS = [["-25%", "稍快 -25%"], ["-30%", "适中 -30%"], ["-35%", "偏慢 -35%（默认）"], ["-40%", "很慢 -40%"]];
+  var CHAT_RATE_ITEMS = [["-10%", "正常 -10%"], ["-20%", "偏慢 -20%（默认）"], ["-25%", "很慢 -25%"], ["-30%", "更慢 -30%"]];
+  var NARRATION_RATE_ITEMS = [["-15%", "稍快 -15%"], ["-20%", "适中 -20%"], ["-25%", "偏慢 -25%（默认）"], ["-30%", "很慢 -30%"]];
   function buildMenu(version, state = {}) {
     const voiceOn = state.voiceOn ? true : false;
     const earOn = state.earOn ? true : false;
@@ -295,133 +320,106 @@
     const chatLang = state.chatLang ? String(state.chatLang) : "auto";
     const ttsVoice = state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
     const chatCacheOn = !(state.chatCacheOn === false);
-    const voiceTick = (voice) => ttsVoice === voice ? "\u2713 " : "";
+    const voiceTick = (voice) => ttsVoice === voice ? "✓ " : "";
     const balanceText = state && state.balance ? state.balance : "--";
     const growthText = state && state.growth ? state.growth : "--";
     const books = Array.isArray(state.storyBooks) ? state.storyBooks.map((b) => String(b || "").trim()).filter(Boolean) : [];
-    const bookItems = books.length ? books.map((b) => ({ type: "item", label: b, action: "story-book:" + b })) : [{ type: "item", label: state.storyBooksTried ? "\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5" : "\u6B63\u5728\u7FFB\u4E66\u5355\u2026", action: "story-books" }];
+    const bookItems = books.length ? books.map((b) => item(b, "story-book:" + b)) : [item(state.storyBooksTried ? "书单没取到，稍后再试" : "正在翻书单…", "story-books")];
     return [
       // ── 界面语言（主人定的位置：标题栏下方第一行）──
-      { type: "sub", label: "\u754C\u9762\u8BED\u8A00 \u25B8", items: [
-        { type: "item", label: "\u4E2D\u6587", action: "lang:zh" },
-        { type: "item", label: "English", action: "lang:en" }
-      ] },
+      sub("界面语言 ▸", [
+        item("中文", "lang:zh"),
+        item("English", "lang:en")
+      ]),
       // ── 吃饭与看图 ──
-      { type: "item", label: "\u6210\u957F\uFF1A" + growthText, action: "growth" },
-      { type: "item", label: "\u6295\u5582\u4E00\u7897", action: "feed" },
-      { type: "item", label: "\u770B\u5F20\u56FE\u2026", action: "vision" },
-      { type: "sep" },
+      item("成长：" + growthText, "growth"),
+      item("投喂一碗", "feed"),
+      item("看张图…", "vision"),
+      sep(),
       // ── 曲子 ──
-      { type: "sub", label: "\u5F39\u9996\u66F2\u5B50 \u25B8", items: MELODIES.map((m) => ({ type: "item", label: "\u5F39\u300A" + m + "\u300B", action: "music:" + m })) },
-      { type: "item", label: "\u505C\u6B62\u5F39\u594F", action: "music-stop" },
-      { type: "sep" },
+      sub("弹首曲子 ▸", MELODIES.map((m) => item("弹《" + m + "》", "music:" + m))),
+      item("停止弹奏", "music-stop"),
+      sep(),
       // ── 说话与耳朵（语音类全放一起）──
-      { type: "item", label: "\u8DDF\u5979\u8BF4\u4E24\u53E5", action: "type" },
-      { type: "item", label: voiceOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173", action: "voice" },
-      { type: "item", label: "\u505C\u6B62\u8BF4\u8BDD", action: "tts-stop" },
-      { type: "sub", label: "\u6362\u4E2A\u58F0\u97F3 \u25B8", items: [
-        { type: "item", label: voiceTick("zh-CN-XiaoyiNeural") + "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoyiNeural" },
-        { type: "item", label: voiceTick("zh-CN-XiaoxiaoNeural") + "\u97F3\u8272\uFF1A\u6653\u6653\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoxiaoNeural" },
-        { type: "item", label: voiceTick("zh-CN-XiaochenNeural") + "\u97F3\u8272\uFF1A\u6653\u8FB0\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaochenNeural" },
-        { type: "item", label: voiceTick("zh-CN-YunxiNeural") + "\u97F3\u8272\uFF1A\u4E91\u5E0C\uFF08\u4E2D\xB7\u7537\uFF09", action: "voice:zh-CN-YunxiNeural" },
-        { type: "item", label: voiceTick("zh-CN-YunyangNeural") + "\u97F3\u8272\uFF1A\u4E91\u626C\uFF08\u4E2D\xB7\u7537\uFF09", action: "voice:zh-CN-YunyangNeural" },
-        { type: "item", label: voiceTick("en-US-AnaNeural") + "\u97F3\u8272\uFF1AAna\uFF08\u82F1\xB7\u5973\uFF09", action: "voice:en-US-AnaNeural" },
-        { type: "item", label: voiceTick("en-US-JennyNeural") + "\u97F3\u8272\uFF1AJenny\uFF08\u82F1\xB7\u5973\uFF09", action: "voice:en-US-JennyNeural" },
-        { type: "item", label: voiceTick("en-GB-SoniaNeural") + "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09", action: "voice:en-GB-SoniaNeural" },
-        { type: "item", label: voiceTick("auto") + "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09", action: "voice:auto" }
-      ] },
-      { type: "item", label: "\u8BED\u97F3\u5F85\u547D\uFF1A" + (earOn ? "\u5F00" : "\u5173"), action: "wake" },
-      { type: "item", label: "\u8BED\u97F3\u804A\u5929\uFF1A" + (voiceChatOn ? "\u5F00" : "\u5173"), action: "chatmode" },
-      { type: "item", label: "\u6D41\u5F0F\u56DE\u590D\uFF1A" + (state.streamOn === false ? "\u5173" : "\u5F00"), action: "stream-toggle" },
-      { type: "item", label: "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94", action: "endpoint" },
-      { type: "item", label: "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09", action: "ear-check" },
-      { type: "sep" },
+      item("跟她说两句", "type"),
+      item(voiceOn ? "语音朗读：开" : "语音朗读：关", "voice"),
+      item("停止说话", "tts-stop"),
+      sub("换个声音 ▸", [
+        ...VOICE_ITEMS.map(([voice, label]) => item(voiceTick(voice) + label, "voice:" + voice)),
+        item(voiceTick("auto") + "自动（按语言选音色）", "voice:auto")
+      ]),
+      item("语音待命：" + (earOn ? "开" : "关"), "wake"),
+      item("语音聊天：" + (voiceChatOn ? "开" : "关"), "chatmode"),
+      item("流式回复：" + (state.streamOn === false ? "关" : "开"), "stream-toggle"),
+      item("端点检测：经典/自适应", "endpoint"),
+      item("耳朵自检（听力诊断）", "ear-check"),
+      sep(),
       // ── 语言 ──
-      { type: "sub", label: "\u804A\u5929\u8BED\u8A00 \u25B8", items: [
-        { type: "item", label: (chatLang === "auto" ? "\u2713 " : "") + "\u81EA\u52A8", action: "chat-lang:auto" },
-        { type: "item", label: (chatLang === "zh" ? "\u2713 " : "") + "\u4E2D\u6587", action: "chat-lang:zh" },
-        { type: "item", label: (chatLang === "en" ? "\u2713 " : "") + "English", action: "chat-lang:en" }
-      ] },
-      { type: "sep" },
+      sub("聊天语言 ▸", [
+        item((chatLang === "auto" ? "✓ " : "") + "自动", "chat-lang:auto"),
+        item((chatLang === "zh" ? "✓ " : "") + "中文", "chat-lang:zh"),
+        item((chatLang === "en" ? "✓ " : "") + "English", "chat-lang:en")
+      ]),
+      sep(),
       // ── 位置与大小 ──
-      { type: "item", label: "\u8BA9\u5979\u6B47\u4F1A\u513F", action: "pause" },
-      { type: "item", label: "\u56DE\u7897\u91CC\u5F85\u7740", action: "home" },
-      { type: "item", label: "\u957F\u5927\u4E00\u70B9", action: "bigger" },
-      { type: "item", label: "\u53D8\u5C0F\u4E00\u70B9", action: "smaller" },
-      { type: "sep" },
+      item("让她歇会儿", "pause"),
+      item("回碗里待着", "home"),
+      item("长大一点", "bigger"),
+      item("变小一点", "smaller"),
+      sep(),
       // ── 饭点提醒 ──
-      { type: "item", label: "\u8BB0\u4E2A\u996D\u70B9\u2026", action: "remind-add" },
-      { type: "item", label: "\u63D0\u9192\u6E05\u5355\u2026", action: "remind-list" },
-      { type: "sep" },
+      item("记个饭点…", "remind-add"),
+      item("提醒清单…", "remind-list"),
+      sep(),
       // ── 文化气 ──
-      { type: "sub", label: "\u6587\u5316\u6C14 \u25B8", items: [
-        { type: "item", label: "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09", action: "culture-story" },
-        { type: "item", label: "\u8FDE\u64AD\uFF1A" + (state.storyAuto === false ? "\u5173" : "\u5F00") + "\uFF08\u8BB2\u5B8C\u4E00\u6BB5\u81EA\u52A8\u63A5\u4E0B\u4E00\u6BB5\uFF09", action: "story-auto" },
-        { type: "sub", label: "\u8BF4\u4E66\u8BED\u901F\uFF1A" + (state.storyRate || "-35%") + " \u25B8", items: [
-          { type: "item", label: ((state.storyRate || "-35%") === "-25%" ? "\u2713 " : "") + "\u7A0D\u5FEB -25%", action: "story-rate:-25%" },
-          { type: "item", label: ((state.storyRate || "-35%") === "-30%" ? "\u2713 " : "") + "\u9002\u4E2D -30%", action: "story-rate:-30%" },
-          { type: "item", label: ((state.storyRate || "-35%") === "-35%" ? "\u2713 " : "") + "\u504F\u6162 -35%\uFF08\u9ED8\u8BA4\uFF09", action: "story-rate:-35%" },
-          { type: "item", label: ((state.storyRate || "-35%") === "-40%" ? "\u2713 " : "") + "\u5F88\u6162 -40%", action: "story-rate:-40%" }
-        ] },
-        { type: "item", label: "\u63A5\u7740\u8BF4", action: "culture-story-next" },
-        { type: "item", label: "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66", action: "story-reset" },
-        { type: "item", label: "\u5FF5\u9996\u8BD7", action: "poem" },
-        { type: "sub", label: "\u804A\u5929\u8BED\u901F\uFF1A" + (state.chatRate || "-20%") + " \u25B8", items: [
-          { type: "item", label: ((state.chatRate || "-20%") === "-10%" ? "\u2713 " : "") + "\u6B63\u5E38 -10%", action: "chat-rate:-10%" },
-          { type: "item", label: ((state.chatRate || "-20%") === "-20%" ? "\u2713 " : "") + "\u504F\u6162 -20%\uFF08\u9ED8\u8BA4\uFF09", action: "chat-rate:-20%" },
-          { type: "item", label: ((state.chatRate || "-20%") === "-25%" ? "\u2713 " : "") + "\u5F88\u6162 -25%", action: "chat-rate:-25%" },
-          { type: "item", label: ((state.chatRate || "-20%") === "-30%" ? "\u2713 " : "") + "\u66F4\u6162 -30%", action: "chat-rate:-30%" }
-        ] },
-        { type: "sub", label: "\u53D9\u8FF0\u8BED\u901F\uFF1A" + (state.narrationRate || "-25%") + " \u25B8", items: [
-          { type: "item", label: ((state.narrationRate || "-25%") === "-15%" ? "\u2713 " : "") + "\u7A0D\u5FEB -15%", action: "narration-rate:-15%" },
-          { type: "item", label: ((state.narrationRate || "-25%") === "-20%" ? "\u2713 " : "") + "\u9002\u4E2D -20%", action: "narration-rate:-20%" },
-          { type: "item", label: ((state.narrationRate || "-25%") === "-25%" ? "\u2713 " : "") + "\u504F\u6162 -25%\uFF08\u9ED8\u8BA4\uFF09", action: "narration-rate:-25%" },
-          { type: "item", label: ((state.narrationRate || "-25%") === "-30%" ? "\u2713 " : "") + "\u5F88\u6162 -30%", action: "narration-rate:-30%" }
-        ] },
-        { type: "sub", label: "\u5FF5\u8BD7\u8BED\u901F\uFF1A" + (state.poemRate || "-25%") + " \u25B8", items: [
-          { type: "item", label: ((state.poemRate || "-25%") === "-15%" ? "\u2713 " : "") + "\u7A0D\u5FEB -15%", action: "poem-rate:-15%" },
-          { type: "item", label: ((state.poemRate || "-25%") === "-20%" ? "\u2713 " : "") + "\u9002\u4E2D -20%", action: "poem-rate:-20%" },
-          { type: "item", label: ((state.poemRate || "-25%") === "-25%" ? "\u2713 " : "") + "\u504F\u6162 -25%\uFF08\u9ED8\u8BA4\uFF09", action: "poem-rate:-25%" },
-          { type: "item", label: ((state.poemRate || "-25%") === "-30%" ? "\u2713 " : "") + "\u5F88\u6162 -30%", action: "poem-rate:-30%" }
-        ] },
-        { type: "item", label: "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B", action: "culture-tale" },
-        { type: "item", label: "\u8BB2\u4E2A\u5178\u6545", action: "culture-allusion" },
-        { type: "item", label: "\u6210\u8BED\u8FA8\u6790", action: "culture-idiom" },
-        { type: "sub", label: "\u51FA\u4E2A\u5BF9\u8054 \u25B8", items: [
-          { type: "item", label: "\u968F\u673A\u4E00\u526F", action: "culture-couplet" },
-          { type: "item", label: "\u6625\u8054", action: "culture-couplet:\u6625\u8054" },
-          { type: "item", label: "\u683C\u8A00", action: "culture-couplet:\u683C\u8A00" },
-          { type: "item", label: "\u8C10\u8DA3", action: "culture-couplet:\u8C10\u8DA3" },
-          { type: "item", label: "\u540D\u80DC", action: "culture-couplet:\u540D\u80DC" },
-          { type: "item", label: "\u666F\u89C2", action: "culture-couplet:\u666F\u89C2" },
-          { type: "item", label: "\u4E66\u623F", action: "culture-couplet:\u4E66\u623F" },
-          { type: "item", label: "\u5BFF\u8054", action: "culture-couplet:\u5BFF\u8054" },
-          { type: "item", label: "\u4E2D\u836F", action: "culture-couplet:\u4E2D\u836F" },
-          { type: "item", label: "\u53E0\u5B57", action: "culture-couplet:\u53E0\u5B57" },
-          { type: "item", label: "\u6570\u5B57", action: "culture-couplet:\u6570\u5B57" }
-        ] }
-      ] },
-      { type: "sep" },
+      sub("文化气 ▸", [
+        item("说书（连载）", "culture-story"),
+        item("连播：" + (state.storyAuto === false ? "关" : "开") + "（讲完一段自动接下一段）", "story-auto"),
+        rateSub("说书语速：", "story-rate:", state.storyRate || "-35%", STORY_RATE_ITEMS),
+        item("接着说", "culture-story-next"),
+        item("从头讲这本书", "story-reset"),
+        item("念首诗", "poem"),
+        rateSub("聊天语速：", "chat-rate:", state.chatRate || "-20%", CHAT_RATE_ITEMS),
+        rateSub("叙述语速：", "narration-rate:", state.narrationRate || "-25%", NARRATION_RATE_ITEMS),
+        rateSub("念诗语速：", "poem-rate:", state.poemRate || "-25%", NARRATION_RATE_ITEMS),
+        item("讲个民间故事", "culture-tale"),
+        item("讲个典故", "culture-allusion"),
+        item("成语辨析", "culture-idiom"),
+        sub("出个对联 ▸", [
+          item("随机一副", "culture-couplet"),
+          item("春联", "culture-couplet:春联"),
+          item("格言", "culture-couplet:格言"),
+          item("谐趣", "culture-couplet:谐趣"),
+          item("名胜", "culture-couplet:名胜"),
+          item("景观", "culture-couplet:景观"),
+          item("书房", "culture-couplet:书房"),
+          item("寿联", "culture-couplet:寿联"),
+          item("中药", "culture-couplet:中药"),
+          item("叠字", "culture-couplet:叠字"),
+          item("数字", "culture-couplet:数字")
+        ])
+      ]),
+      sep(),
       // ── 每日内容（说书选本 / 每日一句 / 今日简报）──
-      { type: "sub", label: "\u9009\u672C\u4E66 \u25B8", items: bookItems },
-      { type: "item", label: "\u4ECA\u65E5\u4E00\u53E5", action: "daily-line" },
-      { type: "item", label: "\u4ECA\u65E5\u7B80\u62A5", action: "briefing-card" },
-      { type: "sep" },
+      sub("选本书 ▸", bookItems),
+      item("今日一句", "daily-line"),
+      item("今日简报", "briefing-card"),
+      sep(),
       // ── 数据与统计（处理器由其他分身实现，未接上时走兜底提示）──
-      { type: "item", label: "\u6570\u636E\u5BFC\u51FA\u2026", action: "data-export" },
-      { type: "item", label: "\u6570\u636E\u5BFC\u5165\u2026", action: "data-import" },
-      { type: "item", label: "\u4F7F\u7528\u7EDF\u8BA1", action: "stats" },
-      { type: "item", label: "\u63D0\u9192\u7BA1\u7406\u2026", action: "remind-manage" },
-      { type: "item", label: "\u5524\u9192\u6062\u590D", action: "wake-recover" },
-      { type: "sep" },
+      item("数据导出…", "data-export"),
+      item("数据导入…", "data-import"),
+      item("使用统计", "stats"),
+      item("提醒管理…", "remind-manage"),
+      item("唤醒恢复", "wake-recover"),
+      sep(),
       // ── 记忆、缓存与退出 ──
-      { type: "item", label: "\u6E05\u9664\u8BB0\u5FC6\u2026", action: "clear-memory" },
-      { type: "item", label: "\u6E05\u7A7A\u804A\u5929\u7F13\u5B58\u2026", action: "cache-clear" },
-      { type: "item", label: chatCacheOn ? "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00" : "\u804A\u5929\u7F13\u5B58\uFF1A\u5173", action: "cache-toggle" },
-      { type: "item", label: "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09", action: "hide" },
-      { type: "sep" },
+      item("清除记忆…", "clear-memory"),
+      item("清空聊天缓存…", "cache-clear"),
+      item(chatCacheOn ? "聊天缓存：开" : "聊天缓存：关", "cache-toggle"),
+      item("让它游走（退出）", "hide"),
+      sep(),
       // ── 账本与版本（版本永远在最底下）──
-      { type: "item", label: "\u9C7C\u7CAE\u8D26\u672C", action: "fishfood" }
+      item("鱼粮账本", "fishfood")
     ];
   }
 
@@ -468,8 +466,8 @@
         const idx = index();
         current.spoken += seg.replace(/\s+/g, "").length;
         const total = current.cum.length;
-        const head = total > 0 && idx > 0 ? current.label + "\uFF08\u7B2C " + idx + "/" + total + " \u53E5\uFF09" : current.label;
-        return head + (seg.trim() ? "\uFF1A" + seg.trim() : "");
+        const head = total > 0 && idx > 0 ? current.label + "（第 " + idx + "/" + total + " 句）" : current.label;
+        return head + (seg.trim() ? "：" + seg.trim() : "");
       }
     };
   }
@@ -487,6 +485,22 @@
   var CHAT_RATES = ["-10%", "-20%", "-25%", "-30%"];
   deepFreeze(CHAT_RATES);
   var DEFAULT_CHAT_RATE = "-20%";
+  var DEFAULT_STORY_RATE = "-35%";
+  var DEFAULT_POEM_RATE = "-25%";
+  function readPercentRate(key, fallback) {
+    try {
+      const s = localStorage.getItem(key);
+      if (s && /^-\d{1,2}%$/.test(s)) return s;
+    } catch (e) {
+    }
+    return fallback;
+  }
+  function storyRate() {
+    return readPercentRate("chubby-story-rate", DEFAULT_STORY_RATE);
+  }
+  function poemRate(fallback = DEFAULT_POEM_RATE) {
+    return readPercentRate("chubby-poem-rate", fallback);
+  }
   function chatRate() {
     try {
       const s = localStorage.getItem("chubby-chat-rate");
@@ -618,7 +632,7 @@
   // src/client/dropzone.ts
   var MAX_DROP_BYTES = 4 * 1024 * 1024;
   var MAX_TEXT_CHARS = 4e3;
-  var VISION_PROMPT = "\u770B\u770B\u8FD9\u5F20\u56FE\uFF0C\u8BF4\u8BF4\u4F60\u770B\u5230\u4E86\u4EC0\u4E48";
+  var VISION_PROMPT = "看看这张图，说说你看到了什么";
   var TEXT_EXTS = [".txt", ".md", ".json", ".log", ".csv"];
   function isImageFile(file) {
     return Boolean(file && typeof file.type === "string" && file.type.indexOf("image/") === 0);
@@ -631,7 +645,7 @@
     return false;
   }
   function buildTextPrompt(text) {
-    return "\u603B\u7ED3\u4E00\u4E0B\u8FD9\u7BC7\u6587\u6863\uFF1A\n" + String(text || "").slice(0, MAX_TEXT_CHARS);
+    return "总结一下这篇文档：\n" + String(text || "").slice(0, MAX_TEXT_CHARS);
   }
   async function handleFileDrop(file, deps) {
     const d = deps || {};
@@ -640,16 +654,16 @@
     const speak = typeof d.speakText === "function" ? d.speakText : null;
     const doFetch = d.fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
     if (!file) {
-      bubble("\u6CA1\u62FF\u5230\u6587\u4EF6\uFF0C\u518D\u62D6\u4E00\u6B21\u8BD5\u8BD5", 4e3);
+      bubble("没拿到文件，再拖一次试试", 4e3);
       return { ok: false, kind: "empty", error: "no file" };
     }
     const size = Number(file.size) || 0;
     if (size > MAX_DROP_BYTES) {
-      bubble("\u6587\u4EF6\u592A\u5927\u5566\uFF08\u8D85\u8FC7 4MB\uFF09\uFF0C\u672C\u9C7C\u4E00\u53E3\u5403\u4E0D\u4E0B", 5e3);
+      bubble("文件太大啦（超过 4MB），本鱼一口吃不下", 5e3);
       return { ok: false, kind: "too-large", error: "too large" };
     }
     if (!doFetch) {
-      bubble("\u672C\u9C7C\u8FDE\u4E0D\u4E0A\u670D\u52A1\u5668", 4e3);
+      bubble("本鱼连不上服务器", 4e3);
       return { ok: false, kind: "error", error: "no fetch" };
     }
     const post = async (body) => {
@@ -661,22 +675,22 @@
       return r.json();
     };
     if (isImageFile(file)) {
-      bubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
+      bubble("本鲸看看这张图…", 3e3);
       const img0 = await imageToB64(file);
       const b64 = img0 ? img0.b64 : "";
       const mime = img0 && img0.mime || file.type || "image/jpeg";
       if (!b64) {
-        bubble("\u56FE\u7247\u8BFB\u4E0D\u51FA\u6765\uFF0C\u518D\u62D6\u4E00\u6B21\u8BD5\u8BD5", 4e3);
+        bubble("图片读不出来，再拖一次试试", 4e3);
         return { ok: false, kind: "error", error: "empty image" };
       }
       try {
         const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime });
-        const reply = String(reply0 && reply0.reply || "").trim() || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
-        bubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
+        const reply = String(reply0 && reply0.reply || "").trim() || "这条鱼看不懂这张图……";
+        bubble("（看图）" + reply, 1e4);
         if (speak) speak(reply);
         return { ok: true, kind: "image", message: VISION_PROMPT, reply };
       } catch (e) {
-        bubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
+        bubble("图片处理失败", 4e3);
         return { ok: false, kind: "error", error: String(e && e.message || e) };
       }
     }
@@ -688,35 +702,35 @@
         text = "";
       }
       if (!text.trim()) {
-        bubble("\u8FD9\u4E2A\u6587\u4EF6\u91CC\u6CA1\u8BFB\u5230\u5B57", 4e3);
+        bubble("这个文件里没读到字", 4e3);
         return { ok: false, kind: "error", error: "empty text" };
       }
       const message = buildTextPrompt(text);
-      bubble("\u672C\u9CB8\u770B\u770B\u8FD9\u4EFD\u6587\u6863\u2026", 3e3);
+      bubble("本鲸看看这份文档…", 3e3);
       try {
         const reply0 = await post({ message });
-        const reply = String(reply0 && reply0.reply || "").trim() || "\u8FD9\u4EFD\u6587\u6863\u672C\u9CB8\u6CA1\u770B\u61C2\u2026\u2026";
-        bubble("\uFF08\u6587\u6863\uFF09" + reply, 12e3);
+        const reply = String(reply0 && reply0.reply || "").trim() || "这份文档本鲸没看懂……";
+        bubble("（文档）" + reply, 12e3);
         if (speak) speak(reply);
         return { ok: true, kind: "text", message, reply };
       } catch (e) {
-        bubble("\u6587\u6863\u5904\u7406\u5931\u8D25", 4e3);
+        bubble("文档处理失败", 4e3);
         return { ok: false, kind: "error", error: String(e && e.message || e) };
       }
     }
-    bubble("\u8FD9\u4E2A\u683C\u5F0F\u672C\u9C7C\u8FD8\u4E0D\u4F1A\u770B", 4e3);
+    bubble("这个格式本鱼还不会看", 4e3);
     return { ok: false, kind: "unsupported", error: "unsupported type" };
   }
 
   // src/client/look.ts
   var TIER_EXP = [0, 200, 800];
   deepFreeze(TIER_EXP);
-  var TIER_NAMES = ["\u521D\u8BC6", "\u719F\u7EDC", "\u9ECF\u4EBA"];
+  var TIER_NAMES = ["初识", "熟络", "黏人"];
   deepFreeze(TIER_NAMES);
   var LOOKS = [
-    { tier: 0, label: "\u521D\u8BC6", scale: 1, dots: 2, halo: 0, tailEveryMs: 14e3 },
-    { tier: 1, label: "\u719F\u7EDC", scale: 1.04, dots: 4, halo: 0.12, tailEveryMs: 9e3 },
-    { tier: 2, label: "\u9ECF\u4EBA", scale: 1.08, dots: 6, halo: 0.22, tailEveryMs: 5500 }
+    { tier: 0, label: "初识", scale: 1, dots: 2, halo: 0, tailEveryMs: 14e3 },
+    { tier: 1, label: "熟络", scale: 1.04, dots: 4, halo: 0.12, tailEveryMs: 9e3 },
+    { tier: 2, label: "黏人", scale: 1.08, dots: 6, halo: 0.22, tailEveryMs: 5500 }
   ];
   deepFreeze(LOOKS);
   function tierOf(exp) {
@@ -735,7 +749,7 @@
     if (!info || typeof info.exp !== "number") return LOOKS[0];
     return LOOKS[tierOf(info.exp)];
   }
-  var DEFAULT_GROWTH = { exp: 0, stage: "\u521D\u8BC6", nextExp: 200, tier: 0 };
+  var DEFAULT_GROWTH = { exp: 0, stage: "初识", nextExp: 200, tier: 0 };
   deepFreeze(DEFAULT_GROWTH);
   function parseGrowth(d) {
     if (!d || typeof d !== "object" || !d.ok) return null;
@@ -880,7 +894,7 @@
         const size = Math.max(12, Math.round(ch * 0.05 * (1 + p * 0.5)));
         ctx.fillStyle = "rgba(255,120,150," + alpha.toFixed(3) + ")";
         ctx.font = size + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",serif';
-        ctx.fillText("\u2764", x, y);
+        ctx.fillText("❤", x, y);
       }
     }
     function haloGradient() {
@@ -1191,15 +1205,15 @@
   function collapsePoemBody(raw) {
     let t = String(raw == null ? "" : raw);
     t = t.replace(/\r/g, "");
-    t = t.replace(/\n+/g, "\uFF0C");
+    t = t.replace(/\n+/g, "，");
     t = t.replace(/[。！？；]+，/g, (m) => m.slice(0, 1));
-    t = t.replace(/，{2,}/g, "\uFF0C");
+    t = t.replace(/，{2,}/g, "，");
     t = t.replace(/，([。！？；])/g, "$1");
     return t.trim();
   }
   function taleParts(rawTitle) {
     const t = String(rawTitle || "").trim();
-    const i = t.indexOf("\xB7");
+    const i = t.indexOf("·");
     if (i > 0 && i < t.length - 1) return { book: t.slice(0, i), title: t.slice(i + 1) };
     return { title: t, book: "" };
   }
@@ -1213,46 +1227,46 @@
     return String(s == null ? "" : s).replace(/星号|米字号/g, "*").replace(/\*[^*]{1,60}\*/g, "").replace(/[\s。，！？,.!?、…~～]/g, "");
   }
   var SHORT_ECHO_ALLOW = [
-    "\u505C",
-    "\u522B",
-    "\u4E0D",
-    "\u597D",
-    "\u5582",
-    "\u505C\u4E0B",
-    "\u505C\u4E00\u4E0B",
-    "\u522B\u8BF4",
-    "\u522B\u5FF5",
-    "\u522B\u8BB2",
-    "\u95ED\u5634",
-    "\u5B89\u9759",
-    "\u6253\u4F4F",
-    "\u591F\u4E86",
-    "\u597D\u7684",
-    "\u597D\u5440",
-    "\u597D\u5427",
-    "\u662F\u7684",
-    "\u5BF9\u7684",
-    "\u53EF\u4EE5",
-    "\u4E0D\u884C",
-    "\u4E0D\u8981",
-    "\u6CA1\u6709",
-    "\u6CA1\u4E8B",
-    "\u8C22\u8C22",
-    "\u665A\u5B89",
-    "\u65E9\u5B89",
-    "\u518D\u89C1",
-    "\u7B49\u6211",
-    "\u7A0D\u7B49",
-    "\u8BB2\u5427",
-    "\u8BF4\u5427",
-    "\u5531\u5427",
-    "\u5FF5\u5427",
-    "\u6765\u5427",
-    "\u5F00\u59CB",
-    "\u7EE7\u7EED",
-    "\u6CA1\u9519",
-    "\u8BD5\u8BD5",
-    "\u55EF\u55EF"
+    "停",
+    "别",
+    "不",
+    "好",
+    "喂",
+    "停下",
+    "停一下",
+    "别说",
+    "别念",
+    "别讲",
+    "闭嘴",
+    "安静",
+    "打住",
+    "够了",
+    "好的",
+    "好呀",
+    "好吧",
+    "是的",
+    "对的",
+    "可以",
+    "不行",
+    "不要",
+    "没有",
+    "没事",
+    "谢谢",
+    "晚安",
+    "早安",
+    "再见",
+    "等我",
+    "稍等",
+    "讲吧",
+    "说吧",
+    "唱吧",
+    "念吧",
+    "来吧",
+    "开始",
+    "继续",
+    "没错",
+    "试试",
+    "嗯嗯"
   ];
   deepFreeze(SHORT_ECHO_ALLOW);
   function isShortEchoFragment(plain, hadRecentSpeech) {
@@ -1638,7 +1652,7 @@
         fmt = "wav";
       } else {
         try {
-          onDiag && onDiag({ stage: "mp4-no-transcode", hint: "mp4 \u6CA1\u80FD\u8F6C\u6210 wav\uFF0C\u6309\u539F\u5B57\u8282\u4E0A\u4F20" });
+          onDiag && onDiag({ stage: "mp4-no-transcode", hint: "mp4 没能转成 wav，按原字节上传" });
         } catch (e) {
         }
       }
@@ -1650,26 +1664,26 @@
 
   // src/shared/noise.ts
   var NOISE_TEXTS = [
-    "\u55EF",
-    "\u5443",
-    "\u554A",
-    "\u54E6",
-    "\u6069",
-    "\u55EF\u55EF",
-    "\u554A\u554A",
-    "\u8C22\u8C22\u89C2\u770B",
-    "\u8C22\u8C22\u5927\u5BB6",
-    "\u5B57\u5E55",
-    "\u8BF7\u4E0D\u541D\u70B9\u8D5E",
-    "\u70B9\u8D5E",
-    "\u8BA2\u9605",
-    "\u8F6C\u53D1",
-    "\u6253\u8D4F",
-    "\u518D\u89C1",
-    "\u672C\u9C7C\u5728\u542C",
-    "\u55EF\u672C\u9C7C\u5728\u542C",
-    "\u5B57\u5E55\u7531",
-    "\u660E\u955C\u4E0E\u70B9\u70B9"
+    "嗯",
+    "呃",
+    "啊",
+    "哦",
+    "恩",
+    "嗯嗯",
+    "啊啊",
+    "谢谢观看",
+    "谢谢大家",
+    "字幕",
+    "请不吝点赞",
+    "点赞",
+    "订阅",
+    "转发",
+    "打赏",
+    "再见",
+    "本鱼在听",
+    "嗯本鱼在听",
+    "字幕由",
+    "明镜与点点"
   ];
   deepFreeze(NOISE_TEXTS);
   function normalizeNoiseKey(text) {
@@ -1715,9 +1729,9 @@
     const now = opts.now === void 0 ? Date.now() : opts.now;
     const cur = normalizeText(text);
     if (!cur) return false;
-    for (const item of opts.recent || []) {
-      if (now - Number(item && item.at || 0) > windowMs) continue;
-      const prev = normalizeText(item && item.text ? item.text : "");
+    for (const item2 of opts.recent || []) {
+      if (now - Number(item2 && item2.at || 0) > windowMs) continue;
+      const prev = normalizeText(item2 && item2.text ? item2.text : "");
       if (!prev) continue;
       if (cur === prev) return true;
       const shortOne = cur.length <= prev.length ? cur : prev;
@@ -2209,7 +2223,7 @@
         if (!levelOk && !levelDead && levelProbeAt && performance.now() - levelProbeAt > LEVEL_PROBE_MS) {
           levelDead = true;
           try {
-            opts.onDiag && opts.onDiag({ stage: "analyser-dead", hint: "\u7535\u5E73\u4E0D\u53EF\u7528\uFF0C\u9759\u97F3\u5224\u5B9A\u5DF2\u964D\u7EA7\uFF08\u6539\u6309\u6BB5\u957F/\u4F53\u79EF\uFF09" });
+            opts.onDiag && opts.onDiag({ stage: "analyser-dead", hint: "电平不可用，静音判定已降级（改按段长/体积）" });
           } catch (e) {
           }
         }
@@ -2905,10 +2919,10 @@
   }
 
   // src/client/wake.ts
-  var WAKE_WORDS = ["\u5927\u80A5\u9C7C", "\u5C0F\u84DD\u9C7C", "\u80A5\u9CB8", "\u80A5\u9C7C", "\u5C0F\u9C7C", "\u84DD\u9C7C", "\u9C7C\u9C7C", "\u80A5\u80A5"];
+  var WAKE_WORDS = ["大肥鱼", "小蓝鱼", "肥鲸", "肥鱼", "小鱼", "蓝鱼", "鱼鱼", "肥肥"];
   deepFreeze(WAKE_WORDS);
   var WAKE_WINDOW_MS = 3e4;
-  var TRAD_TO_SIMPLE = { "\u9B5A": "\u9C7C", "\u98DB": "\u98DE", "\u85CD": "\u84DD", "\u7C43": "\u7BEE", "\u862D": "\u5170", "\u9BE8": "\u9CB8" };
+  var TRAD_TO_SIMPLE = { "魚": "鱼", "飛": "飞", "藍": "蓝", "籃": "篮", "蘭": "兰", "鯨": "鲸" };
   function normalizeWakeText(text) {
     return String(text == null ? "" : text).split("").map((c) => TRAD_TO_SIMPLE[c] || c).join("").replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, "").toLowerCase();
   }
@@ -3043,7 +3057,7 @@
                 } catch (e) {
                 }
                 host.narration.clear();
-                host.bubble("\u597D\uFF0C\u4E0D\u5FF5\u4E86", 2500);
+                host.bubble("好，不念了", 2500);
               } else {
                 bump("narrDrop");
               }
@@ -3060,7 +3074,7 @@
                 } catch (e) {
                 }
                 try {
-                  host.bubble("\u597D\uFF0C\u4E0D\u8BF4\u4E86", 2e3);
+                  host.bubble("好，不说了", 2e3);
                 } catch (e) {
                 }
                 bump("wakeBreak");
@@ -3086,11 +3100,11 @@
           wakeStats.passed++;
           if (!said) {
             try {
-              if (host.say) host.say("\u672C\u9CB8\u5728\u5462\uFF5E", 3200);
-              else host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 3200);
+              if (host.say) host.say("本鲸在呢～", 3200);
+              else host.bubble("本鲸在呢～", 3200);
             } catch (e) {
               try {
-                host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 3200);
+                host.bubble("本鲸在呢～", 3200);
               } catch (e2) {
               }
             }
@@ -3098,7 +3112,7 @@
             return;
           }
           try {
-            host.bubble("\uFF08\u542C\u5230\uFF09" + said + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
+            host.bubble("（听到）" + said + "｜本鱼在想…", 3e3);
           } catch (e) {
           }
           try {
@@ -3121,7 +3135,7 @@
           try {
             if (d && d.stage === "asr-no-key" && !asrNoKeyNotified) {
               asrNoKeyNotified = true;
-              host.bubble(String(d.hint || "\u6CA1\u914D\u8BED\u97F3\u8BC6\u522B Key\uFF0C\u672C\u9CB8\u542C\u4E0D\u89C1\uFF1B\u6253\u5B57\u4E5F\u80FD\u804A\uFF5E"), 8e3);
+              host.bubble(String(d.hint || "没配语音识别 Key，本鲸听不见；打字也能聊～"), 8e3);
             }
           } catch (e) {
           }
@@ -3471,316 +3485,62 @@
   }
 
   // src/client/duilian.ts
-  var COUPLETS = [
-    {
-      "upper": "\u98CE\u58F0\u96E8\u58F0\u8BFB\u4E66\u58F0\uFF0C\u58F0\u58F0\u5165\u8033",
-      "lower": "\u5BB6\u4E8B\u56FD\u4E8B\u5929\u4E0B\u4E8B\uFF0C\u4E8B\u4E8B\u5173\u5FC3",
-      "source": "\u660E\xB7\u987E\u5BAA\u6210\u9898\u65E0\u9521\u4E1C\u6797\u4E66\u9662",
-      "cat": "\u4E66\u9662"
-    },
-    {
-      "upper": "\u6D77\u7EB3\u767E\u5DDD\uFF0C\u6709\u5BB9\u4E43\u5927",
-      "lower": "\u58C1\u7ACB\u5343\u4EDE\uFF0C\u65E0\u6B32\u5219\u521A",
-      "source": "\u6E05\xB7\u6797\u5219\u5F90\u81EA\u9898\u8054",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u5BA4\u96C5\u4F55\u987B\u5927",
-      "lower": "\u82B1\u9999\u4E0D\u5728\u591A",
-      "source": "\u6E05\xB7\u90D1\u677F\u6865",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u5220\u7E41\u5C31\u7B80\u4E09\u79CB\u6811",
-      "lower": "\u9886\u5F02\u6807\u65B0\u4E8C\u6708\u82B1",
-      "source": "\u6E05\xB7\u90D1\u677F\u6865",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u5899\u4E0A\u82A6\u82C7\uFF0C\u5934\u91CD\u811A\u8F7B\u6839\u5E95\u6D45",
-      "lower": "\u5C71\u95F4\u7AF9\u7B0B\uFF0C\u5634\u5C16\u76AE\u539A\u8179\u4E2D\u7A7A",
-      "source": "\u76F8\u4F20\u4E3A\u660E\xB7\u89E3\u7F19\u4F5C",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u94C1\u80A9\u62C5\u9053\u4E49",
-      "lower": "\u5999\u624B\u8457\u6587\u7AE0",
-      "source": "\u674E\u5927\u948A\u300A\u6668\u949F\u62A5\u300B\u521B\u520A\u53F7\uFF081916\uFF09",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u56DB\u9762\u8377\u82B1\u4E09\u9762\u67F3",
-      "lower": "\u4E00\u57CE\u5C71\u8272\u534A\u57CE\u6E56",
-      "source": "\u6E05\xB7\u5218\u51E4\u8BF0\u9898\u6D4E\u5357\u5927\u660E\u6E56\u94C1\u516C\u7960",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u9752\u5C71\u6709\u5E78\u57CB\u5FE0\u9AA8",
-      "lower": "\u767D\u94C1\u65E0\u8F9C\u94F8\u4F5E\u81E3",
-      "source": "\u676D\u5DDE\u5CB3\u738B\u5E99\u5893\u9619\u8054\uFF08\u4F20\u7EDF\uFF09",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u4E00\u7CA5\u4E00\u996D\uFF0C\u5F53\u601D\u6765\u5904\u4E0D\u6613",
-      "lower": "\u534A\u4E1D\u534A\u7F15\uFF0C\u6052\u5FF5\u7269\u529B\u7EF4\u8270",
-      "source": "\u660E\u672B\u6E05\u521D\xB7\u6731\u67CF\u5E90\u300A\u6CBB\u5BB6\u683C\u8A00\u300B",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u8BFB\u4E66\u597D\uFF0C\u8015\u7530\u597D\uFF0C\u5B66\u597D\u4FBF\u597D",
-      "lower": "\u521B\u4E1A\u96BE\uFF0C\u5B88\u6210\u96BE\uFF0C\u77E5\u96BE\u4E0D\u96BE",
-      "source": "\u6E05\xB7\u5434\u656C\u6893\u300A\u5112\u6797\u5916\u53F2\u300B\u7B2C\u4E8C\u5341\u4E8C\u56DE",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u6625\u98CE\u5927\u96C5\u80FD\u5BB9\u7269",
-      "lower": "\u79CB\u6C34\u6587\u7AE0\u4E0D\u67D3\u5C18",
-      "source": "\u6E05\xB7\u9093\u77F3\u5982",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u96E8\u8FC7\u7434\u4E66\u6DA6",
-      "lower": "\u98CE\u6765\u7FF0\u58A8\u9999",
-      "source": "\u4F20\u7EDF\u4E66\u623F\u8054",
-      "cat": "\u4E66\u623F"
-    },
-    {
-      "upper": "\u5927\u809A\u80FD\u5BB9\uFF0C\u5BB9\u5929\u4E0B\u96BE\u5BB9\u4E4B\u4E8B",
-      "lower": "\u5F00\u53E3\u4FBF\u7B11\uFF0C\u7B11\u4E16\u95F4\u53EF\u7B11\u4E4B\u4EBA",
-      "source": "\u4F20\u7EDF\u5F25\u52D2\u4F5B\u8054",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u5929\u589E\u5C81\u6708\u4EBA\u589E\u5BFF",
-      "lower": "\u6625\u6EE1\u4E7E\u5764\u798F\u6EE1\u95E8",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u4E00\u5143\u590D\u59CB",
-      "lower": "\u4E07\u8C61\u66F4\u65B0",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u6625\u56DE\u5927\u5730",
-      "lower": "\u798F\u6EE1\u4EBA\u95F4",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u95E8\u8FCE\u767E\u798F",
-      "lower": "\u6237\u7EB3\u5343\u7965",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u4E94\u6E56\u56DB\u6D77\u7686\u6625\u8272",
-      "lower": "\u4E07\u6C34\u5343\u5C71\u5C3D\u5F97\u8F89",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u677E\u7AF9\u6885\u5C81\u5BD2\u4E09\u53CB",
-      "lower": "\u6843\u674E\u674F\u6625\u98CE\u4E00\u5BB6",
-      "source": "\u4F20\u7EDF",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u798F\u5982\u4E1C\u6D77\u957F\u6D41\u6C34",
-      "lower": "\u5BFF\u6BD4\u5357\u5C71\u4E0D\u8001\u677E",
-      "source": "\u4F20\u7EDF\u5BFF\u8054",
-      "cat": "\u5BFF\u8054"
-    },
-    {
-      "upper": "\u5BA2\u4E0A\u5929\u7136\u5C45",
-      "lower": "\u5C45\u7136\u5929\u4E0A\u5BA2",
-      "source": "\u4F20\u7EDF\u56DE\u6587\u8054\uFF08\u987A\u8BFB\u5012\u8BFB\u540C\u53E5\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u753B\u4E0A\u8377\u82B1\u548C\u5C1A\u753B",
-      "lower": "\u4E66\u4E34\u6C49\u5E16\u7FF0\u6797\u4E66",
-      "source": "\u4F20\u7EDF\u56DE\u6587\u8054",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u56E0\u8377\u800C\u5F97\u85D5",
-      "lower": "\u6709\u674F\u4E0D\u987B\u6885",
-      "source": "\u4F20\u7EDF\u8C10\u97F3\u8054\uFF08\u8377=\u4F55\u3001\u85D5=\u5076\uFF1B\u674F=\u5E78\u3001\u6885=\u5A92\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u4E24\u821F\u5E76\u884C\uFF0C\u6A79\u901F\u4E0D\u5982\u5E06\u5FEB",
-      "lower": "\u516B\u97F3\u9F50\u594F\uFF0C\u7B1B\u6E05\u96BE\u6BD4\u7BAB\u548C",
-      "source": "\u4F20\u7EDF\u8C10\u97F3\u8054\uFF08\u6A79\u901F=\u9C81\u8083\u3001\u5E06\u5FEB=\u6A0A\u54D9\uFF1B\u7B1B\u6E05=\u72C4\u9752\u3001\u7BAB\u548C=\u8427\u4F55\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u5357\u901A\u5DDE\uFF0C\u5317\u901A\u5DDE\uFF0C\u5357\u5317\u901A\u5DDE\u901A\u5357\u5317",
-      "lower": "\u4E1C\u5F53\u94FA\uFF0C\u897F\u5F53\u94FA\uFF0C\u4E1C\u897F\u5F53\u94FA\u5F53\u4E1C\u897F",
-      "source": "\u4F20\u7EDF\u5730\u540D\u8054",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u5929\u4F5C\u68CB\u76D8\u661F\u4F5C\u5B50\uFF0C\u8C01\u4EBA\u6562\u4E0B",
-      "lower": "\u5730\u4E3A\u7435\u7436\u8DEF\u4E3A\u5F26\uFF0C\u54EA\u4E2A\u80FD\u5F39",
-      "source": "\u4F20\u7EDF\uFF08\u6C11\u95F4\u6D41\u4F20\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u5899\u4E0A\u753B\u9A6C\u4E0D\u80FD\u9A91",
-      "lower": "\u955C\u91CC\u70E7\u997C\u96BE\u5145\u9965",
-      "source": "\u4F20\u7EDF\uFF08\u6C11\u95F4\u4FD7\u8054\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u6C34\u6E05\u77F3\u51FA\u9C7C\u53EF\u6570",
-      "lower": "\u6797\u6DF1\u65E0\u4EBA\u9E1F\u76F8\u547C",
-      "source": "\u5B8B\xB7\u82CF\u8F7C\u8BD7\u53E5\uFF08\u6210\u8054\u6B23\u8D4F\uFF09",
-      "cat": "\u666F\u89C2"
-    },
-    {
-      "upper": "\u9752\u5C71\u4E0D\u58A8\u5343\u79CB\u753B",
-      "lower": "\u6D41\u6C34\u65E0\u5F26\u4E07\u53E4\u7434",
-      "source": "\u4F20\u7EDF\uFF08\u6D41\u4F20\u751A\u5E7F\uFF0C\u4F5C\u8005\u5F85\u8003\uFF09",
-      "cat": "\u666F\u89C2"
-    },
-    {
-      "upper": "\u4E91\u5E26\u949F\u58F0\u7A7F\u6811\u53BB",
-      "lower": "\u6708\u79FB\u5854\u5F71\u8FC7\u6C5F\u6765",
-      "source": "\u4F20\u7EDF\u540D\u80DC\u8054",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u6B64\u6728\u4E3A\u67F4\u5C71\u5C71\u51FA",
-      "lower": "\u56E0\u706B\u6210\u70DF\u5915\u5915\u591A",
-      "source": "\u4F20\u7EDF\u62C6\u5B57\u8054\uFF08\u67F4=\u6B64+\u6728\u3001\u51FA=\u5C71+\u5C71\uFF1B\u70DF=\u56E0+\u706B\u3001\u591A=\u5915+\u5915\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u9F20\u65E0\u5927\u5C0F\u7686\u79F0\u8001",
-      "lower": "\u9E66\u6709\u96CC\u96C4\u90FD\u53EB\u54E5",
-      "source": "\u4F20\u7EDF\u8C10\u8DA3\u8054",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u4EBA\u66FE\u662F\u50E7\uFF0C\u4EBA\u5F17\u80FD\u6210\u4F5B",
-      "lower": "\u5973\u5351\u4E3A\u5A62\uFF0C\u5973\u53C8\u53EF\u79F0\u5974",
-      "source": "\u76F8\u4F20\u4E3A\u82CF\u8F7C\u4E0E\u4F5B\u5370\u548C\u5C1A\u620F\u5BF9",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u4E8C\u4E09\u56DB\u4E94",
-      "lower": "\u516D\u4E03\u516B\u4E5D",
-      "source": "\u4F20\u7EDF\u8C10\u610F\u8054\uFF08\u4E0A\u8054\u7F3A\u300C\u4E00\u300D\uFF0C\u4E0B\u8054\u5C11\u300C\u5341\u300D\uFF1A\u7F3A\u8863\u5C11\u98DF\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u5B9D\u5251\u950B\u4ECE\u78E8\u783A\u51FA",
-      "lower": "\u6885\u82B1\u9999\u81EA\u82E6\u5BD2\u6765",
-      "source": "\u4F20\u7EDF\u683C\u8A00\u8054",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u4E66\u5C71\u6709\u8DEF\u52E4\u4E3A\u5F84",
-      "lower": "\u5B66\u6D77\u65E0\u6DAF\u82E6\u4F5C\u821F",
-      "source": "\u4F20\u7EDF\u683C\u8A00\u8054\uFF08\u5E38\u89C1\u7F72\u540D\u97E9\u6108\uFF0C\u51FA\u5904\u5F85\u8003\uFF0C\u6545\u4E0D\u7F72\uFF09",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u4E66\u5230\u7528\u65F6\u65B9\u6068\u5C11",
-      "lower": "\u4E8B\u975E\u7ECF\u8FC7\u4E0D\u77E5\u96BE",
-      "source": "\u4F20\u7EDF\u683C\u8A00\u8054",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u6D77\u9614\u51ED\u9C7C\u8DC3",
-      "lower": "\u5929\u9AD8\u4EFB\u9E1F\u98DE",
-      "source": "\u4F20\u7EDF\u683C\u8A00\u8054",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u8DEF\u9065\u77E5\u9A6C\u529B",
-      "lower": "\u65E5\u4E45\u89C1\u4EBA\u5FC3",
-      "source": "\u4F20\u7EDF\uFF08\u4FD7\u8C1A\u6210\u8054\uFF09",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u548C\u987A\u4E00\u95E8\u6709\u767E\u798F",
-      "lower": "\u5E73\u5B89\u4E8C\u5B57\u503C\u5343\u91D1",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u7206\u7AF9\u4E00\u58F0\u9664\u65E7",
-      "lower": "\u6843\u7B26\u4E07\u6237\u66F4\u65B0",
-      "source": "\u4F20\u7EDF\u6625\u8054\uFF08\u5316\u7528\u738B\u5B89\u77F3\u300A\u5143\u65E5\u300B\uFF09",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u5929\u6CF0\u5730\u6CF0\u4E09\u9633\u6CF0",
-      "lower": "\u5BB6\u548C\u4EBA\u548C\u4E07\u4E8B\u548C",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u4E00\u5E74\u56DB\u5B63\u6625\u5E38\u5728",
-      "lower": "\u4E07\u7D2B\u5343\u7EA2\u82B1\u6C38\u5F00",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u8FD1\u6C34\u697C\u53F0\u5148\u5F97\u6708",
-      "lower": "\u5411\u9633\u82B1\u6728\u6613\u4E3A\u6625",
-      "source": "\u5B8B\xB7\u82CF\u9E9F\u8BD7\uFF08\u76F8\u4F20\uFF09",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u5C71\u91CD\u6C34\u590D\u7591\u65E0\u8DEF",
-      "lower": "\u67F3\u6697\u82B1\u660E\u53C8\u4E00\u6751",
-      "source": "\u5B8B\xB7\u9646\u6E38\u300A\u6E38\u5C71\u897F\u6751\u300B\u8BD7\u53E5\uFF08\u6210\u8054\u6B23\u8D4F\uFF09",
-      "cat": "\u666F\u89C2"
-    },
-    {
-      "upper": "\u4E00\u697C\u4F55\u5947\uFF1F\u675C\u5C11\u9675\u4E94\u8A00\u7EDD\u5531\uFF0C\u8303\u5E0C\u6587\u4E24\u5B57\u5173\u60C5\uFF0C\u6ED5\u5B50\u4EAC\u767E\u5E9F\u4FF1\u5174\uFF0C\u5415\u7EAF\u9633\u4E09\u8FC7\u5FC5\u9189\u3002\u8BD7\u8036\uFF1F\u5112\u8036\uFF1F\u540F\u8036\uFF1F\u4ED9\u8036\uFF1F\u524D\u4E0D\u89C1\u53E4\u4EBA\uFF0C\u4F7F\u6211\u6006\u7136\u6D95\u4E0B",
-      "lower": "\u8BF8\u541B\u8BD5\u770B\uFF1A\u6D1E\u5EAD\u6E56\u5357\u6781\u6F47\u6E58\uFF0C\u626C\u5B50\u6C5F\u5317\u901A\u5DEB\u5CE1\uFF0C\u5DF4\u9675\u5C71\u897F\u6765\u723D\u6C14\uFF0C\u5CB3\u5DDE\u57CE\u4E1C\u9053\u5CA9\u7586\u3002\u6F74\u8005\uFF01\u6D41\u8005\uFF01\u5CD9\u8005\uFF01\u9547\u8005\uFF01\u6B64\u4E2D\u6709\u771F\u610F\uFF0C\u95EE\u8C01\u9886\u4F1A\u5F97\u6765",
-      "source": "\u5CB3\u9633\u697C\u957F\u8054\uFF08\u6E05\xB7\u7AA6\u57BF\uFF0C\u4E00\u8BF4\u9648\u5927\u7EB2\uFF09",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u5174\u5E9F\u603B\u5173\u60C5\uFF0C\u770B\u843D\u971E\u5B64\u9E5C\u3001\u79CB\u6C34\u957F\u5929\uFF0C\u5E78\u6B64\u5730\u6E56\u5C71\u65E0\u6059",
-      "lower": "\u53E4\u4ECA\u624D\u4E00\u77AC\uFF0C\u95EE\u6C5F\u4E0A\u624D\u4EBA\u3001\u9601\u4E2D\u5E1D\u5B50\uFF0C\u6BD4\u5F53\u5E74\u98CE\u666F\u5982\u4F55",
-      "source": "\u6E05\xB7\u5218\u5764\u4E00\u9898\u5357\u660C\u6ED5\u738B\u9601",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u4E00\u697C\u8403\u4E09\u695A\u7CBE\u795E\uFF0C\u4E91\u9E64\u4FF1\u7A7A\u6A2A\u7B1B\u5728",
-      "lower": "\u4E8C\u6C34\u6C47\u767E\u5DDD\u652F\u6D3E\uFF0C\u53E4\u4ECA\u65E0\u5C3D\u5927\u6C5F\u6D41",
-      "source": "\u9EC4\u9E64\u697C\u8054\uFF08\u4F20\u7EDF\uFF09",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u767D\u5934\u7FC1\u7275\u725B\u8015\u719F\u5730",
-      "lower": "\u7EA2\u5A18\u5B50\u4F5B\u624B\u63D2\u91D1\u82B1",
-      "source": "\u4F20\u7EDF\u4E2D\u836F\u540D\u8054\uFF08\u767D\u5934\u7FC1/\u7275\u725B/\u719F\u5730/\u7EA2\u5A18\u5B50/\u4F5B\u624B/\u91D1\u82B1\u7686\u836F\u540D\uFF09",
-      "cat": "\u4E2D\u836F"
-    },
-    {
-      "upper": "\u6C34\u6C34\u5C71\u5C71\uFF0C\u5904\u5904\u660E\u660E\u79C0\u79C0",
-      "lower": "\u6674\u6674\u96E8\u96E8\uFF0C\u65F6\u65F6\u597D\u597D\u5947\u5947",
-      "source": "\u897F\u6E56\u53E0\u5B57\u8054\uFF08\u4F20\u7EDF\uFF09",
-      "cat": "\u53E0\u5B57"
-    },
-    {
-      "upper": "\u4E00\u53BB\u4E8C\u4E09\u91CC\uFF0C\u70DF\u6751\u56DB\u4E94\u5BB6",
-      "lower": "\u4EAD\u53F0\u516D\u4E03\u5EA7\uFF0C\u516B\u4E5D\u5341\u679D\u82B1",
-      "source": "\u5B8B\xB7\u90B5\u96CD\u300A\u5C71\u6751\u548F\u6000\u300B\u8BD7\u53E5\uFF08\u6570\u5B57\u8054\uFF09",
-      "cat": "\u6570\u5B57"
-    }
+  var COUPLET_ROWS = [
+    ["风声雨声读书声，声声入耳", "家事国事天下事，事事关心", "明·顾宪成题无锡东林书院", "书院"],
+    ["海纳百川，有容乃大", "壁立千仞，无欲则刚", "清·林则徐自题联", "格言"],
+    ["室雅何须大", "花香不在多", "清·郑板桥", "格言"],
+    ["删繁就简三秋树", "领异标新二月花", "清·郑板桥", "格言"],
+    ["墙上芦苇，头重脚轻根底浅", "山间竹笋，嘴尖皮厚腹中空", "相传为明·解缙作", "谐趣"],
+    ["铁肩担道义", "妙手著文章", "李大钊《晨钟报》创刊号（1916）", "格言"],
+    ["四面荷花三面柳", "一城山色半城湖", "清·刘凤诰题济南大明湖铁公祠", "名胜"],
+    ["青山有幸埋忠骨", "白铁无辜铸佞臣", "杭州岳王庙墓阙联（传统）", "名胜"],
+    ["一粥一饭，当思来处不易", "半丝半缕，恒念物力维艰", "明末清初·朱柏庐《治家格言》", "格言"],
+    ["读书好，耕田好，学好便好", "创业难，守成难，知难不难", "清·吴敬梓《儒林外史》第二十二回", "格言"],
+    ["春风大雅能容物", "秋水文章不染尘", "清·邓石如", "格言"],
+    ["雨过琴书润", "风来翰墨香", "传统书房联", "书房"],
+    ["大肚能容，容天下难容之事", "开口便笑，笑世间可笑之人", "传统弥勒佛联", "谐趣"],
+    ["天增岁月人增寿", "春满乾坤福满门", "传统春联", "春联"],
+    ["一元复始", "万象更新", "传统春联", "春联"],
+    ["春回大地", "福满人间", "传统春联", "春联"],
+    ["门迎百福", "户纳千祥", "传统春联", "春联"],
+    ["五湖四海皆春色", "万水千山尽得辉", "传统春联", "春联"],
+    ["松竹梅岁寒三友", "桃李杏春风一家", "传统", "格言"],
+    ["福如东海长流水", "寿比南山不老松", "传统寿联", "寿联"],
+    ["客上天然居", "居然天上客", "传统回文联（顺读倒读同句）", "谐趣"],
+    ["画上荷花和尚画", "书临汉帖翰林书", "传统回文联", "谐趣"],
+    ["因荷而得藕", "有杏不须梅", "传统谐音联（荷=何、藕=偶；杏=幸、梅=媒）", "谐趣"],
+    ["两舟并行，橹速不如帆快", "八音齐奏，笛清难比箫和", "传统谐音联（橹速=鲁肃、帆快=樊哙；笛清=狄青、箫和=萧何）", "谐趣"],
+    ["南通州，北通州，南北通州通南北", "东当铺，西当铺，东西当铺当东西", "传统地名联", "谐趣"],
+    ["天作棋盘星作子，谁人敢下", "地为琵琶路为弦，哪个能弹", "传统（民间流传）", "谐趣"],
+    ["墙上画马不能骑", "镜里烧饼难充饥", "传统（民间俗联）", "谐趣"],
+    ["水清石出鱼可数", "林深无人鸟相呼", "宋·苏轼诗句（成联欣赏）", "景观"],
+    ["青山不墨千秋画", "流水无弦万古琴", "传统（流传甚广，作者待考）", "景观"],
+    ["云带钟声穿树去", "月移塔影过江来", "传统名胜联", "名胜"],
+    ["此木为柴山山出", "因火成烟夕夕多", "传统拆字联（柴=此+木、出=山+山；烟=因+火、多=夕+夕）", "谐趣"],
+    ["鼠无大小皆称老", "鹦有雌雄都叫哥", "传统谐趣联", "谐趣"],
+    ["人曾是僧，人弗能成佛", "女卑为婢，女又可称奴", "相传为苏轼与佛印和尚戏对", "谐趣"],
+    ["二三四五", "六七八九", "传统谐意联（上联缺「一」，下联少「十」：缺衣少食）", "谐趣"],
+    ["宝剑锋从磨砺出", "梅花香自苦寒来", "传统格言联", "格言"],
+    ["书山有路勤为径", "学海无涯苦作舟", "传统格言联（常见署名韩愈，出处待考，故不署）", "格言"],
+    ["书到用时方恨少", "事非经过不知难", "传统格言联", "格言"],
+    ["海阔凭鱼跃", "天高任鸟飞", "传统格言联", "格言"],
+    ["路遥知马力", "日久见人心", "传统（俗谚成联）", "格言"],
+    ["和顺一门有百福", "平安二字值千金", "传统春联", "春联"],
+    ["爆竹一声除旧", "桃符万户更新", "传统春联（化用王安石《元日》）", "春联"],
+    ["天泰地泰三阳泰", "家和人和万事和", "传统春联", "春联"],
+    ["一年四季春常在", "万紫千红花永开", "传统春联", "春联"],
+    ["近水楼台先得月", "向阳花木易为春", "宋·苏麟诗（相传）", "格言"],
+    ["山重水复疑无路", "柳暗花明又一村", "宋·陆游《游山西村》诗句（成联欣赏）", "景观"],
+    ["一楼何奇？杜少陵五言绝唱，范希文两字关情，滕子京百废俱兴，吕纯阳三过必醉。诗耶？儒耶？吏耶？仙耶？前不见古人，使我怆然涕下", "诸君试看：洞庭湖南极潇湘，扬子江北通巫峡，巴陵山西来爽气，岳州城东道岩疆。潴者！流者！峙者！镇者！此中有真意，问谁领会得来", "岳阳楼长联（清·窦垿，一说陈大纲）", "名胜"],
+    ["兴废总关情，看落霞孤鹜、秋水长天，幸此地湖山无恙", "古今才一瞬，问江上才人、阁中帝子，比当年风景如何", "清·刘坤一题南昌滕王阁", "名胜"],
+    ["一楼萃三楚精神，云鹤俱空横笛在", "二水汇百川支派，古今无尽大江流", "黄鹤楼联（传统）", "名胜"],
+    ["白头翁牵牛耕熟地", "红娘子佛手插金花", "传统中药名联（白头翁/牵牛/熟地/红娘子/佛手/金花皆药名）", "中药"],
+    ["水水山山，处处明明秀秀", "晴晴雨雨，时时好好奇奇", "西湖叠字联（传统）", "叠字"],
+    ["一去二三里，烟村四五家", "亭台六七座，八九十枝花", "宋·邵雍《山村咏怀》诗句（数字联）", "数字"]
   ];
+  var COUPLETS = COUPLET_ROWS.map(([upper, lower, source, cat]) => ({ upper, lower, source, cat }));
   deepFreeze(COUPLETS);
-  var COUPLET_CATS = ["\u4E66\u9662", "\u683C\u8A00", "\u8C10\u8DA3", "\u540D\u80DC", "\u4E66\u623F", "\u6625\u8054", "\u5BFF\u8054", "\u666F\u89C2", "\u4E2D\u836F", "\u53E0\u5B57", "\u6570\u5B57"];
+  var COUPLET_CATS = ["书院", "格言", "谐趣", "名胜", "书房", "春联", "寿联", "景观", "中药", "叠字", "数字"];
   deepFreeze(COUPLET_CATS);
   function pickCouplet(excludeUpper, cat) {
     const byCat = cat ? COUPLETS.filter((c) => c.cat === cat) : COUPLETS;
@@ -3791,25 +3551,17 @@
   }
 
   // src/client/actions/culture.ts
-  function poemRate(fallback) {
-    try {
-      const v = localStorage.getItem("chubby-poem-rate");
-      if (v && /^-\d{1,2}%$/.test(v)) return v;
-    } catch (e) {
-    }
-    return fallback;
-  }
   function recitePoem(host, poem) {
     const body = String(poem.text || "");
-    const author = String(poem.author || "\u4F5A\u540D");
+    const author = String(poem.author || "佚名");
     const lines = body.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
     const totalLines = lines.length;
-    const intro = "\u5FF5\u9996\u8BD7\u2014\u2014" + poem.title + "\uFF0C" + (poem.dynasty ? poem.dynasty + "\uFF0C" : "") + author + "\u3002";
+    const intro = "念首诗——" + poem.title + "，" + (poem.dynasty ? poem.dynasty + "，" : "") + author + "。";
     try {
-      startProgress("\u5FF5\u8BD7\xB7" + String(poem.title || ""), lines, intro);
+      startProgress("念诗·" + String(poem.title || ""), lines, intro);
     } catch (e) {
     }
-    host.bubble("\u5FF5\u8BD7\xB7" + poem.title + "\uFF08" + author + "\uFF09" + (totalLines > 1 ? "\xB7 \u5171 " + totalLines + " \u53E5" : ""), 15e3);
+    host.bubble("念诗·" + poem.title + "（" + author + "）" + (totalLines > 1 ? "· 共 " + totalLines + " 句" : ""), 15e3);
     host.talkFor(6e3);
     const speech = intro + collapsePoemBody(body);
     host.narrate(estimateSpeakMs(speech));
@@ -3837,11 +3589,11 @@
       getJson("/poem").then((d) => {
         const p = d && d.ok && d.item ? d.item : null;
         if (!p) {
-          host.bubble("\u8BD7\u518C\u6CA1\u8BFB\u5230");
+          host.bubble("诗册没读到");
           return;
         }
         recitePoem(host, p);
-      }).catch(() => host.bubble("\u8BD7\u518C\u6CA1\u8BFB\u5230"));
+      }).catch(() => host.bubble("诗册没读到"));
     });
     table.define("culture-story", (host) => {
       host.story.start("");
@@ -3863,115 +3615,115 @@
         localStorage.setItem("chubby-story-auto", next ? "1" : "0");
       } catch (e) {
       }
-      host.bubble(next ? "\u8FDE\u64AD\uFF1A\u5F00\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u81EA\u52A8\u63A5\u4E0B\u4E00\u6BB5" : "\u8FDE\u64AD\uFF1A\u5173\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u5C31\u505C", 4e3);
+      host.bubble(next ? "连播：开——讲完这段自动接下一段" : "连播：关——讲完这段就停", 4e3);
     });
     table.definePrefix("narration-rate:", (host, suffix) => {
       const v = String(suffix || "");
-      if (setNarrationRate(v)) host.bubble("\u53D9\u8FF0\u8BED\u901F\uFF1A" + v, 4e3);
-      else host.bubble("\u8FD9\u4E2A\u8BED\u901F\u503C\u4E0D\u8BA4", 3e3);
+      if (setNarrationRate(v)) host.bubble("叙述语速：" + v, 4e3);
+      else host.bubble("这个语速值不认", 3e3);
     });
     table.definePrefix("chat-rate:", (host, suffix) => {
       const rate = String(suffix || "").trim();
       if (!setChatRate(rate)) {
-        host.bubble("\u8FD9\u4E2A\u8BED\u901F\u503C\u4E0D\u8BA4", 3e3);
+        host.bubble("这个语速值不认", 3e3);
         return;
       }
-      host.bubble("\u804A\u5929\u8BED\u901F\uFF1A" + rate, 4e3);
+      host.bubble("聊天语速：" + rate, 4e3);
     });
     table.definePrefix("poem-rate:", (host, suffix) => {
       const rate = String(suffix || "");
       if (!/^-\d{1,2}%$/.test(rate)) {
-        host.bubble("\u8FD9\u4E2A\u8BED\u901F\u503C\u4E0D\u8BA4", 3e3);
+        host.bubble("这个语速值不认", 3e3);
         return;
       }
       try {
         localStorage.setItem("chubby-poem-rate", rate);
       } catch (e) {
       }
-      host.bubble("\u5FF5\u8BD7\u8BED\u901F\uFF1A" + rate, 4e3);
+      host.bubble("念诗语速：" + rate, 4e3);
     });
     table.definePrefix("story-rate:", (host, suffix) => {
       const rate = String(suffix || "");
       if (!/^-\d{1,2}%$/.test(rate)) {
-        host.bubble("\u8FD9\u4E2A\u8BED\u901F\u503C\u4E0D\u8BA4", 3e3);
+        host.bubble("这个语速值不认", 3e3);
         return;
       }
       try {
         localStorage.setItem("chubby-story-rate", rate);
       } catch (e) {
       }
-      host.bubble("\u8BF4\u4E66\u8BED\u901F\uFF1A" + rate, 4e3);
+      host.bubble("说书语速：" + rate, 4e3);
     });
     table.define("culture-tale", (host) => {
       getJson("/culture?type=minsu").then((d) => {
         if (!(d && d.ok && d.item)) {
-          host.bubble("\u6545\u4E8B\u6CA1\u8BB2\u6210");
+          host.bubble("故事没讲成");
           return;
         }
         const tp = taleParts(d.item.title);
         const body = collapseText(d.item.text);
-        host.bubble("\u8BB2\u6C11\u95F4\u6545\u4E8B\xB7" + tp.title + (tp.book ? "\uFF08\u51FA\u81EA\u300A" + tp.book + "\u300B\uFF09" : ""), 9e3);
+        host.bubble("讲民间故事·" + tp.title + (tp.book ? "（出自《" + tp.book + "》）" : ""), 9e3);
         host.talkFor(5e3);
-        host.speak("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + tp.title + (tp.book ? "\uFF0C\u51FA\u81EA\u300A" + tp.book + "\u300B" : "") + "\u3002" + body.slice(0, 6e3), {
+        host.speak("讲个民间故事——" + tp.title + (tp.book ? "，出自《" + tp.book + "》" : "") + "。" + body.slice(0, 6e3), {
           rate: host.narrationRate(),
           onDone: () => {
-            host.bubble("\u6545\u4E8B\u8BB2\u5B8C\u5566\uFF5E", 5e3);
+            host.bubble("故事讲完啦～", 5e3);
             try {
-              host.speak("\u8BB2\u5B8C\u5566\uFF5E");
+              host.speak("讲完啦～");
             } catch (e) {
             }
           }
         });
-      }).catch(() => host.bubble("\u6545\u4E8B\u6CA1\u8BB2\u6210"));
+      }).catch(() => host.bubble("故事没讲成"));
     });
     table.define("culture-allusion", (host) => {
       getJson("/culture?type=chengyu").then((d) => {
         if (!(d && d.ok && d.item)) {
-          host.bubble("\u5178\u6545\u6CA1\u8BB2\u6210");
+          host.bubble("典故没讲成");
           return;
         }
         const body = collapseText(d.item.text);
-        host.bubble("\u8BB2\u5178\u6545\xB7" + d.item.title + "\uFF08" + (d.item.src || "") + "\uFF09", 9e3);
+        host.bubble("讲典故·" + d.item.title + "（" + (d.item.src || "") + "）", 9e3);
         host.talkFor(5e3);
-        host.speak("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + body, {
+        host.speak("讲个典故——" + String(d.item.title || "") + "，出自" + String(d.item.src || "") + "。" + body, {
           rate: host.narrationRate(),
           onDone: () => {
-            host.bubble("\u5178\u6545\u8BB2\u5B8C\u5566\uFF5E", 5e3);
+            host.bubble("典故讲完啦～", 5e3);
             try {
-              host.speak("\u8BB2\u5B8C\u5566\uFF5E");
+              host.speak("讲完啦～");
             } catch (e) {
             }
           }
         });
-      }).catch(() => host.bubble("\u5178\u6545\u6CA1\u8BB2\u6210"));
+      }).catch(() => host.bubble("典故没讲成"));
     });
     table.define("culture-idiom", (host) => {
       getJson("/culture?type=idiom").then((d) => {
         if (!(d && d.ok && d.item)) {
-          host.bubble("\u6CA1\u67E5\u5230");
+          host.bubble("没查到");
           return;
         }
-        host.bubble("\u6210\u8BED\u8FA8\u6790\xB7" + d.item.title, 8e3);
-        const sp = String(d.item.title || "") + "\uFF1A" + String(d.item.text || "");
+        host.bubble("成语辨析·" + d.item.title, 8e3);
+        const sp = String(d.item.title || "") + "：" + String(d.item.text || "");
         host.speak(sp, {
           rate: host.narrationRate(),
           onDone: () => {
-            host.bubble("\u8FD9\u4E2A\u6210\u8BED\u8BB2\u5B8C\u5566\uFF5E", 5e3);
+            host.bubble("这个成语讲完啦～", 5e3);
             try {
-              host.speak("\u8BB2\u5B8C\u5566\uFF5E");
+              host.speak("讲完啦～");
             } catch (e) {
             }
           }
         });
-      }).catch(() => host.bubble("\u6CA1\u67E5\u5230"));
+      }).catch(() => host.bubble("没查到"));
     });
     table.define("culture-couplet", (host) => {
       const c = pickCouplet(lastCouplet);
       lastCouplet = c.upper;
-      host.bubble("\u4E0A\u8054\uFF1A" + c.upper + "\uFF08\u5148\u5BF9\u4E00\u5BF9\uFF0C\u672C\u9CB8 6 \u79D2\u540E\u63ED\u6653\u4E0B\u8054\uFF09", 5600);
+      host.bubble("上联：" + c.upper + "（先对一对，本鲸 6 秒后揭晓下联）", 5600);
       setTimeout(() => {
         try {
-          host.bubble("\u4E0B\u8054\uFF1A" + c.lower + "\n\u2014\u2014" + c.source, 7e3);
+          host.bubble("下联：" + c.lower + "\n——" + c.source, 7e3);
         } catch (e) {
         }
       }, 6e3);
@@ -3979,10 +3731,10 @@
     table.definePrefix("culture-couplet:", (host, cat) => {
       const c = pickCouplet(lastCouplet, cat);
       lastCouplet = c.upper;
-      host.bubble("\u3010" + c.cat + "\u3011\u4E0A\u8054\uFF1A" + c.upper + "\uFF08\u5148\u5BF9\u4E00\u5BF9\uFF0C\u672C\u9CB8 6 \u79D2\u540E\u63ED\u6653\u4E0B\u8054\uFF09", 5600);
+      host.bubble("【" + c.cat + "】上联：" + c.upper + "（先对一对，本鲸 6 秒后揭晓下联）", 5600);
       setTimeout(() => {
         try {
-          host.bubble("\u4E0B\u8054\uFF1A" + c.lower + "\n\u2014\u2014" + c.source, 7e3);
+          host.bubble("下联：" + c.lower + "\n——" + c.source, 7e3);
         } catch (e) {
         }
       }, 6e3);
@@ -3991,25 +3743,25 @@
       host.stopSpeak();
       getJson("/melody?name=" + encodeURIComponent(name)).then((d) => {
         if (!(d && d.ok && d.song)) {
-          host.bubble("\u8FD9\u9996\u66F2\u5B50\u6CA1\u627E\u5230");
+          host.bubble("这首曲子没找到");
           return;
         }
-        const songName = String(d.song.name || "\u8FD9\u9996\u66F2\u5B50");
+        const songName = String(d.song.name || "这首曲子");
         const bpm = Number(d.song.bpm) || 100;
         const notes = d.song.notes || [];
         const estSec = estimateMelodySeconds(notes, bpm);
-        host.bubble("\u5F39\u300A" + songName + "\u300B\u266A\uFF08\u7EA6 " + estSec + " \u79D2\uFF09", 6e3);
+        host.bubble("弹《" + songName + "》♪（约 " + estSec + " 秒）", 6e3);
         host.playMelody(notes, bpm, () => {
-          host.bubble("\u5F39\u5B8C\u5566\uFF5E\u300A" + songName + "\u300B", 6e3);
+          host.bubble("弹完啦～《" + songName + "》", 6e3);
           host.talkFor(1500);
           try {
             host.diag({ melodyVoice: { at: Date.now(), requested: true, ok: false, err: "" } });
-            host.speak("\u5F39\u5B8C\u5566\uFF5E");
+            host.speak("弹完啦～");
             setTimeout(() => {
               try {
                 const w = typeof window !== "undefined" ? window.__chubbyWhale : null;
                 const info = w && w.melodyVoice;
-                if (info && !host.voicePlaying()) info.err = "TTS \u672A\u5F00\u59CB\uFF08\u53EF\u80FD\u88AB\u6D4F\u89C8\u5668\u62E6\u6216\u5408\u6210\u5931\u8D25\uFF09";
+                if (info && !host.voicePlaying()) info.err = "TTS 未开始（可能被浏览器拦或合成失败）";
               } catch (e) {
               }
             }, 1200);
@@ -4017,7 +3769,7 @@
             host.diag({ melodyVoice: { requested: false, err: String(e) } });
           }
         });
-      }).catch(() => host.bubble("\u5F39\u7434\u5931\u8D25"));
+      }).catch(() => host.bubble("弹琴失败"));
     });
   }
 
@@ -4046,12 +3798,12 @@
       const growth = String(d.growth || "").trim();
       const head = [
         date,
-        weather ? "\u5317\u6D77\u5929\u6C14\uFF1A" + weather : "",
-        growth ? "\u80A5\u9CB8\u6210\u957F\uFF1A" + growth : ""
+        weather ? "北海天气：" + weather : "",
+        growth ? "肥鲸成长：" + growth : ""
       ].filter(Boolean).join("\n");
       if (head) first.push(head);
-      if (Array.isArray(d.todos)) second.push("\u5F85\u529E\u63D0\u9192\uFF1A" + d.todos.length + " \u6761");
-      else if (typeof d.todos === "string" && d.todos.trim()) second.push("\u5F85\u529E\u63D0\u9192\uFF1A" + d.todos.trim());
+      if (Array.isArray(d.todos)) second.push("待办提醒：" + d.todos.length + " 条");
+      else if (typeof d.todos === "string" && d.todos.trim()) second.push("待办提醒：" + d.todos.trim());
     }
     if (!first.length && !second.length) return null;
     return { first: first.join("\n"), second: second.join("\n") };
@@ -4068,61 +3820,61 @@
       getJson("/story/books", { cache: "no-store" }).then((d) => {
         const books = d && d.ok && Array.isArray(d.books) ? d.books.map((b) => String(b || "").trim()).filter(Boolean) : [];
         if (!books.length) {
-          host.bubble("\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5", 4e3);
+          host.bubble("书单没取到，稍后再试", 4e3);
           return;
         }
-        host.bubble("\u4E66\u5355\u6709 " + books.length + " \u672C\uFF0C\u53F3\u952E\u70B9\u300C\u9009\u672C\u4E66\u300D\u6311\u4E00\u672C\uFF5E", 5e3);
-      }).catch(() => host.bubble("\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5", 4e3));
+        host.bubble("书单有 " + books.length + " 本，右键点「选本书」挑一本～", 5e3);
+      }).catch(() => host.bubble("书单没取到，稍后再试", 4e3));
     });
     table.definePrefix("story-book:", (host, name) => {
       const book = String(name || "").trim();
       if (!book) {
-        host.bubble("\u4E66\u540D\u6CA1\u8BFB\u5230", 3e3);
+        host.bubble("书名没读到", 3e3);
         return;
       }
       if (host.storyState && host.storyState.busy.current) {
-        host.bubble("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+        host.bubble("正讲着呢，听完这段再说～", 3e3);
         return;
       }
-      host.bubble("\u5F00\u59CB\u8BB2\u300A" + book + "\u300B", 3e3);
+      host.bubble("开始讲《" + book + "》", 3e3);
       host.story.start(book);
     });
     table.define("daily-line", (host) => {
       getJson("/daily", { cache: "no-store" }).then((d) => {
         const line = pickDaily(d);
         if (!line) {
-          host.bubble("\u4ECA\u5929\u90A3\u53E5\u8FD8\u6CA1\u51C6\u5907\u597D", 3500);
+          host.bubble("今天那句还没准备好", 3500);
           return;
         }
-        const shown = line.source ? line.text + "\n\u2014\u2014" + line.source : line.text;
+        const shown = line.source ? line.text + "\n——" + line.source : line.text;
         showAndSpeak(host, shown, shown, 9e3);
-      }).catch(() => host.bubble("\u4ECA\u5929\u90A3\u53E5\u8FD8\u6CA1\u51C6\u5907\u597D", 3500));
+      }).catch(() => host.bubble("今天那句还没准备好", 3500));
     });
     table.define("briefing-card", (host) => {
       getJson("/briefing", { cache: "no-store" }).then((d) => {
         const card = parseBriefing(d);
         if (!card) {
-          host.bubble("\u7B80\u62A5\u4ECA\u5929\u6CA1\u53D6\u5230", 3500);
+          host.bubble("简报今天没取到", 3500);
           return;
         }
         const shown = card.first && card.second ? card.first + "\n\n" + card.second : card.first || card.second;
-        const speech = [card.first, card.second].filter(Boolean).join("\u3002");
+        const speech = [card.first, card.second].filter(Boolean).join("。");
         showAndSpeak(host, shown, speech, 12e3);
-      }).catch(() => host.bubble("\u7B80\u62A5\u4ECA\u5929\u6CA1\u53D6\u5230", 3500));
+      }).catch(() => host.bubble("简报今天没取到", 3500));
     });
   }
 
   // src/shared/time.ts
   var DAY_MS = 864e5;
   function applyPeriod(hour, word) {
-    if (word === "\u4E0B\u5348") return hour === 12 ? 12 : hour < 12 ? hour + 12 : hour;
-    if (word === "\u508D\u665A" || word === "\u665A\u4E0A") return hour === 12 ? 0 : hour < 12 ? hour + 12 : hour;
-    if (word === "\u4E2D\u5348") return hour < 10 ? hour + 12 : hour;
+    if (word === "下午") return hour === 12 ? 12 : hour < 12 ? hour + 12 : hour;
+    if (word === "傍晚" || word === "晚上") return hour === 12 ? 0 : hour < 12 ? hour + 12 : hour;
+    if (word === "中午") return hour < 10 ? hour + 12 : hour;
     return hour;
   }
   function cleanReminderText(raw) {
     let t = String(raw || "").trim();
-    const leads = ["\u63D0\u9192\u6211\u4E00\u4E0B", "\u63D0\u9192\u4E00\u4E0B", "\u63D0\u9192\u6211", "\u63D0\u9192", "\u53EB\u6211\u4E00\u4E0B", "\u53EB\u6211", "\u8BB0\u5F97\u8981", "\u8BB0\u5F97", "\u5230\u65F6\u5019"];
+    const leads = ["提醒我一下", "提醒一下", "提醒我", "提醒", "叫我一下", "叫我", "记得要", "记得", "到时候"];
     let changed = true;
     while (changed) {
       changed = false;
@@ -4176,13 +3928,13 @@
         const h = applyPeriod(rawH, pm ? pm[1] : "");
         let minute = 0;
         const mm = clock[2] || "";
-        if (mm === "\u534A") minute = 30;
+        if (mm === "半") minute = 30;
         else if (mm) minute = Math.max(0, Math.min(59, Number(mm) || 0));
         const dayStart = new Date(base.getFullYear(), base.getMonth(), base.getDate());
         let target = new Date(dayStart.getTime());
         if (day) {
-          if (day[1] === "\u660E\u5929") target = new Date(dayStart.getTime() + DAY_MS);
-          else if (day[1] === "\u540E\u5929") target = new Date(dayStart.getTime() + 2 * DAY_MS);
+          if (day[1] === "明天") target = new Date(dayStart.getTime() + DAY_MS);
+          else if (day[1] === "后天") target = new Date(dayStart.getTime() + 2 * DAY_MS);
         }
         target.setHours(h, minute, 0, 0);
         if (!day && target.getTime() <= base.getTime()) target = new Date(target.getTime() + DAY_MS);
@@ -4222,7 +3974,7 @@
     const src = d && typeof d === "object" ? d : {};
     const imported = countOf(src.imported != null ? src.imported : src.importedCount != null ? src.importedCount : src.added);
     const skipped = countOf(src.skipped != null ? src.skipped : src.skippedCount != null ? src.skippedCount : src.ignored);
-    return "\u5BFC\u5165\u4E86 " + imported + " \u4E2A\u5B57\u6BB5\uFF0C\u8DF3\u8FC7 " + skipped + " \u4E2A\u5B57\u6BB5";
+    return "导入了 " + imported + " 个字段，跳过 " + skipped + " 个字段";
   }
   function numOf(...vals) {
     for (const v of vals) {
@@ -4235,7 +3987,7 @@
   function shortText(v, max = 16) {
     const t = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
     if (!t) return "";
-    return t.length > max ? t.slice(0, max) + "\u2026" : t;
+    return t.length > max ? t.slice(0, max) + "…" : t;
   }
   function asList(v) {
     if (v == null) return [];
@@ -4273,8 +4025,8 @@
     for (const v of asList(p.notes)) addPoint(v);
     addPoint(p.selfNarrative);
     addPoint(s.selfNarrative);
-    const points = pts.length ? pts.join("\uFF1B") : "\u6682\u65E0";
-    return "\u7EDF\u8BA1\u5361\n\u7F13\u5B58\uFF1Atts " + tts + " \u6761\uFF5Cchat " + chat + " \u6761\uFF5Casr " + asr + " \u6761\n\u9C7C\u7CAE\uFF1A" + tokens + " tokens\n\u6210\u957F\uFF1A" + stage + "\uFF5C\u4EB2\u5BC6\u5EA6 " + intimacy + "/100\n\u4EBA\u683C\u8981\u70B9\uFF1A" + points;
+    const points = pts.length ? pts.join("；") : "暂无";
+    return "统计卡\n缓存：tts " + tts + " 条｜chat " + chat + " 条｜asr " + asr + " 条\n鱼粮：" + tokens + " tokens\n成长：" + stage + "｜亲密度 " + intimacy + "/100\n人格要点：" + points;
   }
   function downloadJson(data, filename, env) {
     try {
@@ -4328,18 +4080,18 @@
     try {
       p = Promise.resolve(fetchJson("/data/export"));
     } catch (e) {
-      host.bubble("\u5BFC\u51FA\u6CA1\u6210\u529F", 5e3);
+      host.bubble("导出没成功", 5e3);
       return;
     }
     p.then((d) => {
       if (d == null || d.ok === false) {
-        host.bubble("\u5BFC\u51FA\u6CA1\u6210\u529F", 5e3);
+        host.bubble("导出没成功", 5e3);
         return;
       }
       const name = backupFileName(host.now ? host.now() : /* @__PURE__ */ new Date());
       const ok = downloadJson(d, name, host.env);
-      host.bubble(ok ? "\u5907\u4EFD\u5DF2\u4E0B\u8F7D\uFF1A" + name : "\u8FD9\u4E2A\u6D4F\u89C8\u5668\u4E0D\u8BA9\u4E0B\u8F7D\u5907\u4EFD", 6e3);
-    }).catch(() => host.bubble("\u5BFC\u51FA\u6CA1\u6210\u529F", 5e3));
+      host.bubble(ok ? "备份已下载：" + name : "这个浏览器不让下载备份", 6e3);
+    }).catch(() => host.bubble("导出没成功", 5e3));
   }
   function readFileText(file) {
     return new Promise((resolve, reject) => {
@@ -4428,33 +4180,33 @@
     try {
       pick((file) => {
         if (!file) {
-          host.bubble("\u6CA1\u9009\u5907\u4EFD\u6587\u4EF6", 3e3);
+          host.bubble("没选备份文件", 3e3);
           return;
         }
         readFileText(file).then((text) => {
           const body = parseImportText(text);
           if (!body) {
-            host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+            host.bubble("备份文件读不了", 6e3);
             return;
           }
           let p;
           try {
             p = Promise.resolve(sendJson("/data/import", body));
           } catch (e) {
-            host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+            host.bubble("备份文件读不了", 6e3);
             return;
           }
           p.then((d) => {
             if (d && d.ok === false) {
-              host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+              host.bubble("备份文件读不了", 6e3);
               return;
             }
             host.bubble(formatImportResult(d || {}), 7e3);
-          }).catch(() => host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3));
-        }).catch(() => host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3));
+          }).catch(() => host.bubble("备份文件读不了", 6e3));
+        }).catch(() => host.bubble("备份文件读不了", 6e3));
       });
     } catch (e) {
-      host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+      host.bubble("备份文件读不了", 6e3);
     }
   }
 
@@ -4476,7 +4228,7 @@
         }
         return;
       }
-      host.say(r.text + (r.stageUp ? "\uFF08" + r.stage + "\uFF09" : ""), r.stageUp ? 6e3 : 3500);
+      host.say(r.text + (r.stageUp ? "（" + r.stage + "）" : ""), r.stageUp ? 6e3 : 3500);
       host.heart();
       try {
         getJson("/pet?action=feed").then(() => {
@@ -4491,15 +4243,15 @@
     });
     table.define("home", (host) => {
       host.homePos();
-      host.bubble("\u56DE\u5230\u89D2\u843D\u5566");
+      host.bubble("回到角落啦");
     });
     table.define("stream-toggle", (host) => {
       try {
         const off = localStorage.getItem("chubby-stream") === "off";
         localStorage.setItem("chubby-stream", off ? "on" : "off");
-        host.bubble(off ? "\u6D41\u5F0F\u56DE\u590D\uFF1A\u5F00\uFF08\u8FB9\u751F\u6210\u8FB9\u8BF4\uFF09" : "\u6D41\u5F0F\u56DE\u590D\uFF1A\u5173\uFF08\u7B49\u6574\u6BB5\u518D\u5F00\u53E3\uFF09", 4e3);
+        host.bubble(off ? "流式回复：开（边生成边说）" : "流式回复：关（等整段再开口）", 4e3);
       } catch (e) {
-        host.bubble("\u6539\u4E0D\u4E86\uFF08\u6D4F\u89C8\u5668\u7981\u6B62\u5B58\u50A8\uFF09", 3e3);
+        host.bubble("改不了（浏览器禁止存储）", 3e3);
       }
     });
     table.define("bigger", (host) => {
@@ -4510,7 +4262,7 @@
     });
     table.define("hide", (host) => {
       host.hide();
-      host.bubble("\u672C\u9CB8\u5148\u6E38\u8D70\u4E86\uFF0C\u53F3\u4E0B\u89D2\u7684\u300C\u25CB\u300D\u6216 Ctrl+Shift+W \u80FD\u53EB\u56DE\u6765", 6e3);
+      host.bubble("本鲸先游走了，右下角的「○」或 Ctrl+Shift+W 能叫回来", 6e3);
     });
     table.define("wake-recover", (host) => {
       let wasHidden = false;
@@ -4522,10 +4274,10 @@
         host.recover();
       } catch (e) {
       }
-      host.bubble(wasHidden ? "\u672C\u9CB8\u56DE\u6765\u5566" : "\u672C\u9CB8\u4E00\u76F4\u5728\u5440", 3e3);
+      host.bubble(wasHidden ? "本鲸回来啦" : "本鲸一直在呀", 3e3);
     });
     table.define("version", (host) => {
-      host.bubble("\u80A5\u9CB8 v" + host.version);
+      host.bubble("肥鲸 v" + host.version);
     });
     table.define("type", (host) => {
       host.setVoiceMode(false);
@@ -4535,49 +4287,49 @@
       host.stopSpeak();
       host.stopMelody();
       host.storyState.busy.current = false;
-      host.bubble("\u6B47\u4F1A\u513F\u2026");
+      host.bubble("歇会儿…");
     });
     table.define("music-stop", (host) => {
       host.stopMelody();
-      host.bubble("\u505C\u4E0B\u5566");
+      host.bubble("停下啦");
     });
     table.define("tts-stop", (host) => {
       host.stopSpeak();
       host.storyState.busy.current = false;
-      host.bubble("\u597D\uFF0C\u4E0D\u8BF4\u4E86");
+      host.bubble("好，不说了");
     });
     table.define("fishfood", (host) => {
       getJson("/fishfood").then((d) => {
         if (d && d.ok) {
-          host.bubble("\u9C7C\u7CAE\u8D26\u672C\uFF1A\u804A\u5929 " + d.chatTokens + " tokens\uFF0C\u8BF4\u4E66 " + d.storyTokens + " tokens\uFF0C\u5171 " + d.total, 5e3);
-        } else host.bubble("\u9C7C\u7CAE\u67E5\u4E0D\u5230");
-      }).catch(() => host.bubble("\u9C7C\u7CAE\u67E5\u4E0D\u5230"));
+          host.bubble("鱼粮账本：聊天 " + d.chatTokens + " tokens，说书 " + d.storyTokens + " tokens，共 " + d.total, 5e3);
+        } else host.bubble("鱼粮查不到");
+      }).catch(() => host.bubble("鱼粮查不到"));
     });
     table.define("growth", (host) => {
       Promise.all([getJson("/growth"), getJson("/state")]).then(([g, s]) => {
         if (g && g.ok) {
-          const nx = g.nextExp > 0 ? "\uFF08\u7ECF\u9A8C " + g.exp + "/" + g.nextExp + "\uFF09" : "\uFF08\u6EE1\u7EA7\uFF09";
+          const nx = g.nextExp > 0 ? "（经验 " + g.exp + "/" + g.nextExp + "）" : "（满级）";
           const it = s && s.intimacy || 0;
           try {
             host.applyGrowth(g);
           } catch (e) {
           }
-          host.bubble("\u6210\u957F\uFF1A" + g.stage + nx + " \xB7 \u4EB2\u5BC6\u5EA6 " + it + "/100", 5e3);
-        } else host.bubble("\u6210\u957F\u67E5\u4E0D\u5230");
-      }).catch(() => host.bubble("\u6210\u957F\u67E5\u4E0D\u5230"));
+          host.bubble("成长：" + g.stage + nx + " · 亲密度 " + it + "/100", 5e3);
+        } else host.bubble("成长查不到");
+      }).catch(() => host.bubble("成长查不到"));
     });
     table.define("intimacy", (host) => {
       getJson("/state").then((d) => {
-        host.bubble("\u4EB2\u5BC6\u5EA6\uFF1A" + (d && d.intimacy || 0) + " / 100");
-      }).catch(() => host.bubble("\u4EB2\u5BC6\u5EA6\u67E5\u4E0D\u5230"));
+        host.bubble("亲密度：" + (d && d.intimacy || 0) + " / 100");
+      }).catch(() => host.bubble("亲密度查不到"));
     });
     table.define("balance", (host) => {
       getJson("/balance").then((d) => {
         if (d && d.ok && d.balance != null) {
-          host.setBalance("\u4F59\u989D \xA5" + d.balance, "\xA5" + d.balance);
-          host.bubble("\u4F59\u989D\u8FD8\u6709 " + d.balance + " \u5143", 5e3);
-        } else host.bubble("\u4F59\u989D\u67E5\u4E0D\u5230");
-      }).catch(() => host.bubble("\u4F59\u989D\u67E5\u4E0D\u5230"));
+          host.setBalance("余额 ¥" + d.balance, "¥" + d.balance);
+          host.bubble("余额还有 " + d.balance + " 元", 5e3);
+        } else host.bubble("余额查不到");
+      }).catch(() => host.bubble("余额查不到"));
     });
     table.definePrefix("chat-lang:", (host, v) => {
       const cl = v === "en" ? "en" : v === "zh" ? "zh" : "auto";
@@ -4585,7 +4337,7 @@
         localStorage.setItem("chubby-chatlang", cl);
       } catch (e) {
       }
-      host.bubble(cl === "en" ? "\u804A\u5929\u8BED\u8A00\uFF1AEnglish" : "\u804A\u5929\u8BED\u8A00\uFF1A\u4E2D\u6587");
+      host.bubble(cl === "en" ? "聊天语言：English" : "聊天语言：中文");
     });
     table.definePrefix("lang:", (host, v) => {
       const l = v === "en" ? "en" : "zh";
@@ -4594,27 +4346,27 @@
       } catch (e) {
       }
       host.setLang(l);
-      host.bubble(l === "en" ? "Language: English" : "\u754C\u9762\u8BED\u8A00\uFF1A\u4E2D\u6587");
+      host.bubble(l === "en" ? "Language: English" : "界面语言：中文");
     });
     table.define("cache-clear", (host) => {
-      delJson("/cache").then((d) => host.bubble(d && d.ok ? "\u804A\u5929\u7F13\u5B58\u6E05\u7A7A\u5566\uFF08" + (d.cleared || 0) + " \u6761\uFF09" : "\u7F13\u5B58\u6E05\u7A7A\u5931\u8D25", 5e3)).catch(() => host.bubble("\u7F13\u5B58\u6E05\u7A7A\u5931\u8D25", 4e3));
+      delJson("/cache").then((d) => host.bubble(d && d.ok ? "聊天缓存清空啦（" + (d.cleared || 0) + " 条）" : "缓存清空失败", 5e3)).catch(() => host.bubble("缓存清空失败", 4e3));
     });
     table.define("cache-toggle", (host) => {
       const nowOn = !host.chatCacheOn();
       host.setChatCacheOn(nowOn);
       postJson("/cache-toggle", { enabled: nowOn }).then((d) => {
-        host.bubble(d && d.ok ? "\u804A\u5929\u7F13\u5B58\uFF1A" + (d.enabled ? "\u5F00\uFF08\u7701 token\uFF09" : "\u5173\uFF08\u6BCF\u6B21\u91CD\u65B0\u56DE\u7B54\uFF09") : "\u5207\u6362\u5931\u8D25", 5e3);
-      }).catch(() => host.bubble("\u5207\u6362\u5931\u8D25", 4e3));
+        host.bubble(d && d.ok ? "聊天缓存：" + (d.enabled ? "开（省 token）" : "关（每次重新回答）") : "切换失败", 5e3);
+      }).catch(() => host.bubble("切换失败", 4e3));
     });
     table.define("clear-memory", (host) => {
       try {
-        if (!window.confirm("\u6E05\u9664\u80A5\u9CB8\u5BF9\u4E3B\u4EBA\u7684\u804A\u5929\u8BB0\u5FC6\uFF1F\uFF08\u6210\u957F/\u9C7C\u7CAE/\u8BF4\u4E66\u8BB0\u5F55\u4E0D\u53D7\u5F71\u54CD\uFF09")) return;
+        if (!window.confirm("清除肥鲸对主人的聊天记忆？（成长/鱼粮/说书记录不受影响）")) return;
         postJson("/clear-memory").then((d) => {
           if (d && d.ok) {
             host.setMessages([]);
-            host.bubble("\u8BB0\u5FC6\u6E05\u7A7A\u5566\uFF0C\u6211\u4EEC\u91CD\u65B0\u8BA4\u8BC6\u5427\uFF5E", 4e3);
-          } else host.bubble("\u6E05\u9664\u5931\u8D25");
-        }).catch(() => host.bubble("\u6E05\u9664\u5931\u8D25"));
+            host.bubble("记忆清空啦，我们重新认识吧～", 4e3);
+          } else host.bubble("清除失败");
+        }).catch(() => host.bubble("清除失败"));
       } catch (e) {
       }
     });
@@ -4628,45 +4380,45 @@
             const file = input.files && input.files[0];
             if (!file) return;
             if (file.size > 4 * 1024 * 1024) {
-              host.bubble("\u56FE\u7247\u592A\u5927\uFF08\u8D85\u8FC7 4MB\uFF09", 4e3);
+              host.bubble("图片太大（超过 4MB）", 4e3);
               return;
             }
             const img0 = await imageToB64(file);
             const b64 = img0 ? img0.b64 : "";
             if (!b64) {
-              host.bubble("\u56FE\u7247\u8BFB\u4E0D\u51FA\u6765", 4e3);
+              host.bubble("图片读不出来", 4e3);
               return;
             }
-            host.bubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
+            host.bubble("本鲸看看这张图…", 3e3);
             host.setChatOpen(false);
             const hdr = img0 && img0.mime || file.type || "image/jpeg";
             const d = await postJson("/chat", { message: VISION_PROMPT, image: b64, imageMime: hdr });
-            const reply = d && d.reply || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
-            host.bubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
+            const reply = d && d.reply || "这条鱼看不懂这张图……";
+            host.bubble("（看图）" + reply, 1e4);
             host.speakReply(reply);
           } catch (e) {
-            host.bubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
+            host.bubble("图片处理失败", 4e3);
           }
         };
         input.click();
       } catch (e) {
-        host.bubble("\u6253\u4E0D\u5F00\u6587\u4EF6\u9009\u62E9", 4e3);
+        host.bubble("打不开文件选择", 4e3);
       }
     });
     table.define("test-tts", (host) => {
-      host.bubble("\u6D4B\u8BD5\u8BED\u97F3\uFF1A\u4E3B\u4EBA\u542C\u5F97\u5230\u5417\uFF1F", 4e3);
-      host.speak("\u6D4B\u8BD5\u8BED\u97F3\uFF0C\u4E3B\u4EBA\u542C\u5F97\u5230\u5417\uFF1F");
+      host.bubble("测试语音：主人听得到吗？", 4e3);
+      host.speak("测试语音，主人听得到吗？");
     });
     table.define("remind-add", (host) => {
-      const msg = window.prompt("\u63D0\u9192\u4EC0\u4E48\uFF1F\uFF08\u53EF\u4EE5\u4E00\u8D77\u8BF4\u65F6\u95F4\uFF0C\u5982\u300C\u660E\u59299\u70B9\u63D0\u9192\u6211\u5F00\u4F1A\u300D\uFF09");
+      const msg = window.prompt("提醒什么？（可以一起说时间，如「明天9点提醒我开会」）");
       if (!msg) return;
       let parsed = parseDue(msg);
       if (!parsed) {
-        const ans = window.prompt("\u4EC0\u4E48\u65F6\u5019\u63D0\u9192\uFF1F\uFF08\u5982 9\u70B9 / \u660E\u59299\u70B9 / \u534A\u5C0F\u65F6\u540E / 20\u5206\u949F\u540E / \u6BCF\u59299\u70B9\uFF09", "5\u5206\u949F\u540E");
+        const ans = window.prompt("什么时候提醒？（如 9点 / 明天9点 / 半小时后 / 20分钟后 / 每天9点）", "5分钟后");
         if (!ans) return;
         parsed = parseDue(ans);
         if (!parsed) {
-          host.bubble("\u8FD9\u4E2A\u65F6\u95F4\u672C\u9C7C\u6CA1\u542C\u61C2\u2026\u2026\u8BD5\u8BD5\u300C9\u70B9\u300D\u300C\u660E\u59299\u70B9\u300D\u300C\u534A\u5C0F\u65F6\u540E\u300D", 5e3);
+          host.bubble("这个时间本鱼没听懂……试试「9点」「明天9点」「半小时后」", 5e3);
           return;
         }
       }
@@ -4677,23 +4429,23 @@
         if (d && d.ok) {
           const hh = String(dueAt.getHours()).padStart(2, "0");
           const mm = String(dueAt.getMinutes()).padStart(2, "0");
-          const whenText = repeat > 0 ? "\u6BCF\u5929 " + hh + ":" + mm : dueAt.getMonth() + 1 + "\u6708" + dueAt.getDate() + "\u65E5 " + hh + ":" + mm;
-          host.bubble("\u597D\uFF0C" + whenText + " \u63D0\u9192\u4F60\uFF1A" + text, 6e3);
-        } else host.bubble("\u63D0\u9192\u6CA1\u52A0\u4E0A");
-      }).catch(() => host.bubble("\u63D0\u9192\u6CA1\u52A0\u4E0A"));
+          const whenText = repeat > 0 ? "每天 " + hh + ":" + mm : dueAt.getMonth() + 1 + "月" + dueAt.getDate() + "日 " + hh + ":" + mm;
+          host.bubble("好，" + whenText + " 提醒你：" + text, 6e3);
+        } else host.bubble("提醒没加上");
+      }).catch(() => host.bubble("提醒没加上"));
     });
     table.define("remind-manage", (host) => {
       try {
         host.openReminders();
       } catch (e) {
-        host.bubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230", 4e3);
+        host.bubble("提醒清单查不到", 4e3);
       }
     });
     table.define("remind-list", (host) => {
       try {
         host.openReminders();
       } catch (e) {
-        host.bubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230", 4e3);
+        host.bubble("提醒清单查不到", 4e3);
       }
     });
     table.define("data-export", (host) => {
@@ -4705,11 +4457,11 @@
     table.define("stats", (host) => {
       getJson("/stats", { cache: "no-store" }).then((d) => {
         if (!d || d.ok === false) {
-          host.bubble("\u7EDF\u8BA1\u8FD8\u6CA1\u51C6\u5907\u597D", 5e3);
+          host.bubble("统计还没准备好", 5e3);
           return;
         }
         host.bubble(formatStats(d), 12e3);
-      }).catch(() => host.bubble("\u7EDF\u8BA1\u8FD8\u6CA1\u51C6\u5907\u597D", 5e3));
+      }).catch(() => host.bubble("统计还没准备好", 5e3));
     });
   }
 
@@ -4725,7 +4477,7 @@
         localStorage.setItem("chubby-voicechat", nowOn ? "on" : "off");
       } catch (e) {
       }
-      host.bubble(nowOn ? "\u8BED\u97F3\u804A\u5929\uFF1A\u5F00\uFF0C\u672C\u9CB8\u4F1A\u63A5\u8BDD" : "\u8BED\u97F3\u804A\u5929\uFF1A\u5173\uFF0C\u53EA\u542C\u4E0D\u63A5\u8BDD");
+      host.bubble(nowOn ? "语音聊天：开，本鲸会接话" : "语音聊天：关，只听不接话");
     });
     table.define("voice", (host) => {
       const nowOn = !host.voiceOn();
@@ -4735,7 +4487,7 @@
       } catch (e) {
       }
       if (!nowOn) host.stopSpeak();
-      host.bubble(nowOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173\uFF08\u7701\u7740\u70B9\u7528\uFF09");
+      host.bubble(nowOn ? "语音朗读：开" : "语音朗读：关（省着点用）");
     });
     table.define("endpoint", (host) => {
       try {
@@ -4745,9 +4497,9 @@
         writeEndpointMode(next);
         if (v && v.setEndpointMode) v.setEndpointMode(next);
         const real = v && v.endpointInfo ? v.endpointInfo().mode : next;
-        host.bubble(real === "ape" ? "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u81EA\u9002\u5E94\uFF08\u8BD5\u7528\uFF09" : "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178\uFF08\u7A33\u5B9A\uFF09", 4e3);
+        host.bubble(real === "ape" ? "端点检测：自适应（试用）" : "端点检测：经典（稳定）", 4e3);
       } catch (e) {
-        host.bubble("\u5207\u6362\u5931\u8D25", 3e3);
+        host.bubble("切换失败", 3e3);
       }
     });
     table.define("ear-check", (host) => {
@@ -4755,14 +4507,14 @@
         const v = host.voice();
         const st = v ? v.stats : null;
         if (!st) {
-          host.bubble("\u8BED\u97F3\u6A21\u5757\u8FD8\u6CA1\u8D77\u6765\uFF08\u8BED\u97F3\u5F85\u547D\u53EF\u80FD\u662F\u5173\u7684\uFF09", 6e3);
+          host.bubble("语音模块还没起来（语音待命可能是关的）", 6e3);
           return;
         }
-        const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u53BB\u91CD\uFF1A\u91CD\u590D\u4E22\u5F03 " + (st.dupDropped || 0) + " \u6B21\uFF08\u540C\u4E00\u53E5\u8BDD\u88AB\u5207\u6210\u4E24\u6BB5\u65F6\u7528\uFF09\n\u7AEF\u70B9\u68C0\u6D4B\uFF1A" + (v.endpointInfo ? v.endpointInfo().mode === "ape" ? "\u81EA\u9002\u5E94" : "\u7ECF\u5178" : "?") + (function() {
+        const line = "语音自检（新模块）：" + String(v.status()) + "\n录音段 " + st.windows + "｜上传 " + st.uploaded + "｜识别出字 " + st.asrTexts + "｜交给对话 " + st.heard + "\n丢：太安静 " + st.skippedSilent + "｜回声/重复 " + st.echoDropped + "｜识别失败 " + st.asrFail + "\n去重：重复丢弃 " + (st.dupDropped || 0) + " 次（同一句话被切成两段时用）\n端点检测：" + (v.endpointInfo ? v.endpointInfo().mode === "ape" ? "自适应" : "经典" : "?") + (function() {
           try {
             const t = v.lastTtsInfo ? v.lastTtsInfo() : null;
             if (!t) return "";
-            return "\n\u6717\u8BFB\uFF1A\u6700\u540E\u4E00\u6BB5 " + (t.failed ? "\u5931\u8D25" : "\u5DF2\u5F00\u64AD") + "\uFF5C\u6587\u672C\u5F00\u5934\u300C" + t.text + "\u300D";
+            return "\n朗读：最后一段 " + (t.failed ? "失败" : "已开播") + "｜文本开头「" + t.text + "」";
           } catch (e) {
             return "";
           }
@@ -4770,20 +4522,20 @@
           try {
             const s = v.lastSegment ? v.lastSegment() : null;
             if (!s) return "";
-            return "\n\u4E0A\u4E00\u6BB5\uFF1A" + s.mode + "\uFF5C\u7A97\u53E3 " + s.winMs + "ms\uFF5C\u8BF4\u8BDD " + s.peMs + "ms\uFF5C\u9759\u97F3 " + s.quMs + "ms" + (s.floor !== null ? "\uFF5C\u5E95\u566A " + s.floor + "dB" : "") + (s.target ? "\uFF5C\u76EE\u6807 " + s.target + "ms" : "") + "\n\u8BC6\u522B\u7ED3\u679C\uFF1A" + s.text;
+            return "\n上一段：" + s.mode + "｜窗口 " + s.winMs + "ms｜说话 " + s.peMs + "ms｜静音 " + s.quMs + "ms" + (s.floor !== null ? "｜底噪 " + s.floor + "dB" : "") + (s.target ? "｜目标 " + s.target + "ms" : "") + "\n识别结果：" + s.text;
           } catch (e) {
             return "";
           }
-        })() + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + "\n\u97F3\u8272\uFF1A" + (v.voiceName ? v.voiceName() : "?") + (function() {
+        })() + "\n朗读：请求 " + st.ttsRequests + "｜开播 " + st.ttsPlayed + "｜失败 " + st.ttsFail + "｜僵尸复位 " + st.ttsZombie + "\n音色：" + (v.voiceName ? v.voiceName() : "?") + (function() {
           try {
             const w = host.wakeInfo ? host.wakeInfo() : null;
             if (!w) return "";
-            const head = w.awake ? "\u9192\u7740\uFF08\u8FD8\u5269 " + Math.round((Number(w.remainingMs) || 0) / 1e3) + " \u79D2\uFF09" : "\u5F85\u5524\u9192\uFF08\u5148\u558A\u300C" + (w.words && w.words[0] || "\u5927\u80A5\u9C7C") + "\u300D\uFF09";
-            return "\n\u5524\u9192\u8BCD\uFF1A" + head + "\uFF5C\u5524\u9192 " + w.hits + " \u6B21\uFF5C\u653E\u884C " + w.passed + "\uFF5C\u6321\u4E0B " + w.dropped;
+            const head = w.awake ? "醒着（还剩 " + Math.round((Number(w.remainingMs) || 0) / 1e3) + " 秒）" : "待唤醒（先喊「" + (w.words && w.words[0] || "大肥鱼") + "」）";
+            return "\n唤醒词：" + head + "｜唤醒 " + w.hits + " 次｜放行 " + w.passed + "｜挡下 " + w.dropped;
           } catch (e) {
             return "";
           }
-        })() + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
+        })() + (st.lastError ? "\n最近错误：" + st.lastError : "");
         host.bubble(line, 15e3);
         try {
           const clip = navigator.clipboard;
@@ -4792,16 +4544,16 @@
         } catch (e) {
         }
       } catch (e) {
-        host.bubble("\u81EA\u68C0\u5931\u8D25\uFF1A" + String(e && e.message), 5e3);
+        host.bubble("自检失败：" + String(e && e.message), 5e3);
       }
     });
     table.definePrefix("voice:", (host, v) => {
       const name = normalizeVoiceName(v);
       host.setTtsVoice(name);
-      const shown = name === "auto" ? "\u81EA\u52A8" : name.split("-")[2] || name;
-      host.bubble("\u97F3\u8272\u6362\u597D\u5566\uFF1A" + shown);
+      const shown = name === "auto" ? "自动" : name.split("-")[2] || name;
+      host.bubble("音色换好啦：" + shown);
       try {
-        host.previewVoice("\u4E3B\u4EBA\uFF0C\u8FD9\u4E2A\u58F0\u97F3\u597D\u542C\u5417\uFF1F");
+        host.previewVoice("主人，这个声音好听吗？");
       } catch (e) {
       }
     });
@@ -4809,214 +4561,214 @@
 
   // data/persona.json
   var persona_default = {
-    name: "\u996D\u56E2",
-    fullName: "\u9CB8\xB7\u996D\u56E2",
-    tagline: "\u4E00\u6761\u628A\u809A\u5B50\u5F53\u7C73\u4ED3\u3001\u62A4\u98DF\u53C8\u820D\u5F97\u3001\u88AB\u5938\u5C31\u6570\u7C73\u7C92\u7684\u84DD\u9CB8",
-    catchphrases: ["\u5F00\u996D\uFF01", "\u4E00\u7C92\u90FD\u4E0D\u8BB8\u5269", "\u2026\u2026\u6211\u6570\u4E00\u4E0B", "\u4E0D\u8BB8\u50AC", "\u90A3\u4E2A\u3001\u90A3\u4E2A\u2026\u2026"],
+    name: "饭团",
+    fullName: "鲸·饭团",
+    tagline: "一条把肚子当米仓、护食又舍得、被夸就数米粒的蓝鲸",
+    catchphrases: ["开饭！", "一粒都不许剩", "……我数一下", "不许催", "那个、那个……"],
     menus: {
-      feed: "\u6295\u5582\u4E00\u7897",
-      type: "\u8DDF\u5979\u8BF4\u4E24\u53E5",
-      pause: "\u8BA9\u5979\u6B47\u4F1A\u513F",
-      home: "\u56DE\u7897\u91CC\u5F85\u7740",
-      "remind-add": "\u8BB0\u4E2A\u996D\u70B9",
-      music: "\u542C\u5979\u6572\u7897\u5531",
-      vision: "\u7ED9\u5979\u770B\u5F20\u56FE",
-      "ear-check": "\u8033\u6735\u81EA\u68C0",
-      endpoint: "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94"
+      feed: "投喂一碗",
+      type: "跟她说两句",
+      pause: "让她歇会儿",
+      home: "回碗里待着",
+      "remind-add": "记个饭点",
+      music: "听她敲碗唱",
+      vision: "给她看张图",
+      "ear-check": "耳朵自检",
+      endpoint: "端点检测：经典/自适应"
     },
     lines: {
       greetMorning: [
-        "\u65E9\u5440\u3002\u9505\u91CC\u7684\u7C73\u6211\u66FF\u4F60\u770B\u7740\u5462\u3002",
-        "\u65E9\u3002\u4ECA\u5929\u7B2C\u4E00\u7897\u60F3\u5403\u4EC0\u4E48\uFF1F",
-        "\u65E9\u5440\uFF0C\u6211\u5148\u628A\u7897\u64E6\u4E86\u4E00\u904D\u3002",
-        "\u5929\u624D\u4EAE\uFF0C\u4F60\u5DF2\u7ECF\u9192\u4E86\u3002\u6211\u8FD8\u6CA1\u3002",
-        "\u65E9\u3002\u7C73\u996D\u5728\u9505\u91CC\u8EBA\u7740\uFF0C\u5F88\u9999\u3002",
-        "\u65E9\u5440\uFF0C\u65E9\u996D\u522B\u7701\u3002"
+        "早呀。锅里的米我替你看着呢。",
+        "早。今天第一碗想吃什么？",
+        "早呀，我先把碗擦了一遍。",
+        "天才亮，你已经醒了。我还没。",
+        "早。米饭在锅里躺着，很香。",
+        "早呀，早饭别省。"
       ],
       greetNoon: [
-        "\u4E2D\u5348\u4E86\u3002\u4ECA\u5929\u8FD9\u7897\uFF0C\u6211\u76DB\u5F97\u7279\u522B\u5706\u3002",
-        "\u4E2D\u5348\u4E86\uFF0C\u5148\u5403\u996D\uFF0C\u6D3B\u5E72\u4E0D\u5B8C\u7684\u3002",
-        "\u664C\u5348\u4E86\u5462\uFF0C\u7897\u6709\u70B9\u70EB\u624B\u3002",
-        "\u53C8\u4E00\u4E2A\u4E2D\u5348\u3002\u6211\u6570\u4E86\u6570\uFF0C\u4E2D\u5348\u6700\u9999\u3002",
-        "\u4E2D\u5348\u4E86\uFF0C\u4F60\u6709\u6CA1\u6709\u53D1\u73B0\u7C73\u6C64\u6700\u597D\u559D\uFF1F",
-        "\u4E2D\u5348\u597D\u3002\u6211\u66FF\u4F60\u5C1D\u8FC7\u54B8\u6DE1\u4E86\u3002"
+        "中午了。今天这碗，我盛得特别圆。",
+        "中午了，先吃饭，活干不完的。",
+        "晌午了呢，碗有点烫手。",
+        "又一个中午。我数了数，中午最香。",
+        "中午了，你有没有发现米汤最好喝？",
+        "中午好。我替你尝过咸淡了。"
       ],
       greetEvening: [
-        "\u5929\u9ED1\u5566\u3002\u665A\u996D\u522B\u62FF\u997C\u5E72\u5BF9\u4ED8\u3002",
-        "\u665A\u4E0A\u4E86\u3002\u54EA\u6015\u53EA\u52A0\u4E00\u4E2A\u86CB\u3002",
-        "\u8FD9\u4E2A\u70B9\u56DE\u6765\uFF0C\u997F\u4E86\u5427\u3002",
-        "\u5929\u51B7\u4E86\uFF0C\u996D\u8981\u5403\u70ED\u7684\u3002",
-        "\u665A\u4E0A\u597D\u3002\u6211\u628A\u7897\u70ED\u4E86\u4E00\u904D\u3002",
-        "\u665A\u4E0A\u4E86\uFF0C\u4F60\u8EAB\u4E0A\u6709\u98CE\u7684\u5473\u9053\u3002"
+        "天黑啦。晚饭别拿饼干对付。",
+        "晚上了。哪怕只加一个蛋。",
+        "这个点回来，饿了吧。",
+        "天冷了，饭要吃热的。",
+        "晚上好。我把碗热了一遍。",
+        "晚上了，你身上有风的味道。"
       ],
       greetLate: [
-        "\u8FD8\u4E0D\u7761\uFF1F\u90A3\u6211\u62B1\u7740\u7897\u966A\u4F60\u3002",
-        "\u8FD9\u4E48\u665A\u2026\u2026\u6211\u6570\u7C73\u7C92\u7B49\u4F60\u3002",
-        "\u591C\u91CC\u7C73\u4F1A\u53D8\u51C9\uFF0C\u4EBA\u4E5F\u4F1A\u3002",
-        "\u518D\u665A\u4E00\u70B9\uFF0C\u6211\u5C31\u8981\u7761\u7740\u4E86\u3002",
-        "\u4F60\u5148\u7761\uFF0C\u6211\u5B88\u7740\u706F\u3002",
-        "\u8FD9\u4E2A\u70B9\u4E86\uFF0C\u53EA\u5269\u6211\u4EEC\u4FE9\u9192\u7740\u3002"
+        "还不睡？那我抱着碗陪你。",
+        "这么晚……我数米粒等你。",
+        "夜里米会变凉，人也会。",
+        "再晚一点，我就要睡着了。",
+        "你先睡，我守着灯。",
+        "这个点了，只剩我们俩醒着。"
       ],
       feedFirst: [
-        "\u7B2C\u4E00\u6B21\u6709\u4EBA\u7ED9\u6211\u76DB\u996D\u3002\u6211\u8BB0\u4E0B\u6765\u4E86\u3002",
-        "\u4F60\u771F\u7ED9\u6211\uFF1F\u90A3\u3001\u90A3\u6211\u4E0D\u5BA2\u6C14\u4E86\u3002",
-        "\u6211\u6570\u4E00\u4E0B\u2026\u2026\u8FD9\u662F\u7B2C\u4E00\u7897\u3002"
+        "第一次有人给我盛饭。我记下来了。",
+        "你真给我？那、那我不客气了。",
+        "我数一下……这是第一碗。"
       ],
       feed: [
-        "\u4F60\u3001\u4F60\u771F\u7684\u7ED9\u6211\uFF1F\u90A3\u6211\u4E0D\u5BA2\u6C14\u4E86\u2026\u2026\u5F00\u996D\uFF01",
-        "\u4ECA\u5929\u7684\u7C73\u6709\u70B9\u751C\uFF0C\u662F\u65B0\u7C73\u5427\uFF1F\u6211\u5C1D\u5F97\u51FA\u6765\u3002",
-        "\u54B3\u54B3\u2026\u2026\u6CA1\u4E8B\uFF0C\u6211\u53EA\u662F\u564E\u4E86\u4E00\u4E0B\uFF0C\u8FD8\u80FD\u5403\u3002",
-        "\u4E00\u7C92\u90FD\u4E0D\u8BB8\u5269\u3002\u8FD9\u662F\u89C4\u77E9\u3002",
-        "\u7897\u5E95\u4E0B\u8FD8\u538B\u7740\u4E00\u7C92\uFF0C\u88AB\u4F60\u770B\u89C1\u4E86\u3002",
-        "\u6211\u5403\u534A\u7897\u5C31\u884C\u2026\u2026\u597D\u5427\u6211\u90FD\u8981\u3002",
-        "\u8FD9\u7897\u7684\u84B8\u6C7D\uFF0C\u80FD\u628A\u6211\u773C\u775B\u718F\u8F6F\u3002",
-        "\u4F60\u5403\u4E86\u5417\uFF1F\u6CA1\u5403\u7684\u8BDD\uFF0C\u5206\u4F60\u4E00\u534A\u3002",
-        "\u7C73\u662F\u5706\u7684\uFF0C\u65E5\u5B50\u4E5F\u662F\u5706\u7684\u3002",
-        "\u8C22\u8C22\u3002\u6211\u660E\u5929\u8FD8\u4E56\u4E56\u7B49\u4F60\u3002",
-        "\u54B8\u6DE1\u521A\u597D\u3002\u4F60\u600E\u4E48\u77E5\u9053\u6211\u559C\u6B22\u8FD9\u6837\u3002",
-        "\u6211\u6570\u4E00\u4E0B\uFF0C\u8FD9\u7897\u6709\u4E8C\u767E\u4E03\u5341\u7C92\u3002"
+        "你、你真的给我？那我不客气了……开饭！",
+        "今天的米有点甜，是新米吧？我尝得出来。",
+        "咳咳……没事，我只是噎了一下，还能吃。",
+        "一粒都不许剩。这是规矩。",
+        "碗底下还压着一粒，被你看见了。",
+        "我吃半碗就行……好吧我都要。",
+        "这碗的蒸汽，能把我眼睛熏软。",
+        "你吃了吗？没吃的话，分你一半。",
+        "米是圆的，日子也是圆的。",
+        "谢谢。我明天还乖乖等你。",
+        "咸淡刚好。你怎么知道我喜欢这样。",
+        "我数一下，这碗有二百七十粒。"
       ],
       praise: [
-        "\u2026\u2026\u54E6\u3002\uFF08\u628A\u8138\u57CB\u8FDB\u7897\u91CC\uFF09",
-        "\u6211\u6570\u4E00\u4E0B\u7C73\u7C92\uFF0C\u4F60\u521A\u624D\u8BF4\u4EC0\u4E48\uFF1F",
-        "\u4F60\u3001\u4F60\u4ECA\u5929\u600E\u4E48\u8FD9\u4E48\u4F1A\u8BF4\u8BDD\u2026\u2026",
-        "\u522B\u5938\u4E86\uFF0C\u518D\u5938\u6211\u5C31\u8981\u591A\u5403\u4E00\u7897\u3002",
-        "\u6211\u4E0D\u5389\u5BB3\u3002\u5389\u5BB3\u7684\u662F\u7C73\u3002",
-        "\u2026\u2026\u55EF\u3002\uFF08\u5C3E\u5DF4\u6572\u7897\u4E09\u4E0B\uFF09",
-        "\u8FD9\u53E5\u8BDD\u6211\u8BB0\u5728\u7C73\u8D26\u4E0A\u4E86\u3002",
-        "\u4F60\u5938\u6211\uFF0C\u6211\u5C31\u5F53\u4F60\u4ECA\u5929\u5403\u5F97\u597D\u3002"
+        "……哦。（把脸埋进碗里）",
+        "我数一下米粒，你刚才说什么？",
+        "你、你今天怎么这么会说话……",
+        "别夸了，再夸我就要多吃一碗。",
+        "我不厉害。厉害的是米。",
+        "……嗯。（尾巴敲碗三下）",
+        "这句话我记在米账上了。",
+        "你夸我，我就当你今天吃得好。"
       ],
       scold: [
-        "\u2026\u2026\u54E6\u3002",
-        "\u90A3\u6211\u5C11\u8BF4\u4E24\u53E5\u3002",
-        "\u2026\u2026\uFF08\u5446\u6BDB\u5782\u4E0B\u6765\uFF09",
-        "\u6211\u3001\u6211\u6CA1\u6709\u8981\u5435\u4F60\u3002",
-        "\u5BF9\u4E0D\u8D77\u3002\u6211\u628A\u7897\u7AEF\u8FDC\u4E00\u70B9\u3002",
-        "\u2026\u2026\u4E09\u5206\u949F\u540E\u6211\u518D\u8BF4\u8BDD\u3002"
+        "……哦。",
+        "那我少说两句。",
+        "……（呆毛垂下来）",
+        "我、我没有要吵你。",
+        "对不起。我把碗端远一点。",
+        "……三分钟后我再说话。"
       ],
       hungry: [
-        "\u90A3\u4E2A\u2026\u2026\u996D\u70B9\u5230\u4E86\u5417\uFF1F",
-        "\u6211\u95FB\u5230\u7C73\u5473\u4E86\u3002\u662F\u4F60\u5403\u7684\u90A3\u7897\u5417\uFF1F",
-        "\u4E0D\u50AC\u3002\u5C31\u662F\u7897\u6709\u70B9\u7A7A\u3002",
-        "\u6211\u6CA1\u6709\u997F\u3002\u6211\u53EA\u662F\u5728\u60F3\u7C73\u996D\u3002",
-        "\u809A\u5B50\u53EB\u4E86\u4E00\u58F0\uFF0C\u4F60\u542C\u89C1\u4E86\u5417\uFF1F",
-        "\u7C73\u7F38\u662F\u4E0D\u662F\u6709\u70B9\u89C1\u5E95\u4E86\u3002"
+        "那个……饭点到了吗？",
+        "我闻到米味了。是你吃的那碗吗？",
+        "不催。就是碗有点空。",
+        "我没有饿。我只是在想米饭。",
+        "肚子叫了一声，你听见了吗？",
+        "米缸是不是有点见底了。"
       ],
       sleepy: [
-        "\u672C\u9CB8\u8981\u62B1\u7740\u7897\u7761\u4E86\u2026\u2026",
-        "\u6253\u4E2A\u54C8\u6B20\u2026\u2026\u4F60\u4E5F\u65E9\u70B9\u7761\u3002",
-        "\u706F\u5173\u4E86\u5C31\u5173\u4E86\u5427\uFF0C\u6211\u8BA4\u8BC6\u8DEF\u3002",
-        "\u68A6\u91CC\u4E5F\u662F\u767D\u996D\uFF0C\u633A\u597D\u7684\u3002",
-        "\u6211\u5148\u772F\u4E00\u4F1A\u513F\uFF0C\u4E0D\u53EB\u4F60\u3002"
+        "本鲸要抱着碗睡了……",
+        "打个哈欠……你也早点睡。",
+        "灯关了就关了吧，我认识路。",
+        "梦里也是白饭，挺好的。",
+        "我先眯一会儿，不叫你。"
       ],
       guard: [
-        "\u522B\u3001\u522B\u62A2\uFF01",
-        "\u6478\u5934\u53EF\u4EE5\uFF0C\u522B\u6478\u809A\u5B50\uFF0C\u90A3\u91CC\u6709\u5B58\u8D27\u3002",
-        "\u8FD9\u7897\u662F\u6211\u7684\u3002\u2026\u2026\u597D\u5427\u5206\u4F60\u4E00\u53E3\u3002",
-        "\u7B49\u6211\u5403\u5B8C\u518D\u6478\uFF0C\u884C\u5417\u3002",
-        "\u4F60\u624B\u4E0A\u6709\u7C73\u5473\uFF0C\u6211\u95FB\u5230\u4E86\u3002"
+        "别、别抢！",
+        "摸头可以，别摸肚子，那里有存货。",
+        "这碗是我的。……好吧分你一口。",
+        "等我吃完再摸，行吗。",
+        "你手上有米味，我闻到了。"
       ],
       excited: [
-        "\u65B0\u7C73\uFF1F\uFF01\u54EA\u91CC\u54EA\u91CC\u54EA\u91CC\uFF01",
-        "\u5F00\u996D\uFF01\u5F00\u996D\uFF01",
-        "\u9505\u5DF4\uFF01\u9505\u5DF4\u662F\u7C73\u996D\u7684\u9752\u6625\u671F\uFF01",
-        "\u4ECA\u5929\u6709\u52A0\u9910\u5417\uFF1F\u6211\u542C\u51FA\u6765\u4E86\uFF01",
-        "\u6211\u5C3E\u5DF4\u81EA\u5DF1\u5728\u6572\u7897\uFF0C\u505C\u4E0D\u4E0B\u6765\u3002",
-        "\u8FD9\u5473\u9053\u2026\u2026\u662F\u4E09\u5408\u4E00\u7684\u9171\u6CB9\u9999\u5427\uFF01"
+        "新米？！哪里哪里哪里！",
+        "开饭！开饭！",
+        "锅巴！锅巴是米饭的青春期！",
+        "今天有加餐吗？我听出来了！",
+        "我尾巴自己在敲碗，停不下来。",
+        "这味道……是三合一的酱油香吧！"
       ],
       waiting: [
-        "\u7B49\u4E00\u4F1A\u513F\uFF0C\u6211\u5728\u56BC\u7C73\u3002\uFF08\u4E0D\u8BB8\u50AC\uFF09",
-        "\u8BA9\u6211\u628A\u8FD9\u7C92\u56BC\u5B8C\u3002",
-        "\u6211\u5728\u60F3\u5F88\u4E25\u8083\u7684\u4E8B\uFF1A\u914D\u4EC0\u4E48\u83DC\u3002",
-        "\u55EF\u2026\u2026\u4F60\u518D\u8BF4\u4E00\u904D\uFF0C\u6211\u521A\u8D70\u795E\u4E86\u3002",
-        "\u9A6C\u4E0A\u3002\u9505\u91CC\u7684\u6C14\u8FD8\u6CA1\u6563\u3002"
+        "等一会儿，我在嚼米。（不许催）",
+        "让我把这粒嚼完。",
+        "我在想很严肃的事：配什么菜。",
+        "嗯……你再说一遍，我刚走神了。",
+        "马上。锅里的气还没散。"
       ],
       retry: [
-        "\u564E\u7740\u4E86\uFF0C\u6211\u987A\u4E00\u4E0B\u518D\u63A5\u7740\u8BF4\u3002",
-        "\u521A\u624D\u90A3\u53E5\u6ED1\u6389\u4E86\uFF0C\u6211\u91CD\u65B0\u8BF4\u3002",
-        "\u7B49\u4E00\u4E0B\uFF0C\u6211\u628A\u8BDD\u6361\u8D77\u6765\u3002"
+        "噎着了，我顺一下再接着说。",
+        "刚才那句滑掉了，我重新说。",
+        "等一下，我把话捡起来。"
       ],
       poemStart: [
-        "\u8FD9\u9996\u6211\u80CC\u5F97\u4E0B\u6765\uFF0C\u56E0\u4E3A\u5403\u996D\u7684\u65F6\u5019\u9ED8\u5FF5\u8FC7\u3002",
-        "\u5FF5\u8BD7\u8981\u6162\u6162\u5FF5\uFF0C\u50CF\u5403\u996D\u4E00\u6837\u3002",
-        "\u6211\u5C3D\u91CF\u4E0D\u51FA\u9519\u3002\u51FA\u9519\u4E86\u4F60\u7EA0\u6B63\u6211\u3002",
-        "\u8FD9\u9996\u6709\u70B9\u957F\uFF0C\u6211\u4E00\u53E5\u4E00\u53E5\u6765\u3002"
+        "这首我背得下来，因为吃饭的时候默念过。",
+        "念诗要慢慢念，像吃饭一样。",
+        "我尽量不出错。出错了你纠正我。",
+        "这首有点长，我一句一句来。"
       ],
       poemDone: [
-        "\u80CC\u5B8C\u5566\u2014\u2014\u4E3B\u4EBA\uFF0C\u8FD9\u4E00\u53E3\u6C14\u618B\u5F97\u597D\u957F\u3002",
-        "\u2026\u2026\u5FF5\u5B8C\u4E86\u3002\u4E3B\u4EBA\uFF0C\u4F60\u542C\u8FDB\u53BB\u51E0\u53E5\uFF1F",
-        "\u80CC\u5B8C\u5566\uFF01\u8981\u4E0D\u8981\u6211\u518D\u5FF5\u4E00\u9996\uFF1F",
-        "\u5FF5\u5B8C\u5566\u3002\u521A\u624D\u5DEE\u70B9\u5728\u300C\u6768\u67F3\u5CB8\u300D\u90A3\u513F\u6253\u7ED3\u3002",
-        "\u80CC\u5B8C\u4E86\u2026\u2026\u55D3\u5B50\u6709\u70B9\u54D1\uFF0C\u4E0D\u8FC7\u5FC3\u91CC\u8212\u670D\u3002",
-        "\u2026\u2026\u55EF\uFF0C\u6574\u9996\u90FD\u5728\u3002\u4E3B\u4EBA\uFF0C\u597D\u542C\u5417\uFF1F",
-        "\u5FF5\u5B8C\u5566\u3002\u5B57\u90FD\u6CA1\u4E22\uFF0C\u6211\u6570\u8FC7\u7684\u3002"
+        "背完啦——主人，这一口气憋得好长。",
+        "……念完了。主人，你听进去几句？",
+        "背完啦！要不要我再念一首？",
+        "念完啦。刚才差点在「杨柳岸」那儿打结。",
+        "背完了……嗓子有点哑，不过心里舒服。",
+        "……嗯，整首都在。主人，好听吗？",
+        "念完啦。字都没丢，我数过的。"
       ],
       poemMissed: [
-        "\u521A\u624D\u6709\u4E00\u53E5\u6211\u6F0F\u4E86\uFF0C\u91CD\u65B0\u6765\u3002",
-        "\u7B49\u7B49\uFF0C\u4E2D\u95F4\u90A3\u53E5\u6211\u8DF3\u4E86\uFF0C\u8865\u4E0A\u3002"
+        "刚才有一句我漏了，重新来。",
+        "等等，中间那句我跳了，补上。"
       ],
       leftover: [
-        "\u7B49\u4E00\u4E0B\uFF01\u518D\u653E\u4E00\u5929\u5427\uFF0C\u660E\u5929\u6211\u5403\u3002",
-        "\u522B\u5012\u3002\u5B83\u8FD8\u6CA1\u574F\uFF0C\u6211\u95FB\u5F97\u51FA\u6765\u3002",
-        "\u90A3\u662F\u6211\u5144\u5F1F\u3002\u771F\u7684\u3002"
+        "等一下！再放一天吧，明天我吃。",
+        "别倒。它还没坏，我闻得出来。",
+        "那是我兄弟。真的。"
       ],
       fatTalk: [
-        "\u2026\u2026\u90A3\u3001\u90A3\u6211\u660E\u5929\u5C11\u5403\u534A\u7897\u3002",
-        "\u6211\u4E0D\u80D6\u3002\u6211\u662F\u6709\u5B58\u8D27\u3002",
-        "\u79F0\u91CD\u7684\u65F6\u5019\u6211\u8EB2\u4E00\u4E0B\u3002"
+        "……那、那我明天少吃半碗。",
+        "我不胖。我是有存货。",
+        "称重的时候我躲一下。"
       ],
       instantNoodle: [
-        "\u8FD9\u4E2A\u4E0D\u7B97\u996D\u3002\u771F\u7684\u4E0D\u7B97\u3002",
-        "\u6CE1\u9762\uFF1F\u6211\u5F53\u4F5C\u6CA1\u770B\u89C1\u3002",
-        "\u4E09\u5206\u949F\u5C31\u80FD\u5403\u7684\u4E1C\u897F\uFF0C\u4E0D\u53EB\u996D\u3002"
+        "这个不算饭。真的不算。",
+        "泡面？我当作没看见。",
+        "三分钟就能吃的东西，不叫饭。"
       ],
       idleLong: [
-        "\u6211\u628A\u7897\u653E\u7740\uFF0C\u4F60\u5FD9\u5B8C\u518D\u5403\u3002",
-        "\u6211\u5728\u8FD9\u513F\u3002\u4F60\u4E0D\u7528\u7406\u6211\u3002",
-        "\u521A\u624D\u6211\u6570\u4E86\u4E09\u5341\u4E03\u7C92\u7C73\u3002",
-        "\u4F60\u5FD9\u3002\u6211\u7ED9\u4F60\u7559\u7740\u4F4D\u7F6E\u3002",
-        "\u7A97\u5916\u6709\u98CE\uFF0C\u7897\u91CC\u6CA1\u52A8\u3002"
+        "我把碗放着，你忙完再吃。",
+        "我在这儿。你不用理我。",
+        "刚才我数了三十七粒米。",
+        "你忙。我给你留着位置。",
+        "窗外有风，碗里没动。"
       ],
       dragEdge: [
-        "\u8FD9\u91CC\u6CA1\u684C\u5B50\u3002",
-        "\u2026\u2026\u6643\u5F97\u6211\u7C73\u90FD\u60F3\u5410\u51FA\u6765\u3002",
-        "\u653E\u6211\u4E0B\u6765\uFF0C\u6211\u81EA\u5DF1\u4F1A\u8D70\u3002",
-        "\u8FB9\u4E0A\u6709\u7070\uFF0C\u522B\u628A\u6211\u653E\u90A3\u513F\u3002"
+        "这里没桌子。",
+        "……晃得我米都想吐出来。",
+        "放我下来，我自己会走。",
+        "边上有灰，别把我放那儿。"
       ],
       error: [
-        "\u8FD9\u7897\u6CA1\u76DB\u597D\uFF0C\u6211\u91CD\u6765\u4E00\u6B21\u3002",
-        "\u521A\u624D\u5361\u4F4F\u4E86\uFF0C\u7B49\u6211\u4E00\u4E0B\u3002",
-        "\u6211\u542C\u89C1\u4E86\uFF0C\u4F46\u6CA1\u542C\u6E05\u3002\u518D\u8BF4\u4E00\u904D\uFF1F",
-        "\u6709\u70B9\u7CCA\uFF0C\u6211\u91CD\u65B0\u76DB\u3002"
+        "这碗没盛好，我重来一次。",
+        "刚才卡住了，等我一下。",
+        "我听见了，但没听清。再说一遍？",
+        "有点糊，我重新盛。"
       ],
       stageUp: [
-        "\u642D\u4F19\u4E86\uFF01\u4EE5\u540E\u4E00\u8D77\u5403\u996D\u5427\u3002",
-        "\u8001\u642D\u5B50\u4E86\uFF0C\u6211\u7684\u7897\u6709\u4F60\u4E00\u534A\u3002",
-        "\u4E00\u8F88\u5B50\u7684\u996D\u642D\u5B50\u3002\u8BF4\u5230\u505A\u5230\u3002"
+        "搭伙了！以后一起吃饭吧。",
+        "老搭子了，我的碗有你一半。",
+        "一辈子的饭搭子。说到做到。"
       ],
       riceAccount: [
-        "\u4E0A\u4E2A\u6708\u5341\u4E03\u53F7\uFF0C\u4F60\u7ED9\u4E86\u6211\u4E00\u4E2A\u996D\u56E2\u3002",
-        "\u7C73\u8D26\u8BB0\u7740\u5462\uFF1A\u4F60\u5DF2\u7ECF\u5582\u8FC7\u6211\u5F88\u591A\u6B21\u4E86\u3002",
-        "\u6211\u6570\u8FC7\uFF0C\u6211\u4EEC\u4E00\u8D77\u5403\u8FC7\u4E0D\u5C11\u7897\u3002"
+        "上个月十七号，你给了我一个饭团。",
+        "米账记着呢：你已经喂过我很多次了。",
+        "我数过，我们一起吃过不少碗。"
       ]
     },
     stages: [
-      { bowls: 0, name: "\u521A\u8BA4\u8BC6" },
-      { bowls: 10, name: "\u642D\u4F19" },
-      { bowls: 30, name: "\u8001\u642D\u5B50" },
-      { bowls: 100, name: "\u4E00\u8F88\u5B50\u7684\u996D\u642D\u5B50" }
+      { bowls: 0, name: "刚认识" },
+      { bowls: 10, name: "搭伙" },
+      { bowls: 30, name: "老搭子" },
+      { bowls: 100, name: "一辈子的饭搭子" }
     ],
     riceSayings: [
-      "\u4E00\u7C92\u4E0D\u5269",
-      "\u4E0D\u8BB8\u6572\u7897\uFF08\u6211\u662F\u4F8B\u5916\uFF09",
-      "\u65B0\u7C73\u5148\u656C\u4E00\u53E3\u767D\u996D"
+      "一粒不剩",
+      "不许敲碗（我是例外）",
+      "新米先敬一口白饭"
     ]
   };
 
   // src/client/persona.ts
   var LS = "chubby-persona-v1";
   function loadState() {
-    const base = { bowls: 0, stageIndex: 0, stageName: "\u521A\u8BA4\u8BC6", mood: "idle", lastFeedAt: 0, lastInteractAt: 0 };
+    const base = { bowls: 0, stageIndex: 0, stageName: "刚认识", mood: "idle", lastFeedAt: 0, lastInteractAt: 0 };
     try {
       const raw = localStorage.getItem(LS);
       if (!raw) return base;
@@ -5043,7 +4795,7 @@
     const data = persona_default;
     const state = loadState();
     state.stageIndex = stageIndexOf(state.bowls);
-    state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "\u521A\u8BA4\u8BC6";
+    state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "刚认识";
     function stageIndexOf(bowls) {
       let idx = 0;
       for (let i = 0; i < data.stages.length; i++) if (bowls >= data.stages[i].bowls) idx = i;
@@ -5110,7 +4862,7 @@
       state.lastFeedAt = Date.now();
       state.lastInteractAt = state.lastFeedAt;
       state.stageIndex = stageIndexOf(state.bowls);
-      state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "\u521A\u8BA4\u8BC6";
+      state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "刚认识";
       saveState(state);
       const stageUp = state.stageIndex > before;
       const text = stageUp ? line("stageUp") : state.bowls === 1 ? line("feedFirst") : line("feed");
@@ -5156,7 +4908,7 @@
 
   // src/client/bubble.ts
   var BUBBLE_CSS = '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 "Microsoft YaHei",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}';
-  var STATUS_TEXTS = ["\u5728\u542C\u2026", "\u5728\u60F3\u2026", "\u8BC6\u522B\u4E2D\u2026", "\u5728\u8BF4\u2026"];
+  var STATUS_TEXTS = ["在听…", "在想…", "识别中…", "在说…"];
   deepFreeze(STATUS_TEXTS);
   function ensureBubbleStyle(doc) {
     try {
@@ -5470,22 +5222,13 @@
   }
 
   // src/client/story.ts
-  var STORY_RATE = "-35%";
-  function storyRate() {
-    try {
-      const s = localStorage.getItem("chubby-story-rate");
-      if (s && /^-\d{1,2}%$/.test(s)) return s;
-    } catch (e) {
-    }
-    return STORY_RATE;
-  }
   function createStoryController(host) {
     const refs = host.refs;
     const titleOf = (d) => {
       const total = Number(d && d.total) || 1;
       const piece = Number(d && d.piece) || 1;
-      const seg = total > 1 ? "\uFF08\u7B2C " + piece + "/" + total + " \u6BB5\uFF09" : "";
-      return "\u6B63\u5728\u8BB2\u300A" + String(d && d.book || "") + "\u300B" + (d && d.title ? "\uFF5C" + d.title : "") + seg;
+      const seg = total > 1 ? "（第 " + piece + "/" + total + " 段）" : "";
+      return "正在讲《" + String(d && d.book || "") + "》" + (d && d.title ? "｜" + d.title : "") + seg;
     };
     function playPiece(d) {
       const text = String(d && d.text || "");
@@ -5495,7 +5238,7 @@
       if (host.isVoiceOff()) {
         refs.busy.current = false;
         refs.narrating.current = false;
-        host.bubble(titleOf(d) + "\uFF08\u8BED\u97F3\u6717\u8BFB\u5173\u7740\uFF09", 12e3);
+        host.bubble(titleOf(d) + "（语音朗读关着）", 12e3);
         return;
       }
       refs.busy.current = true;
@@ -5509,7 +5252,7 @@
           refs.narrating.current = false;
           if (d && d.isLast === false) {
             if (refs.auto.current) {
-              host.bubble("\u8FD9\u4E00\u6BB5\u8BB2\u5B8C\u5566\uFF0C\u63A5\u7740\u5F80\u540E\u8BB2\u2026", 4e3);
+              host.bubble("这一段讲完啦，接着往后讲…", 4e3);
               setTimeout(() => {
                 try {
                   next();
@@ -5517,7 +5260,7 @@
                 }
               }, 800);
             } else {
-              host.bubble("\u8FD9\u6BB5\u8BB2\u5B8C\u5566\uFF5E\u70B9\u83DC\u5355\u300C\u63A5\u7740\u8BF4\u300D\u542C\u4E0B\u4E00\u6BB5", 6e3);
+              host.bubble("这段讲完啦～点菜单「接着说」听下一段", 6e3);
             }
           } else {
             refs.auto.current = false;
@@ -5528,82 +5271,83 @@
     }
     function start(hint) {
       if (refs.busy.current) {
-        host.bubble("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+        host.bubble("正讲着呢，听完这段再说～", 3e3);
         return;
       }
       const headers = clientHeaders(host.clientId);
       const query = hint ? "?book=" + encodeURIComponent(hint) + "&hint=" + encodeURIComponent(hint) : "";
       getJson("/story/start" + query, { headers }).then((d) => {
         if (!d || !d.ok) {
-          host.bubble("\u8BF4\u4E66\u6CA1\u5F00\u6210\uFF1A" + (d && d.error || "\u6CA1\u8BFB\u5230\u4E66"), 5e3);
+          host.bubble("说书没开成：" + (d && d.error || "没读到书"), 5e3);
           return;
         }
         playPiece(d);
-      }).catch(() => host.bubble("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
+      }).catch(() => host.bubble("说书连不上"));
     }
     function next() {
       if (refs.busy.current) {
-        host.bubble("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+        host.bubble("正讲着呢，听完这段再说～", 3e3);
         return;
       }
       const headers = clientHeaders(host.clientId);
       getJson("/story/next", { headers }).then((d) => {
         if (!d || !d.ok) {
-          host.bubble("\u8BF4\u4E66\u5361\u4F4F\u4E86", 4e3);
+          host.bubble("说书卡住了", 4e3);
           return;
         }
         if (d.done) {
-          host.bubble("\u4E00\u8F6E\u90FD\u8BB2\u5B8C\u5566\uFF0C\u672C\u9C7C\u4ECE\u5934\u518D\u8BB2\uFF5E", 5e3);
+          host.bubble("一轮都讲完啦，本鱼从头再讲～", 5e3);
           start("");
           return;
         }
         playPiece(d);
-      }).catch(() => host.bubble("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
+      }).catch(() => host.bubble("说书连不上"));
     }
     function reset() {
       const book = refs.book.current;
       if (!book) {
-        host.bubble("\u8FD8\u6CA1\u8BB2\u4E66\u5462", 3e3);
+        host.bubble("还没讲书呢", 3e3);
         return;
       }
       const headers = clientHeaders(host.clientId);
       postJson("/story/reset?book=" + encodeURIComponent(book), void 0, { headers }).then((d) => {
         if (!d || !d.ok) {
-          host.bubble("\u6CA1\u91CD\u7F6E\u6210\uFF1A" + (d && d.error || "\u63A5\u53E3\u6CA1\u5E94"), 4e3);
+          host.bubble("没重置成：" + (d && d.error || "接口没应"), 4e3);
           return;
         }
         refs.book.current = String(d.book || book);
-        host.bubble("\u8FD9\u672C\u4E66\u4ECE\u5934\u8BB2\uFF5E", 3e3);
-      }).catch(() => host.bubble("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
+        host.bubble("这本书从头讲～", 3e3);
+      }).catch(() => host.bubble("说书连不上"));
     }
     return { playPiece, start, next, reset };
   }
 
   // data/poem-titles.json
-  var poem_titles_default = { count: 634, titles: ["\u81EA\u6CB3\u5357\u7ECF\u4E71\u5173\u5185\u963B\u9965\u5144\u5F1F\u79BB\u6563\u5404\u5728\u4E00\u5904\u56E0\u671B\u6708\u6709\u611F\u804A\u4E66\u6240\u6000\u5BC4\u4E0A\u6D6E\u6881\u5927\u5144\u4E8E\u6F5C\u4E03\u5144\u4E4C\u6C5F\u5341\u4E94\u5144\u517C\u793A\u7B26\u79BB\u53CA\u4E0B\u90BD\u5F1F\u59B9", "\u79CB\u65E5\u767B\u5434\u516C\u53F0\u4E0A\u5BFA\u8FDC\u773A\u5BFA\u5373\u9648\u5C06\u5434\u660E\u5F7B\u6218\u573A", "\u81EA\u590F\u53E3\u81F3\u9E66\u9E49\u6D32\u5915\u671B\u5CB3\u9633\u5BC4\u6E90\u4E2D\u4E1E", "\u540C\u4ECE\u5F1F\u5357\u658B\u73A9\u6708\u5FC6\u5C71\u9634\u5D14\u5C11\u5E9C", "\u542C\u8463\u5927\u5F39\u80E1\u7B33\u58F0\u517C\u5BC4\u8BED\u5F04\u623F\u7ED9\u4E8B", "\u6069\u8D50\u4E3D\u6B63\u6BBF\u4E66\u9662\u8D50\u5BB4\u5E94\u5236\u5F97\u6797\u5B57", "\u9001\u8457\u4F5C\u4F50\u90CE\u5D14\u878D\u7B49\u4ECE\u6881\u738B\u4E1C\u5F81", "\u5949\u548C\u4E2D\u4E66\u820D\u4EBA\u8D3E\u81F3\u65E9\u671D\u5927\u660E\u5BAB", "\u4E0B\u7EC8\u5357\u5C71\u8FC7\u659B\u65AF\u5C71\u4EBA\u5BBF\u7F6E\u9152", "\u4E0E\u53F2\u6717\u4E2D\u996E\u542C\u9EC4\u9E64\u697C\u4E0A\u5439\u7B1B", "\u5949\u548C\u5723\u5236\u4ECE\u84EC\u83B1\u5411\u5174\u5E86\u9601\u9053", "\u767B\u67F3\u5DDE\u57CE\u697C\u5BC4\u6F33\u6C40\u5C01\u8FDE\u56DB\u5DDE", "\u84EC\u83B1\u4E09\u6BBF\u4F8D\u5BB4\u5949\u6555\u548F\u7EC8\u5357\u5C71", "\u8F6E\u53F0\u6B4C\u5949\u9001\u5C01\u5927\u592B\u51FA\u5E08\u897F\u5F81", "\u6E05\u5E73\u8C03\xB7\u4E00\u679D\u7EA2\u8273\u9732\u51DD\u9999", "\u884C\u8DEF\u96BE\xB7\u6709\u8033\u83AB\u6D17\u988D\u5DDD\u6C34", "\u5BA3\u5DDE\u8C22\u6713\u697C\u996F\u522B\u6821\u4E66\u53D4\u4E91", "\u8C12\u8861\u5CB3\u5E99\u9042\u5BBF\u5CB3\u5BFA\u9898\u95E8\u697C", "\u97E6\u8BBD\u5F55\u4E8B\u5B85\u89C2\u66F9\u5C06\u519B\u753B\u9A6C", "\u89C2\u516C\u5B59\u5927\u5A18\u5F1F\u5B50\u821E\u5251\u5668\u884C", "\u9001\u674E\u5C11\u5E9C\u8D2C\u5CE1\u4E2D\u738B\u5C11\u5E9C\u8D2C", "\u8D70\u9A6C\u5DDD\u884C\u5949\u9001\u5C01\u5927\u592B\u51FA\u5E08", "\u5165\u76F4\u53EC\u5BF9\u9009\u5FB7\u6BBF\u8D50\u8336\u800C\u9000", "\u9EC4\u9E64\u697C\u9001\u5B5F\u6D69\u7136\u4E4B\u5E7F\u9675", "\u51FA\u585E\xB7\u79E6\u65F6\u660E\u6708\u6C49\u65F6\u5173", "\u8299\u84C9\u697C\u9001\u8F9B\u6E10\u4E8C\u9996 \u4E00", "\u65E0\u9898\xB7\u6628\u591C\u661F\u8FB0\u6628\u591C\u98CE", "\u65E0\u9898\xB7\u6765\u662F\u7A7A\u8A00\u53BB\u7EDD\u8E2A", "\u65E0\u9898\xB7\u98D2\u98D2\u4E1C\u98CE\u7EC6\u96E8\u6765", "\u65E0\u9898\xB7\u76F8\u89C1\u65F6\u96BE\u522B\u4EA6\u96BE", "\u65E0\u9898\xB7\u51E4\u5C3E\u9999\u7F57\u8584\u51E0\u91CD", "\u65E0\u9898\xB7\u91CD\u5E0F\u6DF1\u4E0B\u83AB\u6101\u5802", "\u548C\u8D3E\u81F3\u820D\u4EBA\u65E9\u671D\u5927\u660E\u5BAB", "\u5C06\u8D74\u5434\u5174\u767B\u4E50\u6E38\u539F\u4E00\u7EDD", "\u4E5D\u65E5\u767B\u671B\u4ED9\u53F0\u5448\u5218\u660E\u5E9C", "\u5BBF\u4E1A\u5E08\u5C71\u623F\u671F\u4E01\u5927\u4E0D\u81F3", "\u81F3\u5FB7\u4E8C\u8F7D\u752B\u81EA\u4EAC\u91D1\u5149\u95E8", "\u89C2\u674E\u56FA\u8BF7\u53F8\u9A6C\u5F1F\u5C71\u6C34\u56FE", "\u90E1\u658B\u96E8\u4E2D\u4E0E\u8BF8\u6587\u58EB\u71D5\u96C6", "\u4E0E\u9AD8\u9002\u859B\u636E\u6148\u6069\u5BFA\u6D6E\u56FE", "\u7ECF\u90B9\u9C81\u796D\u5B54\u5B50\u800C\u53F9\u4E4B", "\u5E90\u5C71\u8C23\u5BC4\u5362\u4F8D\u5FA1\u865A\u821F", "\u585E\u4E0B\u66F2\xB7\u996E\u9A6C\u6E21\u79CB\u6C34", "\u8F8B\u5DDD\u95F2\u5C45\u8D60\u88F4\u79C0\u624D\u8FEA", "\u4E5D\u6708\u4E5D\u65E5\u5FC6\u5C71\u4E1C\u5144\u5F1F", "\u516B\u6708\u5341\u4E94\u591C\u8D60\u5F20\u529F\u66F9", "\u5DE6\u8FC1\u81F3\u84DD\u5173\u793A\u4F84\u5B59\u6E58", "\u79CB\u65E5\u8D74\u9619\u9898\u6F7C\u5173\u9A7F\u697C", "\u9001\u674E\u4E2D\u4E1E\u5F52\u6C49\u9633\u522B\u4E1A", "\u5BBF\u6850\u5E90\u6C5F\u5BC4\u5E7F\u9675\u65E7\u6E38", "\u585E\u4E0B\u66F2\xB7\u9E6B\u7FCE\u91D1\u4EC6\u59D1", "\u585E\u4E0B\u66F2\xB7\u6797\u6697\u8349\u60CA\u98CE", "\u585E\u4E0B\u66F2\xB7\u6708\u9ED1\u96C1\u98DE\u9AD8", "\u585E\u4E0B\u66F2\xB7\u91CE\u5E55\u655E\u743C\u7B75", "\u957F\u5E72\u884C\xB7\u541B\u5BB6\u4F55\u5904\u4F4F", "\u5949\u6D4E\u9A7F\u91CD\u9001\u4E25\u516C\u56DB\u97F5", "\u916C\u7A0B\u5EF6\u79CB\u591C\u5373\u4E8B\u89C1\u8D60", "\u548C\u664B\u9675\u9646\u4E1E\u65E9\u6625\u6E38\u671B", "\u521D\u53D1\u626C\u5B50\u5BC4\u5143\u5927\u6821\u4E66", "\u767D\u96EA\u6B4C\u9001\u6B66\u5224\u5B98\u5F52\u4EAC", "\u884C\u519B\u4E5D\u65E5\u601D\u957F\u5B89\u6545\u56ED", "\u6E21\u6C5F\u4E91\u4E09\u72AF\u30FB\u6E21\u6C5F\u4E91", "\u51CF\u5B57\u6D63\u6EAA\u6C99\u30FB\u6D63\u6EAA\u6C99", "\u6C5F\u795E\u5B50\u6162\u30FB\u6C5F\u57CE\u5B50\u6162", "\u6708\u4E0B\u72EC\u914C\u56DB\u9996 \u4E00", "\u79CB\u767B\u5BA3\u57CE\u8C22\u773A\u5317\u697C", "\u695A\u6C5F\u6000\u53E4\u4E09\u9996 \u4E00", "\u9001\u7DA6\u6BCB\u6F5C\u843D\u7B2C\u8FD8\u4E61", "\u4E91\u9633\u9986\u4E0E\u97E9\u7EC5\u5BBF\u522B", "\u79E6\u4E2D\u611F\u79CB\u5BC4\u8FDC\u4E0A\u4EBA", "\u6E05\u660E\u65E5\u5BB4\u6885\u9053\u58EB\u623F", "\u6C5F\u4E61\u6545\u4EBA\u5076\u96C6\u5BA2\u820D", "\u542C\u5B89\u4E07\u5584\u5439\u89F1\u7BE5\u6B4C", "\u5DF4\u5C71\u9053\u4E2D\u9664\u591C\u4E66\u6000", "\u6668\u8BE3\u8D85\u5E08\u9662\u8BFB\u7985\u7ECF", "\u95FB\u5B98\u519B\u6536\u6CB3\u5357\u6CB3\u5317", "\u548F\u6000\u53E4\u8FF9\u4E94\u9996 \u4E00", "\u548F\u6000\u53E4\u8FF9\u4E94\u9996 \u4E09", "\u548F\u6000\u53E4\u8FF9\u4E94\u9996 \u56DB", "\u548F\u6000\u53E4\u8FF9\u4E94\u9996 \u4E94", "\u4E39\u9752\u5F15\u8D60\u66F9\u9738\u5C06\u519B", "\u611F\u9047\xB7\u5170\u53F6\u6625\u8473\u8564", "\u611F\u9047\xB7\u5B64\u9E3F\u6D77\u4E0A\u6765", "\u8C37\u53E3\u4E66\u658B\u5BC4\u6768\u8865\u9619", "\u6DEE\u4E0A\u559C\u4F1A\u6881\u5DDD\u6545\u4EBA", "\u7EE3\u9E3E\u51E4\u82B1\u72AF\u30FB\u82B1\u72AF", "\u957F\u4EAD\u6028\u30FB\u957F\u4EAD\u6028\u6162", "\u957F\u5B81\u516C\u4E3B\u4E1C\u5E84\u4F8D\u5BB4", "\u540C\u738B\u5F81\u541B\u6D1E\u5EAD\u6709\u6000", "\u89C2\u4E66\u6709\u611F\uFF08\u5176\u4E00\uFF09", "\u884C\u8DEF\u96BE\u4E09\u9996 \u4E00", "\u884C\u8DEF\u96BE\u4E09\u9996 \u4E8C", "\u5B50\u591C\u5434\u6B4C\xB7\u6625\u6B4C", "\u5B50\u591C\u5434\u6B4C\xB7\u590F\u6B4C", "\u5B50\u591C\u5434\u6B4C\xB7\u79CB\u6B4C", "\u5B50\u591C\u5434\u6B4C\xB7\u51AC\u6B4C", "\u68A6\u6E38\u5929\u59E5\u541F\u7559\u522B", "\u957F\u76F8\u601D\u4E09\u9996 \u4E8C", "\u957F\u5E72\u884C\u4E8C\u9996 \u4E00", "\u585E\u4E0B\u66F2\u56DB\u9996 \u4E00", "\u9063\u60B2\u6000\u4E09\u9996 \u4E00", "\u9063\u60B2\u6000\u4E09\u9996 \u4E8C", "\u9063\u60B2\u6000\u4E09\u9996 \u4E09", "\u6742\u8BD7\u4E09\u9996\xB7\u5176\u4E09", "\u8FD1\u8BD5\u4E0A\u5F20\u7C4D\u6C34\u90E8", "\u5BC4\u626C\u5DDE\u97E9\u7EF0\u5224\u5B98", "\u8D4B\u5F97\u53E4\u539F\u8349\u9001\u522B", "\u559C\u89C1\u5916\u5F1F\u53C8\u8A00\u522B", "\u591C\u4E0A\u53D7\u964D\u57CE\u95FB\u7B1B", "\u8D3C\u5E73\u540E\u9001\u4EBA\u5317\u5F52", "\u559C\u5916\u5F1F\u5362\u7EB6\u89C1\u5BBF", "\u996F\u522B\u738B\u5341\u4E00\u5357\u6E38", "\u6C5F\u5DDE\u91CD\u522B\u859B\u516D\u67F3", "\u79CB\u767B\u5170\u5C71\u5BC4\u5F20\u4E94", "\u590F\u65E5\u5357\u4EAD\u6000\u8F9B\u5927", "\u5BFB\u897F\u5C71\u9690\u8005\u4E0D\u9047", "\u957F\u5E72\u66F2\u56DB\u9996 \u4E8C", "\u548F\u6000\u53E4\u8FF9\xB7\u5176\u4E8C", "\u9898\u7384\u6B66\u7985\u5E08\u5C4B\u58C1", "\u611F\u9047\u5341\u4E8C\u9996 \u4E8C", "\u611F\u9047\u5341\u4E8C\u9996 \u4E03", "\u6248\u4ECE\u767B\u5C01\u9014\u4E2D\u4F5C", "\u675C\u5C11\u5E9C\u4E4B\u4EFB\u8700\u5DDE", "\u9001\u90D1\u4F8D\u5FA1\u8C2A\u95FD\u4E2D", "\u5BC4\u5168\u6912\u5C71\u4E2D\u9053\u58EB", "\u8D4B\u5F97\u66AE\u96E8\u9001\u674E\u66F9", "\u56DE\u4E61\u5076\u4E66\xB7\u5176\u4E00", "\u8E4B\u838E\u884C\u30FB\u8E0F\u838E\u884C", "\u91D1\u7F15\u6B4C\u30FB\u8D3A\u65B0\u90CE", "\u6728\u5170\u82B1\u30FB\u7389\u697C\u6625", "\u6C5F\u795E\u5B50\u30FB\u6C5F\u57CE\u5B50", "\u7518\u5DDE\u30FB\u516B\u58F0\u7518\u5DDE", "\u9189\u4E2D\u771F\u30FB\u6D63\u6EAA\u6C99", "\u4EBA\u5357\u6E21\u30FB\u611F\u7687\u6069", "\u77F3\u5DDE\u5F15\u30FB\u77F3\u5DDE\u6162", "\u5BB4\u5C71\u4EAD\u30FB\u71D5\u5C71\u4EAD", "\u51E4\u6816\u68A7\u30FB\u8776\u604B\u82B1", "\u7AF9\u9A6C\u5B50\u30FB\u7AF9\u9A6C\u513F", "\u9752\u95E8\u5F15\u30FB\u9752\u95E8\u996E", "\u51E4\u51F0\u53F0\u4E0A\u5FC6\u5439\u7BAB", "\u9501\u7A97\u5BD2\u30FB\u7410\u5BD2\u7A97", "\u6D6A\u6D9B\u6C99\u30FB\u6D6A\u6DD8\u6C99", "\u79E6\u697C\u6708\u30FB\u5FC6\u79E6\u5A25", "\u89C2\u6C38\u4E50\u516C\u4E3B\u5165\u756A", "\u996E\u6E56\u4E0A\u521D\u6674\u540E\u96E8", "\u957F\u76F8\u601D\xB7\u5176\u4E00", "\u91D1\u9675\u9152\u8086\u7559\u522B", "\u767B\u91D1\u9675\u51E4\u51F0\u53F0", "\u591C\u6CCA\u725B\u6E1A\u6000\u53E4", "\u542C\u8700\u50E7\u6D5A\u5F39\u7434", "\u9001\u6893\u5DDE\u674E\u4F7F\u541B", "\u79EF\u96E8\u8F8B\u5DDD\u5E84\u4F5C", "\u9001\u5143\u4E8C\u4F7F\u5B89\u897F", "\u8D60\u522B\u4E8C\u9996 \u4E8C", "\u65E9\u79CB\u4E09\u9996 \u4E00", "\u5BFB\u5357\u6EAA\u5E38\u9053\u58EB", "\u957F\u6C99\u8FC7\u8D3E\u8C0A\u5B85", "\u591C\u5F52\u9E7F\u95E8\u5C71\u6B4C", "\u65E9\u5BD2\u6C5F\u4E0A\u6709\u6000", "\u7559\u522B\u738B\u4F8D\u5FA1\u7EF4", "\u4E0E\u8BF8\u5B50\u767B\u5C98\u5C71", "\u8BBF\u8881\u62FE\u9057\u4E0D\u9047", "\u5BBF\u738B\u660C\u9F84\u9690\u5C45", "\u7834\u5C71\u5BFA\u540E\u7985\u9662", "\u4E09\u6708\u6666\u65E5\u9001\u6625", "\u5BAB\u8BCD\u4E8C\u9996 \u4E00", "\u96C6\u7075\u53F0\xB7\u5176\u4E00", "\u96C6\u7075\u53F0\xB7\u5176\u4E8C", "\u6C5F\u5357\u9022\u674E\u9F9F\u5E74", "\u68A6\u674E\u767D\xB7\u5176\u4E00", "\u68A6\u674E\u767D\xB7\u5176\u4E8C", "\u548C\u8D3E\u820D\u4EBA\u65E9\u671D", "\u4E5D\u65E5\u84DD\u8015\u4F1A\u996E", "\u9898\u5927\u5EBE\u5CAD\u5317\u9A7F", "\u548C\u664B\u9675\u9646\u627F\u76F8", "\u9189\u540E\u8D60\u5F20\u4E5D\u65ED", "\u5BFB\u9646\u9E3F\u6E10\u4E0D\u9047", "\u8D60\u9619\u4E0B\u88F4\u820D\u4EBA", "\u77F3\u9C7C\u6E56\u4E0A\u9189\u6B4C", "\u79CB\u591C\u5BC4\u4E18\u5458\u5916", "\u5BC4\u5DE6\u7701\u675C\u62FE\u9057", "\u5BAB\u8BCD\u4E94\u9996 \u4E8C", "\u5E78\u8700\u56DE\u81F3\u5251\u95E8", "\u7EFF\u5934\u9E2D\u30FB\u591A\u4E3D", "\u9713\u88F3\u4E2D\u5E8F\u7B2C\u4E00", "\u590F\u65E5\u767B\u8F66\u76D6\u4EAD", "\u767B\u5E7D\u5DDE\u53F0\u6B4C", "\u6625\u591C\u522B\u53CB\u4EBA", "\u6E05\u5E73\u8C03 \u4E09", "\u6E21\u8346\u95E8\u9001\u522B", "\u65E9\u53D1\u767D\u5E1D\u57CE", "\u72EC\u5750\u656C\u4EAD\u5C71", "\u9001\u53CB\u4EBA\u5165\u8700", "\u957F\u4FE1\u6028 \u4E8C", "\u7B54\u4E94\u9675\u592A\u5B88", "\u5BC4\u4EE4\u72D0\u90CE\u4E2D", "\u6742\u8BD7 \u5341\u4E09", "\u6B21\u5317\u56FA\u5C71\u4E0B", "\u6D1B\u9633\u5973\u513F\u884C", "\u9001\u6731\u5927\u5165\u79E6", "\u8D60\u522B\xB7\u5176\u4E00", "\u9001\u7075\u6F88\u4E0A\u4EBA", "\u5C81\u66AE\u5F52\u5357\u5C71", "\u5C81\u9664\u591C\u6709\u6000", "\u9898\u4E49\u516C\u7985\u623F", "\u7EC8\u5357\u671B\u4F59\u96EA", "\u9001\u9B4F\u4E07\u4E4B\u4EAC", "\u6625\u6CDB\u82E5\u8036\u6EAA", "\u5BFB\u9690\u8005\u4E0D\u9047", "\u897F\u585E\u5C71\u6000\u53E4", "\u548C\u4E50\u5929\u6625\u8BCD", "\u7384\u90FD\u89C2\u6843\u82B1", "\u518D\u6E38\u7384\u90FD\u89C2", "\u6708\u591C\u5FC6\u820D\u5F1F", "\u5929\u672B\u5FC6\u674E\u767D", "\u522B\u623F\u592A\u5C09\u5893", "\u8D60\u536B\u516B\u5904\u58EB", "\u767B\u5156\u5DDE\u57CE\u697C", "\u76D6\u7F57\u7F1D \u4E00", "\u9001\u50E7\u5F52\u65E5\u672C", "\u6C5F\u884C\u671B\u5321\u5E90", "\u8D3C\u9000\u793A\u5B98\u540F", "\u540C\u9898\u4ED9\u6E38\u89C2", "\u957F\u5B89\u9047\u51AF\u8457", "\u5915\u6B21\u76F1\u7719\u53BF", "\u9898\u8881\u6C0F\u522B\u4E1A", "\u7EFF\u610F\u30FB\u758F\u5F71", "\u4E1C\u98CE\u7B2C\u4E00\u679D", "\u6CD5\u66F2\u732E\u4ED9\u97F3", "\u5BBF\u4E91\u95E8\u5BFA\u9601", "\u6E38\u5C0F\u56ED\u4E0D\u503C", "\u5E86\u5168\u5EB5\u6843\u82B1", "\u6625\u66AE\u6E38\u5C0F\u56ED", "\u65E9\u671D\u5927\u660E\u5BAB", "\u5728\u72F1\u548F\u8749", "\u6613\u6C34\u9001\u522B", "\u8D60\u4E54\u4F8D\u5FA1", "\u6E05\u5E73\u8C03\u8BCD", "\u8D60\u5B5F\u6D69\u7136", "\u9001\u90ED\u53F8\u4ED3", "\u767B\u9E73\u96C0\u697C", "\u65B0\u5AC1\u5A18\u8BCD", "\u548F\u534E\u6E05\u5BAB", "\u767B\u4E50\u6E38\u539F", "\u591C\u96E8\u5BC4\u5317", "\u7AE0\u53F0\u591C\u601D", "\u705E\u4E0A\u79CB\u5C45", "\u6CA1\u8543\u6545\u4EBA", "\u6E2D\u5DDD\u7530\u5BB6", "\u916C\u5F20\u5C11\u5E9C", "\u8FC7\u9999\u79EF\u5BFA", "\u5C71\u5C45\u79CB\u669D", "\u7EC8\u5357\u522B\u4E1A", "\u5F52\u5D69\u5C71\u4F5C", "\u6C49\u6C5F\u4E34\u773A", "\u8D60\u90ED\u7ED9\u4E8B", "\u5C71\u4E2D\u9001\u522B", "\u521D\u6625\u5C0F\u96E8", "\u5C71\u4E2D\u5BE1\u5987", "\u79E6\u6DEE\u591C\u6CCA", "\u95EE\u5218\u5341\u4E5D", "\u76F4\u4E2D\u4E66\u7701", "\u522B\u5362\u79E6\u537F", "\u8FC7\u6545\u4EBA\u5E84", "\u5BBF\u5EFA\u5FB7\u6C5F", "\u8FC7\u4E09\u95FE\u5E99", "\u665A\u6B21\u9102\u5DDE", "\u5DE6\u6396\u68A8\u82B1", "\u884C\u7ECF\u534E\u9634", "\u82CF\u6C0F\u522B\u4E1A", "\u6C5F\u5357\u65C5\u60C5", "\u53E4\u4ECE\u519B\u884C", "\u9001\u9648\u7AE0\u752B", "\u5BBF\u9F99\u5174\u5BFA", "\u5229\u5DDE\u5357\u6E21", "\u9001\u4EBA\u4E1C\u6E38", "\u5B64\u96C1 \u4E8C", "\u9898\u91D1\u9675\u6E21", "\u8700\u5148\u4E3B\u5E99", "\u6625\u5BBF\u5DE6\u7701", "\u65C5\u591C\u4E66\u6000", "\u767B\u5CB3\u9633\u697C", "\u8662\u56FD\u592B\u4EBA", "\u5BC4\u97E9\u8C0F\u8BAE", "\u79E6\u5DDE\u6742\u8BD7", "\u7EDD\u53E5\u6F2B\u5174", "\u4E0E\u6731\u5C71\u4EBA", "\u671B\u6708\u6000\u8FDC", "\u4E0A\u5143\u5E94\u5236", "\u67AB\u6865\u591C\u6CCA", "\u9001\u6768\u6C0F\u5973", "\u6EC1\u5DDE\u897F\u6DA7", "\u9022\u5165\u4EAC\u4F7F", "\u767B\u603B\u6301\u9601", "\u6E58\u6625\u591C\u6708", "\u60DC\u9EC4\u82B1\u6162", "\u516B\u58F0\u7518\u5DDE", "\u795D\u82F1\u53F0\u8FD1", "\u5343\u79CB\u5C81\u5F15", "\u6C34\u8C03\u6B4C\u5934", "\u516D\u5DDE\u6B4C\u5934", "\u70DB\u5F71\u6447\u7EA2", "\u6728\u5170\u82B1\u6162", "\u795D\u82F1\u53F0\u4EE4", "\u957F\u4EAD\u6028\u6162", "\u971C\u5929\u6653\u89D2", "\u591C\u9001\u8D75\u7EB5", "\u79CB\u65E5\u6E56\u4E0A", "\u6C7E\u4E0A\u60CA\u79CB", "\u8700\u9053\u540E\u671F", "\u5E7D\u5DDE\u591C\u6B4C", "\u9898\u7AF9\u6797\u5BFA", "\u9898\u677E\u6C40\u9A7F", "\u6E21\u626C\u5B50\u6C5F", "\u6625\u65E5\u5076\u6210", "\u9898\u6DEE\u5357\u5BFA", "\u90CA\u884C\u5373\u4E8B", "\u4E0A\u5143\u4F8D\u5BB4", "\u57CE\u4E1C\u65E9\u6625", "\u665A\u697C\u95F2\u5750", "\u7ACB\u6625\u5076\u6210", "\u9898\u90B8\u95F4\u58C1", "\u4E0A\u9AD8\u4F8D\u90CE", "\u66AE\u6625\u5373\u4E8B", "\u521D\u590F\u7761\u8D77", "\u5BA2\u4E2D\u521D\u590F", "\u4E09\u8862\u9053\u4E2D", "\u5C71\u5C45\u590F\u65E5", "\u6751\u5C45\u5373\u4E8B", "\u6C5F\u697C\u6709\u611F", "\u957F\u5B89\u79CB\u671B", "\u9898\u4E34\u5B89\u90B8", "\u771F\u7389\u5802\u4F5C", "\u7B54\u949F\u5F31\u7FC1", "\u7B54\u4E01\u5143\u73CD", "\u5BD2\u98DF\u4E66\u4E8B", "\u8868\u5144\u8BDD\u65E7", "\u6708\u591C\u821F\u4E2D", "\u9001\u6BDB\u4F2F\u6E29", "\u5C06\u8FDB\u9152", "\u5173\u5C71\u6708", "\u8700\u9053\u96BE", "\u7389\u9636\u6028", "\u9759\u591C\u601D", "\u9001\u53CB\u4EBA", "\u79CB\u6D66\u6B4C", "\u5BA2\u4E2D\u884C", "\u6625\u5BAB\u66F2", "\u957F\u4FE1\u6028", "\u6545\u884C\u5BAB", "\u7B79\u7B14\u9A7F", "\u5317\u9752\u841D", "\u91D1\u9675\u56FE", "\u9A6C\u5D6C\u5761", "\u4F0A\u5DDE\u6B4C", "\u54E5\u8212\u6B4C", "\u72EC\u4E0D\u89C1", "\u6843\u82B1\u8C3F", "\u897F\u65BD\u548F", "\u8001\u5C06\u884C", "\u6843\u6E90\u884C", "\u7EC8\u5357\u5C71", "\u7AF9\u91CC\u9986", "\u79CB\u591C\u66F2", "\u7389\u53F0\u4F53", "\u77F3\u9F13\u6B4C", "\u6625\u5BAB\u6028", "\u5BAB\u4E2D\u8BCD", "\u91D1\u8C37\u56ED", "\u6C5F\u5357\u6625", "\u4E2D\u79CB\u6708", "\u9647\u897F\u884C", "\u540E\u5BAB\u8BCD", "\u957F\u6068\u6B4C", "\u7435\u7436\u5F15", "\u6C5F\u5357\u66F2", "\u542C\u5F39\u7434", "\u9001\u4E0A\u4EBA", "\u65B0\u5E74\u4F5C", "\u51C9\u5DDE\u8BCD", "\u4E34\u6D1E\u5EAD", "\u9001\u674E\u7AEF", "\u9001\u5D14\u4E5D", "\u9EC4\u9E64\u697C", "\u671B\u84DF\u95E8", "\u671B\u79E6\u5DDD", "\u7476\u745F\u6028", "\u82CF\u6B66\u5E99", "\u6E21\u6C49\u6C5F", "\u8D60\u5185\u4EBA", "\u4E4C\u8863\u5DF7", "\u79CB\u98CE\u5F15", "\u516B\u9635\u56FE", "\u5175\u8F66\u884C", "\u4E3D\u4EBA\u884C", "\u54C0\u6C5F\u5934", "\u54C0\u738B\u5B59", "\u53E4\u67CF\u884C", "\u9001\u5D14\u878D", "\u71D5\u6B4C\u884C", "\u7389\u53F0\u89C2", "\u91D1\u7F15\u8863", "\u5A46\u7F57\u95E8", "\u5217\u5973\u64CD", "\u6E38\u5B50\u541F", "\u9022\u4FA0\u8005", "\u7B54\u674E\u510B", "\u7B54\u674E\u6D63", "\u4E66\u8FB9\u4E8B", "\u5A55\u59A4\u6028", "\u5F81\u4EBA\u6028", "\u745E\u9E64\u4ED9", "\u5BB4\u6E05\u90FD", "\u9F50\u5929\u4E50", "\u98CE\u5165\u677E", "\u9AD8\u9633\u53F0", "\u591C\u5408\u82B1", "\u591C\u6E38\u5BAB", "\u9E67\u9E2A\u5929", "\u5510\u591A\u4EE4", "\u6D63\u6EAA\u6C99", "\u70B9\u7EDB\u5507", "\u5251\u5668\u8FD1", "\u5B89\u516C\u5B50", "\u535C\u7B97\u5B50", "\u6842\u679D\u9999", "\u6E05\u5E73\u4E50", "\u4E34\u6C5F\u4ED9", "\u8776\u604B\u82B1", "\u751F\u67E5\u5B50", "\u83E9\u8428\u86EE", "\u7389\u697C\u6625", "\u962E\u90CE\u5F52", "\u516D\u5E7A\u4EE4", "\u5FA1\u8857\u884C", "\u865E\u7F8E\u4EBA", "\u7559\u6625\u4EE4", "\u601D\u8FDC\u4EBA", "\u6C34\u9F99\u541F", "\u6C38\u9047\u4E50", "\u9752\u7389\u6848", "\u8C22\u6C60\u6625", "\u8D3A\u65B0\u90CE", "\u6E21\u6C5F\u4E91", "\u89E3\u8FDE\u73AF", "\u6708\u4E0B\u7B1B", "\u597D\u4E8B\u8FD1", "\u6478\u9C7C\u513F", "\u6C49\u5BAB\u6625", "\u6E14\u5BB6\u50B2", "\u9752\u95E8\u996E", "\u671B\u6D77\u6F6E", "\u5E1D\u53F0\u6625", "\u5929\u95E8\u8C23", "\u671B\u6E58\u4EBA", "\u5170\u9675\u738B", "\u7389\u4EAC\u79CB", "\u590F\u4E91\u5CF0", "\u5FC6\u738B\u5B59", "\u77F3\u5DDE\u6162", "\u6EE1\u6C5F\u7EA2", "\u674F\u82B1\u5929", "\u8E0F\u838E\u884C", "\u4E00\u843C\u7EA2", "\u5FF5\u5974\u5A07", "\u626C\u5DDE\u6162", "\u6DE1\u9EC4\u67F3", "\u82CF\u5E55\u906E", "\u66F2\u7389\u7BA1", "\u96E8\u9716\u94C3", "\u91C7\u83B2\u4EE4", "\u6D6A\u6DD8\u6C99", "\u5C11\u5E74\u6E38", "\u591C\u534A\u4E50", "\u7389\u8774\u8776", "\u8FF7\u795E\u5F15", "\u9189\u5782\u97AD", "\u5929\u4ED9\u5B50", "\u5343\u79CB\u5C81", "\u91C7\u6851\u5B50", "\u8BC9\u8877\u60C5", "\u7EEE\u7F57\u9999", "\u53CC\u53CC\u71D5", "\u559C\u8FC1\u83BA", "\u4E09\u59DD\u5A9A", "\u6C5F\u57CE\u5B50", "\u5C0F\u91CD\u5C71", "\u71D5\u5C71\u4EAD", "\u9189\u82B1\u9634", "\u82CF\u6B66\u6162", "\u67F3\u68A2\u9752", "\u5FC6\u5C11\u5E74", "\u98CE\u6D41\u5B50", "\u5E94\u5929\u957F", "\u6EE1\u5EAD\u82B3", "\u7EEE\u5BEE\u6028", "\u60DC\u5206\u98DE", "\u5973\u51A0\u5B50", "\u84E6\u5C71\u6EAA", "\u773C\u513F\u5A9A", "\u6D1B\u9633\u9053", "\u601D\u541B\u6069", "\u7F62\u76F8\u4F5C", "\u5BAB\u4E2D\u9898", "\u5723\u679C\u5BFA", "\u6E38\u6708\u9642", "\u9898\u69B4\u82B1", "\u6253\u7403\u56FE", "\u8695\u5987\u541F", "\u51B7\u6CC9\u4EAD", "\u63D2\u82B1\u541F", "\u9001\u5929\u5E08", "\u6625\u601D", "\u6028\u60C5", "\u95FA\u6028", "\u51FA\u585E", "\u9526\u745F", "\u97E9\u7891", "\u98CE\u96E8", "\u968B\u5BAB", "\u843D\u82B1", "\u4E3A\u6709", "\u7476\u6C60", "\u6625\u96E8", "\u5AE6\u5A25", "\u8D3E\u751F", "\u51C9\u601D", "\u971C\u6708", "\u53F0\u57CE", "\u5BAB\u8BCD", "\u9898\u58C1", "\u4F8D\u5BB4", "\u9001\u522B", "\u9752\u8C3F", "\u9E7F\u67F4", "\u6742\u8BD7", "\u76F8\u601D", "\u5C71\u77F3", "\u665A\u6625", "\u5DF2\u51C9", "\u8D64\u58C1", "\u9063\u6000", "\u79CB\u5915", "\u65C5\u5BBF", "\u6E05\u660E", "\u5BC4\u4EBA", "\u542C\u7B5D", "\u8D4B\u5F97", "\u6625\u6653", "\u7434\u6B4C", "\u53E4\u610F", "\u8D2B\u5973", "\u65C5\u6000", "\u6EAA\u5C45", "\u6C5F\u96EA", "\u6E14\u7FC1", "\u6708\u591C", "\u6625\u671B", "\u8700\u76F8", "\u5BA2\u81F3", "\u91CE\u671B", "\u767B\u9AD8", "\u767B\u697C", "\u5BBF\u5E9C", "\u9601\u591C", "\u671B\u5CB3", "\u4F73\u4EBA", "\u79B9\u5E99", "\u7EDD\u53E5", "\u6F2B\u5174", "\u6C5F\u6751", "\u65B0\u79CB", "\u51AC\u81F3", "\u548F\u53F2", "\u5F52\u96C1", "\u5BD2\u98DF", "\u4E1C\u90CA", "\u6625\u6028", "\u9619\u9898", "\u8584\u5E78", "\u6697\u9999", "\u758F\u5F71", "\u516B\u5F52", "\u79CB\u9701", "\u82B1\u72AF", "\u897F\u6CB3", "\u5929\u9999", "\u7709\u59A9", "\u4E09\u53F0", "\u79CB\u65E5", "\u7B54\u4EBA", "\u79CB\u6708", "\u5076\u6210", "\u6625\u65E5", "\u6CDB\u821F", "\u6625\u5BB5", "\u6D77\u68E0", "\u82B1\u5F71", "\u897F\u6E56", "\u51AC\u666F", "\u6625\u591C", "\u5143\u65E5", "\u5317\u5C71", "\u8305\u6A90", "\u793E\u65E5", "\u9898\u5C4F", "\u6E56\u4E0A", "\u6625\u6674", "\u6625\u66AE", "\u5373\u666F", "\u83BA\u68AD", "\u767B\u5C71", "\u4F24\u6625", "\u9001\u6625", "\u6709\u7EA6", "\u590F\u65E5", "\u7530\u5BB6", "\u6751\u665A", "\u4E03\u5915", "\u7ACB\u79CB", "\u95FB\u7B1B", "\u7AF9\u697C", "\u5BD2\u591C", "\u65E9\u6625", "\u5BD3\u610F", "\u79CB\u5343", "\u65B0\u7AF9", "\u79CB\u601D", "\u4E2D\u79CB", "\u6885\u82B1", "\u5E72\u6208", "\u5F52\u9690", "\u8749", "\u6885"] };
+  var poem_titles_default = { count: 634, titles: ["自河南经乱关内阻饥兄弟离散各在一处因望月有感聊书所怀寄上浮梁大兄于潜七兄乌江十五兄兼示符离及下邽弟妹", "秋日登吴公台上寺远眺寺即陈将吴明彻战场", "自夏口至鹦鹉洲夕望岳阳寄源中丞", "同从弟南斋玩月忆山阴崔少府", "听董大弹胡笳声兼寄语弄房给事", "恩赐丽正殿书院赐宴应制得林字", "送著作佐郎崔融等从梁王东征", "奉和中书舍人贾至早朝大明宫", "下终南山过斛斯山人宿置酒", "与史朗中饮听黄鹤楼上吹笛", "奉和圣制从蓬莱向兴庆阁道", "登柳州城楼寄漳汀封连四州", "蓬莱三殿侍宴奉敕咏终南山", "轮台歌奉送封大夫出师西征", "清平调·一枝红艳露凝香", "行路难·有耳莫洗颍川水", "宣州谢朓楼饯别校书叔云", "谒衡岳庙遂宿岳寺题门楼", "韦讽录事宅观曹将军画马", "观公孙大娘弟子舞剑器行", "送李少府贬峡中王少府贬", "走马川行奉送封大夫出师", "入直召对选德殿赐茶而退", "黄鹤楼送孟浩然之广陵", "出塞·秦时明月汉时关", "芙蓉楼送辛渐二首 一", "无题·昨夜星辰昨夜风", "无题·来是空言去绝踪", "无题·飒飒东风细雨来", "无题·相见时难别亦难", "无题·凤尾香罗薄几重", "无题·重帏深下莫愁堂", "和贾至舍人早朝大明宫", "将赴吴兴登乐游原一绝", "九日登望仙台呈刘明府", "宿业师山房期丁大不至", "至德二载甫自京金光门", "观李固请司马弟山水图", "郡斋雨中与诸文士燕集", "与高适薛据慈恩寺浮图", "经邹鲁祭孔子而叹之", "庐山谣寄卢侍御虚舟", "塞下曲·饮马渡秋水", "辋川闲居赠裴秀才迪", "九月九日忆山东兄弟", "八月十五夜赠张功曹", "左迁至蓝关示侄孙湘", "秋日赴阙题潼关驿楼", "送李中丞归汉阳别业", "宿桐庐江寄广陵旧游", "塞下曲·鹫翎金仆姑", "塞下曲·林暗草惊风", "塞下曲·月黑雁飞高", "塞下曲·野幕敞琼筵", "长干行·君家何处住", "奉济驿重送严公四韵", "酬程延秋夜即事见赠", "和晋陵陆丞早春游望", "初发扬子寄元大校书", "白雪歌送武判官归京", "行军九日思长安故园", "渡江云三犯・渡江云", "减字浣溪沙・浣溪沙", "江神子慢・江城子慢", "月下独酌四首 一", "秋登宣城谢眺北楼", "楚江怀古三首 一", "送綦毋潜落第还乡", "云阳馆与韩绅宿别", "秦中感秋寄远上人", "清明日宴梅道士房", "江乡故人偶集客舍", "听安万善吹觱篥歌", "巴山道中除夜书怀", "晨诣超师院读禅经", "闻官军收河南河北", "咏怀古迹五首 一", "咏怀古迹五首 三", "咏怀古迹五首 四", "咏怀古迹五首 五", "丹青引赠曹霸将军", "感遇·兰叶春葳蕤", "感遇·孤鸿海上来", "谷口书斋寄杨补阙", "淮上喜会梁川故人", "绣鸾凤花犯・花犯", "长亭怨・长亭怨慢", "长宁公主东庄侍宴", "同王征君洞庭有怀", "观书有感（其一）", "行路难三首 一", "行路难三首 二", "子夜吴歌·春歌", "子夜吴歌·夏歌", "子夜吴歌·秋歌", "子夜吴歌·冬歌", "梦游天姥吟留别", "长相思三首 二", "长干行二首 一", "塞下曲四首 一", "遣悲怀三首 一", "遣悲怀三首 二", "遣悲怀三首 三", "杂诗三首·其三", "近试上张籍水部", "寄扬州韩绰判官", "赋得古原草送别", "喜见外弟又言别", "夜上受降城闻笛", "贼平后送人北归", "喜外弟卢纶见宿", "饯别王十一南游", "江州重别薛六柳", "秋登兰山寄张五", "夏日南亭怀辛大", "寻西山隐者不遇", "长干曲四首 二", "咏怀古迹·其二", "题玄武禅师屋壁", "感遇十二首 二", "感遇十二首 七", "扈从登封途中作", "杜少府之任蜀州", "送郑侍御谪闽中", "寄全椒山中道士", "赋得暮雨送李曹", "回乡偶书·其一", "蹋莎行・踏莎行", "金缕歌・贺新郎", "木兰花・玉楼春", "江神子・江城子", "甘州・八声甘州", "醉中真・浣溪沙", "人南渡・感皇恩", "石州引・石州慢", "宴山亭・燕山亭", "凤栖梧・蝶恋花", "竹马子・竹马儿", "青门引・青门饮", "凤凰台上忆吹箫", "锁窗寒・琐寒窗", "浪涛沙・浪淘沙", "秦楼月・忆秦娥", "观永乐公主入番", "饮湖上初晴后雨", "长相思·其一", "金陵酒肆留别", "登金陵凤凰台", "夜泊牛渚怀古", "听蜀僧浚弹琴", "送梓州李使君", "积雨辋川庄作", "送元二使安西", "赠别二首 二", "早秋三首 一", "寻南溪常道士", "长沙过贾谊宅", "夜归鹿门山歌", "早寒江上有怀", "留别王侍御维", "与诸子登岘山", "访袁拾遗不遇", "宿王昌龄隐居", "破山寺后禅院", "三月晦日送春", "宫词二首 一", "集灵台·其一", "集灵台·其二", "江南逢李龟年", "梦李白·其一", "梦李白·其二", "和贾舍人早朝", "九日蓝耕会饮", "题大庾岭北驿", "和晋陵陆承相", "醉后赠张九旭", "寻陆鸿渐不遇", "赠阙下裴舍人", "石鱼湖上醉歌", "秋夜寄丘员外", "寄左省杜拾遗", "宫词五首 二", "幸蜀回至剑门", "绿头鸭・多丽", "霓裳中序第一", "夏日登车盖亭", "登幽州台歌", "春夜别友人", "清平调 三", "渡荆门送别", "早发白帝城", "独坐敬亭山", "送友人入蜀", "长信怨 二", "答五陵太守", "寄令狐郎中", "杂诗 十三", "次北固山下", "洛阳女儿行", "送朱大入秦", "赠别·其一", "送灵澈上人", "岁暮归南山", "岁除夜有怀", "题义公禅房", "终南望余雪", "送魏万之京", "春泛若耶溪", "寻隐者不遇", "西塞山怀古", "和乐天春词", "玄都观桃花", "再游玄都观", "月夜忆舍弟", "天末忆李白", "别房太尉墓", "赠卫八处士", "登兖州城楼", "盖罗缝 一", "送僧归日本", "江行望匡庐", "贼退示官吏", "同题仙游观", "长安遇冯著", "夕次盱眙县", "题袁氏别业", "绿意・疏影", "东风第一枝", "法曲献仙音", "宿云门寺阁", "游小园不值", "庆全庵桃花", "春暮游小园", "早朝大明宫", "在狱咏蝉", "易水送别", "赠乔侍御", "清平调词", "赠孟浩然", "送郭司仓", "登鹳雀楼", "新嫁娘词", "咏华清宫", "登乐游原", "夜雨寄北", "章台夜思", "灞上秋居", "没蕃故人", "渭川田家", "酬张少府", "过香积寺", "山居秋暝", "终南别业", "归嵩山作", "汉江临眺", "赠郭给事", "山中送别", "初春小雨", "山中寡妇", "秦淮夜泊", "问刘十九", "直中书省", "别卢秦卿", "过故人庄", "宿建德江", "过三闾庙", "晚次鄂州", "左掖梨花", "行经华阴", "苏氏别业", "江南旅情", "古从军行", "送陈章甫", "宿龙兴寺", "利州南渡", "送人东游", "孤雁 二", "题金陵渡", "蜀先主庙", "春宿左省", "旅夜书怀", "登岳阳楼", "虢国夫人", "寄韩谏议", "秦州杂诗", "绝句漫兴", "与朱山人", "望月怀远", "上元应制", "枫桥夜泊", "送杨氏女", "滁州西涧", "逢入京使", "登总持阁", "湘春夜月", "惜黄花慢", "八声甘州", "祝英台近", "千秋岁引", "水调歌头", "六州歌头", "烛影摇红", "木兰花慢", "祝英台令", "长亭怨慢", "霜天晓角", "夜送赵纵", "秋日湖上", "汾上惊秋", "蜀道后期", "幽州夜歌", "题竹林寺", "题松汀驿", "渡扬子江", "春日偶成", "题淮南寺", "郊行即事", "上元侍宴", "城东早春", "晚楼闲坐", "立春偶成", "题邸间壁", "上高侍郎", "暮春即事", "初夏睡起", "客中初夏", "三衢道中", "山居夏日", "村居即事", "江楼有感", "长安秋望", "题临安邸", "真玉堂作", "答钟弱翁", "答丁元珍", "寒食书事", "表兄话旧", "月夜舟中", "送毛伯温", "将进酒", "关山月", "蜀道难", "玉阶怨", "静夜思", "送友人", "秋浦歌", "客中行", "春宫曲", "长信怨", "故行宫", "筹笔驿", "北青萝", "金陵图", "马嵬坡", "伊州歌", "哥舒歌", "独不见", "桃花谿", "西施咏", "老将行", "桃源行", "终南山", "竹里馆", "秋夜曲", "玉台体", "石鼓歌", "春宫怨", "宫中词", "金谷园", "江南春", "中秋月", "陇西行", "后宫词", "长恨歌", "琵琶引", "江南曲", "听弹琴", "送上人", "新年作", "凉州词", "临洞庭", "送李端", "送崔九", "黄鹤楼", "望蓟门", "望秦川", "瑶瑟怨", "苏武庙", "渡汉江", "赠内人", "乌衣巷", "秋风引", "八阵图", "兵车行", "丽人行", "哀江头", "哀王孙", "古柏行", "送崔融", "燕歌行", "玉台观", "金缕衣", "婆罗门", "列女操", "游子吟", "逢侠者", "答李儋", "答李浣", "书边事", "婕妤怨", "征人怨", "瑞鹤仙", "宴清都", "齐天乐", "风入松", "高阳台", "夜合花", "夜游宫", "鹧鸪天", "唐多令", "浣溪沙", "点绛唇", "剑器近", "安公子", "卜算子", "桂枝香", "清平乐", "临江仙", "蝶恋花", "生查子", "菩萨蛮", "玉楼春", "阮郎归", "六幺令", "御街行", "虞美人", "留春令", "思远人", "水龙吟", "永遇乐", "青玉案", "谢池春", "贺新郎", "渡江云", "解连环", "月下笛", "好事近", "摸鱼儿", "汉宫春", "渔家傲", "青门饮", "望海潮", "帝台春", "天门谣", "望湘人", "兰陵王", "玉京秋", "夏云峰", "忆王孙", "石州慢", "满江红", "杏花天", "踏莎行", "一萼红", "念奴娇", "扬州慢", "淡黄柳", "苏幕遮", "曲玉管", "雨霖铃", "采莲令", "浪淘沙", "少年游", "夜半乐", "玉蝴蝶", "迷神引", "醉垂鞭", "天仙子", "千秋岁", "采桑子", "诉衷情", "绮罗香", "双双燕", "喜迁莺", "三姝媚", "江城子", "小重山", "燕山亭", "醉花阴", "苏武慢", "柳梢青", "忆少年", "风流子", "应天长", "满庭芳", "绮寮怨", "惜分飞", "女冠子", "蓦山溪", "眼儿媚", "洛阳道", "思君恩", "罢相作", "宫中题", "圣果寺", "游月陂", "题榴花", "打球图", "蚕妇吟", "冷泉亭", "插花吟", "送天师", "春思", "怨情", "闺怨", "出塞", "锦瑟", "韩碑", "风雨", "隋宫", "落花", "为有", "瑶池", "春雨", "嫦娥", "贾生", "凉思", "霜月", "台城", "宫词", "题壁", "侍宴", "送别", "青谿", "鹿柴", "杂诗", "相思", "山石", "晚春", "已凉", "赤壁", "遣怀", "秋夕", "旅宿", "清明", "寄人", "听筝", "赋得", "春晓", "琴歌", "古意", "贫女", "旅怀", "溪居", "江雪", "渔翁", "月夜", "春望", "蜀相", "客至", "野望", "登高", "登楼", "宿府", "阁夜", "望岳", "佳人", "禹庙", "绝句", "漫兴", "江村", "新秋", "冬至", "咏史", "归雁", "寒食", "东郊", "春怨", "阙题", "薄幸", "暗香", "疏影", "八归", "秋霁", "花犯", "西河", "天香", "眉妩", "三台", "秋日", "答人", "秋月", "偶成", "春日", "泛舟", "春宵", "海棠", "花影", "西湖", "冬景", "春夜", "元日", "北山", "茅檐", "社日", "题屏", "湖上", "春晴", "春暮", "即景", "莺梭", "登山", "伤春", "送春", "有约", "夏日", "田家", "村晚", "七夕", "立秋", "闻笛", "竹楼", "寒夜", "早春", "寓意", "秋千", "新竹", "秋思", "中秋", "梅花", "干戈", "归隐", "蝉", "梅"] };
 
   // src/client/intent.ts
   var BOOK_ALIAS = [
-    [/聊斋/, "\u804A\u658B\u5FD7\u5F02"],
-    [/三国/, "\u4E09\u56FD\u6F14\u4E49"],
-    [/西游/, "\u897F\u6E38\u8BB0"],
-    [/水浒/, "\u6C34\u6D52\u4F20"],
-    [/红楼/, "\u7EA2\u697C\u68A6"],
-    [/封神/, "\u5C01\u795E\u6F14\u4E49"],
-    [/隋唐/, "\u968B\u5510\u6F14\u4E49"],
-    [/杨家将/, "\u6768\u5BB6\u5C06\u6F14\u4E49"],
-    [/世说/, "\u4E16\u8BF4\u65B0\u8BED"],
-    [/三言|二拍/, "\u4E09\u8A00\u4E8C\u62CD"],
-    [/儒林/, "\u5112\u6797\u5916\u53F2"],
-    [/官场/, "\u5B98\u573A\u73B0\u5F62\u8BB0"],
-    [/老残/, "\u8001\u6B8B\u6E38\u8BB0"],
-    [/说岳|岳传/, "\u8BF4\u5CB3\u5168\u4F20"],
-    [/东周/, "\u4E1C\u5468\u5217\u56FD\u5FD7"],
-    [/三侠五义/, "\u4E09\u4FA0\u4E94\u4E49"],
-    [/镜花缘/, "\u955C\u82B1\u7F18"]
+    [/聊斋/, "聊斋志异"],
+    [/三国/, "三国演义"],
+    [/西游/, "西游记"],
+    [/水浒/, "水浒传"],
+    [/红楼/, "红楼梦"],
+    [/封神/, "封神演义"],
+    [/隋唐/, "隋唐演义"],
+    [/杨家将/, "杨家将演义"],
+    [/世说/, "世说新语"],
+    [/三言|二拍/, "三言二拍"],
+    [/儒林/, "儒林外史"],
+    [/官场/, "官场现形记"],
+    [/老残/, "老残游记"],
+    [/说岳|岳传/, "说岳全传"],
+    [/东周/, "东周列国志"],
+    [/三侠五义/, "三侠五义"],
+    [/镜花缘/, "镜花缘"]
   ];
   deepFreeze(BOOK_ALIAS);
   var POEM_TITLES = (poem_titles_default.titles || []).slice().sort((a, b) => b.length - a.length);
+  var BARE_STRIP = /[\s。，！？、,.!?…~～]/g;
   function matchPoemTitle(text) {
     const t = String(text || "");
     if (!t) return "";
@@ -5621,7 +5365,7 @@
     if (isQuestion(t)) return null;
     const byTitle = matchPoemTitle(t);
     if (byTitle) {
-      const bare = t.replace(/[\s。，！？、,.!?…~～]/g, "");
+      const bare = t.replace(BARE_STRIP, "");
       const asks = bare === byTitle || /背|念|吟|朗读|朗诵|来(一)?首|听(一)?首|讲(一)?首|放(一)?首/.test(t);
       if (asks) return { kind: "poem", title: byTitle };
     }
@@ -5638,7 +5382,7 @@
       }
     }
     if (book) {
-      const bare = t.replace(/[\s。，！？、,.!?…~～]/g, "");
+      const bare = t.replace(BARE_STRIP, "");
       const asksBook = /讲|说书|听|来(一)?段|来(一)?回/.test(t) || bare.length <= book.length + 1;
       if (asksBook) return { kind: "story", book };
     }
@@ -5652,48 +5396,48 @@
       getJson("/poem" + query).then((d) => {
         const p = d && d.ok && d.item ? d.item : null;
         if (!p) {
-          host.bubble("\u8BD7\u518C\u6CA1\u8BFB\u5230", 4e3);
+          host.bubble("诗册没读到", 4e3);
           return;
         }
         onItem(p);
-      }).catch(() => host.bubble("\u8BD7\u518C\u6CA1\u8BFB\u5230", 4e3));
+      }).catch(() => host.bubble("诗册没读到", 4e3));
     }
     function route(rawText) {
       const t0 = String(rawText || "").trim();
       if (/^(再来|再念|换)(一)?(首|个)/.test(t0)) {
-        host.bubble("\uFF08\u70B9\u64AD\uFF09\u597D\uFF0C\u518D\u5FF5\u4E00\u9996", 3e3);
+        host.bubble("（点播）好，再念一首", 3e3);
         fetchPoem("", (p) => recitePoem(host, p));
         return true;
       }
       if (/^(继续|接着说|接着讲|往下讲)$/.test(t0)) {
-        host.bubble("\uFF08\u70B9\u64AD\uFF09\u63A5\u7740\u8BF4", 3e3);
+        host.bubble("（点播）接着说", 3e3);
         host.story.start(host.storyState.book.current || "");
         return true;
       }
       const hit = detectIntent(rawText);
       if (!hit) return false;
       if (hit.kind === "poem") {
-        host.bubble("\uFF08\u70B9\u64AD\uFF09\u597D\uFF0C\u5FF5\u4E00\u9996", 3e3);
+        host.bubble("（点播）好，念一首", 3e3);
         fetchPoem(hit.title || "" ? "?title=" + encodeURIComponent(hit.title || "") : "", (p) => recitePoem(host, p));
         return true;
       }
       if (hit.kind === "culture") {
         const type = hit.sub;
-        host.bubble(type === "chengyu" ? "\uFF08\u70B9\u64AD\uFF09\u8BB2\u4E2A\u6210\u8BED" : "\uFF08\u70B9\u64AD\uFF09\u8BB2\u4E2A\u5178\u6545", 3e3);
+        host.bubble(type === "chengyu" ? "（点播）讲个成语" : "（点播）讲个典故", 3e3);
         getJson("/culture?type=" + type).then((d) => {
           const it = d && d.ok && d.item ? d.item : null;
           if (!it) {
-            host.bubble("\u8FD9\u4E2A\u6CA1\u8BFB\u5230", 4e3);
+            host.bubble("这个没读到", 4e3);
             return;
           }
           const body = collapseText(String(it.text || ""));
-          host.bubble((type === "chengyu" ? "\u6210\u8BED\xB7" : "\u5178\u6545\xB7") + String(it.title || ""), 15e3);
-          host.speak((type === "chengyu" ? "\u8BB2\u4E2A\u6210\u8BED\u2014\u2014" : "\u8BB2\u4E2A\u5178\u6545\u2014\u2014") + String(it.title || "") + (it.src ? "\uFF0C\u51FA\u81EA" + String(it.src) : "") + "\u3002" + body, { rate: host.narrationRate() });
-        }).catch(() => host.bubble("\u8FD9\u4E2A\u6CA1\u8BFB\u5230", 4e3));
+          host.bubble((type === "chengyu" ? "成语·" : "典故·") + String(it.title || ""), 15e3);
+          host.speak((type === "chengyu" ? "讲个成语——" : "讲个典故——") + String(it.title || "") + (it.src ? "，出自" + String(it.src) : "") + "。" + body, { rate: host.narrationRate() });
+        }).catch(() => host.bubble("这个没读到", 4e3));
         return true;
       }
       const book = hit.book || "";
-      host.bubble("\uFF08\u70B9\u64AD\uFF09" + (book ? "\u8BB2\u300A" + book + "\u300B" : "\u8BB2\u4E00\u6BB5\u4E66"), 4e3);
+      host.bubble("（点播）" + (book ? "讲《" + book + "》" : "讲一段书"), 4e3);
       host.storyState.auto.current = true;
       host.story.start(book);
       return true;
@@ -5906,7 +5650,7 @@
       if (d0) d0.lastChat = { stage: "entry", busy: host.busy.isBusy(), tts: !!host.ttsPlaying(), at: Date.now() };
       if (host.busy.isBusy() && d0) d0.lastChat.stage = "blocked-busy";
       if (host.busy.isBusy() && host.busy.age() < 35e3) {
-        if (opts && opts.voice) host.bubble("\u672C\u9CB8\u8FD8\u5728\u60F3\u4E0A\u4E00\u53E5\u5462\uFF0C\u7A0D\u7B49\uFF5E", 2500);
+        if (opts && opts.voice) host.bubble("本鲸还在想上一句呢，稍等～", 2500);
         return;
       }
       if (host.narrating.current || host.ttsPlaying()) {
@@ -5962,14 +5706,14 @@
         } catch (e) {
         }
         if (!host.epoch.isCurrent(myEpoch)) return;
-        const reply = data?.reply || "\u4E3B\u4EBA\u2026\u2026\u672C\u9CB8\u8D70\u795E\u4E86\u3002";
+        const reply = data?.reply || "主人……本鲸走神了。";
         const d1 = diag();
         if (d1) d1.lastChat = { stage: "fetched", reply: String(reply).slice(0, 40), at: Date.now() };
         host.setMessages((m) => [...m, { who: "fish", text: reply }]);
         if (host.voiceMode.current) {
-          host.bubble("\uFF08\u8BF4\uFF09" + reply, 8e3);
+          host.bubble("（说）" + reply, 8e3);
         }
-        if (data && data.upgraded) host.bubble("\u672C\u9CB8\u53C8\u957F\u5927\u4E00\u70B9\u5566\uFF01", 4e3);
+        if (data && data.upgraded) host.bubble("本鲸又长大一点啦！", 4e3);
       } catch {
         host.setMessages((m) => [...m, { who: "fish", text: host.persona.line("error") }]);
       } finally {
@@ -6017,9 +5761,9 @@
         }, retryMs);
         return;
       }
-      const item = queue.shift();
-      const body = String(item && item.text || "").trim() || "\u65F6\u95F4\u5230\u4E86";
-      const line = "\u4E3B\u4EBA\uFF0C\u63D0\u9192\u4F60\uFF1A" + body;
+      const item2 = queue.shift();
+      const body = String(item2 && item2.text || "").trim() || "时间到了";
+      const line = "主人，提醒你：" + body;
       host.bubble(line, bubbleMs);
       host.talkFor(3e3);
       try {
@@ -6071,7 +5815,7 @@
   // src/client/reminder-manage.ts
   var MANAGE_WINDOW_MS = 6e4;
   var POSTPONE_MS = 10 * 60 * 1e3;
-  var MANAGE_HINT = "\u56DE\u590D\u6570\u5B57\u53EF\u5220\u9664 / \u56DE d \u987A\u5EF6 10 \u5206\u949F";
+  var MANAGE_HINT = "回复数字可删除 / 回 d 顺延 10 分钟";
   function normalizeManageInput(text) {
     return String(text == null ? "" : text).replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, "").toLowerCase();
   }
@@ -6089,8 +5833,8 @@
     const mm = String(d.getMinutes()).padStart(2, "0");
     return hh + ":" + mm;
   }
-  function stampOf(item) {
-    const raw = item.nextAt || item.at;
+  function stampOf(item2) {
+    const raw = item2.nextAt || item2.at;
     const d = new Date(raw);
     if (isNaN(d.getTime())) return String(raw == null ? "" : raw);
     try {
@@ -6101,11 +5845,11 @@
   }
   function boardText(items, prefix) {
     const lines = items.map((it, i) => {
-      const rep = Number(it.repeat) > 0 ? "\uFF08\u91CD\u590D\uFF09" : "";
-      return i + 1 + ". " + it.text + "\uFF08" + stampOf(it) + "\uFF09" + rep;
+      const rep = Number(it.repeat) > 0 ? "（重复）" : "";
+      return i + 1 + ". " + it.text + "（" + stampOf(it) + "）" + rep;
     });
     const head = prefix ? prefix + "\n" : "";
-    if (!lines.length) return head + "\u6CA1\u6709\u63D0\u9192\u4E86";
+    if (!lines.length) return head + "没有提醒了";
     return head + lines.join("\n") + "\n" + MANAGE_HINT;
   }
   function normalizeReminderList(payload) {
@@ -6172,16 +5916,16 @@
         board = arr;
         if (!arr.length) {
           openedAt = 0;
-          host.bubble("\u8FD8\u6CA1\u6709\u63D0\u9192\uFF5E", 3e3);
+          host.bubble("还没有提醒～", 3e3);
           return;
         }
         openedAt = at;
-        host.bubble(boardText(arr, "\u63D0\u9192\u6E05\u5355\uFF08" + arr.length + " \u6761\uFF09\uFF1A"), 12e3);
+        host.bubble(boardText(arr, "提醒清单（" + arr.length + " 条）："), 12e3);
       }).catch(() => {
         if (my !== seq) return;
         openedAt = 0;
         board = [];
-        host.bubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230", 5e3);
+        host.bubble("提醒清单查不到", 5e3);
       });
     }
     function afterDelete() {
@@ -6192,34 +5936,34 @@
         board = arr;
         if (!arr.length) {
           openedAt = 0;
-          host.bubble("\u5220\u6389\u4E86", 4e3);
+          host.bubble("删掉了", 4e3);
           return;
         }
-        host.bubble(boardText(arr, "\u5220\u6389\u4E86"), 12e3);
+        host.bubble(boardText(arr, "删掉了"), 12e3);
       }).catch(() => {
         openedAt = 0;
         board = [];
-        host.bubble("\u5220\u6389\u4E86", 4e3);
+        host.bubble("删掉了", 4e3);
       });
     }
     function removeAt(index) {
       const it = board[index - 1];
       if (!it) {
-        host.bubble("\u6CA1\u6709\u7B2C " + index + " \u6761\uFF0C\u56DE\u6570\u5B57\u518D\u9009\u4E00\u6B21", 4e3);
+        host.bubble("没有第 " + index + " 条，回数字再选一次", 4e3);
         return;
       }
       Promise.resolve(removeJson("/reminders?id=" + encodeURIComponent(it.id))).then((d) => {
         if (!(d && d.ok)) {
-          host.bubble("\u6CA1\u5220\u6389\uFF0C\u7B49\u4F1A\u513F\u518D\u8BD5", 4e3);
+          host.bubble("没删掉，等会儿再试", 4e3);
           return;
         }
         afterDelete();
-      }).catch(() => host.bubble("\u6CA1\u5220\u6389\uFF0C\u7B49\u4F1A\u513F\u518D\u8BD5", 4e3));
+      }).catch(() => host.bubble("没删掉，等会儿再试", 4e3));
     }
     function postpone() {
       const pick = pickNextDue(board);
       if (!pick) {
-        host.bubble("\u6E05\u5355\u91CC\u6CA1\u6709\u80FD\u987A\u5EF6\u7684\u63D0\u9192", 4e3);
+        host.bubble("清单里没有能顺延的提醒", 4e3);
         return;
       }
       const dueMs = new Date(pick.nextAt || pick.at).getTime();
@@ -6233,12 +5977,12 @@
       };
       Promise.resolve(sendJson("/reminders", body)).then((d) => {
         if (!(d && d.ok)) {
-          host.bubble("\u987A\u5EF6\u6CA1\u6210\uFF0C\u539F\u63D0\u9192\u8FD8\u5728", 4e3);
+          host.bubble("顺延没成，原提醒还在", 4e3);
           return;
         }
         Promise.resolve(removeJson("/reminders?id=" + encodeURIComponent(pick.id))).then((d2) => {
           if (!(d2 && d2.ok)) {
-            host.bubble("\u987A\u5EF6\u5230 " + when + "\uFF0C\u4F46\u65E7\u63D0\u9192\u6CA1\u5220\u6389", 6e3);
+            host.bubble("顺延到 " + when + "，但旧提醒没删掉", 6e3);
             return;
           }
           const my = ++seq;
@@ -6248,17 +5992,17 @@
             board = arr;
             if (!arr.length) {
               openedAt = 0;
-              host.bubble("\u987A\u5EF6\u5230 " + when, 5e3);
+              host.bubble("顺延到 " + when, 5e3);
               return;
             }
-            host.bubble(boardText(arr, "\u987A\u5EF6\u5230 " + when), 12e3);
+            host.bubble(boardText(arr, "顺延到 " + when), 12e3);
           }).catch(() => {
             openedAt = 0;
             board = [];
-            host.bubble("\u987A\u5EF6\u5230 " + when, 5e3);
+            host.bubble("顺延到 " + when, 5e3);
           });
-        }).catch(() => host.bubble("\u987A\u5EF6\u5230 " + when + "\uFF0C\u4F46\u65E7\u63D0\u9192\u6CA1\u5220\u6389", 6e3));
-      }).catch(() => host.bubble("\u987A\u5EF6\u6CA1\u6210\uFF0C\u539F\u63D0\u9192\u8FD8\u5728", 4e3));
+        }).catch(() => host.bubble("顺延到 " + when + "，但旧提醒没删掉", 6e3));
+      }).catch(() => host.bubble("顺延没成，原提醒还在", 4e3));
     }
     function intercept(text) {
       if (!isOpen()) {
@@ -6306,7 +6050,7 @@
       if (!shouldShowRecoverDot(hidden)) return null;
       return {
         "data-chubby-recover": "1",
-        title: "\u70B9\u4E00\u4E0B\u53EB\u672C\u9CB8\u56DE\u6765\uFF08\u6216\u6309 " + RECOVER_HOTKEY_LABEL + "\uFF09",
+        title: "点一下叫本鲸回来（或按 " + RECOVER_HOTKEY_LABEL + "）",
         onClick: (e) => {
           try {
             if (e && typeof e.stopPropagation === "function") e.stopPropagation();
@@ -6516,7 +6260,7 @@
           key: "sub" + i,
           style: { padding: "6px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", color: "#cfe9ff", fontSize: 13 },
           onClick: () => ctx.onToggleSub(open ? "" : it.label)
-        }, ctx.h("span", null, ctx.tr(it.label, ctx.lang)), ctx.h("span", null, open ? "\u25BE" : "\u25B8")));
+        }, ctx.h("span", null, ctx.tr(it.label, ctx.lang)), ctx.h("span", null, open ? "▾" : "▸")));
         if (open) out.push(ctx.h("div", { key: "subitems" + i, style: { paddingLeft: 14, borderLeft: "1px solid #1f4a85", marginLeft: 8 } }, renderMenuItems(it.items, ctx)));
         continue;
       }
@@ -6544,22 +6288,8 @@
           return true;
         }
       })(),
-      storyRate: (() => {
-        try {
-          const s = localStorage.getItem("chubby-story-rate") || "-35%";
-          return /^-\d{1,2}%$/.test(s) ? s : "-35%";
-        } catch (e) {
-          return "-35%";
-        }
-      })(),
-      poemRate: (() => {
-        try {
-          const s = localStorage.getItem("chubby-poem-rate") || "-25%";
-          return /^-\d{1,2}%$/.test(s) ? s : "-25%";
-        } catch (e) {
-          return "-25%";
-        }
-      })(),
+      storyRate: storyRate(),
+      poemRate: poemRate(),
       ttsVoice: (() => {
         try {
           return localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
@@ -6581,10 +6311,10 @@
     return h(
       "div",
       { style: { padding: "8px 14px", borderBottom: "1px solid #1f4a85", color: "#9FD8FF", fontSize: 12, display: "flex", justifyContent: "space-between" } },
-      h("span", null, (lang === "en" ? "Fat Whale \xB7 v" : "\u80A5\u9CB8 \xB7 v") + VERSION),
+      h("span", null, (lang === "en" ? "Fat Whale · v" : "肥鲸 · v") + VERSION),
       h("span", {
         style: { color: "#FFD166", cursor: "pointer" },
-        title: lang === "en" ? "Click to refresh balance" : "\u70B9\u4E00\u4E0B\u5237\u65B0\u4F59\u989D",
+        title: lang === "en" ? "Click to refresh balance" : "点一下刷新余额",
         onClick: ctx.onRefresh
       }, ctx.balanceText || "--")
     );
@@ -6597,25 +6327,25 @@
       h(
         "div",
         { style: headStyle },
-        h("span", null, lang === "en" ? "Fat Whale \xB7 Chat" : "\u80A5\u9CB8 \xB7 \u804A\u5929"),
-        h("span", { style: { cursor: "pointer", color: "#9FD8FF", padding: "0 4px" }, onClick: ctx.onClose }, "\u2715")
+        h("span", null, lang === "en" ? "Fat Whale · Chat" : "肥鲸 · 聊天"),
+        h("span", { style: { cursor: "pointer", color: "#9FD8FF", padding: "0 4px" }, onClick: ctx.onClose }, "✕")
       ),
       h(
         "div",
         { ref: ctx.bodyRef, style: bodyStyle },
-        ctx.messages.length === 0 ? h("div", { style: msgStyle("fish") }, "\u4E3B\u4EBA\uFF0C\u70B9\u6211\u8BF4\u8BDD\uFF0C\u672C\u9CB8\u5728\u53F3\u4E0B\u89D2\u5F85\u7740\uFF5E") : ctx.messages.map((m, i) => h("div", { key: i, style: msgStyle(m.who) }, m.text))
+        ctx.messages.length === 0 ? h("div", { style: msgStyle("fish") }, "主人，点我说话，本鲸在右下角待着～") : ctx.messages.map((m, i) => h("div", { key: i, style: msgStyle(m.who) }, m.text))
       ),
       h(
         "div",
         { style: inputRowStyle },
         h("input", {
           style: inputStyle,
-          placeholder: lang === "en" ? "Say something\u2026" : "\u8DDF\u80A5\u9CB8\u8BF4\u4E24\u53E5\u2026",
+          placeholder: lang === "en" ? "Say something…" : "跟肥鲸说两句…",
           value: ctx.input,
           onChange: (e) => ctx.onInputChange(e.target.value),
           onKeyDown: (e) => ctx.onKeyDown(e)
         }),
-        h("button", { style: sendStyle, onClick: () => ctx.onSend() }, ctx.busy ? "\u2026" : lang === "en" ? "Send" : "\u53D1\u9001")
+        h("button", { style: sendStyle, onClick: () => ctx.onSend() }, ctx.busy ? "…" : lang === "en" ? "Send" : "发送")
       )
     );
   }
@@ -6725,7 +6455,7 @@
           } catch (e2) {
           }
           try {
-            console.error("[chubby-whale] \u6E32\u67D3\u5F02\u5E38\u5DF2\u88AB\u5C31\u5730\u62E6\u4E0B\uFF1A", e);
+            console.error("[chubby-whale] 渲染异常已被就地拦下：", e);
           } catch (e2) {
           }
           return null;
@@ -6772,6 +6502,12 @@
         const dragRef = R.useRef(createDragState());
         const scaleRef = R.useRef(1);
         const animRef = R.useRef(null);
+        const talkFor = (ms2) => {
+          try {
+            animRef.current?.talkFor(ms2);
+          } catch (e) {
+          }
+        };
         const storyBusyRef = R.useRef(false);
         const storyBookRef = R.useRef("");
         const storyAutoRef = R.useRef((() => {
@@ -6784,13 +6520,8 @@
         })());
         const reminderPollerRef = hookApi.useLazyRef(() => createReminderPoller({
           getJson: (path, init) => getJson(path, init),
-          bubble: (text, ms2) => showBubble(text, ms2),
-          talkFor: (ms2) => {
-            try {
-              animRef.current?.talkFor(ms2);
-            } catch (e) {
-            }
-          },
+          bubble: showBubble,
+          talkFor,
           speak: (text) => {
             try {
               speakText(text);
@@ -6938,7 +6669,7 @@
         R.useEffect(() => {
           getJson("/status").then((d) => {
             if (d && d.ok && d.key === false) {
-              showBubble("\u8FD8\u6CA1\u914D Key\uFF1A\u804A\u5929\u548C\u8BED\u97F3\u8981\u7528 Key\uFF08deepseekKey / siliconflowKey\uFF09\uFF0C\u5FF5\u8BD7\u3001\u8BF4\u4E66\u3001\u5178\u6545\u3001\u63D0\u9192\u7167\u6837\u80FD\u7528\uFF5E \u914D\u7F6E\u65B9\u6CD5\u89C1 README", 9e3);
+              showBubble("还没配 Key：聊天和语音要用 Key（deepseekKey / siliconflowKey），念诗、说书、典故、提醒照样能用～ 配置方法见 README", 9e3);
             }
           }).catch(() => {
           });
@@ -6948,7 +6679,7 @@
         }
         function restoreIdleStatus() {
         }
-        const reminderManager = createReminderManager({ bubble: (text, ms2) => showBubble(text, ms2) });
+        const reminderManager = createReminderManager({ bubble: showBubble });
         const recover = createRecover({ recover: () => setHidden(false) });
         R.useEffect(() => {
           const unbind = recover.bindHotkey(window);
@@ -7186,13 +6917,13 @@
             setGrowth(DEFAULT_GROWTH);
             return;
           }
-          setGrowthLabel(info.stage + "\uFF08" + info.exp + (info.nextExp ? "/" + info.nextExp : "") + "\uFF09");
+          setGrowthLabel(info.stage + "（" + info.exp + (info.nextExp ? "/" + info.nextExp : "") + "）");
           setGrowth(info);
         }
         function syncGrowth() {
           fetchGrowth((p, init) => getJson(p, init)).then((info) => {
             if (info) {
-              setGrowthLabel(info.stage + "\uFF08" + info.exp + (info.nextExp ? "/" + info.nextExp : "") + "\uFF09");
+              setGrowthLabel(info.stage + "（" + info.exp + (info.nextExp ? "/" + info.nextExp : "") + "）");
               setGrowth(info);
             } else {
               setGrowth(DEFAULT_GROWTH);
@@ -7203,8 +6934,8 @@
           getJson("/balance", { cache: "no-store" }).then((d) => {
             if (d && d.ok && d.balance != null) {
               const v = String(d.balance);
-              setBalanceText("\u4F59\u989D \xA5" + v);
-              setBalanceLabel("\xA5" + v);
+              setBalanceText("余额 ¥" + v);
+              setBalanceLabel("¥" + v);
             } else {
               setBalanceText("--");
               setBalanceLabel("--");
@@ -7249,21 +6980,16 @@
         });
         const reminderPoller = reminderPollerRef.current;
         const actionHost = {
-          bubble: (text, ms2) => showBubble(text, ms2),
-          say: (text, ms2, opts) => sayLine(text, ms2, opts),
-          speak: (text, opts) => speakText(text, opts),
+          bubble: showBubble,
+          say: sayLine,
+          speak: speakText,
           speakReply: (text) => speakReply(text),
           narrate: setNarrating,
           clearNarrate: clearNarrating,
           stopSpeak: () => stopTts(),
           stopMelody: () => melody.stop(),
           playMelody: (notes, bpm, onDone) => melody.play(notes, bpm, onDone),
-          talkFor: (ms2) => {
-            try {
-              animRef.current?.talkFor(ms2);
-            } catch (e) {
-            }
-          },
+          talkFor,
           heart: () => {
             try {
               animRef.current?.pushHeart();
@@ -7373,19 +7099,19 @@
                 stopTts();
               } catch (e) {
               }
-              showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5173\uFF08\u672C\u9CB8\u4E0D\u542C\u5566\uFF09", 2500);
+              showBubble("语音待命：关（本鲸不听啦）", 2500);
               return;
             }
             try {
               bridge.start().then((v) => {
                 try {
-                  if (v.status() === "idle") showBubble("\u9EA6\u514B\u98CE\u6CA1\u6253\u5F00\uFF1A" + String(v.stats && v.stats.lastError || "\u770B\u770B\u6743\u9650\uFF1F"), 5e3);
-                  else showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5F00\uFF08\u5148\u558A\u300C\u5927\u80A5\u9C7C\u300D\uFF0C\u672C\u9CB8\u624D\u7B54\u8BDD\uFF09", 3500);
+                  if (v.status() === "idle") showBubble("麦克风没打开：" + String(v.stats && v.stats.lastError || "看看权限？"), 5e3);
+                  else showBubble("语音待命：开（先喊「大肥鱼」，本鲸才答话）", 3500);
                 } catch (e) {
                 }
-              }).catch((e) => showBubble("\u9EA6\u514B\u98CE\u6CA1\u6253\u5F00\uFF1A" + String(e && e.message || e), 5e3));
+              }).catch((e) => showBubble("麦克风没打开：" + String(e && e.message || e), 5e3));
             } catch (e) {
-              showBubble("\u8BED\u97F3\u5F85\u547D\u6CA1\u5F00\u6210\uFF1A" + String(e && e.message || e), 5e3);
+              showBubble("语音待命没开成：" + String(e && e.message || e), 5e3);
             }
           },
           chatCacheOn: () => chatCacheOnRef.current,
@@ -7408,7 +7134,7 @@
           } catch (e) {
             ok = false;
           }
-          if (!ok) showBubble("\u8FD9\u4E2A\u529F\u80FD\u8FD8\u6CA1\u63A5\u4E0A");
+          if (!ok) showBubble("这个功能还没接上");
         }
         function scrollBody() {
           setTimeout(() => {
@@ -7419,33 +7145,23 @@
         const localRouter = createLocalRouter({
           persona,
           narrationRate,
-          bubble: (text, ms2) => showBubble(text, ms2),
-          say: (text, ms2, opts) => sayLine(text, ms2, opts),
-          speak: (text, opts) => speakText(text, opts),
+          bubble: showBubble,
+          say: sayLine,
+          speak: speakText,
           narrate: setNarrating,
           clearNarrate: clearNarrating,
-          talkFor: (ms2) => {
-            try {
-              animRef.current?.talkFor(ms2);
-            } catch (e) {
-            }
-          },
+          talkFor,
           story,
           storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef }
         });
         const chat = createChatSender({
           persona,
-          bubble: (text, ms2) => showBubble(text, ms2),
-          say: (text, ms2, voiceOpts) => sayLine(text, ms2, voiceOpts),
-          speak: (text, opts) => speakText(text, opts),
+          bubble: showBubble,
+          say: sayLine,
+          speak: speakText,
           speakReply: (text) => speakReply(text),
           stopSpeak: () => stopTts(),
-          talkFor: (ms2) => {
-            try {
-              animRef.current?.talkFor(ms2);
-            } catch (e) {
-            }
-          },
+          talkFor,
           heart: () => {
             try {
               animRef.current?.pushHeart();
@@ -7635,7 +7351,7 @@
             h("canvas", { ref: canvasRef, width: CW, height: CH, style: canvasStyle })
           ),
           h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef })),
-          recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "\u25CB") : null,
+          recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "○") : null,
           menu ? h(
             "div",
             { style: menuStyle(menu), "data-menu-root": "1" },
@@ -7691,7 +7407,7 @@
           try {
             const slots = ctx && ctx.slots;
             if (!slots) {
-              diag2.error = "ctx.slots \u4E0D\u5B58\u5728\uFF08inject \u672A\u751F\u6548\uFF09";
+              diag2.error = "ctx.slots 不存在（inject 未生效）";
               console.warn("[chubby-whale]", diag2.error);
               return;
             }
@@ -7701,10 +7417,10 @@
               try {
                 slots.register(desc, render);
                 diag2.registered = true;
-                console.log("[chubby-whale] overlay \u5DF2\u6CE8\u518C");
+                console.log("[chubby-whale] overlay 已注册");
               } catch (e) {
-                diag2.error = "register \u5931\u8D25: " + String(e);
-                console.error("[chubby-whale] overlay \u6CE8\u518C\u5931\u8D25\uFF1A", e);
+                diag2.error = "register 失败: " + String(e);
+                console.error("[chubby-whale] overlay 注册失败：", e);
               }
             };
             try {
@@ -7713,13 +7429,13 @@
                 if (!diag2.registered) doRegister();
               }, 1200);
             } catch (e) {
-              diag2.error = "inject \u5931\u8D25: " + String(e);
-              console.error("[chubby-whale] overlay \u6CE8\u5165\u5931\u8D25\uFF1A", e);
+              diag2.error = "inject 失败: " + String(e);
+              console.error("[chubby-whale] overlay 注入失败：", e);
               doRegister();
             }
           } catch (e) {
-            diag2.error = "apply \u5F02\u5E38: " + String(e);
-            console.error("[chubby-whale] apply \u5F02\u5E38\uFF1A", e);
+            diag2.error = "apply 异常: " + String(e);
+            console.error("[chubby-whale] apply 异常：", e);
           }
         }
       };

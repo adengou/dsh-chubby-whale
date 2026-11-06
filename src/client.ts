@@ -180,6 +180,8 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
       const dragRef = R.useRef(createDragState())
       const scaleRef = R.useRef(1)
       const animRef = R.useRef(null as any)
+      /** 动画口型：动画器还没建好时静默（宿主回调里多处共用这一份，别各写一遍 try/catch） */
+      const talkFor = (ms: number): void => { try { animRef.current?.talkFor(ms) } catch (e) { } }
       const storyBusyRef = R.useRef(false)
       // 最近一次说书的书名（「从头讲这本书」要按它重置进度）
       const storyBookRef = R.useRef('')
@@ -191,8 +193,8 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
       // 到点提醒：轮询 + 播报队列在 client/reminders.ts；惰性 ref 保证跨渲染只建一个实例
       const reminderPollerRef = hookApi.useLazyRef(() => createReminderPoller({
         getJson: (path, init) => getJson(path, init),
-        bubble: (text, ms) => showBubble(text, ms),
-        talkFor: (ms) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
+        bubble: showBubble,
+        talkFor,
         speak: (text) => { try { speakText(text) } catch (e) { } },
         isSpeaking: () => ttsPlaying,
         isNarrating: () => storyNarratingRef.current,
@@ -334,7 +336,7 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
 
       // 提醒管理面板：清单 + 「下一条输入」（数字=删 / d=顺延）共用同一个实例；
       // 聊天框与语音最终都走 sendText，所以拦截只接一处（逻辑在 client/reminder-manage.ts）。
-      const reminderManager = createReminderManager({ bubble: (text, ms) => showBubble(text, ms) })
+      const reminderManager = createReminderManager({ bubble: showBubble })
       // 「让它游走」可逆：隐藏时右下角留「○」恢复点，Ctrl+Shift+W 也走同一条恢复路径（不刷新页面）
       const recover = createRecover({ recover: () => setHidden(false) })
       // 全局快捷键：捕获阶段登记，避免被宿主页面的 keydown 先吃掉
@@ -586,16 +588,16 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
 
       // 菜单动作：动作表 + 处理器注册（client/actions/*.ts），客户端只留组装与分发
       const actionHost: ActionHost = {
-        bubble: (text, ms) => showBubble(text, ms),
-        say: (text, ms, opts) => sayLine(text, ms, opts),
-        speak: (text, opts) => speakText(text, opts),
+        bubble: showBubble,
+        say: sayLine,
+        speak: speakText,
         speakReply: (text) => speakReply(text),
         narrate: setNarrating,
         clearNarrate: clearNarrating,
         stopSpeak: () => stopTts(),
         stopMelody: () => melody.stop(),
         playMelody: (notes, bpm, onDone) => melody.play(notes, bpm, onDone),
-        talkFor: (ms) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
+        talkFor,
         heart: () => { try { animRef.current?.pushHeart() } catch (e) { } },
         persona,
         clientId: CLIENT_ID,
@@ -689,12 +691,12 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
       const localRouter = createLocalRouter({
         persona,
         narrationRate: narrationRate,
-        bubble: (text, ms) => showBubble(text, ms),
-        say: (text, ms, opts) => sayLine(text, ms, opts),
-        speak: (text, opts) => speakText(text, opts),
+        bubble: showBubble,
+        say: sayLine,
+        speak: speakText,
         narrate: setNarrating,
         clearNarrate: clearNarrating,
-        talkFor: (ms) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
+        talkFor,
         story,
         storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
       })
@@ -707,12 +709,12 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
       // ===== 聊天/流式：发送器在 client/chat.ts，这里只做组装与转发 =====
       const chat = createChatSender({
         persona,
-        bubble: (text, ms) => showBubble(text, ms),
-        say: (text, ms, voiceOpts) => sayLine(text, ms, voiceOpts),
-        speak: (text, opts) => speakText(text, opts),
+        bubble: showBubble,
+        say: sayLine,
+        speak: speakText,
         speakReply: (text) => speakReply(text),
         stopSpeak: () => stopTts(),
-        talkFor: (ms) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
+        talkFor,
         heart: () => { try { animRef.current?.pushHeart() } catch (e) { } },
         setInput: (v) => setInput(v),
         setMessages: (v) => setMessages(v),

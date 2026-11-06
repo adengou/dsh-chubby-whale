@@ -8,10 +8,11 @@
  * 业务在 host/ 下按职责拆分：routes/*（HTTP）、repos/*（持久化）、story/*（说书）、
  * chat-core.ts（聊天纯函数）、prefs.ts（偏好）、atomic/body/respond/http（小工具）。
  */
+import { migrateRuntimeData } from './host/migrate.js';
 import { buildSystemPrompt, SYSTEM_PROMPT } from './host/persona.js';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { mkdirSync, existsSync, copyFileSync, cpSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readApiKey, readSiliconFlowKey, readDataSource, readPersonalityLearning, readPersonalityWriting, readChatModel, sanitizePluginConfig, } from './host/config.js';
 import { createStore, growthStage } from './host/store.js';
@@ -50,37 +51,6 @@ const DATA_DIR = join(PLUGIN_DIR, 'data');
  */
 const RUNTIME_DIR = join(homedir(), '.dsh-chubby-whale');
 /** 老的运行数据写在包内 data/ 里，首次启动搬到 RUNTIME_DIR（不删原件，保守迁移） */
-function migrateRuntimeData() {
-    const files = [
-        'memory.json', 'state.json', 'growth.json', 'fishfood.json', 'reminders.json',
-        'story_progress.json', 'culture-seen.json', 'poem-seen.json', 'pet_state.json',
-    ];
-    try {
-        mkdirSync(RUNTIME_DIR, { recursive: true });
-    }
-    catch { }
-    for (const f of files) {
-        const src = join(DATA_DIR, f);
-        const dst = join(RUNTIME_DIR, f);
-        try {
-            if (existsSync(src) && !existsSync(dst)) {
-                copyFileSync(src, dst);
-                console.log('[chubby-whale] 迁移运行数据 ' + f + ' → ' + RUNTIME_DIR);
-            }
-        }
-        catch { }
-    }
-    // 缓存目录整目录搬迁（只在目标不存在时）
-    try {
-        const src = join(DATA_DIR, 'cache');
-        const dst = join(RUNTIME_DIR, 'cache');
-        if (existsSync(src) && !existsSync(dst)) {
-            cpSync(src, dst, { recursive: true });
-            console.log('[chubby-whale] 迁移缓存 → ' + dst);
-        }
-    }
-    catch { }
-}
 export const name = 'dsh-chubby-whale';
 export const inject = ['webServer'];
 /** 插件版本（导出包的 version 字段）；读不到 package.json 时给 0.0.0，不编版本号 */
@@ -133,7 +103,7 @@ export function apply(ctx, rawConfig) {
         console.log('[chubby-whale] disabled by config');
         return;
     }
-    migrateRuntimeData();
+    migrateRuntimeData(DATA_DIR, RUNTIME_DIR);
     // 聊天模型：装配时算一次（cordis config.model → config.json → 环境变量 → 默认）
     const chatModel = readChatModel(PLUGIN_DIR, config);
     console.log('[chubby-whale] chat model=' + chatModel);

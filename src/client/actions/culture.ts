@@ -11,16 +11,7 @@ import { getJson } from '../http.js'
 import { estimateMelodySeconds } from '../melody.js'
 import { collapsePoemBody, collapseText, taleParts, estimateSpeakMs } from '../text.js'
 import { startProgress, stopProgress } from '../narration-progress.js'
-import { setNarrationRate, setChatRate } from '../rates.js'
-
-/** 念诗语速：菜单里选过就用选的（-15%/-20%/-25%/-30%），否则沿用叙述语速 -25% */
-function poemRate(fallback: string): string {
-  try {
-    const v = localStorage.getItem('chubby-poem-rate')
-    if (v && /^-\d{1,2}%$/.test(v)) return v
-  } catch (e) { }
-  return fallback
-}
+import { setNarrationRate, setChatRate, poemRate } from '../rates.js'
 
 /** 念诗需要的最小能力集（菜单动作与点播路由共用） */
 export type ReciteHost = Pick<ActionHost, 'bubble' | 'talkFor' | 'narrate' | 'clearNarrate' | 'say' | 'speak' | 'persona' | 'narrationRate'>

@@ -20,6 +20,34 @@ deepFreeze(CHAT_RATES)
 
 export const DEFAULT_CHAT_RATE = '-20%'
 
+/** 说书语速默认值（主人反馈 -30% 仍略快 → -35%；菜单与播放器共用一份） */
+export const DEFAULT_STORY_RATE = '-35%'
+
+/** 念诗语速默认值（与叙述语速一致；菜单与念诗共用一份） */
+export const DEFAULT_POEM_RATE = '-25%'
+
+/**
+ * 读「-xx%」形态的语速偏好（说书 / 念诗共用这一份读取口径）：
+ * 读不到、浏览器禁存储、格式不对 → 回默认值。
+ */
+function readPercentRate(key: string, fallback: string): string {
+  try {
+    const s = localStorage.getItem(key)
+    if (s && /^-\d{1,2}%$/.test(s)) return s
+  } catch (e) { }
+  return fallback
+}
+
+/** 读当前说书语速（非法值回落默认 -35%） */
+export function storyRate(): string {
+  return readPercentRate('chubby-story-rate', DEFAULT_STORY_RATE)
+}
+
+/** 读当前念诗语速（非法值回落 fallback，缺省 -25%） */
+export function poemRate(fallback: string = DEFAULT_POEM_RATE): string {
+  return readPercentRate('chubby-poem-rate', fallback)
+}
+
 /** 读当前聊天语速（非法值回落默认 -20%）；用时现读，菜单改完立即生效 */
 export function chatRate(): string {
   try {

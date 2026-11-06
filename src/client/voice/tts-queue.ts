@@ -19,12 +19,6 @@ export const ECHO_MUTE_MS = 700
 export const TTS_RETRY_MAX = 3
 /** 重试退避基数：第 n 次重试等 n * 300ms（300/600/900） */
 export const TTS_RETRY_BASE_MS = 300
-/**
- * 历史常量：一段朗读最多 90 字。
- * 注意：当前切分实际用的是 splitForTts(raw, 56)（见 voice.ts 的 speak 调用点与单测），
- * 这个 90 从未参与切分。保留只为说明历史口径，别拿它当实际上限。
- */
-export const TTS_SEG_MAX = 90
 
 export type TtsJob = {
   seq: number

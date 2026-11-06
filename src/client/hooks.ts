@@ -36,11 +36,6 @@ export function readLocalFlag(key: string, fallback = true): boolean {
   } catch (e) { return fallback }
 }
 
-/** 写 localStorage 布尔开关（on / off），失败静默 */
-export function writeLocalFlag(key: string, on: boolean): void {
-  try { localStorage.setItem(key, on ? 'on' : 'off') } catch (e) { }
-}
-
 export function createHooks(R: any) {
   /** 惰性单例 ref：首次渲染调用 factory，之后始终返回同一个对象 */
   function useLazyRef<T>(factory: () => T): LazyRef<T> {

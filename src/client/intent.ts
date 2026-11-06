@@ -44,6 +44,9 @@ deepFreeze(BOOK_ALIAS)
 /** 诗名索引（按长度降序，保证「雨霖铃」优先于「雨」这类短名） */
 const POEM_TITLES: string[] = ((poemTitleData as any).titles || []).slice().sort((a: string, b: string) => b.length - a.length)
 
+/** 判断"整句就是诗名/书名"时去掉空白与标点（两处共用一份字符集） */
+const BARE_STRIP = /[\s。，！？、,.!?…~～]/g
+
 /** 从一句话里认出诗名（认不出返回空串） */
 export function matchPoemTitle(text: string): string {
   const t = String(text || '')
@@ -70,7 +73,7 @@ export function detectIntent(rawText: string): Intent {
   //    会把「梅花开了」「落花人独立」这类普通陈述抢去念诗。必须有"点播动词"或整句就是诗名才算。
   const byTitle = matchPoemTitle(t)
   if (byTitle) {
-    const bare = t.replace(/[\s。，！？、,.!?…~～]/g, '')
+    const bare = t.replace(BARE_STRIP, '')
     const asks = bare === byTitle || /背|念|吟|朗读|朗诵|来(一)?首|听(一)?首|讲(一)?首|放(一)?首/.test(t)
     if (asks) return { kind: 'poem', title: byTitle }
   }
@@ -90,7 +93,7 @@ export function detectIntent(rawText: string): Intent {
   let book = ''
   for (const [re, name] of BOOK_ALIAS) { if (re.test(t)) { book = name; break } }
   if (book) {
-    const bare = t.replace(/[\s。，！？、,.!?…~～]/g, '')
+    const bare = t.replace(BARE_STRIP, '')
     const asksBook = /讲|说书|听|来(一)?段|来(一)?回/.test(t) || bare.length <= book.length + 1
     if (asksBook) return { kind: 'story', book }
   }

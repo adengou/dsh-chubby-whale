@@ -10,18 +10,7 @@
 import { getJson, postJson, clientHeaders } from './http.js'
 import { estimateSpeakMs } from './text.js'
 import { normalizeRate } from '../shared/tts.js'
-
-/** 讲故事默认语速（主人反馈 -30% 仍略快 → -35%）；念诗走叙述语速 -25% */
-const STORY_RATE = '-35%'
-
-/** 读当前说书语速：菜单里选过就用选的，否则用默认；非法值一律回默认 */
-function storyRate(): string {
-  try {
-    const s = localStorage.getItem('chubby-story-rate')
-    if (s && /^-\d{1,2}%$/.test(s)) return s
-  } catch (e) { }
-  return STORY_RATE
-}
+import { storyRate } from './rates.js'
 import type { Persona } from './persona.js'
 
 export type StoryRefs = {

@@ -9,7 +9,7 @@
  * 三者都只依赖传入参数与 localStorage，不持有 React 状态、不产生副作用；
  * 调用点仍在原处（每次渲染调用一次），所以外提不改变 hooks 顺序与闭包语义。
  */
-import { narrationRate, chatRate } from './rates.js'
+import { storyRate, poemRate } from './rates.js'
 import { VERSION } from './version.js'
 import { chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle } from './styles.js'
 
@@ -70,8 +70,8 @@ export function readMenuRuntime(): MenuRuntime {
   return {
     storyAuto: (() => { try { return localStorage.getItem('chubby-story-auto') !== '0' } catch (e) { return true } })(),
     streamOn: (() => { try { return localStorage.getItem('chubby-stream') !== 'off' } catch (e) { return true } })(),
-    storyRate: (() => { try { const s = localStorage.getItem('chubby-story-rate') || '-35%'; return /^-\d{1,2}%$/.test(s) ? s : '-35%' } catch (e) { return '-35%' } })(),
-    poemRate: (() => { try { const s = localStorage.getItem('chubby-poem-rate') || '-25%'; return /^-\d{1,2}%$/.test(s) ? s : '-25%' } catch (e) { return '-25%' } })(),
+    storyRate: storyRate(),
+    poemRate: poemRate(),
     ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(),
     chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(),
   }
