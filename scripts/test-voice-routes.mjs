@@ -209,6 +209,19 @@ try {
       res.code === 200 && calls.length === 1 && calls[0].voice === 'en-US-AnaNeural',
       'voice=' + (calls[0] && calls[0].voice))
 
+    // 云端路径不接收 voice（用配置里的 speaker）：成功出云端时不该报 x-tts-voice: fallback
+    {
+      const cloudCalls = []
+      const cloudStub = { enabled: () => true, synthesize: async (t) => { cloudCalls.push(t); return Buffer.from('CLOUD:' + t) } }
+      const h2 = TTS.createTtsHandler({ cache: createMemCache(), engine, cloudTts: cloudStub })
+      const r2 = mkRes()
+      await h2(mkReq({ text: 'hello cloud', voice: 'ja-JP-NanamiNeural' }), r2)
+      ok('云端成功时引擎不被调用（音频来自云端）', r2.code === 200 && cloudCalls.length === 1 && calls.length === 1,
+        'code=' + r2.code + ' cloud=' + cloudCalls.length)
+      ok('云端成功时不谎报 x-tts-voice: fallback', r2.headers['x-tts-voice'] === undefined,
+        'header=' + String(r2.headers['x-tts-voice']))
+    }
+
     // B93 收口：白名单已提到 shared/voices.ts 并在服务端校验，「HTTP 直调可绕过白名单」的缺口关闭。
     // 语义仍是「不 400、回落默认」，并带 x-tts-voice: fallback 供排障（细则见 scripts/test-voices-shared.mjs）。
     res = mkRes(); calls.length = 0

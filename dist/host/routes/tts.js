@@ -119,6 +119,10 @@ export function createTtsHandler(opts) {
             if (cloud && cloud.enabled()) {
                 try {
                     buf = await cloud.synthesize(msg);
+                    // 云端不接收 voice（用配置里的 speaker），所以「音色被替换」在云端路径上不成立：
+                    // 成功出云端时把 fallback 头摘掉，别让排障的人以为客户端音色真的生效了（2026-11-07 B93）。
+                    if (voiceFallback)
+                        delete audioHeaders['x-tts-voice'];
                 }
                 catch (ce) {
                     console.warn('[tts] CLOUD-FAIL 回退 edge-tts：' + String(ce?.message || ce).slice(0, 200));
