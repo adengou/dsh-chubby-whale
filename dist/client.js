@@ -213,12 +213,17 @@
      */
     steadyMaxAboveFloorDb: 20,
     maxSegmentMs: 6e3,
+    /**
+     * 平稳性判别窗口（帧）。10 帧 × 60ms = 600ms。
+     * 注意：起判前至少采 8 帧再算起伏（见 step 里的 minFrames，窗口配得更小时按窗口本身算）；
+     * 这里原来写「25 帧 = 1.5s」是旧稿注释，与取值不符，2026-11-07 按实际取值改正。
+     */
     steadyWindowFrames: 10,
-    // 25 帧 × 60ms = 1.5s
     steadySpreadDb: 3,
     steadyMs: 400
   };
   deepFreeze(APE_DEFAULTS);
+  var SENTINEL_DB = -160;
   var Ape = class {
     p;
     floorDb = null;
@@ -254,20 +259,29 @@
     floor() {
       return this.floorDb === null ? -70 : this.floorDb;
     }
-    step(db) {
+    step(rawDb) {
       const p = this.p;
-      if (this.floorDb === null) this.floorDb = db;
-      if (db > this.peakDb) this.peakDb = db;
-      else this.peakDb = Math.max(-160, this.peakDb - p.peakDecayDb);
-      const range = this.peakDb - this.floorDb;
+      const valid = Number.isFinite(rawDb) && rawDb > SENTINEL_DB;
+      const db = valid ? rawDb : this.floor();
+      if (valid) {
+        if (this.floorDb === null) this.floorDb = db;
+        if (db > this.peakDb) this.peakDb = db;
+        else this.peakDb = Math.max(-160, this.peakDb - p.peakDecayDb);
+      }
+      const floorNow = this.floor();
+      const range = this.peakDb - floorNow;
       const margin = Math.max(p.marginMinDb, Math.min(p.marginMaxDb, range * p.marginRatio));
-      const onsetTh = this.floorDb + margin;
-      const offsetTh = this.floorDb + p.offsetMarginDb;
+      const onsetTh = floorNow + margin;
+      const offsetTh = floorNow + p.offsetMarginDb;
       this.elapsedMs += p.frameMs;
-      if (db > onsetTh) {
+      if (!valid) {
+        this.quietMs += p.frameMs;
+        this.bandMs = 0;
+      } else if (db > onsetTh) {
         this.steadyHist.push(db);
         while (this.steadyHist.length > p.steadyWindowFrames) this.steadyHist.shift();
-        const spread = this.steadyHist.length >= 8 ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist) : 99;
+        const minFrames = Math.max(2, Math.min(8, p.steadyWindowFrames));
+        const spread = this.steadyHist.length >= minFrames ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist) : 99;
         const nearFloor = db - this.floorDb <= p.steadyMaxAboveFloorDb;
         const steadyNow = spread < p.steadySpreadDb && nearFloor;
         if (steadyNow) {
@@ -329,7 +343,7 @@
       }
       return {
         db,
-        floorDb: this.floorDb,
+        floorDb: this.floor(),
         onsetTh,
         offsetTh,
         speechMs: this.speechMs,
@@ -6190,7 +6204,7 @@
         if (!el) return;
         const te = opts.textEl();
         const txt = te ? String(te.textContent || "") : "";
-        if (STATUS_TEXTS.indexOf(txt) >= 0) {
+        if (STATUS_TEXTS.indexOf(txt.trim()) >= 0) {
           clearTimer(el);
           el.classList.remove("show");
         }
@@ -6979,13 +6993,16 @@
     }
     function route(rawText) {
       const t0 = String(rawText || "").trim();
-      if (/^(再来|再念|换)(一)?(首|个)/.test(t0)) {
+      const cmd = t0.replace(/[。．.!！~～…]+$/, "");
+      const again = /^(再来|再念|换)(一)?(首|个)([\s\S]*)$/.exec(cmd);
+      const againTail = again ? again[4] : "";
+      if (again && (againTail === "" || /^[吧啊呀哦嘛哈啦呗吖诗]+/.test(againTail))) {
         takeOver();
         host.bubble("（点播）好，再念一首", 3e3);
         fetchPoem("", (p) => recitePoem(host, p));
         return true;
       }
-      if (/^(继续|接着说|接着讲|往下讲)$/.test(t0)) {
+      if (/^(继续|接着说|接着讲|往下讲)$/.test(cmd)) {
         takeOver();
         host.bubble("（点播）接着说", 3e3);
         try {
@@ -6996,7 +7013,7 @@
         host.story.start(host.storyState.book.current || "");
         return true;
       }
-      if (/^(报|说|列)(一下|下)?(书名|书单)$/.test(t0)) {
+      if (/^(报|说|列)(一下|下)?(书名|书单)$/.test(cmd)) {
         takeOver();
         host.bubble("（点播）本鲸数数书单…", 3e3);
         getJson("/story/books", { cache: "no-store" }).then((d) => {
@@ -7023,7 +7040,8 @@
           host.bubble("正在讲呢，稍等～", 2e3);
           return true;
         }
-        host.bubble(type === "chengyu" ? "（点播）讲个成语" : "（点播）讲个典故", 3e3);
+        const saidIdiom = /成语/.test(t0);
+        host.bubble(saidIdiom ? "（点播）讲个成语" : "（点播）讲个典故", 3e3);
         getJson("/culture?type=" + type).then((d) => {
           const it = d && d.ok && d.item ? d.item : null;
           if (!it) {
@@ -7031,8 +7049,8 @@
             return;
           }
           const body = collapseText(String(it.text || ""));
-          host.bubble((type === "chengyu" ? "成语·" : "典故·") + String(it.title || ""), 15e3);
-          host.speak((type === "chengyu" ? "讲个成语——" : "讲个典故——") + String(it.title || "") + (it.src ? "，出自" + String(it.src) : "") + "。" + body, { rate: host.narrationRate() });
+          host.bubble((saidIdiom ? "成语·" : "典故·") + String(it.title || ""), 15e3);
+          host.speak((saidIdiom ? "讲个成语——" : "讲个典故——") + String(it.title || "") + (it.src ? "，出自" + String(it.src) : "") + "。" + body, { rate: host.narrationRate() });
         }).catch(() => host.bubble("这个没读到", 4e3));
         return true;
       }
@@ -7835,8 +7853,9 @@
   }
   function createHooks(R) {
     function useLazyRef(factory) {
-      const ref = R.useRef(null);
-      if (!ref.current) ref.current = factory();
+      const UNSET = {};
+      const ref = R.useRef(UNSET);
+      if (ref.current === UNSET) ref.current = factory();
       return ref;
     }
     function usePersistentBool(key, fallback = true) {

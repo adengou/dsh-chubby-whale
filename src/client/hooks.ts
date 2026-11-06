@@ -39,13 +39,16 @@ export function readLocalFlag(key: string, fallback = true): boolean {
 export function createHooks(R: any) {
   /**
    * 惰性单例 ref：首次渲染调用 factory，之后始终返回同一个对象。
+   * 用独有哨兵而不是 `!ref.current` 判"还没建"：工厂返回 0 / '' / false / null 这类
+   * 假值也是合法结果，用真假值判断会每次渲染都重建（契约是"只建一次"）。
    * 注意：React StrictMode 的开发期双渲染会重建 hook 槽，factory 可能被调用两次
    * （第一次实例被丢弃）。三处调用点都是纯构造、不申请监听器/定时器，可安全丢弃；
    * 若将来工厂里申请了资源，需把创建挪进 effect 或自带幂等保护。
    */
   function useLazyRef<T>(factory: () => T): LazyRef<T> {
-    const ref = R.useRef(null as any)
-    if (!ref.current) ref.current = factory()
+    const UNSET = {}
+    const ref = R.useRef(UNSET)
+    if (ref.current === UNSET) ref.current = factory()
     return ref as LazyRef<T>
   }
 
