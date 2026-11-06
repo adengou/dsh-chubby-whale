@@ -4,6 +4,35 @@
 
 ## [未发布]
 
+## [1.1.61] - 2026-11-07
+
+### 修复（B89 宿主 HTTP 层分身）
+- **413 永远送不到客户端**：`readBody` 发现超限先 `abortRequest()`→`destroy()` 再抛错，连接被主动断掉，`sendTooLarge` 写的 413 根本没机会发出（真实 socket 探针：声明超限与 chunked 超限**全部** `ECONNRESET`、0 个 413）。现在区分两种语义：声明超限=不读流不断连，流式超限=1MB 预算内 drain 后再判
+- **UTF-8 BOM 让合法 JSON 变成空请求**：`readJsonBody` 未剥 BOM，`JSON.parse` 必抛 → `body={}`；带 BOM 的备份包原本被判 400 `BAD_BODY`
+- **二次写响应抛 `ERR_HTTP_HEADERS_SENT`**：宿主 webserver 在 `headersSent` 后只 `destroy()` → 客户端丢掉已写好的响应；四个 writer 统一加短路
+
+### 修复（B89 客户端网络层分身）
+- **非对象 SSE 帧进 events**：`data: null` 会让 `chat.ts` 读 `obj.error` 抛 TypeError → 白回退一轮 `/chat`（白烧一次模型）；现在只收对象帧，其余计 `invalid`
+- **恢复快捷键抢别的键**：`keyCode=87` 兜底不看 `key`，`Ctrl+Shift+Z` 会被当成恢复快捷键
+
+### 修复（B89 纯函数工具层分身）
+- **切句器卡死**：增量以句末标点开头时（`。你好。世界。`）既不吐也不前进，后面整段攒到 `maxLen` 才出
+- **书名劫持普通陈述**：「我在看三国」「三国好看」被判成说书点播
+- **否定句反着做**：「不要讲故事」→ 真的讲起来了；「讲个故事吗。」不认提问
+- **脏 fallback 透传 TTS**：`poemRate('胡说')` 原样进 TTS rate
+- **`lock(0)` 闭麦一分钟**：空文本估算 0 被 `|| 60000` 兜成 60s；且 `expire()` 与 `active()` 差 1ms 界线（`t===until` 时不释放）
+- **对仗分类静默错档**：`pickCouplet(null, ' 春联')` 会落「书院」
+
+### 修复（主代理）
+- **`/chat` 超时被报成普通失败**：只认 `AbortError`/20/2，`AbortSignal.timeout()` 的 `TimeoutError`（code 23）漏判（`story.ts` 早已补）
+- **endpoint 切换重复写盘**：先自己写一次再让实例 setter 写一次，setter 抛错时落盘值与实例值分叉；改为有实例时只走 setter
+- **多文件拖入静默丢弃**：只取第一张，其余文件没有任何提示；现在先提示「一次一张（共 N 个）」再处理第一张
+- 文档：坑 49（读体超限的两种语义、新路由必须用 `sendTooLarge` 收尾）；`story.ts` 的超限注释改为新语义
+
+### 测试
+- 新增 `test-host-http.mjs`(32)、`test-net-client.mjs`(122+4 变异体)、`test-utils-pure.mjs`(153)、`test-multidrop.mjs`(10)，均接入 `npm test`
+- 全链 **3258 项 0 失败**（`node tools/test-count.mjs`：45 个套件，失败 0，未识别 0）
+
 ## [1.1.60] - 2026-11-07
 
 ### 修复（B87 数据端口收口：路由不再直读 data/）
