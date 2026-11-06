@@ -14,8 +14,16 @@
  *     否则旧实例的 onDone 会把新实例的占线清掉。
  *   · 停止检测：请求回来时 busy 已被「歇会儿/停止说话」清掉（client.ts 的 stopTts 会清 storyBusyRef），
  *     据此丢弃这段结果，不再念、不再接。
+ *   · 请求在途也算「在讲」（2026-11-07）：narrating 从发请求那一刻就立起来。P0 打断只认
+ *     `narrating || ttsPlaying`（client/chat.ts），请求在途期间标记为假的话，主人这时提问打不断
+ *     这一轮，响应回来会把说书接在回答后面（违反并发纪律规则 4）。
  *   · 自动连播不落定时器：一段念完用微任务接下一段。用 setTimeout(800) 时，主人在这 0.8 秒里
  *     点「歇会儿」，定时器照样会把下一段接上（stopTts 清 busy 拦不住它）。
+ *   · isLast 语义（服务端 2026-11-07 收紧后）：只在「整本书讲完」为真 → 关连播 + 报完。
+ *     关连播要同步写 localStorage：菜单「连播」读的是这个键（client/render.ts readMenuRuntime、
+ *     actions/culture.ts story-auto），只改 ref 会让菜单继续显示「开」，下次「接着说」只讲一段就停。
+ *   · 超时识别：client/http.ts 的 timeoutSignal 用的是 AbortSignal.timeout()，它的拒绝名是
+ *     TimeoutError（code 23）而不是 AbortError；只认 AbortError 会把「等超时」误报成「连不上」。
  */
 
 import { getJson, postJson, clientHeaders, timeoutSignal } from './http.js'
@@ -92,7 +100,12 @@ function sharedStateOf(refs: StoryRefs): SharedState {
 
 /** fetch 被 abort 时不同运行时的错误形状不一样，统一认一下 */
 function isAbortError(err: any): boolean {
-  return !!err && (err.name === 'AbortError' || err.code === 20 || err.code === 2)
+  if (!err) return false
+  // 'AbortError'：手动 abort；'TimeoutError'（code 23）：AbortSignal.timeout() 到点。
+  // http.ts 的 timeoutSignal 走的就是后者，漏掉它会把超时误报成「连不上」。
+  // code 20 = AbortError，code 23 = TimeoutError，code 2 兼容部分实现的旧形状。
+  return err.name === 'AbortError' || err.name === 'TimeoutError'
+    || err.code === 20 || err.code === 23 || err.code === 2
 }
 
 /** 后端错误码 → 主人能看懂的话（后端这几个 error 是英文常量） */
@@ -157,7 +170,10 @@ export function createStoryController(host: StoryHost): StoryController {
     clearGuard()
     const token = bumpGen()
     refs.busy.current = true
-    refs.narrating.current = false
+    // 叙述标记从「发请求」就立起来：P0（client/chat.ts）只在 narrating || ttsPlaying 时才先停旁白。
+    // 请求在途期间标记为假的话，主人这时提问打不断这一轮，响应回来会把说书接在回答后面。
+    // 所有收尾路径（release / armDeadline / 朗读兜底 guard / playPiece 的早退）都会把它清掉。
+    refs.narrating.current = true
     return token
   }
 
@@ -262,8 +278,16 @@ export function createStoryController(host: StoryHost): StoryController {
               host.bubble('这段讲完啦～点菜单「接着说」听下一段', 6000)
             }
           } else {
+            // isLast 服务端 2026-11-07 起只在「整本书讲完」时为真 → 关连播 + 报这本书讲完。
+            // 关掉必须落盘：菜单「连播」读的是 localStorage（actions/culture.ts 写、client/render.ts 读），
+            // 只改 ref 会让菜单继续显示「开」，而下次「接着说」只讲一段就停 —— 两套状态对不上。
             refs.auto.current = false
-            host.bubble(host.persona.line('poemDone'), 6000)
+            try { localStorage.setItem('chubby-story-auto', '0') } catch (e) { }
+            // 人设台词（念完该说的话）后面补一句「为什么停了、怎么接着听」：
+            // 人设库没有 storyDone 这个 key，poemDone 是唯一现成的收尾语气，借它的调子不借它的用途。
+            host.bubble(host.persona.line('poemDone') + '（《'
+              + String((d && d.book) || refs.book.current || '这本')
+              + '》讲完啦，连播已关；想接着听点「接着说」）', 8000)
           }
         },
       })
