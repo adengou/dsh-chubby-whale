@@ -9,10 +9,14 @@
  *   · 甩尾/水花：按档位调节间隔（14s / 9s / 5.5s），短促摆尾 + 尾巴尖水花。
  */
 import { lookFor, type Look } from './look.js'
+import { deepFreeze } from '../shared/immutable.js'
 
 export const EYE_L = { x: 679, y: 430, r: 68 }
+deepFreeze(EYE_L)
 export const EYE_R = { x: 860, y: 435, r: 68 }
+deepFreeze(EYE_R)
 export const MOUTH = { x: 779, y: 525, rw: 26, rh: 18 }
+deepFreeze(MOUTH)
 
 export interface AnimState {
   talkUntil: number
@@ -40,6 +44,13 @@ const HALO = { x: 240, y: 228, r0: 30, r1: 252 }
 /** 光点呼吸周期（毫秒） */
 const DOT_BREATH_MS = 620
 const TAU = Math.PI * 2
+/**
+ * 每多少帧做一次「便宜维护」（可见性 / DPR / 画布尺寸）。
+ * 读取布局（getBoundingClientRect）会触发布局查询，不能每帧做；约 0.5 秒一次足够跟手。
+ */
+const MAINTAIN_EVERY = 30
+/** 爱心同时存在的上限：动画暂停 / 页面隐藏期间连点也不会把数组撑大 */
+const HEART_MAX = 8
 
 /** 按需要的光点数沿鳍缘均匀取样（2/4/6 个），返回 FIN_DOTS 下标 */
 function pickDotIndexes(count: number): number[] {
@@ -62,10 +73,26 @@ export function createAnimator(opts: {
   look?: Look
 }) {
   const { canvas, imgSrc, cw, ch, sx, sy, state } = opts
-  const ctx = canvas.getContext('2d')
+  const ctx: any = canvas && typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null
+  // 取不到 2D 上下文（元素尺寸为 0、GPU 进程回收等）时给一个空句柄：
+  // 后面每帧都要在 ctx 上调方法，绝不能让它抛异常 —— 那会把宿主整棵渲染树拖垮。
+  if (!ctx) {
+    let fallbackLook: Look = opts.look || lookFor(0)
+    return {
+      start(): void { },
+      stop(): void { },
+      talkFor(_ms?: number): void { },
+      pushHeart(): void { },
+      // 取不到上下文时动画无法重建，但外观数据仍要跟上成长（否则 getLook 永远停在初识档）
+      setLook(next?: Look): void { fallbackLook = next || lookFor(0) },
+      getLook(): Look { return fallbackLook },
+    }
+  }
   const img = new Image()
   img.src = imgSrc
   let raf = 0
+  /** 循环是否在跑：start 必须幂等，否则重复 start 会叠加两条 RAF 链，stop 只取消得掉最后一条 */
+  let running = false
   let last = performance.now()
   let blinkT = 0
   let blinkClosed = false
@@ -80,6 +107,86 @@ export function createAnimator(opts: {
   let splashes: { x: number; y: number; vx: number; vy: number; age: number; life: number; r: number }[] = []
   const haloGrads: any[] = []
 
+  // ===== 画布尺寸：按「显示尺寸 × devicePixelRatio」设 backing store =====
+  // 旧实现把 backing 写死成 CW×CH（恰好是 CSS 尺寸的 2 倍）：DPR=2 时清晰，
+  // 但 DPR=3（手机）、菜单把鱼放大 1.4 倍、外接屏切换 DPR 时都会被拉伸变糊。
+  // 逻辑绘制坐标始终是 cw×ch，靠 setTransform 映射到物理像素，绘制代码不用改。
+  let visible = true
+  let maintCountdown = MAINTAIN_EVERY
+  let usedDpr = 0
+
+  function dprNow(): number {
+    try {
+      const d = typeof window !== 'undefined' ? Number((window as any).devicePixelRatio) : 1
+      return isFinite(d) && d > 0 ? d : 1
+    } catch (e) { return 1 }
+  }
+
+  function syncCanvasSize(): void {
+    try {
+      let cssW = 0
+      let cssH = 0
+      if (typeof canvas.getBoundingClientRect === 'function') {
+        const r = canvas.getBoundingClientRect()
+        cssW = Number(r && r.width) || 0
+        cssH = Number(r && r.height) || 0
+      }
+      // display:none / 尚未布局时拿不到尺寸：按设计基准（CW/2、CH/2）兜底，绝不清成 0
+      if (!(cssW > 0)) cssW = cw / 2
+      if (!(cssH > 0)) cssH = ch / 2
+      const dpr = dprNow()
+      // 上限 2 倍逻辑坐标（960×852）：DPR3 + 菜单放大 1.4 时再往上堆像素没有视觉收益，
+      // 只会让每帧全画布重绘的负担翻倍。
+      const pxW = Math.max(1, Math.min(cw * 2, Math.round(cssW * dpr)))
+      const pxH = Math.max(1, Math.min(ch * 2, Math.round(cssH * dpr)))
+      // 给 canvas.width/height 赋值（即使同值）也会清空画布，所以只在真正变化时写
+      if (canvas.width !== pxW) canvas.width = pxW
+      if (canvas.height !== pxH) canvas.height = pxH
+      if (typeof ctx.setTransform === 'function') ctx.setTransform(pxW / cw, 0, 0, pxH / ch, 0, 0)
+      if (dpr !== usedDpr) {
+        usedDpr = dpr
+        // 分辨率变了：清掉按档位缓存的渐变，下帧按新上下文重建
+        haloGrads.length = 0
+      }
+    } catch (e) { }
+  }
+
+  /** 元素是否还看得见（卸载后 isConnected=false；「让它游走」时 display:none 于祖先） */
+  function checkVisible(): boolean {
+    try {
+      if (typeof document !== 'undefined' && (document as any).hidden) return false
+      if (canvas.isConnected === false) return false
+      if (typeof canvas.getClientRects === 'function') return canvas.getClientRects().length > 0
+    } catch (e) { }
+    return true
+  }
+
+  function maintain(): void {
+    maintCountdown = MAINTAIN_EVERY
+    visible = checkVisible()
+    if (visible) syncCanvasSize()
+  }
+
+  let watchingResize = false
+  function onWindowResize(): void {
+    try { visible = checkVisible() } catch (e) { }
+    if (visible) syncCanvasSize()
+  }
+  function watchResize(): void {
+    if (watchingResize) return
+    watchingResize = true
+    try {
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('resize', onWindowResize)
+    } catch (e) { }
+  }
+  function unwatchResize(): void {
+    if (!watchingResize) return
+    watchingResize = false
+    try {
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') window.removeEventListener('resize', onWindowResize)
+    } catch (e) { }
+  }
+
   /** 下一次甩尾的间隔：档位基准 ±20% 抖动 */
   function wagGap(): number {
     return Math.max(2500, look.tailEveryMs * (1 - WAG_JITTER + Math.random() * WAG_JITTER * 2))
@@ -87,9 +194,12 @@ export function createAnimator(opts: {
 
   /** 应用外观参数：体型走 canvas 元素 transform，光点数量即时生效 */
   function applyLook(next: Look): void {
+    const prev = look
     look = next || lookFor(0)
-    dotIdx = pickDotIndexes(look.dots)
-    nextWagAt = performance.now() + wagGap()
+    // 只有参数真的变了才动作：菜单打开会周期性重拉 /growth，旧实现每次都把甩尾计时重置，
+    // 频繁开菜单时鱼就永远不甩尾了。
+    if (look.dots !== prev.dots) dotIdx = pickDotIndexes(look.dots)
+    if (look.tailEveryMs !== prev.tailEveryMs) nextWagAt = performance.now() + wagGap()
     try {
       canvas.style.transform = 'scale(' + look.scale + ')'
       canvas.style.transformOrigin = '50% 100%'
@@ -143,7 +253,9 @@ export function createAnimator(opts: {
       const alpha = Math.max(0, 1 - p)       // 寿命结束时透明度正好降到 0
       const size = Math.max(12, Math.round(ch * 0.05 * (1 + p * 0.5)))
       ctx.fillStyle = 'rgba(255,120,150,' + alpha.toFixed(3) + ')'
-      ctx.font = size + 'px serif'
+      // 字体回退链：三家都不一定给 serif 配 emoji 字形。
+      // 显式列出颜色 emoji 字体，免得 Safari 画成黑白、Linux 上画成豆腐块。
+      ctx.font = size + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",serif'
       ctx.fillText('❤', x, y)
     }
   }
@@ -234,8 +346,18 @@ export function createAnimator(opts: {
   }
 
   function loop(t: number): void {
-    const dt = Math.min(50, t - last)
+    // stop 之后即使还有一帧回调被派发到这里，也绝不再排下一帧（RAF 链必断）
+    if (!running) return
+    const dt = Math.max(0, Math.min(50, t - last))
     last = t
+
+    // 便宜维护（可见性 / DPR / 尺寸）按帧数节流：见 MAINTAIN_EVERY
+    maintCountdown -= 1
+    if (maintCountdown <= 0) maintain()
+    // 不可见（卸载 / display:none / 标签页隐藏）时只保活 RAF，不做绘制：
+    // 2MB 的鱼图每帧 drawImage 纯属白烧 GPU，恢复可见后下一拍自动续上。
+    if (!visible) { raf = requestAnimationFrame(loop); return }
+
     ctx.clearRect(0, 0, cw, ch)
 
     // 甩尾节拍：到点就起一段短摆尾，并按档位重排下一次
@@ -277,10 +399,27 @@ export function createAnimator(opts: {
     raf = requestAnimationFrame(loop)
   }
 
-  function start(): void { raf = requestAnimationFrame(loop) }
-  function stop(): void { cancelAnimationFrame(raf) }
+  function start(): void {
+    if (running) return
+    running = true
+    last = performance.now()
+    maintCountdown = MAINTAIN_EVERY
+    visible = true
+    watchResize()
+    syncCanvasSize()
+    raf = requestAnimationFrame(loop)
+  }
+  function stop(): void {
+    running = false
+    unwatchResize()
+    cancelAnimationFrame(raf)
+    raf = 0
+  }
   function talkFor(ms: number): void { state.talkUntil = performance.now() + ms }
-  function pushHeart(): void { state.hearts.push({ age: 0, dx: Math.random() - 0.5 }) }
+  function pushHeart(): void {
+    if (state.hearts.length >= HEART_MAX) state.hearts.shift()
+    state.hearts.push({ age: 0, dx: Math.random() - 0.5 })
+  }
   /** 成长变化时热更新外观（不重建动画器，不影响眨眼/说话/爱心） */
   function setLook(next: Look): void { applyLook(next) }
   /** 当前外观参数（诊断/自测用） */

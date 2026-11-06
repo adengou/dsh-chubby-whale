@@ -1,13 +1,40 @@
 /**
  * host/routes/misc.ts —— 图片/状态/余额/成长/鱼粮/宠物/清除记忆/缓存路由（可复用模块）
  * 只依赖注入的读取器（load*）与动作（feedPet/clearMemory/…），不直接摸 store/cache 实现。
+ *
+ * 约定：本插件沿用「HTTP 200 承载业务失败（ok:false）」的既有口径，只有参数/方法
+ * 本身不合法时才用 4xx（/cache 的 action 校验是唯一一处）。
  */
 import { readFile } from 'node:fs/promises';
-import { growthStage } from '../store.js';
+import { growthStage } from '../../shared/growth.js';
 import { fetchJson, isTimeoutError } from '../http.js';
 import { sendJson, sendText, sendError, sendBuffer } from '../respond.js';
 /** 余额查询超时：15 秒 */
 const BALANCE_TIMEOUT = 15 * 1000;
+/** 亲密度上限（与 state.json 同口径） */
+const INTIMACY_MAX = 100;
+/** 亲密度展示口径：非数字/负数归 0，超 100 截到 100（真源另在 repos/state.ts 清洗） */
+function cleanIntimacy(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n))
+        return 0;
+    return Math.max(0, Math.min(INTIMACY_MAX, Math.floor(n)));
+}
+/** 非负整数（经验/token 展示用）：NaN/负数/Infinity 一律归 0 */
+function nonNegInt(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+/** 取 query 参数里的 action；URL 坏掉时返回 null（由调用方按方法判定） */
+function readAction(req) {
+    try {
+        const url = new URL(String((req && req.url) || ''), 'http://x');
+        return url.searchParams.get('action');
+    }
+    catch {
+        return null;
+    }
+}
 export function createMiscHandlers(opts) {
     async function handleAsset(_req, res) {
         try {
@@ -19,8 +46,13 @@ export function createMiscHandlers(opts) {
         }
     }
     async function handleState(_req, res) {
-        const st = opts.loadState();
-        sendJson(res, { ok: true, intimacy: Number(st.intimacy) || 0 });
+        try {
+            const st = opts.loadState() || {};
+            sendJson(res, { ok: true, intimacy: cleanIntimacy(st.intimacy) });
+        }
+        catch (err) {
+            sendError(res, err, { intimacy: 0 });
+        }
     }
     async function handleBalance(_req, res) {
         try {
@@ -50,43 +82,101 @@ export function createMiscHandlers(opts) {
         }
     }
     async function handleGrowth(_req, res) {
-        const g = opts.loadGrowth();
-        const st = growthStage(Number(g.exp) || 0);
-        sendJson(res, { ok: true, exp: Number(g.exp) || 0, stage: st.name, nextExp: st.nextExp });
+        try {
+            const g = opts.loadGrowth() || {};
+            const exp = nonNegInt(g.exp);
+            const st = growthStage(exp);
+            sendJson(res, { ok: true, exp, stage: st.name, nextExp: st.nextExp });
+        }
+        catch (err) {
+            sendError(res, err, { exp: 0, stage: growthStage(0).name, nextExp: growthStage(0).nextExp });
+        }
     }
     async function handleFishfood(_req, res) {
-        const f = opts.loadFishfood();
-        sendJson(res, {
-            ok: true,
-            chatTokens: Number(f.chatTokens) || 0,
-            storyTokens: Number(f.storyTokens) || 0,
-            total: (Number(f.chatTokens) || 0) + (Number(f.storyTokens) || 0),
-        });
+        try {
+            // loadFishfood 读入时已做跨天/跨月滚动，这里拿到的今日/本月计数不会停在昨天
+            const f = opts.loadFishfood() || {};
+            const chatTokens = nonNegInt(f.chatTokens);
+            const storyTokens = nonNegInt(f.storyTokens);
+            sendJson(res, {
+                ok: true,
+                chatTokens,
+                storyTokens,
+                total: chatTokens + storyTokens,
+                dayTokens: nonNegInt(f.dayTokens),
+            });
+        }
+        catch (err) {
+            sendError(res, err, { chatTokens: 0, storyTokens: 0, total: 0, dayTokens: 0 });
+        }
     }
     async function handlePet(req, res) {
         try {
-            const url = new URL(req.url, 'http://x');
+            const url = new URL(String((req && req.url) || ''), 'http://x');
             if (url.searchParams.get('action') === 'feed' && opts.feedPet) {
-                sendJson(res, { ok: true, pet: opts.feedPet() });
+                const pet = opts.feedPet();
+                // 亲密度以 state.json 为准：喂食只负责"加"，不再让 pet_state.intimacy 自成一套
+                let intimacy = cleanIntimacy(pet && pet.intimacy);
+                if (opts.bumpIntimacy) {
+                    try {
+                        const v = Number(opts.bumpIntimacy(2));
+                        if (Number.isFinite(v))
+                            intimacy = cleanIntimacy(v);
+                    }
+                    catch (e) { }
+                }
+                else if (opts.loadIntimacy) {
+                    try {
+                        const v = Number(opts.loadIntimacy());
+                        if (Number.isFinite(v))
+                            intimacy = cleanIntimacy(v);
+                    }
+                    catch (e) { }
+                }
+                sendJson(res, { ok: true, pet: { ...(pet || {}), intimacy } });
                 return;
             }
-            sendJson(res, { ok: true, pet: opts.loadPet ? opts.loadPet() : { feeds: 0, hunger: 0, mood: 'normal' } });
+            const pet = opts.loadPet ? opts.loadPet() : { feeds: 0, hunger: 0, mood: 'normal' };
+            let intimacy = cleanIntimacy(pet && pet.intimacy);
+            if (opts.loadIntimacy) {
+                try {
+                    const v = Number(opts.loadIntimacy());
+                    if (Number.isFinite(v))
+                        intimacy = cleanIntimacy(v);
+                }
+                catch (e) { }
+            }
+            sendJson(res, { ok: true, pet: { ...(pet || {}), intimacy } });
         }
         catch (err) {
             sendError(res, err);
         }
     }
-    /** 聊天缓存：GET 看条数，DELETE 清空 */
+    /**
+     * 聊天缓存：GET 看条数，DELETE 清空；也接受 ?action=stat|clear（显式优先于方法）。
+     * action 只认这两个值，其它值回 400 BAD_ACTION——参数写错时不能悄悄当成 stat 返回 0。
+     */
     async function handleCache(req, res) {
         try {
-            if (req.method === 'DELETE') {
+            const rawAction = readAction(req);
+            const action = rawAction == null ? '' : String(rawAction).trim().toLowerCase();
+            if (action && action !== 'clear' && action !== 'stat') {
+                sendJson(res, { ok: false, error: 'BAD_ACTION' }, 400);
+                return;
+            }
+            const method = String((req && req.method) || 'GET').toUpperCase();
+            const doClear = action ? action === 'clear' : method === 'DELETE';
+            if (doClear) {
                 let n = 0;
                 try {
                     if (opts.clearChatCache)
                         n = await opts.clearChatCache();
                 }
-                catch { }
-                sendJson(res, { ok: true, cleared: n });
+                catch (err) {
+                    sendError(res, err, { cleared: 0 });
+                    return;
+                }
+                sendJson(res, { ok: true, cleared: nonNegInt(n) });
                 return;
             }
             let count = 0;
@@ -98,39 +188,51 @@ export function createMiscHandlers(opts) {
             let byType = {};
             try {
                 if (opts.cacheStats)
-                    byType = await opts.cacheStats();
+                    byType = await opts.cacheStats() || {};
             }
             catch { }
-            const total = Object.keys(byType).length ? Object.values(byType).reduce((a, b) => a + b, 0) : count;
-            sendJson(res, { ok: true, count: total, byType });
+            const total = Object.keys(byType).length ? Object.values(byType).reduce((a, b) => a + (Number(b) || 0), 0) : count;
+            sendJson(res, { ok: true, count: nonNegInt(total), byType });
         }
         catch (err) {
             sendError(res, err);
         }
     }
     async function handleClearMemory(_req, res) {
+        let memoryError = null;
         try {
             if (opts.clearMemory)
                 opts.clearMemory();
-            // 连聊天缓存一起清：否则「它把主人忘了，却还说着同一句话」
-            let cleared = 0;
-            try {
-                if (opts.clearChatCache)
-                    cleared = await opts.clearChatCache();
-            }
-            catch { }
-            try {
-                res.setHeader && res.setHeader('x-cache-cleared', String(cleared));
-            }
-            catch { }
-            sendJson(res, { ok: true, cacheCleared: typeof cleared === 'number' ? cleared : 0 });
         }
         catch (err) {
-            sendError(res, err);
+            memoryError = err;
         }
+        // 无论记忆清空成功与否，聊天缓存都要清：否则「它把主人忘了，却还说着同一句话」。
+        // 只清聊天记忆与聊天缓存；L2 可变人格 / L3 近期心境是人格资产，不属于「聊天记忆」，不在这里清。
+        let cleared = 0;
+        try {
+            if (opts.clearChatCache)
+                cleared = await opts.clearChatCache();
+        }
+        catch { }
+        cleared = nonNegInt(cleared);
+        try {
+            res.setHeader && res.setHeader('x-cache-cleared', String(cleared));
+        }
+        catch { }
+        if (memoryError) {
+            sendError(res, memoryError, { cacheCleared: cleared });
+            return;
+        }
+        sendJson(res, { ok: true, cacheCleared: cleared });
     }
     function handleStatus(_req, res) {
-        sendJson(res, { ok: true, name: 'dsh-chubby-whale', key: Boolean(opts.getKey()) });
+        try {
+            sendJson(res, { ok: true, name: 'dsh-chubby-whale', key: Boolean(opts.getKey()) });
+        }
+        catch (err) {
+            sendError(res, err, { key: false });
+        }
     }
     return { handleAsset, handleState, handleBalance, handleStatus, handleGrowth, handleFishfood, handlePet, handleClearMemory, handleCache };
 }

@@ -3,7 +3,8 @@
  *
  * 验证四件事：
  *   ① 换音色后 /tts 请求里的 voice 参数确实变了（含"菜单存的值会被建实例时读到"）
- *   ② 唤醒词 30 秒窗：命中刷新、窗内放行、超窗丢弃；bridge 里真的按它拦话
+ *   ② 唤醒词：gate 原语仍算 30 秒窗；bridge 层自 2026-11-06 起"随时可以说"，
+ *      唤醒词只剩两个用途——只喊名字时应一声、句首出现时从正文剥掉
  *   ③ endpointInfo 随实际模式变化（不是写死 classic）
  *   ④ 聊天语言随菜单选择变化（流式与普通 /chat 同源）
  * 另有 ⑤：试听（strict）失败时不回落浏览器 speechSynthesis。
@@ -147,8 +148,8 @@ console.log('\n[1] 音色接线（/tts 的 voice 参数）')
   v.stopSpeaking(); v2.stopSpeaking()
 }
 
-// ---------- ② 唤醒词 30 秒窗 ----------
-console.log('\n[2] 唤醒词 30 秒窗')
+// ---------- ② 唤醒词 gate 原语（bridge 已不据此拦话，见 [2b]） ----------
+console.log('\n[2] 唤醒词 gate 原语（窗口语义仍在；bridge 是否拦话见 [2b]）')
 {
   ok('默认窗口 30 秒', M.WAKE_WINDOW_MS === 30000 && M.createWakeGate().windowMs === 30000)
   ok('主唤醒词是「大肥鱼」', M.WAKE_WORDS[0] === '大肥鱼')
@@ -157,7 +158,7 @@ console.log('\n[2] 唤醒词 30 秒窗')
   const gate = M.createWakeGate({ windowMs: 30000 })
   const t0 = 1_000_000
   let r = gate.check('今天天气怎么样', t0)
-  ok('没被唤醒 → 不交给聊天', r.pass === false && r.hit === false)
+  ok('gate 原语：没被唤醒时 pass=false（bridge 不再据此拦话）', r.pass === false && r.hit === false)
 
   r = gate.check('大肥鱼', t0 + 1000)
   ok('喊唤醒词 → 命中并刷新窗口', r.hit === true && r.pass === true && r.text === '')
@@ -169,7 +170,7 @@ console.log('\n[2] 唤醒词 30 秒窗')
   ok('29 秒仍在窗内', r.pass === true)
 
   r = gate.check('再讲一个', t0 + 32000)
-  ok('超过 30 秒被挡下', r.pass === false)
+  ok('gate 原语：超过 30 秒 pass=false（不代表 bridge 丢话）', r.pass === false)
 
   r = gate.check('小鱼，背首诗', t0 + 40000)
   ok('唤醒词可出现在句中，并剥出正文', r.hit === true && r.text === '背首诗', '正文「' + r.text + '」')
@@ -182,11 +183,12 @@ console.log('\n[2] 唤醒词 30 秒窗')
   ok('窗口按最近一次命中刷新', g2.remainingMs(5000) === 30000 && g2.remainingMs(35000) === 0)
 }
 
-// ---------- ②b bridge 里真的按唤醒门拦话 ----------
-console.log('\n[2b] voice-bridge 集成（唤醒门 / 语音聊天开关 / 试听）')
+// ---------- ②b bridge 集成：唤醒词只是"打招呼/剥词"，不再当门槛 ----------
+console.log('\n[2b] voice-bridge 集成（随时可以说 / 语音聊天开关 / 试听）')
 {
   const sends = []
   const bubbles = []
+  const says = []
   const previews = []
   let fakeVoiceName = ''
   let capturedOpts = null
@@ -209,6 +211,7 @@ console.log('\n[2b] voice-bridge 集成（唤醒门 / 语音聊天开关 / 试�
     narrating: () => false,
     stopSpeaking() { },
     bubble: (t) => bubbles.push(t),
+    say: (t) => says.push(t),
     sendText: (t, o) => sends.push({ t, o }),
     onVoiceHeard() { },
     onSpeaking() { },
@@ -220,19 +223,20 @@ console.log('\n[2b] voice-bridge 集成（唤醒门 / 语音聊天开关 / 试�
   ok('建实例时把菜单音色带进 createVoice', capturedOpts && capturedOpts.voiceName === 'zh-CN-XiaoxiaoNeural', '实际 ' + (capturedOpts && capturedOpts.voiceName))
 
   capturedOpts.onHeard('客厅里的闲聊')
-  ok('未唤醒：闲聊不送聊天', sends.length === 0 && bubbles.some((b) => b.indexOf('先喊一声') >= 0))
+  ok('未喊唤醒词也照常送聊天（2026-11-06「随时可以说」）', sends.length === 1 && sends[0].t === '客厅里的闲聊' && bubbles.some((b) => b.indexOf('听到') >= 0), sends.length ? '「' + sends[0].t + '」' : '未发送')
 
   capturedOpts.onHeard('大肥鱼')
-  ok('只喊名字：应一声，不送聊天', sends.length === 0 && bubbles.some((b) => b.indexOf('在呢') >= 0))
+  ok('只喊名字：应一声（say），不送聊天', says.length === 1 && says[0].indexOf('在呢') >= 0 && sends.length === 1, says.join('/'))
 
   capturedOpts.onHeard('大肥鱼，讲个故事')
-  ok('唤醒 + 正文：剥离唤醒词后送聊天', sends.length === 1 && sends[0].t === '讲个故事', sends.length ? '「' + sends[0].t + '」' : '未发送')
+  ok('唤醒词在句首：剥掉后送正文', sends.length === 2 && sends[1].t === '讲个故事', sends.length > 1 ? '「' + sends[1].t + '」' : '未发送')
 
   capturedOpts.onHeard('再讲一个')
-  ok('唤醒窗内接着说：放行', sends.length === 2 && sends[1].t === '再讲一个')
+  ok('接着说：不再受唤醒窗限制，照常送聊天', sends.length === 3 && sends[2].t === '再讲一个')
 
   const wake = bridge.wakeInfo()
-  ok('唤醒诊断可读（hits/passed/dropped）', wake && wake.hits === 2 && wake.passed === 2 && wake.dropped === 1, JSON.stringify({ hits: wake.hits, passed: wake.passed, dropped: wake.dropped }))
+  ok('唤醒诊断可读（hits=2 / passed=4 / dropped=0）', wake && wake.hits === 2 && wake.passed === 4 && wake.dropped === 0, JSON.stringify({ hits: wake.hits, passed: wake.passed, dropped: wake.dropped }))
+  ok('喊过名字后诊断报 awake、窗口 30 秒', wake && wake.awake === true && wake.remainingMs > 0 && wake.windowMs === 30000, '剩余 ' + wake.remainingMs + 'ms')
 
   bridge.setVoiceName('zh-CN-YunxiNeural')
   ok('setVoiceName 同步到已建实例', fakeVoiceName === 'zh-CN-YunxiNeural')
@@ -276,7 +280,7 @@ console.log('\n[2b] voice-bridge 集成（唤醒门 / 语音聊天开关 / 试�
     makeVoice: (o) => { opts3 = o; return Object.assign({}, fakeVoice, { voiceName: () => 'x' }) },
   })
   await b3.start()
-  ok('试听/打断：未唤醒也能用（先确认门是关着的）', b3.wakeInfo().awake === false)
+  ok('打断词直通：从未命中唤醒词也能停（不前置唤醒门）', b3.wakeInfo().awake === false)
   opts3.onHeard('停')
   ok('朗读中喊「停」：直接停，不要求唤醒', stopCount === 1 && sends3.length === 0, '停 ' + stopCount + ' 次')
 }
@@ -362,6 +366,8 @@ console.log('\n[6] 接线静态断言')
     { voiceOn: true, earOn: true, voiceChatOn: true, chatCacheOn: false, chatLang: 'zh', ttsVoice: 'zh-CN-YunxiNeural' },
     { chatLang: 'en', ttsVoice: 'auto' },
     { chatLang: 'zh', ttsVoice: 'en-GB-SoniaNeural', chatCacheOn: false },
+    // 书单拉过但为空 → 菜单显示兜底项「书单没取到，稍后再试」（menu.ts 的 bookItems 分支）
+    { storyBooksTried: true },
   ]
   const labels = new Set()
   const walk = (items) => {
@@ -373,7 +379,7 @@ console.log('\n[6] 接线静态断言')
   for (const s of states) walk(M.buildMenu('0.1.1', s))
   const arr = [...labels]
   const missingEn = arr.filter((l) => /[\u4e00-\u9fa5]/.test(M.tr(l, 'en')))
-  ok('英文界面无遗漏菜单项（' + arr.length + ' 个标签 / 4 种状态）', missingEn.length === 0, missingEn.slice(0, 3).join(' / '))
+  ok('英文界面无遗漏菜单项（' + arr.length + ' 个标签 / ' + states.length + ' 种状态）', missingEn.length === 0, missingEn.slice(0, 3).join(' / '))
 
   const dead = Object.keys(M.EN_MAP).filter((k) => !arr.some((l) => l === k || l === '✓ ' + k))
   ok('EN_MAP 无死键', dead.length === 0, dead.join(','))

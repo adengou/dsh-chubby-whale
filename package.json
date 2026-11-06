@@ -1,6 +1,6 @@
 {
   "name": "dsh-chubby-whale",
-  "version": "1.0.1",
+  "version": "1.1.48",
   "description": "DSH 网页版桌面宠物「肥鲸」——蓝发鲸鱼娘，固定在 harness 页面右下角：会眨眼、能拖拽、点击可聊天，支持语音对话、念诗说书、饭点提醒。",
   "keywords": [
     "dsh",
@@ -23,7 +23,6 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "data",
     "dist",
     "cordis.patch.yml",
     "assets",
@@ -31,14 +30,27 @@
     "LICENSE",
     "CHANGELOG.md",
     "config.example.json",
-    "docs"
+    "docs",
+    "data/story",
+    "data/culture",
+    "data/poems.json",
+    "data/duilian.json",
+    "data/melodies.json",
+    "data/persona.json",
+    "data/poem-titles.json",
+    "data/daily.json"
   ],
   "engines": {
-    "node": ">=22",
+    "node": ">=22.3",
     "dsh": ">=0.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
   },
   "dsh": {
     "bundle": {
@@ -60,19 +72,25 @@
     "typescript": "^7.0.2"
   },
   "scripts": {
-    "build": "node scripts/check-bom.mjs && tsc -p tsconfig.json && esbuild src/client.ts --bundle --format=iife --external:react --outfile=dist/client.js",
+    "build": "node scripts/gen-version.mjs && node scripts/check-bom.mjs && tsc -p tsconfig.json && tsc -p tsconfig.client.json && esbuild src/client.ts --bundle --format=iife --external:react --charset=utf8 --outfile=dist/client.js",
     "prepublishOnly": "npm run build",
-    "test": "node scripts/check-imports.mjs && node scripts/check-text.mjs && node scripts/test.mjs",
-    "version:check": "node tools/version-check.mjs --deep",
-    "sync:github": "node tools/gh-sync.mjs"
+    "test": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/check-imports.mjs && node scripts/gen-module-index.mjs --check && node scripts/check-boundaries.mjs && node scripts/check-diag-keys.mjs && node scripts/check-text.mjs && node scripts/test.mjs && node scripts/test-chat-limits.mjs && node scripts/test-stream-ledger.mjs && node scripts/test-story-security.mjs && node scripts/test-behavior-regressions.mjs && node scripts/verify-voice.mjs && node scripts/smoke-client.mjs && node scripts/ape-bench.mjs && node scripts/smoke-host.mjs && node scripts/test-voice-queue.mjs && node scripts/test-tts-engine.mjs && node scripts/test-data-layer.mjs && node scripts/test-repos.mjs && node scripts/test-personality.mjs && node scripts/test-story-player.mjs && node scripts/platform-check.mjs",
+    "version:check": "node tools/version-check.mjs",
+    "typecheck": "node scripts/gen-version.mjs && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "smoke:client": "node scripts/smoke-client.mjs",
+    "bench:ape": "node scripts/ape-bench.mjs",
+    "smoke:host": "node scripts/smoke-host.mjs",
+    "bench:tts": "node tools/tts-bench.mjs",
+    "bench:voice": "node tools/voice-bench.mjs",
+    "check:installed": "node tools/check-installed.mjs"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/adengou/dsh-chubby-whale.git"
+    "url": "git+https://gitee.com/adengou/dsh-chubby-whale.git"
   },
-  "homepage": "https://github.com/adengou/dsh-chubby-whale#readme",
+  "homepage": "https://gitee.com/adengou/dsh-chubby-whale#readme",
   "bugs": {
-    "url": "https://github.com/adengou/dsh-chubby-whale/issues"
+    "url": "https://gitee.com/adengou/dsh-chubby-whale/issues"
   },
   "author": "adengou"
 }

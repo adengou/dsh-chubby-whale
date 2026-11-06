@@ -3,10 +3,10 @@
  *
  * 从 host/store.ts 拆出：这里只负责「聊天记忆」这一件事。
  * 写盘走 host/atomic.ts；读坏文件按 [store] 前缀记日志并备份 .bad-<时间戳>。
+ * 读入容错 UTF-8 BOM，写出统一 UTF-8 无 BOM（Windows / Linux / macOS 同一套行为）。
  */
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { writeJsonAtomic, isMissingFileError, quarantineFile } from '../atomic.js'
+import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } from '../atomic.js'
 
 /** 记忆里最多留多少条（40 条 = 20 轮） */
 const MEMORY_LIMIT = 40
@@ -26,7 +26,7 @@ export function createMemoryRepo(dataDir: string): MemoryRepo {
 
   function loadMemoryObj(): any {
     try {
-      const obj = JSON.parse(readFileSync(MEMORY, 'utf8'))
+      const obj = JSON.parse(readTextNoBom(MEMORY))
       if (Array.isArray(obj)) return { history: obj, summary: '' }
       if (obj && typeof obj === 'object') {
         return { history: Array.isArray(obj.history) ? obj.history : [], summary: String(obj.summary || '') }
@@ -39,7 +39,10 @@ export function createMemoryRepo(dataDir: string): MemoryRepo {
   function saveMemoryObj(obj: any): void {
     try {
       writeJsonAtomic(MEMORY, { history: (obj.history || []).slice(-MEMORY_LIMIT), summary: String(obj.summary || ''), savedAt: new Date().toISOString() })
-    } catch { }
+    } catch (err: any) {
+      // 与其它五个仓储同口径：磁盘满/占用时不能静默丢记忆，留 WRITE-FAIL 供排障（2026-11-06 仓储分身取证）
+      console.error('[store] WRITE-FAIL ' + String(MEMORY) + ' err=' + String(err?.message || err))
+    }
   }
   /**
    * 追加一轮对话（主人一句 + 肥鲸一句）。
@@ -60,7 +63,9 @@ export function createMemoryRepo(dataDir: string): MemoryRepo {
   function loadMemorySummary(): string { return loadMemoryObj().summary }
   function saveMemorySummary(s: string): void { const m = loadMemoryObj(); m.summary = String(s || ''); saveMemoryObj(m) }
   function clearMemory(): void {
-    try { writeJsonAtomic(MEMORY, { history: [], summary: '', savedAt: new Date().toISOString() }) } catch { }
+    try { writeJsonAtomic(MEMORY, { history: [], summary: '', savedAt: new Date().toISOString() }) } catch (err: any) {
+      console.error('[store] WRITE-FAIL ' + String(MEMORY) + ' err=' + String(err?.message || err))
+    }
   }
 
   return { loadHistory, saveHistory, appendTurns, clearMemory, loadMemorySummary, saveMemorySummary }

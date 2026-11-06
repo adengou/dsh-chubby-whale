@@ -10,6 +10,8 @@
  * 因此可以脱离浏览器 UI 在 Node 里验证。
  */
 
+import { evPrevent, evStop, str } from './util.js'
+
 /** 恢复快捷键的展示文案（气泡/提示用，只写一处） */
 export const RECOVER_HOTKEY_LABEL = 'Ctrl+Shift+W'
 
@@ -41,7 +43,7 @@ export function isRecoverHotkey(e: any): boolean {
   const ctrl = !!(e.ctrlKey || e.metaKey)
   const shift = !!e.shiftKey
   if (!ctrl || !shift) return false
-  const key = String(e.key == null ? '' : e.key).toLowerCase()
+  const key = str(e.key).toLowerCase()
   if (key === 'w') return true
   const code = Number(e.keyCode != null ? e.keyCode : e.which)
   return code === 87
@@ -60,8 +62,7 @@ export function createRecover(host: RecoverHost): Recover {
       title: '点一下叫本鲸回来（或按 ' + RECOVER_HOTKEY_LABEL + '）',
       onClick: (e: any) => {
         // 恢复点只做恢复，不把这次点击继续传给底下的宿主页面
-        try { if (e && typeof e.stopPropagation === 'function') e.stopPropagation() } catch (err) { }
-        try { if (e && typeof e.preventDefault === 'function') e.preventDefault() } catch (err) { }
+        evStop(e); evPrevent(e)
         trigger()
       },
     }
@@ -76,8 +77,7 @@ export function createRecover(host: RecoverHost): Recover {
     const onKeyDown = (e: any): void => {
       if (!isRecoverHotkey(e)) return
       // 恢复是幂等的：显示时按它等于「鱼还在」，不闪烁、不打断任何播放
-      try { if (e && typeof e.preventDefault === 'function') e.preventDefault() } catch (err) { }
-      try { if (e && typeof e.stopPropagation === 'function') e.stopPropagation() } catch (err) { }
+      evPrevent(e); evStop(e)
       trigger()
     }
     try { el.addEventListener('keydown', onKeyDown, true) } catch (e) { return () => { } }

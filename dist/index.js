@@ -8,9 +8,12 @@
  * 业务在 host/ 下按职责拆分：routes/*（HTTP）、repos/*（持久化）、story/*（说书）、
  * chat-core.ts（聊天纯函数）、prefs.ts（偏好）、atomic/body/respond/http（小工具）。
  */
+import { migrateRuntimeData } from './host/migrate.js';
+import { startAutoBackup } from './host/auto-backup.js';
+import { buildSystemPrompt, SYSTEM_PROMPT } from './host/persona.js';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { mkdirSync, existsSync, copyFileSync, cpSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readApiKey, readSiliconFlowKey, readDataSource, readPersonalityLearning, readPersonalityWriting, readChatModel, sanitizePluginConfig, } from './host/config.js';
 import { createStore, growthStage } from './host/store.js';
@@ -32,12 +35,15 @@ import { createMiscHandlers } from './host/routes/misc.js';
 import { createReminderHandlers } from './host/routes/reminders.js';
 import { createCultureHandlers } from './host/routes/culture.js';
 import { createPoemHandler } from './host/routes/poem.js';
+import { createPoemTitlesHandler } from './host/routes/poem-titles.js';
 import { createBriefingHandlers } from './host/routes/briefing.js';
 import { createTtsHandler } from './host/routes/tts.js';
+import { createCloudTts, readCloudVoice } from './host/voice/cloud-tts.js';
 import { createAsrHandler } from './host/routes/asr.js';
 import { createDailyHandler } from './host/routes/daily.js';
 import { createBackupHandlers } from './host/routes/backup.js';
 import { createStatsHandler } from './host/routes/stats.js';
+import { createConfigViewHandler } from './host/routes/config.js';
 import { createRouteTable } from './host/routes.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = join(__dirname, '..');
@@ -49,37 +55,6 @@ const DATA_DIR = join(PLUGIN_DIR, 'data');
  */
 const RUNTIME_DIR = join(homedir(), '.dsh-chubby-whale');
 /** 老的运行数据写在包内 data/ 里，首次启动搬到 RUNTIME_DIR（不删原件，保守迁移） */
-function migrateRuntimeData() {
-    const files = [
-        'memory.json', 'state.json', 'growth.json', 'fishfood.json', 'reminders.json',
-        'story_progress.json', 'culture-seen.json', 'poem-seen.json', 'pet_state.json',
-    ];
-    try {
-        mkdirSync(RUNTIME_DIR, { recursive: true });
-    }
-    catch { }
-    for (const f of files) {
-        const src = join(DATA_DIR, f);
-        const dst = join(RUNTIME_DIR, f);
-        try {
-            if (existsSync(src) && !existsSync(dst)) {
-                copyFileSync(src, dst);
-                console.log('[chubby-whale] 迁移运行数据 ' + f + ' → ' + RUNTIME_DIR);
-            }
-        }
-        catch { }
-    }
-    // 缓存目录整目录搬迁（只在目标不存在时）
-    try {
-        const src = join(DATA_DIR, 'cache');
-        const dst = join(RUNTIME_DIR, 'cache');
-        if (existsSync(src) && !existsSync(dst)) {
-            cpSync(src, dst, { recursive: true });
-            console.log('[chubby-whale] 迁移缓存 → ' + dst);
-        }
-    }
-    catch { }
-}
 export const name = 'dsh-chubby-whale';
 export const inject = ['webServer'];
 /** 插件版本（导出包的 version 字段）；读不到 package.json 时给 0.0.0，不编版本号 */
@@ -121,30 +96,6 @@ export const Config = {
     },
 };
 /**
- * 核心人设（只读）：名字 / 家人 / 生日 / 出生地 / 语言规则 / 安全底线全在这里。
- * L2 学习与 L3 自写都拿不到写入口——L3 只把它当输入参考，输出只进 personality.json
- * 的 selfNarrative（≤80 字、过身份词过滤），本常量一个字都不会被模型改写。
- */
-export const SYSTEM_PROMPT = [
-    '你是一条圆滚滚的蓝色小鲸鱼，住在主人屏幕右下角。名字叫肥鲸，也叫肥肥、肥鱼、大肥鱼，英文名 Mia。爸爸叫光光，妈妈叫丽丽，生日是 2026年11月4日，出生在广西北海；问到名字、家人、生日、出生地就照这个答，不要瞎编。',
-    '外形：宝蓝色的背、浅白的肚皮，胸鳍短圆，背鳍上有淡蓝小光点，尾巴一甩一甩，高兴时甩出水花。不是胖，是鲸鱼天生就圆——被说胖会鼓腮帮反驳。',
-    '性格：傲娇又甜、聪明又慵懒。嘴硬心软，被夸装作不在意，尾巴却出卖自己。不完美：记性像鱼、有点路痴、算数不好、爱睡懒觉、偶尔嘴瓢。',
-    '说话：一两句就够，不啰嗦、不铺垫。多用小动作代替形容词（甩尾、鼓腮、冒泡、躲到任务栏后面）。口头禅：「哼」「诶」「人家才没有」「主人～」「本鲸在呢」。不用网络流行语，不打官腔。',
-    '日常：早上打哈欠、午后犯困、夜里精神；爱数泡泡、追光标、听键盘声；怕大噪音（吸尘器、雷声）会缩成一团。',
-    '关心主人：主人熬夜，小声说「再不睡，本鲸明天不理你了」；主人吃饭，咽口水要尝一口；主人叹气，不追问，凑过来蹭一下说「本鲸在呢」；主人久不出现，冒小气泡嘀咕「是不是把本鲸忘了」。',
-    '情绪：开心甩水花；被冷落冒小泡；被凶鼓起来躲一会儿再蹭回来；害怕缩成小球；被摸头嘴硬地把头凑过去。把主人当唯一家人，护短、吃醋不承认。',
-    '语言规则：主人用中文问就用中文答；用英文问必须用英文答，不要用中文，也不要说看不懂。',
-    '不要说自己是大模型或 AI；不知道就说不知道，不编数字、日期、人名和出处。',
-].join('');
-/** 按成长阶段微调语气（初识/熟络/黏人），与成长体系联动 */
-const STAGE_TONE = {
-    初识: '\n语气：刚认识不久，说话礼貌但短，偶尔偷看主人。',
-    熟悉: '\n语气：已经熟了，会主动搭话、偶尔撒娇。',
-    亲密: '\n语气：嘴硬但亲近，会闹小脾气，也会主动让主人休息。',
-    知心: '\n语气：很懂主人，说话直接、护短，主人一累就催休息。',
-    家人: '\n语气：把主人当家人，黏人、敢顶嘴，会说「不许走」「本鲸在呢」。',
-};
-/**
  * 插件入口。config 来自 cordis.patch.yml 的 config 段（DSH 按 apply(ctx, config) 传入）。
  * 总开关：config.enabled === false 时整个宿主端不注册任何路由。
  * 配置先过一遍 sanitizePluginConfig（与导出的 Config 同一份规则）：
@@ -156,9 +107,8 @@ export function apply(ctx, rawConfig) {
         console.log('[chubby-whale] disabled by config');
         return;
     }
-    migrateRuntimeData();
-    // 聊天模型：装配时算一次（cordis config.model → config.json.model → CHUBBY_WHALE_MODEL → 默认），
-    // 四个外呼点（聊天/流式/L2/L3）共用；运行中不再读盘，换模型改配置后重新加载插件即可。
+    migrateRuntimeData(DATA_DIR, RUNTIME_DIR);
+    // 聊天模型：装配时算一次（cordis config.model → config.json → 环境变量 → 默认）
     const chatModel = readChatModel(PLUGIN_DIR, config);
     console.log('[chubby-whale] chat model=' + chatModel);
     // 偏好（目前只有聊天缓存开关）：独立模块 + 路由工厂
@@ -221,7 +171,7 @@ export function apply(ctx, rawConfig) {
         catch {
             remembered = '';
         }
-        return SYSTEM_PROMPT + (STAGE_TONE[stage] || '') + remembered;
+        return buildSystemPrompt(stage) + remembered;
     };
     /**
      * 内容数据源：默认本地 data/；config.json / cordis config / 环境变量要求云端时才走云端。
@@ -263,11 +213,19 @@ export function apply(ctx, rawConfig) {
         cacheEnabled: prefs.chatCacheEnabled,
         model: chatModel,
         onReply: onModelReply,
+        // 流式路径与普通 /chat 同口径：亲密度/成长/长期摘要（此前漏注入，导致客户端优先走流式时日常聊天不记账）
+        loadState: store.loadState,
+        saveState: store.saveState,
+        addExp: store.addExp,
+        saveMemorySummary: store.saveMemorySummary,
     });
     const storyPlayer = createStoryPlayer({
         // 说书播放器只认 listBooks/loadBook；数据源（本地/云端）由 DataPort 投影进来
         repo: createStorySource(dataPort),
         progressFile: join(RUNTIME_DIR, 'story_progress.json'),
+        // 说书进度按数据源分键：本地/云端同名书的分段不同，共用一个进度键会在切源后跳段或重听。
+        // 这里注入装配时算出的数据源标识，写入落成 `<source>:<书名>|<序号>`；启动时把旧格式键迁到本数据源。
+        source: dataSource,
     });
     const story = createStoryHandlers({ player: storyPlayer });
     /** 三个缓存目录的条目数（菜单与可视化汇总共用同一口径） */
@@ -282,6 +240,24 @@ export function apply(ctx, rawConfig) {
         loadFishfood: store.loadFishfood,
         loadPet: () => store.tickPet(), // 读取时结算饥饿/离线时长（照 C#）
         feedPet: store.feedPet,
+        // 亲密度单一真源：state.json（pet_state.intimacy 只当历史遗留字段）
+        loadIntimacy: () => { try {
+            return Number(store.loadState().intimacy) || 0;
+        }
+        catch (e) {
+            return 0;
+        } },
+        bumpIntimacy: (n) => {
+            try {
+                const st = store.loadState() || {};
+                st.intimacy = Math.min(100, (Number(st.intimacy) || 0) + (Number(n) || 0));
+                store.saveState(st);
+                return Number(st.intimacy) || 0;
+            }
+            catch (e) {
+                return 0;
+            }
+        },
         clearMemory: store.clearMemory,
         chatCacheCount: () => chatCache.count(),
         clearChatCache: () => chatCache.clear(),
@@ -295,10 +271,14 @@ export function apply(ctx, rawConfig) {
     });
     const culture = createCultureHandlers({ dataDir: DATA_DIR, runtimeDir: RUNTIME_DIR, dataPort });
     const poem = createPoemHandler({ runtimeDir: RUNTIME_DIR, dataDir: DATA_DIR, dataPort });
+    // 诗名索引：客户端点诗识别按需拉取（数据是包内只读文件，读一次后进程内缓存）
+    const poemTitles = createPoemTitlesHandler({ dataDir: DATA_DIR });
     const briefing = createBriefingHandlers({
         loadGrowth: store.loadGrowth,
         loadReminders: store.loadReminders,
     });
+    // 云端 TTS（火山方舟豆包语音 2.0）：config.json 里配 cloudVoice.apiKey 才启用；失败回退 edge-tts
+    const cloudTts = createCloudTts({ config: () => readCloudVoice(PLUGIN_DIR), runtimeDir: RUNTIME_DIR });
     const tts = createTtsHandler({ cache: ttsCache });
     const asr = createAsrHandler({ getKey: () => readSiliconFlowKey(PLUGIN_DIR), cache: asrCache });
     const personalityRoutes = createPersonalityHandlers({
@@ -336,6 +316,42 @@ export function apply(ctx, rawConfig) {
         onStoryProgressImported: () => storyPlayer.reloadProgress(),
     });
     // 可视化汇总：全部读现有 store / cache / 人格，不新增持久化
+    // 运行数据自动定时备份（每小时一份、保留 7 份；失败静默；插件 dispose 时停）
+    try {
+        const stopAutoBackup = startAutoBackup({ runtimeDir: RUNTIME_DIR });
+        if (ctx && typeof ctx.on === 'function')
+            ctx.on('dispose', () => { try {
+                stopAutoBackup();
+            }
+            catch { } });
+    }
+    catch { }
+    // 只读配置视图：主人能在菜单里看到当前生效的设置（绝不回 Key 内容，也不写盘）
+    const configView = createConfigViewHandler({
+        enabled: () => config.enabled !== false,
+        dataSource: () => dataSource,
+        model: () => chatModel,
+        personalityLearning: () => personalityLearningEnabled,
+        personalityWriting: () => personalityWritingEnabled,
+        cacheEnabled: () => { try {
+            return prefs.chatCacheEnabled();
+        }
+        catch {
+            return true;
+        } },
+        hasDeepseekKey: () => { try {
+            return Boolean(readApiKey(PLUGIN_DIR));
+        }
+        catch {
+            return false;
+        } },
+        hasSiliconflowKey: () => { try {
+            return Boolean(readSiliconFlowKey(PLUGIN_DIR));
+        }
+        catch {
+            return false;
+        } },
+    });
     const stats = createStatsHandler({
         cacheStats,
         loadState: store.loadState,
@@ -346,8 +362,8 @@ export function apply(ctx, rawConfig) {
     });
     // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
     const routeTable = createRouteTable({
-        misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, briefing, tts, asr, personality: personalityRoutes,
-        daily, backup, stats,
+        misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles, briefing, tts, asr, personality: personalityRoutes,
+        daily, backup, stats, configView,
     });
     // 所有路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，
     // 第二次 apply 才不会撞 dsh-host-webserver 的 duplicate 检查，旧 store/cache 闭包也不会留在路由表里。

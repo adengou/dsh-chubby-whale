@@ -21,6 +21,8 @@ export interface HandlerSet {
   reminders: any
   culture: any
   poem: any
+  /** 诗名索引：{ handlePoemTitles }（客户端点诗识别按需拉取） */
+  poemTitles: any
   briefing: any
   tts: any
   asr: any
@@ -32,6 +34,8 @@ export interface HandlerSet {
   backup: any
   /** 可视化汇总：{ handleStats } */
   stats: any
+  /** 只读配置视图：{ handleConfig }（不含 Key 内容） */
+  configView: any
 }
 
 export function createRouteTable(h: HandlerSet): HttpRoute[] {
@@ -57,6 +61,8 @@ export function createRouteTable(h: HandlerSet): HttpRoute[] {
     { path: '/api/chubby-whale/melodies', handler: h.culture.handleMelodies },
     { path: '/api/chubby-whale/melody', handler: h.culture.handleMelody },
     { path: '/api/chubby-whale/poem', handler: h.poem.handlePoem },
+    // 诗名索引：客户端点诗识别按需拉取（不再内联进 client bundle）
+    { path: '/api/chubby-whale/poem-titles', handler: h.poemTitles.handlePoemTitles },
     { path: '/api/chubby-whale/briefing', handler: h.briefing.handleBriefing },
     { path: '/api/chubby-whale/tts', handler: h.tts },
     { path: '/api/chubby-whale/asr', handler: h.asr },
@@ -70,5 +76,6 @@ export function createRouteTable(h: HandlerSet): HttpRoute[] {
     { path: '/api/chubby-whale/data/import', handler: h.backup.handleImport },
     // 可视化汇总（只读现有 store/cache）
     { path: '/api/chubby-whale/stats', handler: h.stats.handleStats },
+    { path: '/api/chubby-whale/config', handler: h.configView.handleConfig },
   ]
 }

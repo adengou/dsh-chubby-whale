@@ -1,3 +1,4 @@
+import { deepFreeze } from '../shared/immutable.js'
 /**
  * client/ape.ts —— APE 端点检测（Adaptive Percentile Endpointing）
  *
@@ -45,6 +46,8 @@ export type ApeParams = {
   quietLongMs: number
   /** 一段里至少累计这么多说话时长才算有效语音 */
   minSpeechMs: number
+  /** 稳态噪声允许高出噪声底多少 dB（超过就当人声，见 APE_DEFAULTS 里的说明） */
+  steadyMaxAboveFloorDb: number
   /**
    * 说完话后最多再等多久（毫秒）。背景噪声落在"中间带"（高于安静阈值、又不到起判阈值）时，
    * 静音永远不累计——实测会让每句话都等满 6 秒窗口。用"距最后一次说话帧的时长"兜底。
@@ -79,11 +82,18 @@ export const APE_DEFAULTS: ApeParams = {
   minSpeechMs: 150,
   maxWaitAfterSpeechMs: 900,
   noiseNearDb: 14,
+  /**
+   * 稳态噪声允许高出噪声底多少 dB。
+   * 取 20：风扇/空调常压在 15~20dB；而"持续大声说话"一般高出 25dB 以上，
+   * 不会被误当噪声（试过 28，合成的一直 -45dB 语音会被判成噪声、永远不提交）。
+   */
+  steadyMaxAboveFloorDb: 20,
   maxSegmentMs: 6000,
   steadyWindowFrames: 10,   // 25 帧 × 60ms = 1.5s
   steadySpreadDb: 3,
   steadyMs: 400,
 }
+deepFreeze(APE_DEFAULTS)
 
 export type ApeStep = {
   db: number
@@ -113,7 +123,6 @@ export class Ape {
   private bandMs = 0
   private steadyHist: number[] = []
   private steadyMs = 0
-  private steadyCooldownMs = 0   // 平稳噪声确认后的冷却期：这段时间不把电平算成说话
 
   constructor(params?: Partial<ApeParams>) {
     this.p = { ...APE_DEFAULTS, ...(params || {}) }
@@ -127,7 +136,7 @@ export class Ape {
     this.elapsedMs = 0
     this.runMs = 0
     this.hadSpeech = false
-    this.steadyCooldownMs = 0
+    this.noiseTail = false          // 上一段的"噪声尾"标记不能带到下一段（会提前收尾）
     this.bandMs = 0
   }
 
@@ -162,7 +171,7 @@ export class Ape {
       const spread = this.steadyHist.length >= 8
         ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist)
         : 99
-      const nearFloor = (db - this.floorDb) <= p.noiseNearDb
+      const nearFloor = (db - this.floorDb) <= p.steadyMaxAboveFloorDb
       const steadyNow = spread < p.steadySpreadDb && nearFloor
 
       if (steadyNow) {
@@ -183,8 +192,6 @@ export class Ape {
         // 噪声尾：按安静累计（这样才能提前收尾）
         this.quietMs += p.frameMs
         this.bandMs = 0
-      } else if (this.steadyCooldownMs > 0) {
-        this.steadyCooldownMs -= p.frameMs
       } else {
         this.speechMs += p.frameMs
         this.runMs += p.frameMs
@@ -210,11 +217,28 @@ export class Ape {
       ? p.quietShortMs
       : (this.runMs < p.longRunMs ? p.quietMidMs : p.quietLongMs)
 
+    // 说完话后兜底：有些背景噪声落在中间带、或刚过阈值又不够"平稳"，
+    // quietMs 涨不起来，会一直等到 maxSegmentMs（6 秒）。按"距最后一次说话帧"收尾。
+    const sinceSpeechMs = this.hadSpeech ? Math.max(0, this.elapsedMs - this.lastSpeechAtMs) : 0
+    const overSpeechWait = this.hadSpeech && sinceSpeechMs >= p.maxWaitAfterSpeechMs
     const validSpeech = this.speechMs >= p.minSpeechMs
     let commit = false
     let commitReason: 'quiet' | 'overflow' | '' = ''
     if (validSpeech && this.quietMs >= quietTargetMs) { commit = true; commitReason = 'quiet' }
-    else if (this.elapsedMs >= p.maxSegmentMs) { commit = true; commitReason = 'overflow' }
+    else if (validSpeech && overSpeechWait) { commit = true; commitReason = 'quiet' }
+    else if (this.elapsedMs >= p.maxSegmentMs) {
+      if (validSpeech) { commit = true; commitReason = 'overflow' }
+      else {
+        // 一直是静音：静默重置窗口，继续录；不能把一段空气送去 ASR（缓存里曾堆满 17 字节噪声）
+        this.elapsedMs = 0
+        this.runMs = 0
+        this.quietMs = 0
+        this.speechMs = 0
+        this.bandMs = 0
+        this.hadSpeech = false
+        this.lastSpeechAtMs = 0
+      }
+    }
 
     return {
       db,
@@ -240,5 +264,7 @@ export function simulateSegment(dbSeq: number[], params?: Partial<ApeParams>): {
     last = ape.step(dbSeq[i])
     if (last.commit) return { step: last, frames: i + 1 }
   }
-  return { step: last as ApeStep, frames: dbSeq.length }
+  // 空序列时 last 为 null：调用方取 .commit 会崩，返回一个未收尾的空步骤
+  if (!last) return { step: { db: 0, floorDb: 0, onsetTh: 0, offsetTh: 0, speechMs: 0, quietMs: 0, elapsedMs: 0, hadSpeech: false, quietTargetMs: 0, commit: false, commitReason: '' }, frames: 0 }
+  return { step: last, frames: dbSeq.length }
 }

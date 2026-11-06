@@ -18,6 +18,7 @@
  *   · 失败/解析失败/超时静默放弃：不写盘、不阻塞回复、不影响 L2。
  */
 import { fetchJson } from './http.js'
+import { deepFreeze } from '../shared/immutable.js'
 import { CHAT_URL, SUMMARY_MAX_TOKENS } from './chat-core.js'
 import { DEFAULT_CHAT_MODEL } from './config.js'
 import { validateSelfNarrative } from './personality.js'
@@ -39,6 +40,34 @@ export const WRITE_TIMEOUT = 20 * 1000
 const WRITE_LINE_MAX = 300
 
 /**
+ * 按 Unicode 码点截断：`String.prototype.slice` 按 UTF-16 码元切，正好切在 emoji 代理对中间
+ * 会留下孤立代理（实测「'字'×299 + '🙂'」会切出半个表情 U+D83D）。喂模型的每行都走这里。
+ * 与 host/personality/merge.ts 的 clampText 同一口径（按「字」而不是按码元）。
+ */
+function clipCodePoints(s: string, max: number): string {
+  const chars = Array.from(s)
+  return chars.length > max ? chars.slice(0, max).join('') : s
+}
+
+/**
+ * 取正整数选项：显式 0 表示「最快（1）」，缺省 / 非数值才回落默认值。
+ * 审计修复 F9（2026-11-07，同 personality-learn.ts）：原写法 `Number(v) || 默认值` 把显式 0
+ * 当成「没传」回落 20，而负数反而被 `Math.max(1, ·)` 收成 1——0 与负数结果相反。
+ */
+function positiveOption(value: any, fallback: number): number {
+  if (value === undefined || value === null) return fallback
+  const n = Math.floor(Number(value))
+  return Number.isFinite(n) ? Math.max(1, n) : fallback
+}
+
+/** 取非负毫秒选项：显式 0 表示「不设最小间隔」，缺省 / 非数值才回落默认值（同 F9 的 0 边界） */
+function nonNegativeOption(value: any, fallback: number): number {
+  if (value === undefined || value === null) return fallback
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.max(0, n) : fallback
+}
+
+/**
  * L3 的 system 提示：第一句是需求写死的限域条款，原样保留；
  * 后面几条只是把「一句、6～80 字、只写心情」说清楚，不放宽任何一条限制。
  */
@@ -51,6 +80,7 @@ export const SELF_NARRATIVE_SYSTEM_PROMPT = [
   '4) 不许提名字、家人、生日、出生地、语言规则、安全底线；不许自称 AI 或大模型。',
   '5) 核心设定只读参考，禁止复述、禁止改写、禁止补充。',
 ].join('\n')
+deepFreeze(SELF_NARRATIVE_SYSTEM_PROMPT)
 
 /**
  * 拼 L3 的 user 消息：核心人设原文（只读，不进 history）+ 最近 16 条对话摘要。
@@ -61,7 +91,7 @@ export function buildNarrativeUser(corePrompt: any, messages: any[]): string {
   const lines: string[] = []
   for (const m of Array.isArray(messages) ? messages.slice(-WRITE_MESSAGE_COUNT) : []) {
     if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') continue
-    const text = m.content.replace(/[\s\u3000]+/g, ' ').trim().slice(0, WRITE_LINE_MAX)
+    const text = clipCodePoints(m.content.replace(/[\s\u3000]+/g, ' ').trim(), WRITE_LINE_MAX)
     if (!text) continue
     lines.push((m.role === 'user' ? '主人' : '肥鲸') + '：' + text)
   }
@@ -86,8 +116,8 @@ export function shouldWrite(
   now: number,
   opts: { every?: number; minIntervalMs?: number; lastWrittenAt?: number } = {},
 ): boolean {
-  const every = Math.max(1, Math.floor(Number(opts.every) || WRITE_EVERY))
-  const minIntervalMs = Math.max(0, Number(opts.minIntervalMs) || WRITE_MIN_INTERVAL_MS)
+  const every = positiveOption(opts.every, WRITE_EVERY)
+  const minIntervalMs = nonNegativeOption(opts.minIntervalMs, WRITE_MIN_INTERVAL_MS)
   const successes = Math.floor(Number(state && state.successes) || 0)
   const lastAttempt = Number(state && state.lastAttemptAt) || 0
   const lastWritten = Number(opts.lastWrittenAt) || 0

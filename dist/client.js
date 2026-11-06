@@ -1,4 +1,21 @@
 (() => {
+  // src/shared/immutable.ts
+  function deepFreeze(value) {
+    if (value === null || typeof value !== "object") return value;
+    const obj = value;
+    if (Object.isFrozen(obj)) return value;
+    Object.freeze(obj);
+    if (Array.isArray(obj)) {
+      for (const v of obj) deepFreeze(v);
+    } else if (Object.prototype.toString.call(obj) === "[object Object]") {
+      for (const k of Object.keys(obj)) deepFreeze(obj[k]);
+    }
+    return value;
+  }
+
+  // src/client/version.ts
+  var VERSION = "1.1.48";
+
   // src/client/styles.ts
   var W = 240;
   var H = 213;
@@ -6,7 +23,6 @@
   var CH = 426;
   var SX = CW / 1696;
   var SY = CH / 1504;
-  var VERSION = "0.1.0";
   var stageStyle = (scale, hidden) => ({
     position: "fixed",
     left: 0,
@@ -19,10 +35,13 @@
     cursor: "grab",
     touchAction: "none",
     transform: "scale(" + scale + ")",
-    transformOrigin: "100% 100%",
+    // 缩放原点用左上角：与 stage.ts 的 clampPos（按左上坐标 + W*s 宽高钳制）同口径；
+    // 原先 100% 100%（右下）会让缩放后的鱼贴边溢出约 96px。
+    transformOrigin: "0 0",
     display: hidden ? "none" : "block"
   });
   var canvasStyle = { width: "100%", height: "100%", display: "block" };
+  deepFreeze(canvasStyle);
   var recoverDotStyle = {
     position: "fixed",
     right: 16,
@@ -45,7 +64,8 @@
   };
   var menuStyle = (menu) => ({
     position: "fixed",
-    left: (menu ? Math.min(menu.x, window.innerWidth - 220) : 0) + "px",
+    // 窄视口（<220px）时 innerWidth-220 为负会把菜单甩出左边；夹到 8px 保底
+    left: (menu ? Math.max(8, Math.min(menu.x, window.innerWidth - 220)) : 0) + "px",
     top: (menu ? Math.max(8, Math.min(menu.y, window.innerHeight - 520)) : 0) + "px",
     width: 210,
     maxHeight: typeof window !== "undefined" ? Math.max(200, Math.min(480, window.innerHeight - 32)) : 480,
@@ -59,6 +79,21 @@
     font: '13px/1.5 "Microsoft YaHei", sans-serif',
     display: menu ? "block" : "none",
     color: "#cfe9ff"
+  });
+  var menuItemStyle = (active) => ({
+    padding: "6px 14px",
+    cursor: "pointer",
+    color: active ? "#ffffff" : "#cfe9ff",
+    fontSize: 13,
+    whiteSpace: "nowrap",
+    background: active ? "linear-gradient(90deg, rgba(46,107,184,0.95), rgba(34,78,140,0.55))" : "transparent",
+    borderRadius: active ? 6 : 0,
+    boxShadow: active ? "inset 0 0 0 1px rgba(159,216,255,0.8)" : "none"
+  });
+  var menuSubStyle = (active) => ({
+    ...menuItemStyle(active),
+    display: "flex",
+    justifyContent: "space-between"
   });
   var chatPanelStyle = (open) => ({
     position: "fixed",
@@ -87,6 +122,7 @@
   };
   var bodyStyle = { height: 240, overflowY: "auto", padding: "12px 14px" };
   var inputRowStyle = { display: "flex", gap: 8, padding: "10px 12px", borderTop: "1px solid rgba(93,160,240,0.25)", background: "rgba(6,16,32,0.6)" };
+  deepFreeze(inputRowStyle);
   var inputStyle = {
     flex: 1,
     border: "1px solid rgba(93,160,240,0.35)",
@@ -122,236 +158,795 @@
     boxShadow: who === "me" ? "0 4px 12px rgba(46,107,184,0.35)" : "0 2px 8px rgba(0,0,0,0.25)"
   });
 
-  // src/client/menu.ts
-  var MELODIES = ["\u5C0F\u661F\u661F", "\u4E24\u53EA\u8001\u864E", "\u751F\u65E5\u5FEB\u4E50", "\u6B22\u4E50\u9882", "\u94C3\u513F\u54CD\u53EE\u5F53", "\u4F26\u6566\u5927\u6865", "\u65AF\u5361\u5E03\u7F57\u96C6\u5E02", "\u601D\u541B\u9EEF\u7136", "\u7EFF\u8896\u5B50", "\u81F4\u7231\u4E3D\u4E1D", "\u53CB\u8C0A\u5929\u957F\u5730\u4E45"];
-  var SONG_EN = {
-    "\u5C0F\u661F\u661F": "Twinkle Twinkle Little Star",
-    "\u4E24\u53EA\u8001\u864E": "Two Tigers",
-    "\u751F\u65E5\u5FEB\u4E50": "Happy Birthday",
-    "\u6B22\u4E50\u9882": "Ode to Joy",
-    "\u94C3\u513F\u54CD\u53EE\u5F53": "Jingle Bells",
-    "\u4F26\u6566\u5927\u6865": "London Bridge",
-    "\u65AF\u5361\u5E03\u7F57\u96C6\u5E02": "Scarborough Fair",
-    "\u601D\u541B\u9EEF\u7136": "Longing for You",
-    "\u7EFF\u8896\u5B50": "Greensleeves",
-    "\u81F4\u7231\u4E3D\u4E1D": "Fur Elise",
-    "\u53CB\u8C0A\u5929\u957F\u5730\u4E45": "Auld Lang Syne"
+  // src/client/ape.ts
+  var APE_DEFAULTS = {
+    frameMs: 60,
+    floorDownAlpha: 0.25,
+    floorUpAlpha: 0.03,
+    quietMarginDb: 6,
+    offsetMarginDb: 6,
+    marginRatio: 0.45,
+    marginMinDb: 4,
+    marginMaxDb: 14,
+    peakDecayDb: 0.3,
+    driftAfterMs: 1e3,
+    shortRunMs: 1200,
+    longRunMs: 3e3,
+    quietShortMs: 300,
+    quietMidMs: 450,
+    quietLongMs: 600,
+    minSpeechMs: 150,
+    maxWaitAfterSpeechMs: 900,
+    noiseNearDb: 14,
+    /**
+     * 稳态噪声允许高出噪声底多少 dB。
+     * 取 20：风扇/空调常压在 15~20dB；而"持续大声说话"一般高出 25dB 以上，
+     * 不会被误当噪声（试过 28，合成的一直 -45dB 语音会被判成噪声、永远不提交）。
+     */
+    steadyMaxAboveFloorDb: 20,
+    maxSegmentMs: 6e3,
+    steadyWindowFrames: 10,
+    // 25 帧 × 60ms = 1.5s
+    steadySpreadDb: 3,
+    steadyMs: 400
   };
-  var EN_MAP = {
-    "\u6295\u5582\u4E00\u7897": "Feed a bowl",
-    "\u9009\u672C\u4E66 \u25B8": "Choose a book \u25B8",
-    "\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5": "Book list unavailable, try again later",
-    "\u6B63\u5728\u7FFB\u4E66\u5355\u2026": "Loading book list\u2026",
-    "\u4ECA\u65E5\u4E00\u53E5": "Daily quote",
-    "\u4ECA\u65E5\u7B80\u62A5": "Today's briefing",
-    "\u6570\u636E\u5BFC\u51FA\u2026": "Export data\u2026",
-    "\u6570\u636E\u5BFC\u5165\u2026": "Import data\u2026",
-    "\u4F7F\u7528\u7EDF\u8BA1": "Usage stats",
-    "\u63D0\u9192\u7BA1\u7406\u2026": "Manage reminders\u2026",
-    "\u5524\u9192\u6062\u590D": "Wake recovery",
-    "\u5F39\u9996\u66F2\u5B50 \u25B8": "Play a song \u25B8",
-    "\u505C\u6B62\u5F39\u594F": "Stop music",
-    "\u8DDF\u5979\u8BF4\u4E24\u53E5": "Talk to her",
-    "\u6362\u4E2A\u58F0\u97F3 \u25B8": "Change voice \u25B8",
-    "\u804A\u5929\u8BED\u8A00 \u25B8": "Chat language \u25B8",
-    "\u754C\u9762\u8BED\u8A00 \u25B8": "Interface language \u25B8",
-    "\u770B\u5F20\u56FE\u2026": "Look at a picture\u2026",
-    "\u505C\u6B62\u8BF4\u8BDD": "Stop talking",
-    "\u8BA9\u5979\u6B47\u4F1A\u513F": "Let her rest",
-    "\u56DE\u7897\u91CC\u5F85\u7740": "Back in the bowl",
-    "\u957F\u5927\u4E00\u70B9": "Grow bigger",
-    "\u53D8\u5C0F\u4E00\u70B9": "Shrink",
-    "\u8BB0\u4E2A\u996D\u70B9\u2026": "Add a meal reminder\u2026",
-    "\u63D0\u9192\u6E05\u5355\u2026": "Reminders\u2026",
-    "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94": "Endpoint detection: classic / adaptive",
-    "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09": "Hearing self-test",
-    "\u6587\u5316\u6C14 \u25B8": "Culture \u25B8",
-    "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09": "Storytelling",
-    "\u63A5\u7740\u8BF4": "Continue story",
-    "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66": "Restart this book",
-    "\u5FF5\u9996\u8BD7": "Recite a poem",
-    "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B": "Folk tale",
-    "\u8BB2\u4E2A\u5178\u6545": "Classic allusion",
-    "\u6210\u8BED\u8FA8\u6790": "Idiom",
-    "\u51FA\u4E2A\u5BF9\u8054 \u25B8": "Couplets \u25B8",
-    "\u968F\u673A\u4E00\u526F": "Random pair",
-    "\u6625\u8054": "Spring couplet",
-    "\u683C\u8A00": "Motto",
-    "\u8C10\u8DA3": "Witty",
-    "\u540D\u80DC": "Landmarks",
-    "\u666F\u89C2": "Scenery",
-    "\u4E66\u623F": "Study",
-    "\u5BFF\u8054": "Birthday couplet",
-    "\u4E2D\u836F": "Herbs",
-    "\u53E0\u5B57": "Repeated characters",
-    "\u6570\u5B57": "Numerals",
-    "\u6E05\u9664\u8BB0\u5FC6\u2026": "Clear memory\u2026",
-    "\u6E05\u7A7A\u804A\u5929\u7F13\u5B58\u2026": "Clear chat cache\u2026",
-    "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09": "Let it go (exit)",
-    "\u9C7C\u7CAE\u8D26\u672C": "Token ledger",
-    "English": "English",
-    "\u4E2D\u6587": "Chinese",
-    // 动态 label（音色勾选/聊天缓存开关/自动）需要的英文键
-    "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00": "Chat cache: on",
-    "\u804A\u5929\u7F13\u5B58\uFF1A\u5173": "Chat cache: off",
-    "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09": "Auto (by language)",
-    "\u81EA\u52A8": "Auto",
-    "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaoyi (CN F)",
-    "\u97F3\u8272\uFF1A\u6653\u6653\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaoxiao (CN F)",
-    "\u97F3\u8272\uFF1A\u6653\u8FB0\uFF08\u4E2D\xB7\u5973\uFF09": "Voice: Xiaochen (CN F)",
-    "\u97F3\u8272\uFF1A\u4E91\u5E0C\uFF08\u4E2D\xB7\u7537\uFF09": "Voice: Yunxi (CN M)",
-    "\u97F3\u8272\uFF1A\u4E91\u626C\uFF08\u4E2D\xB7\u7537\uFF09": "Voice: Yunyang (CN M)",
-    "\u97F3\u8272\uFF1AAna\uFF08\u82F1\xB7\u5973\uFF09": "Voice: Ana (EN F)",
-    "\u97F3\u8272\uFF1AJenny\uFF08\u82F1\xB7\u5973\uFF09": "Voice: Jenny (EN F)",
-    "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09": "Voice: Sonia (EN-GB F)"
-  };
-  var TOGGLE_EN = {
-    "\u8BED\u97F3\u6717\u8BFB\uFF1A": ["Voice output: on", "Voice output: off"],
-    "\u8BED\u97F3\u5F85\u547D\uFF1A": ["Voice standby: on", "Voice standby: off"],
-    "\u8BED\u97F3\u804A\u5929\uFF1A": ["Voice chat: on", "Voice chat: off"]
-  };
-  function tr(label, lang) {
-    if (lang !== "en") return label;
-    const exact = EN_MAP[label];
-    if (exact) return exact;
-    if (label.startsWith("\u2713 ")) {
-      const base = label.slice(2);
-      const en = tr(base, lang);
-      return en === base ? label : "\u2713 " + en;
+  deepFreeze(APE_DEFAULTS);
+  var Ape = class {
+    p;
+    floorDb = null;
+    peakDb = -160;
+    speechMs = 0;
+    quietMs = 0;
+    elapsedMs = 0;
+    runMs = 0;
+    hadSpeech = false;
+    lastSpeechAtMs = 0;
+    noiseTail = false;
+    bandMs = 0;
+    steadyHist = [];
+    steadyMs = 0;
+    constructor(params) {
+      this.p = { ...APE_DEFAULTS, ...params || {} };
     }
-    if (label.startsWith("\u5F39\u300A") && label.endsWith("\u300B")) {
-      const song = label.slice(2, label.length - 1);
-      return SONG_EN[song] ? 'Play "' + SONG_EN[song] + '"' : "Play a song";
+    resetSegment() {
+      this.steadyHist = [];
+      this.steadyMs = 0;
+      this.speechMs = 0;
+      this.quietMs = 0;
+      this.elapsedMs = 0;
+      this.runMs = 0;
+      this.hadSpeech = false;
+      this.noiseTail = false;
+      this.bandMs = 0;
     }
-    if (label.startsWith("\u6210\u957F\uFF1A")) return "Growth: " + label.slice(3);
-    if (label.startsWith("\u7248\u672C\uFF1Av")) return "Version: v" + label.slice(4);
-    if (label.startsWith("\u4F59\u989D\uFF1A")) return "Balance: " + label.slice(3);
-    for (const prefix of Object.keys(TOGGLE_EN)) {
-      if (label.startsWith(prefix)) {
-        const pair = TOGGLE_EN[prefix];
-        return label.slice(prefix.length) === "\u5F00" ? pair[0] : pair[1];
+    resetNoise() {
+      this.floorDb = null;
+      this.peakDb = -160;
+    }
+    floor() {
+      return this.floorDb === null ? -70 : this.floorDb;
+    }
+    step(db) {
+      const p = this.p;
+      if (this.floorDb === null) this.floorDb = db;
+      if (db > this.peakDb) this.peakDb = db;
+      else this.peakDb = Math.max(-160, this.peakDb - p.peakDecayDb);
+      const range = this.peakDb - this.floorDb;
+      const margin = Math.max(p.marginMinDb, Math.min(p.marginMaxDb, range * p.marginRatio));
+      const onsetTh = this.floorDb + margin;
+      const offsetTh = this.floorDb + p.offsetMarginDb;
+      this.elapsedMs += p.frameMs;
+      if (db > onsetTh) {
+        this.steadyHist.push(db);
+        while (this.steadyHist.length > p.steadyWindowFrames) this.steadyHist.shift();
+        const spread = this.steadyHist.length >= 8 ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist) : 99;
+        const nearFloor = db - this.floorDb <= p.steadyMaxAboveFloorDb;
+        const steadyNow = spread < p.steadySpreadDb && nearFloor;
+        if (steadyNow) {
+          this.steadyMs += p.frameMs;
+          if (this.steadyMs >= p.steadyMs) {
+            this.noiseTail = true;
+            this.floorDb = this.floorDb * 0.7 + db * 0.3;
+          }
+        } else {
+          this.steadyMs = 0;
+          this.noiseTail = false;
+        }
+        if (this.noiseTail) {
+          this.quietMs += p.frameMs;
+          this.bandMs = 0;
+        } else {
+          this.speechMs += p.frameMs;
+          this.runMs += p.frameMs;
+          this.hadSpeech = true;
+          this.lastSpeechAtMs = this.elapsedMs;
+          this.quietMs = 0;
+          this.bandMs = 0;
+        }
+      } else if (db <= offsetTh) {
+        this.quietMs += p.frameMs;
+        this.bandMs = 0;
+        this.floorDb = this.floorDb * (1 - p.floorDownAlpha) + db * p.floorDownAlpha;
+      } else {
+        this.bandMs += p.frameMs;
+        if (this.bandMs >= p.driftAfterMs) {
+          this.floorDb = this.floorDb * (1 - p.floorUpAlpha) + db * p.floorUpAlpha;
+        }
       }
+      const quietTargetMs = this.runMs < p.shortRunMs ? p.quietShortMs : this.runMs < p.longRunMs ? p.quietMidMs : p.quietLongMs;
+      const sinceSpeechMs = this.hadSpeech ? Math.max(0, this.elapsedMs - this.lastSpeechAtMs) : 0;
+      const overSpeechWait = this.hadSpeech && sinceSpeechMs >= p.maxWaitAfterSpeechMs;
+      const validSpeech = this.speechMs >= p.minSpeechMs;
+      let commit = false;
+      let commitReason = "";
+      if (validSpeech && this.quietMs >= quietTargetMs) {
+        commit = true;
+        commitReason = "quiet";
+      } else if (validSpeech && overSpeechWait) {
+        commit = true;
+        commitReason = "quiet";
+      } else if (this.elapsedMs >= p.maxSegmentMs) {
+        if (validSpeech) {
+          commit = true;
+          commitReason = "overflow";
+        } else {
+          this.elapsedMs = 0;
+          this.runMs = 0;
+          this.quietMs = 0;
+          this.speechMs = 0;
+          this.bandMs = 0;
+          this.hadSpeech = false;
+          this.lastSpeechAtMs = 0;
+        }
+      }
+      return {
+        db,
+        floorDb: this.floorDb,
+        onsetTh,
+        offsetTh,
+        speechMs: this.speechMs,
+        quietMs: this.quietMs,
+        elapsedMs: this.elapsedMs,
+        hadSpeech: this.hadSpeech,
+        quietTargetMs,
+        commit,
+        commitReason
+      };
     }
-    return label;
+  };
+
+  // src/client/rates.ts
+  var NARRATION_RATES = ["-15%", "-20%", "-25%", "-30%"];
+  deepFreeze(NARRATION_RATES);
+  var DEFAULT_NARRATION_RATE = "-25%";
+  var CHAT_RATES = ["-10%", "-20%", "-25%", "-30%"];
+  deepFreeze(CHAT_RATES);
+  var DEFAULT_CHAT_RATE = "-20%";
+  var DEFAULT_STORY_RATE = "-35%";
+  var DEFAULT_POEM_RATE = "-25%";
+  function readPercentRate(key, fallback) {
+    try {
+      const s = String(localStorage.getItem(key) || "").trim();
+      if (/^-(?:[1-9]\d?)%$/.test(s)) return s;
+    } catch (e) {
+    }
+    return fallback;
   }
-  var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
-  function buildMenu(version, state = {}) {
-    const voiceOn = state.voiceOn ? true : false;
-    const earOn = state.earOn ? true : false;
-    const voiceChatOn = state.voiceChatOn ? true : false;
-    const chatLang = state.chatLang ? String(state.chatLang) : "auto";
-    const ttsVoice = state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
-    const chatCacheOn = !(state.chatCacheOn === false);
-    const voiceTick = (voice) => ttsVoice === voice ? "\u2713 " : "";
-    const balanceText = state && state.balance ? state.balance : "--";
-    const growthText = state && state.growth ? state.growth : "--";
-    const books = Array.isArray(state.storyBooks) ? state.storyBooks.map((b) => String(b || "").trim()).filter(Boolean) : [];
-    const bookItems = books.length ? books.map((b) => ({ type: "item", label: b, action: "story-book:" + b })) : [{ type: "item", label: state.storyBooksTried ? "\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5" : "\u6B63\u5728\u7FFB\u4E66\u5355\u2026", action: "story-books" }];
-    return [
-      // ── 界面语言（主人定的位置：标题栏下方第一行）──
-      { type: "sub", label: "\u754C\u9762\u8BED\u8A00 \u25B8", items: [
-        { type: "item", label: "\u4E2D\u6587", action: "lang:zh" },
-        { type: "item", label: "English", action: "lang:en" }
-      ] },
-      // ── 吃饭与看图 ──
-      { type: "item", label: "\u6210\u957F\uFF1A" + growthText, action: "growth" },
-      { type: "item", label: "\u6295\u5582\u4E00\u7897", action: "feed" },
-      { type: "item", label: "\u770B\u5F20\u56FE\u2026", action: "vision" },
-      { type: "sep" },
-      // ── 曲子 ──
-      { type: "sub", label: "\u5F39\u9996\u66F2\u5B50 \u25B8", items: MELODIES.map((m) => ({ type: "item", label: "\u5F39\u300A" + m + "\u300B", action: "music:" + m })) },
-      { type: "item", label: "\u505C\u6B62\u5F39\u594F", action: "music-stop" },
-      { type: "sep" },
-      // ── 说话与耳朵（语音类全放一起）──
-      { type: "item", label: "\u8DDF\u5979\u8BF4\u4E24\u53E5", action: "type" },
-      { type: "item", label: voiceOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173", action: "voice" },
-      { type: "item", label: "\u505C\u6B62\u8BF4\u8BDD", action: "tts-stop" },
-      { type: "sub", label: "\u6362\u4E2A\u58F0\u97F3 \u25B8", items: [
-        { type: "item", label: voiceTick("zh-CN-XiaoyiNeural") + "\u97F3\u8272\uFF1A\u6653\u4F0A\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoyiNeural" },
-        { type: "item", label: voiceTick("zh-CN-XiaoxiaoNeural") + "\u97F3\u8272\uFF1A\u6653\u6653\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaoxiaoNeural" },
-        { type: "item", label: voiceTick("zh-CN-XiaochenNeural") + "\u97F3\u8272\uFF1A\u6653\u8FB0\uFF08\u4E2D\xB7\u5973\uFF09", action: "voice:zh-CN-XiaochenNeural" },
-        { type: "item", label: voiceTick("zh-CN-YunxiNeural") + "\u97F3\u8272\uFF1A\u4E91\u5E0C\uFF08\u4E2D\xB7\u7537\uFF09", action: "voice:zh-CN-YunxiNeural" },
-        { type: "item", label: voiceTick("zh-CN-YunyangNeural") + "\u97F3\u8272\uFF1A\u4E91\u626C\uFF08\u4E2D\xB7\u7537\uFF09", action: "voice:zh-CN-YunyangNeural" },
-        { type: "item", label: voiceTick("en-US-AnaNeural") + "\u97F3\u8272\uFF1AAna\uFF08\u82F1\xB7\u5973\uFF09", action: "voice:en-US-AnaNeural" },
-        { type: "item", label: voiceTick("en-US-JennyNeural") + "\u97F3\u8272\uFF1AJenny\uFF08\u82F1\xB7\u5973\uFF09", action: "voice:en-US-JennyNeural" },
-        { type: "item", label: voiceTick("en-GB-SoniaNeural") + "\u97F3\u8272\uFF1ASonia\uFF08\u82F1\xB7\u5973\xB7\u82F1\u5F0F\uFF09", action: "voice:en-GB-SoniaNeural" },
-        { type: "item", label: voiceTick("auto") + "\u81EA\u52A8\uFF08\u6309\u8BED\u8A00\u9009\u97F3\u8272\uFF09", action: "voice:auto" }
-      ] },
-      { type: "item", label: "\u8BED\u97F3\u5F85\u547D\uFF1A" + (earOn ? "\u5F00" : "\u5173"), action: "wake" },
-      { type: "item", label: "\u8BED\u97F3\u804A\u5929\uFF1A" + (voiceChatOn ? "\u5F00" : "\u5173"), action: "chatmode" },
-      { type: "item", label: "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94", action: "endpoint" },
-      { type: "item", label: "\u8033\u6735\u81EA\u68C0\uFF08\u542C\u529B\u8BCA\u65AD\uFF09", action: "ear-check" },
-      { type: "sep" },
-      // ── 语言 ──
-      { type: "sub", label: "\u804A\u5929\u8BED\u8A00 \u25B8", items: [
-        { type: "item", label: (chatLang === "auto" ? "\u2713 " : "") + "\u81EA\u52A8", action: "chat-lang:auto" },
-        { type: "item", label: (chatLang === "zh" ? "\u2713 " : "") + "\u4E2D\u6587", action: "chat-lang:zh" },
-        { type: "item", label: (chatLang === "en" ? "\u2713 " : "") + "English", action: "chat-lang:en" }
-      ] },
-      { type: "sep" },
-      // ── 位置与大小 ──
-      { type: "item", label: "\u8BA9\u5979\u6B47\u4F1A\u513F", action: "pause" },
-      { type: "item", label: "\u56DE\u7897\u91CC\u5F85\u7740", action: "home" },
-      { type: "item", label: "\u957F\u5927\u4E00\u70B9", action: "bigger" },
-      { type: "item", label: "\u53D8\u5C0F\u4E00\u70B9", action: "smaller" },
-      { type: "sep" },
-      // ── 饭点提醒 ──
-      { type: "item", label: "\u8BB0\u4E2A\u996D\u70B9\u2026", action: "remind-add" },
-      { type: "item", label: "\u63D0\u9192\u6E05\u5355\u2026", action: "remind-list" },
-      { type: "sep" },
-      // ── 文化气 ──
-      { type: "sub", label: "\u6587\u5316\u6C14 \u25B8", items: [
-        { type: "item", label: "\u8BF4\u4E66\uFF08\u8FDE\u8F7D\uFF09", action: "culture-story" },
-        { type: "item", label: "\u8FDE\u64AD\uFF1A" + (state.storyAuto === false ? "\u5173" : "\u5F00") + "\uFF08\u8BB2\u5B8C\u4E00\u6BB5\u81EA\u52A8\u63A5\u4E0B\u4E00\u6BB5\uFF09", action: "story-auto" },
-        { type: "item", label: "\u63A5\u7740\u8BF4", action: "culture-story-next" },
-        { type: "item", label: "\u4ECE\u5934\u8BB2\u8FD9\u672C\u4E66", action: "story-reset" },
-        { type: "item", label: "\u5FF5\u9996\u8BD7", action: "poem" },
-        { type: "item", label: "\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B", action: "culture-tale" },
-        { type: "item", label: "\u8BB2\u4E2A\u5178\u6545", action: "culture-allusion" },
-        { type: "item", label: "\u6210\u8BED\u8FA8\u6790", action: "culture-idiom" },
-        { type: "sub", label: "\u51FA\u4E2A\u5BF9\u8054 \u25B8", items: [
-          { type: "item", label: "\u968F\u673A\u4E00\u526F", action: "culture-couplet" },
-          { type: "item", label: "\u6625\u8054", action: "culture-couplet:\u6625\u8054" },
-          { type: "item", label: "\u683C\u8A00", action: "culture-couplet:\u683C\u8A00" },
-          { type: "item", label: "\u8C10\u8DA3", action: "culture-couplet:\u8C10\u8DA3" },
-          { type: "item", label: "\u540D\u80DC", action: "culture-couplet:\u540D\u80DC" },
-          { type: "item", label: "\u666F\u89C2", action: "culture-couplet:\u666F\u89C2" },
-          { type: "item", label: "\u4E66\u623F", action: "culture-couplet:\u4E66\u623F" },
-          { type: "item", label: "\u5BFF\u8054", action: "culture-couplet:\u5BFF\u8054" },
-          { type: "item", label: "\u4E2D\u836F", action: "culture-couplet:\u4E2D\u836F" },
-          { type: "item", label: "\u53E0\u5B57", action: "culture-couplet:\u53E0\u5B57" },
-          { type: "item", label: "\u6570\u5B57", action: "culture-couplet:\u6570\u5B57" }
-        ] }
-      ] },
-      { type: "sep" },
-      // ── 每日内容（说书选本 / 每日一句 / 今日简报）──
-      { type: "sub", label: "\u9009\u672C\u4E66 \u25B8", items: bookItems },
-      { type: "item", label: "\u4ECA\u65E5\u4E00\u53E5", action: "daily-line" },
-      { type: "item", label: "\u4ECA\u65E5\u7B80\u62A5", action: "briefing-card" },
-      { type: "sep" },
-      // ── 数据与统计（处理器由其他分身实现，未接上时走兜底提示）──
-      { type: "item", label: "\u6570\u636E\u5BFC\u51FA\u2026", action: "data-export" },
-      { type: "item", label: "\u6570\u636E\u5BFC\u5165\u2026", action: "data-import" },
-      { type: "item", label: "\u4F7F\u7528\u7EDF\u8BA1", action: "stats" },
-      { type: "item", label: "\u63D0\u9192\u7BA1\u7406\u2026", action: "remind-manage" },
-      { type: "item", label: "\u5524\u9192\u6062\u590D", action: "wake-recover" },
-      { type: "sep" },
-      // ── 记忆、缓存与退出 ──
-      { type: "item", label: "\u6E05\u9664\u8BB0\u5FC6\u2026", action: "clear-memory" },
-      { type: "item", label: "\u6E05\u7A7A\u804A\u5929\u7F13\u5B58\u2026", action: "cache-clear" },
-      { type: "item", label: chatCacheOn ? "\u804A\u5929\u7F13\u5B58\uFF1A\u5F00" : "\u804A\u5929\u7F13\u5B58\uFF1A\u5173", action: "cache-toggle" },
-      { type: "item", label: "\u8BA9\u5B83\u6E38\u8D70\uFF08\u9000\u51FA\uFF09", action: "hide" },
-      { type: "sep" },
-      // ── 账本与版本（版本永远在最底下）──
-      { type: "item", label: "\u9C7C\u7CAE\u8D26\u672C", action: "fishfood" }
-    ];
+  function storyRate() {
+    return readPercentRate("chubby-story-rate", DEFAULT_STORY_RATE);
+  }
+  function poemRate(fallback = DEFAULT_POEM_RATE) {
+    return readPercentRate("chubby-poem-rate", fallback);
+  }
+  function chatRate() {
+    try {
+      const s = localStorage.getItem("chubby-chat-rate");
+      if (s && CHAT_RATES.indexOf(s) >= 0) return s;
+    } catch (e) {
+    }
+    return DEFAULT_CHAT_RATE;
+  }
+  function setChatRate(rate) {
+    const v = String(rate || "").trim();
+    if (CHAT_RATES.indexOf(v) < 0) return false;
+    try {
+      localStorage.setItem("chubby-chat-rate", v);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  function narrationRate() {
+    try {
+      const s = localStorage.getItem("chubby-narration-rate");
+      if (s && NARRATION_RATES.indexOf(s) >= 0) return s;
+    } catch (e) {
+    }
+    return DEFAULT_NARRATION_RATE;
+  }
+  function setNarrationRate(rate) {
+    const v = String(rate || "").trim();
+    if (NARRATION_RATES.indexOf(v) < 0) return false;
+    try {
+      localStorage.setItem("chubby-narration-rate", v);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
-  // src/client/image.ts
-  var DEFAULT_MAX_EDGE = 1280;
-  var DEFAULT_QUALITY = 0.85;
-  var KEEP_RAW_BELOW = 400 * 1024;
-  function readFileAsBase64(file) {
+  // src/client/util.ts
+  function evStop(e) {
+    try {
+      if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+    } catch (e2) {
+    }
+  }
+  function evPrevent(e) {
+    try {
+      if (e && typeof e.preventDefault === "function") e.preventDefault();
+    } catch (e2) {
+    }
+  }
+  function clearT(t) {
+    try {
+      if (t) clearTimeout(t);
+    } catch (e) {
+    }
+  }
+  function clearI(t) {
+    try {
+      if (t) clearInterval(t);
+    } catch (e) {
+    }
+  }
+  function str(x) {
+    return x == null ? "" : String(x);
+  }
+
+  // src/client/text.ts
+  function collapseText(raw) {
+    return str(raw).replace(/\s+/g, " ").trim();
+  }
+  function collapsePoemBody(raw) {
+    let t = str(raw);
+    t = t.replace(/\r/g, "");
+    t = t.replace(/\n+/g, "，");
+    t = t.replace(/[。！？；]+，/g, (m) => m.slice(0, 1));
+    t = t.replace(/，{2,}/g, "，");
+    t = t.replace(/，([。！？；])/g, "$1");
+    return t.trim();
+  }
+  function taleParts(rawTitle) {
+    const t = String(rawTitle || "").trim();
+    const i = t.indexOf("·");
+    if (i < 0) return { title: t, book: "" };
+    const book = t.slice(0, i).trim();
+    const title = t.slice(i + 1).trim();
+    if (book && title) return { book, title };
+    return { title: title || book, book: "" };
+  }
+  function normalizePlain(text) {
+    return str(text).replace(/[\s。，！？,.!?、…~～]/g, "");
+  }
+  function estimateSpeakMs(text) {
+    const s = str(text);
+    if (!s.trim()) return 0;
+    let cjk = 0;
+    let cjkPuncts = 0;
+    let cjkScript = false;
+    let words = 0;
+    let digits = 0;
+    let halfPuncts = 0;
+    let inWord = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (isSpeakDigit(c)) {
+        digits++;
+        inWord = false;
+        continue;
+      }
+      if (isSpeakWordLetter(c)) {
+        if (!inWord) {
+          words++;
+          inWord = true;
+        }
+        continue;
+      }
+      if (inWord && isSpeakWordJoiner(c)) continue;
+      inWord = false;
+      if (isCjkSpeakChar(c)) {
+        cjk++;
+        cjkScript = true;
+        continue;
+      }
+      if (isCjkSpeakPunct(c)) {
+        cjkPuncts++;
+        continue;
+      }
+      if (isHalfSpeakPunct(c)) halfPuncts++;
+    }
+    const base = cjkScript ? 3e3 : 600;
+    const ms2 = base + (cjk + cjkPuncts) * 260 + words * 300 + digits * 200 + halfPuncts * 100;
+    return Math.round(Math.min(ms2, Number.MAX_SAFE_INTEGER));
+  }
+  function isSpeakWordLetter(c) {
+    return c >= 65 && c <= 90 || c >= 97 && c <= 122 || c >= 192 && c <= 591;
+  }
+  function isSpeakWordJoiner(c) {
+    return c === 39 || c === 45;
+  }
+  function isCjkSpeakChar(c) {
+    return c >= 19968 && c <= 40959 || c >= 13312 && c <= 19903 || c >= 63744 && c <= 64255 || c >= 12288 && c <= 12351 || c >= 65280 && c <= 65519;
+  }
+  function isHalfSpeakPunct(c) {
+    return c === 44 || c === 46 || c === 33 || c === 63 || c === 59 || c === 58;
+  }
+  function isCjkSpeakPunct(c) {
+    return c >= 8208 && c <= 8231 || c === 183;
+  }
+  function isSpeakDigit(c) {
+    return c >= 48 && c <= 57;
+  }
+  function echoKey(s) {
+    return str(s).replace(/星号|米字号/g, "*").replace(/\*[^*]{1,60}\*/g, "").replace(/[\s。，！？,.!?、…~～]/g, "");
+  }
+  var SHORT_ECHO_ALLOW = [
+    "停",
+    "别",
+    "不",
+    "好",
+    "喂",
+    "停下",
+    "停一下",
+    "别说",
+    "别念",
+    "别讲",
+    "闭嘴",
+    "安静",
+    "打住",
+    "够了",
+    "好的",
+    "好呀",
+    "好吧",
+    "是的",
+    "对的",
+    "可以",
+    "不行",
+    "不要",
+    "没有",
+    "没事",
+    "谢谢",
+    "晚安",
+    "早安",
+    "再见",
+    "等我",
+    "稍等",
+    "讲吧",
+    "说吧",
+    "唱吧",
+    "念吧",
+    "来吧",
+    "开始",
+    "继续",
+    "没错",
+    "试试",
+    "嗯嗯"
+  ];
+  deepFreeze(SHORT_ECHO_ALLOW);
+  function isShortEchoFragment(plain, hadRecentSpeech) {
+    const p = String(plain || "");
+    if (!hadRecentSpeech) return false;
+    if (p.length > 2) return false;
+    return SHORT_ECHO_ALLOW.indexOf(p) < 0;
+  }
+  function stripStageDirections(raw) {
+    let t = str(raw);
+    t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, " ");
+    t = t.replace(/[\*＊]/g, " ");
+    t = t.replace(/([，。！？；：、])\s+/g, "$1");
+    return t.replace(/\s{2,}/g, " ").trim();
+  }
+  function createDeduper(opts) {
+    const windowMs = Math.max(0, Number(opts && opts.windowMs) || 0);
+    let lastNorm = "";
+    let lastAt = 0;
+    return {
+      allow(text) {
+        const norm = normalizePlain(text);
+        const now = Date.now();
+        if (lastNorm && lastAt && now - lastAt < windowMs && norm === lastNorm) {
+          try {
+            if (opts.onDuplicate) opts.onDuplicate();
+          } catch (e) {
+          }
+          return false;
+        }
+        lastNorm = norm;
+        lastAt = now;
+        return true;
+      },
+      reset() {
+        lastNorm = "";
+        lastAt = 0;
+      }
+    };
+  }
+  function createSentenceBuffer(maxLen = 40) {
+    const limit = Math.max(2, Number(maxLen) || 40);
+    let tail = "";
+    function take(force) {
+      const out = [];
+      for (; ; ) {
+        if (!tail) break;
+        tail = tail.replace(/^\s+/, "");
+        if (!tail) break;
+        const m = tail.match(/[\s\S]*?[。！？!?；;\n]/);
+        if (m && m[0].length >= 2) {
+          const seg = m[0].trim();
+          tail = tail.slice(m[0].length);
+          if (seg) out.push(seg);
+          continue;
+        }
+        if (force || tail.length >= limit) {
+          const seg = tail.trim();
+          tail = "";
+          if (seg) out.push(seg);
+        }
+        break;
+      }
+      return out;
+    }
+    return {
+      push(delta) {
+        tail += str(delta);
+        return take(false);
+      },
+      flush() {
+        return take(true);
+      }
+    };
+  }
+
+  // src/client/playback.ts
+  function isPlaybackZombie(p) {
+    const zombieMs = p.zombieMs === void 0 ? 2500 : p.zombieMs;
+    const synthTimeoutMs = p.synthTimeoutMs === void 0 ? 2e4 : p.synthTimeoutMs;
+    if (!p.busy) return false;
+    if (p.hasAudio && p.audioPlaying) return false;
+    if (!p.hasAudio && p.synthAt > 0 && p.now - p.synthAt < synthTimeoutMs) return false;
+    const since = typeof p.lastProgressAt === "number" && p.lastProgressAt > 0 ? p.lastProgressAt : p.busySince;
+    return p.now - since >= zombieMs;
+  }
+
+  // src/client/endpoint.ts
+  var ENDPOINT_MODES = ["ape", "classic"];
+  deepFreeze(ENDPOINT_MODES);
+  var DEFAULT_ENDPOINT_MODE = "classic";
+  function normalizeEndpointMode(v) {
+    return String(v || "").trim() === "ape" ? "ape" : DEFAULT_ENDPOINT_MODE;
+  }
+  function readEndpointMode() {
+    try {
+      return normalizeEndpointMode(localStorage.getItem("chubby-endpoint"));
+    } catch (e) {
+      return DEFAULT_ENDPOINT_MODE;
+    }
+  }
+  function writeEndpointMode(m) {
+    try {
+      localStorage.setItem("chubby-endpoint", normalizeEndpointMode(m));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // src/client/audio-codec.ts
+  var RECORDER_MIME_CANDIDATES = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4"
+  ];
+  deepFreeze(RECORDER_MIME_CANDIDATES);
+  var WAV_HEADER_BYTES = 44;
+  function formatFromMime(mime) {
+    const m = str(mime).toLowerCase();
+    if (m.indexOf("webm") >= 0) return "webm";
+    if (m.indexOf("wav") >= 0 || m.indexOf("wave") >= 0) return "wav";
+    if (m.indexOf("mpeg") >= 0 || m.indexOf("mp3") >= 0) return "mp3";
+    if (m.indexOf("mp4") >= 0 || m.indexOf("m4a") >= 0 || m.indexOf("aac") >= 0) return "mp4";
+    return "webm";
+  }
+  function pickRecorderMime(caps) {
+    const can = caps && typeof caps.isTypeSupported === "function" ? caps : null;
+    if (can) {
+      for (let i = 0; i < RECORDER_MIME_CANDIDATES.length; i++) {
+        const t = RECORDER_MIME_CANDIDATES[i];
+        try {
+          if (can.isTypeSupported(t)) return { mimeType: t, format: formatFromMime(t) };
+        } catch (e) {
+        }
+      }
+    }
+    return { mimeType: "", format: "webm" };
+  }
+  function hostAsrFormat(format) {
+    return format === "wav" ? "wav" : format === "mp3" ? "mp3" : "webm";
+  }
+  function downmixToMono(channels) {
+    const list = (channels || []).filter(Boolean);
+    if (!list.length) return new Float32Array(0);
+    let len = 0;
+    for (let i = 0; i < list.length; i++) len = Math.max(len, list[i].length >>> 0);
+    const out = new Float32Array(len);
+    for (let c = 0; c < list.length; c++) {
+      const ch = list[c];
+      for (let i = 0; i < len; i++) {
+        const v = i < ch.length ? Number(ch[i]) : 0;
+        out[i] += isFinite(v) ? v : 0;
+      }
+    }
+    if (list.length > 1) for (let i = 0; i < len; i++) out[i] = out[i] / list.length;
+    return out;
+  }
+  function writeAscii(view, offset, text) {
+    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i) & 255);
+  }
+  function encodeWavPcm16(samples, sampleRate) {
+    const src = samples || [];
+    const n = Math.max(0, src.length >>> 0);
+    const rateRaw = Math.round(Number(sampleRate) || 48e3);
+    const sr = Math.max(8e3, Math.min(96e3, rateRaw));
+    const dataBytes = n * 2;
+    if (dataBytes > 4294967295 - 36) throw new RangeError("wav too large");
+    const buf = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes);
+    const v = new DataView(buf);
+    writeAscii(v, 0, "RIFF");
+    v.setUint32(4, 36 + dataBytes, true);
+    writeAscii(v, 8, "WAVE");
+    writeAscii(v, 12, "fmt ");
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true);
+    v.setUint32(24, sr, true);
+    v.setUint32(28, sr * 2, true);
+    v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true);
+    writeAscii(v, 36, "data");
+    v.setUint32(40, dataBytes, true);
+    for (let i = 0; i < n; i++) {
+      let s = Number(src[i]);
+      if (!isFinite(s)) s = 0;
+      if (s < -1) s = -1;
+      else if (s > 1) s = 1;
+      v.setInt16(WAV_HEADER_BYTES + i * 2, s < 0 ? Math.round(s * 32768) : Math.round(s * 32767), true);
+    }
+    return buf;
+  }
+  function wavBytes(seconds, sampleRate) {
+    const sec = Math.max(0, Number(seconds) || 0);
+    const sr = Math.max(8e3, Math.min(96e3, Math.round(Number(sampleRate) || 48e3)));
+    return WAV_HEADER_BYTES + Math.ceil(sec * sr) * 2;
+  }
+
+  // src/client/browser-tts.ts
+  function scopeOf(scope) {
+    if (scope) return scope;
+    try {
+      return typeof window !== "undefined" ? window : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function browserVoiceUsable(scope) {
+    try {
+      const s = scopeOf(scope);
+      if (!s || !s.speechSynthesis || typeof s.speechSynthesis.speak !== "function") return false;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  function watchdogMs(text) {
+    const n = String(text || "").length;
+    return Math.min(3e4, Math.max(4e3, 1500 + n * 220));
+  }
+  var VOICE_WAIT_MS = 300;
+  function speakViaBrowser(text, opts) {
+    const src = String(text || "");
+    const s = scopeOf(opts && opts.scope);
+    const ms2 = opts && typeof opts.watchdog === "number" && opts.watchdog > 0 ? opts.watchdog : watchdogMs(src);
+    return new Promise((resolve) => {
+      let done = false;
+      let startTimer = null;
+      let voiceTimer = null;
+      let onVoices = null;
+      let synthRef = null;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        try {
+          if (startTimer) {
+            clearTimeout(startTimer);
+            startTimer = null;
+          }
+        } catch (e) {
+        }
+        try {
+          if (voiceTimer) {
+            clearTimeout(voiceTimer);
+            voiceTimer = null;
+          }
+        } catch (e) {
+        }
+        try {
+          if (onVoices && synthRef && typeof synthRef.removeEventListener === "function") {
+            synthRef.removeEventListener("voiceschanged", onVoices);
+          }
+        } catch (e) {
+        }
+        onVoices = null;
+        resolve();
+      };
+      const watch = setTimeout(finish, ms2);
+      const realFinish = () => {
+        clearT(watch);
+        finish();
+      };
+      try {
+        const Synth = s && s.speechSynthesis;
+        const Utt = s && s.SpeechSynthesisUtterance;
+        if (!Synth || !Utt || typeof Synth.speak !== "function") {
+          realFinish();
+          return;
+        }
+        synthRef = Synth;
+        const u = new Utt(src);
+        const wantZh = /[\u4e00-\u9fa5]/.test(src);
+        u.lang = wantZh ? "zh-CN" : "en-US";
+        u.onend = realFinish;
+        u.onerror = realFinish;
+        const chooseVoice = () => {
+          try {
+            const vs = typeof Synth.getVoices === "function" ? Synth.getVoices() : null;
+            for (let i = 0; vs && i < vs.length; i++) {
+              const v = vs[i];
+              if (!v) continue;
+              const lang = String(v.lang || "");
+              if (wantZh ? /^zh/i.test(lang) : /^en/i.test(lang)) {
+                u.voice = v;
+                break;
+              }
+            }
+          } catch (e) {
+          }
+        };
+        const speak = () => {
+          try {
+            Synth.speak(u);
+          } catch (e) {
+            realFinish();
+          }
+        };
+        const launch = () => {
+          if (done) return;
+          try {
+            if (voiceTimer) {
+              clearTimeout(voiceTimer);
+              voiceTimer = null;
+            }
+          } catch (e) {
+          }
+          try {
+            if (onVoices && typeof Synth.removeEventListener === "function") Synth.removeEventListener("voiceschanged", onVoices);
+          } catch (e) {
+          }
+          onVoices = null;
+          chooseVoice();
+          const busy = (() => {
+            try {
+              return !!(Synth.speaking || Synth.pending);
+            } catch (e) {
+              return false;
+            }
+          })();
+          if (busy) {
+            try {
+              if (typeof Synth.cancel === "function") Synth.cancel();
+            } catch (e) {
+            }
+            startTimer = setTimeout(speak, 80);
+          } else speak();
+        };
+        let waiting = false;
+        try {
+          const vs = typeof Synth.getVoices === "function" ? Synth.getVoices() : null;
+          if ((!vs || !vs.length) && typeof Synth.addEventListener === "function") {
+            waiting = true;
+            onVoices = () => {
+              if (done) return;
+              launch();
+            };
+            Synth.addEventListener("voiceschanged", onVoices);
+            voiceTimer = setTimeout(() => {
+              if (done) return;
+              launch();
+            }, VOICE_WAIT_MS);
+          }
+        } catch (e) {
+          waiting = false;
+        }
+        if (!waiting) launch();
+      } catch (e) {
+        realFinish();
+      }
+    });
+  }
+
+  // src/client/voice/asr-audio.ts
+  function readBlobBuffer(blob) {
+    return new Promise((resolve) => {
+      try {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result || null);
+        fr.onerror = () => resolve(null);
+        fr.readAsArrayBuffer(blob);
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }
+  function transcodeToWav(blob, actx, maxWavBytes = 6 * 1024 * 1024) {
+    return new Promise((resolve) => {
+      const ctx = actx;
+      if (!ctx || typeof ctx.decodeAudioData !== "function") {
+        resolve(null);
+        return;
+      }
+      let settled = false;
+      let timeout = null;
+      const done = (wav) => {
+        if (settled) return;
+        settled = true;
+        clearT(timeout);
+        resolve(wav);
+      };
+      const finish = (buf) => {
+        try {
+          if (!buf || !buf.numberOfChannels) {
+            done(null);
+            return;
+          }
+          const chans = [];
+          const n = Math.min(2, Number(buf.numberOfChannels) || 1);
+          for (let i = 0; i < n; i++) chans.push(buf.getChannelData(i));
+          const mono = downmixToMono(chans);
+          if (wavBytes(mono.length / (Number(buf.sampleRate) || 48e3), buf.sampleRate) > maxWavBytes) {
+            done(null);
+            return;
+          }
+          done(new Blob([encodeWavPcm16(mono, buf.sampleRate)], { type: "audio/wav" }));
+        } catch (e) {
+          done(null);
+        }
+      };
+      readBlobBuffer(blob).then((ab) => {
+        if (!ab) {
+          done(null);
+          return;
+        }
+        try {
+          const ret = ctx.decodeAudioData(ab, finish, () => done(null));
+          if (ret && typeof ret.then === "function") ret.then(finish).catch(() => done(null));
+        } catch (e) {
+          done(null);
+        }
+      });
+      timeout = setTimeout(() => done(null), 3e3);
+    });
+  }
+  function blobToBase64(blob) {
     return new Promise((resolve) => {
       try {
         const fr = new FileReader();
@@ -360,18 +955,1871 @@
           resolve(s.indexOf(",") >= 0 ? s.slice(s.indexOf(",") + 1) : s);
         };
         fr.onerror = () => resolve("");
+        fr.readAsDataURL(blob);
+      } catch (e) {
+        resolve("");
+      }
+    });
+  }
+  async function prepareAudioForAsr(blob, deps) {
+    const recMime = String(deps && deps.recMime || "");
+    const onDiag = deps && deps.onDiag;
+    const maxWavBytes = deps && typeof deps.maxWavBytes === "number" ? deps.maxWavBytes : 6 * 1024 * 1024;
+    let src = blob;
+    let fmt = formatFromMime(blob.type || recMime);
+    if (fmt === "mp4") {
+      const wav = await transcodeToWav(blob, deps && deps.actx, maxWavBytes);
+      if (wav) {
+        src = wav;
+        fmt = "wav";
+      } else {
+        try {
+          onDiag && onDiag({ stage: "mp4-no-transcode", hint: "mp4 没能转成 wav，按原字节上传" });
+        } catch (e) {
+        }
+      }
+    }
+    const b64 = await blobToBase64(src);
+    if (!b64) return null;
+    return { base64: b64, format: hostAsrFormat(fmt) };
+  }
+
+  // src/shared/noise.ts
+  var NOISE_TEXTS = [
+    "嗯",
+    "呃",
+    "啊",
+    "哦",
+    "恩",
+    "嗯嗯",
+    "啊啊",
+    "谢谢观看",
+    "谢谢大家",
+    "字幕",
+    "请不吝点赞",
+    "点赞",
+    "订阅",
+    "转发",
+    "打赏",
+    "再见",
+    "本鱼在听",
+    "嗯本鱼在听",
+    "字幕由",
+    "明镜与点点"
+  ];
+  deepFreeze(NOISE_TEXTS);
+  var INTERRUPT_WORDS = ["停", "别", "不", "闭嘴", "打住"];
+  deepFreeze(INTERRUPT_WORDS);
+  function normalizeNoiseKey(text) {
+    return String(text == null ? "" : text).replace(/\s+/g, "").replace(/[。，、！？；：,.!?;:…~～·""''（）()【】\[\]]/g, "").toLowerCase();
+  }
+  function isNoiseText(text) {
+    const k = normalizeNoiseKey(text);
+    if (!k) return true;
+    if (isInterruptWord(k)) return false;
+    if (k.length <= 1) return true;
+    if (NOISE_TEXTS.indexOf(k) >= 0) return true;
+    if (k.length <= 6 && /^([\u4e00-\u9fa5])\1{2,}$/.test(k)) return true;
+    return false;
+  }
+  function isInterruptWord(text) {
+    const k = normalizeNoiseKey(text);
+    return k.length > 0 && INTERRUPT_WORDS.indexOf(k) >= 0;
+  }
+
+  // src/client/sim.ts
+  function normalizeText(s) {
+    return String(s || "").toLowerCase().replace(/[\s\u3000]+/g, "").replace(/[\s。，！？、；：,.!?;:"'”’“”（）()【】\[\]<>《》~～`@#$%^&*_+=|\\/-]/g, "");
+  }
+  function bigrams(s) {
+    const out = /* @__PURE__ */ new Set();
+    const t = String(s || "");
+    if (!t) return out;
+    if (t.length === 1) {
+      out.add(t);
+      return out;
+    }
+    for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
+    return out;
+  }
+  function similarity(a, b) {
+    const A = bigrams(normalizeText(a));
+    const B = bigrams(normalizeText(b));
+    if (A.size === 0 || B.size === 0) return 0;
+    let inter = 0;
+    for (const g of A) if (B.has(g)) inter++;
+    const union = A.size + B.size - inter;
+    return union === 0 ? 0 : inter / union;
+  }
+  function isRepeat(text, opts) {
+    const threshold = opts.threshold === void 0 ? 0.85 : opts.threshold;
+    const minLen = opts.minLen === void 0 ? 4 : opts.minLen;
+    const windowMs = opts.windowMs === void 0 ? 2e4 : opts.windowMs;
+    const now = opts.now === void 0 ? Date.now() : opts.now;
+    const cur = normalizeText(text);
+    if (!cur) return false;
+    for (const item2 of opts.recent || []) {
+      if (now - Number(item2 && item2.at || 0) > windowMs) continue;
+      const prev = normalizeText(item2 && item2.text ? item2.text : "");
+      if (!prev) continue;
+      if (cur === prev) return true;
+      const shortOne = cur.length <= prev.length ? cur : prev;
+      const longOne = cur.length <= prev.length ? prev : cur;
+      if (shortOne.length >= minLen && longOne.indexOf(shortOne) >= 0) return true;
+      if (cur.length >= minLen && prev.length >= minLen && similarity(cur, prev) >= threshold) return true;
+    }
+    return false;
+  }
+
+  // src/client/voice/echo-filter.ts
+  function createEchoFilter() {
+    const spokenRecent = [];
+    const recentHeard = [];
+    const acceptedSeg = [];
+    let maxSegId = 0;
+    function noteSpoken(text, now) {
+      const t = String(text || "").trim();
+      if (!t) return;
+      spokenRecent.push({ text: t, at: typeof now === "number" ? now : Date.now() });
+      while (spokenRecent.length > 12) spokenRecent.shift();
+    }
+    function accept(text, nowIn, segId) {
+      if (typeof segId === "number") {
+        if (segId < maxSegId) return { ok: false, reason: "dup" };
+        if (acceptedSeg.indexOf(segId) >= 0) return { ok: false, reason: "dup" };
+        acceptedSeg.push(segId);
+        while (acceptedSeg.length > 50) acceptedSeg.shift();
+        if (segId > maxSegId) maxSegId = segId;
+      }
+      const plain = normalizePlain(text).toLowerCase();
+      const plainKey = echoKey(text).toLowerCase();
+      const interrupt = /^[停别不]$/.test(plain);
+      if (plain.length < 2 && !interrupt) return { ok: false, reason: "trivial" };
+      if (!interrupt && isNoiseText(plain)) return { ok: false, reason: "noise" };
+      if (/^本鱼在听/.test(plain)) return { ok: false, reason: "self" };
+      const now = typeof nowIn === "number" ? nowIn : Date.now();
+      let hadRecentSpeech = false;
+      for (const s of spokenRecent) {
+        if (now - s.at > 15e3) continue;
+        if (now - s.at <= 8e3) hadRecentSpeech = true;
+        const target = normalizePlain(s.text).toLowerCase();
+        if (!target) continue;
+        const targetKey = echoKey(s.text).toLowerCase();
+        if (plainKey && targetKey && (plainKey === targetKey || targetKey.length >= 6 && plainKey.indexOf(targetKey.slice(0, 6)) >= 0)) {
+          return { ok: false, reason: "echo" };
+        }
+        if (plain === target) return { ok: false, reason: "echo" };
+        if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return { ok: false, reason: "echo" };
+        if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return { ok: false, reason: "echo" };
+        if (plain.length >= 3 && now - s.at < 6e3 && target.indexOf(plain) >= 0) return { ok: false, reason: "echo" };
+      }
+      if (isShortEchoFragment(plain, hadRecentSpeech)) return { ok: false, reason: "short" };
+      if (isRepeat(plain, { recent: recentHeard, windowMs: 8e3, threshold: 0.9, minLen: 4, now })) {
+        return { ok: false, reason: "dup" };
+      }
+      recentHeard.push({ text, at: now });
+      while (recentHeard.length > 3) recentHeard.shift();
+      return { ok: true };
+    }
+    return {
+      accept,
+      noteSpoken,
+      reset() {
+        spokenRecent.length = 0;
+        recentHeard.length = 0;
+        acceptedSeg.length = 0;
+        maxSegId = 0;
+      }
+    };
+  }
+
+  // src/client/voice/fetch.ts
+  async function fetchWithTimeout(url, init, ms2, outer) {
+    const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => {
+      try {
+        ctl.abort();
+      } catch (e) {
+      }
+    }, ms2) : null;
+    let sig = ctl ? ctl.signal : void 0;
+    const forwardOuter = () => {
+      try {
+        if (ctl) ctl.abort();
+      } catch (e) {
+      }
+    };
+    let hooked = false;
+    if (outer && ctl) {
+      const AnySig = AbortSignal;
+      if (typeof AnySig.any === "function") {
+        try {
+          sig = AnySig.any([ctl.signal, outer]);
+        } catch (e) {
+          sig = ctl.signal;
+        }
+      } else {
+        try {
+          if (outer.aborted) forwardOuter();
+          else {
+            outer.addEventListener("abort", forwardOuter, { once: true });
+            hooked = true;
+          }
+        } catch (e) {
+        }
+        sig = ctl.signal;
+      }
+    } else if (!ctl && outer) {
+      sig = outer;
+    }
+    try {
+      return await fetch(url, sig ? { ...init, signal: sig } : init);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (hooked) {
+        try {
+          outer.removeEventListener("abort", forwardOuter);
+        } catch (e) {
+        }
+      }
+    }
+  }
+
+  // src/client/voice/voices.ts
+  var TTS_VOICES = [
+    "zh-CN-XiaoyiNeural",
+    "zh-CN-XiaoxiaoNeural",
+    "zh-CN-XiaochenNeural",
+    "zh-CN-YunxiNeural",
+    "zh-CN-YunyangNeural",
+    "en-US-AnaNeural",
+    "en-US-JennyNeural",
+    "en-GB-SoniaNeural",
+    "auto"
+  ];
+  deepFreeze(TTS_VOICES);
+  var DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
+  function normalizeVoiceName(name, fallback = DEFAULT_VOICE) {
+    const n = str(name).trim();
+    return TTS_VOICES.indexOf(n) >= 0 ? n : fallback;
+  }
+  function readStoredVoiceName() {
+    try {
+      return normalizeVoiceName(localStorage.getItem("chubby-tts-voice"));
+    } catch (e) {
+      return DEFAULT_VOICE;
+    }
+  }
+
+  // src/client/voice/status.ts
+  function createVoiceStats() {
+    return {
+      windows: 0,
+      skippedSilent: 0,
+      uploaded: 0,
+      asrFail: 0,
+      asrRetry: 0,
+      asrTexts: 0,
+      heard: 0,
+      echoDropped: 0,
+      shortDropped: 0,
+      dupDropped: 0,
+      qDropped: 0,
+      ttsRequests: 0,
+      ttsPlayed: 0,
+      ttsFail: 0,
+      ttsZombie: 0,
+      lastError: ""
+    };
+  }
+  function createStatusHolder(sink) {
+    let status = "idle";
+    return {
+      get: () => status,
+      set(s) {
+        if (status === s) return;
+        status = s;
+        try {
+          if (sink) sink(s);
+        } catch (e) {
+        }
+      }
+    };
+  }
+  function createDiagSnapshots() {
+    let lastApe = null;
+    let lastSegment = null;
+    let lastTts = null;
+    return {
+      setApe: (v) => {
+        lastApe = v;
+      },
+      getApe: () => lastApe,
+      setSegment: (v) => {
+        lastSegment = v;
+      },
+      getSegment: () => lastSegment,
+      setTts: (v) => {
+        lastTts = v;
+      },
+      getTts: () => lastTts
+    };
+  }
+
+  // src/client/voice/tts-queue.ts
+  var TTS_TIMEOUT_MS = 2e4;
+  var TTS_WATCH_MS = 1e3;
+  var TTS_ZOMBIE_MS = 2500;
+  var ECHO_MUTE_MS = 700;
+  var TTS_RETRY_MAX = 4;
+  var TTS_RETRY_BASE_MS = 500;
+  function ttsRetryDelayMs(attempt) {
+    const n = Math.max(1, Math.floor(Number(attempt) || 1));
+    return TTS_RETRY_BASE_MS * Math.pow(2, Math.min(n, TTS_RETRY_MAX) - 1);
+  }
+  function narrationPauseFor(text) {
+    const t = String(text || "").trim();
+    if (!t) return 200;
+    const last = t.slice(-1);
+    if (/[。！？!?…]/.test(last)) return 260;
+    if (/[，、；,;]/.test(last)) return 140;
+    return 200;
+  }
+  function prefetchTargets(queue, narration, inflight = 0, has, maxInflight = 3) {
+    const depth = narration ? 3 : 2;
+    const cap = Math.max(0, Math.floor(Number(maxInflight) || 0));
+    let n = Math.max(0, Math.floor(Number(inflight) || 0));
+    const out = [];
+    for (let i = 0; i < depth && i < queue.length; i++) {
+      const t = queue[i];
+      if (has && has(t.seq)) continue;
+      if (n >= cap) break;
+      out.push(t);
+      n++;
+    }
+    return out;
+  }
+  function buildTtsJobs(segs, opts) {
+    const out = [];
+    for (let i = 0; i < segs.length; i++) {
+      out.push({
+        seq: opts.nextSeq + i,
+        text: segs[i],
+        rate: opts.rate,
+        narration: opts.narration,
+        attempts: 0,
+        strict: opts.strict,
+        onDone: i === segs.length - 1 ? opts.onDone : void 0
+      });
+    }
+    return out;
+  }
+  function isStaleToken(token, current) {
+    return typeof token === "number" && token !== current;
+  }
+  var TTS_QUEUE_MAX = 200;
+  function capQueue(q, max = TTS_QUEUE_MAX) {
+    const limit = Math.max(0, Math.floor(Number(max) || 0));
+    if (!Array.isArray(q) || q.length <= limit) return 0;
+    const drop = q.length - limit;
+    q.splice(0, drop);
+    return drop;
+  }
+
+  // src/client/voice/recorder.ts
+  var WINDOW_MS = 6e3;
+  var EARLY_STOP_QUIET = 700;
+  var MIN_SPEECH_MS = 400;
+  var SILENT_PEAK_DB = -35;
+  var CLASSIC_SPEECH_DB = -45;
+  var MUTED_SPEECH_DB = 0;
+  var TICK_MS = 60;
+  var TICK_ERROR_MS = 120;
+  var LEVEL_PROBE_MS = 1200;
+  var MIN_SEGMENT_BYTES = 1200;
+  var APE_MIN_SPEECH_MS = 150;
+  function readLevel(analyser, timeBuf, box) {
+    const an = analyser;
+    if (!an || !timeBuf) return { db: -160, read: false };
+    let ok = false;
+    try {
+      if (typeof an.getFloatTimeDomainData === "function") {
+        an.getFloatTimeDomainData(timeBuf);
+        ok = true;
+      } else if (typeof an.getByteTimeDomainData === "function") {
+        let bytes = box.byte;
+        if (!bytes || bytes.length !== timeBuf.length) {
+          bytes = new Uint8Array(timeBuf.length);
+          box.byte = bytes;
+        }
+        an.getByteTimeDomainData(bytes);
+        for (let i = 0; i < timeBuf.length; i++) timeBuf[i] = (bytes[i] - 128) / 128;
+        ok = true;
+      }
+    } catch (e) {
+      ok = false;
+    }
+    if (!ok) return { db: -160, read: false };
+    let sum = 0;
+    for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
+    const rms = Math.sqrt(sum / timeBuf.length);
+    const db = 20 * Math.log10(rms + 1e-8);
+    return { db, read: true };
+  }
+  function createSegmentState() {
+    return { chunks: [], peakDb: -160, speechMs: 0, quietMs: 0, startedAt: 0 };
+  }
+  function resetSegmentState(s, startedAt) {
+    s.chunks = [];
+    s.peakDb = -160;
+    s.speechMs = 0;
+    s.quietMs = 0;
+    s.startedAt = startedAt;
+  }
+  function addChunk(s, blob) {
+    s.chunks.push(blob);
+  }
+  function clearChunks(s) {
+    s.chunks = [];
+  }
+  function notePeak(s, db) {
+    if (db > s.peakDb) s.peakDb = db;
+  }
+  function accrueClassic(s, db, muted) {
+    if (db > (muted ? MUTED_SPEECH_DB : CLASSIC_SPEECH_DB)) {
+      s.speechMs += TICK_MS;
+      s.quietMs = 0;
+    } else {
+      s.quietMs += TICK_MS;
+    }
+  }
+  function shouldStopClassic(s, now) {
+    if (s.speechMs >= MIN_SPEECH_MS && s.quietMs >= EARLY_STOP_QUIET) return "quiet";
+    if (now - s.startedAt >= WINDOW_MS) return "timeout";
+    return "";
+  }
+  function shouldStopApeNoLevel(s, levelDead, now) {
+    return !!(levelDead && now - s.startedAt >= WINDOW_MS);
+  }
+  function takeBlob(s, type) {
+    const blob = new Blob(s.chunks, { type });
+    s.chunks = [];
+    return blob;
+  }
+  function isTooSmallSegment(bytes) {
+    return bytes < MIN_SEGMENT_BYTES;
+  }
+  function isSilentPeak(peakDb) {
+    return peakDb < SILENT_PEAK_DB;
+  }
+  function hadApeSpeech(step) {
+    return !!(step && step.hadSpeech && step.speechMs >= APE_MIN_SPEECH_MS);
+  }
+
+  // src/client/voice.ts
+  var ASR_TIMEOUT_MS = 3e4;
+  var ASR_RETRY_ONCE = true;
+  var TTS_FAIL_COOLDOWN_K = 3;
+  var TTS_COOLDOWN_MS = 6e4;
+  var TTS_MAX_INFLIGHT = 3;
+  var ttsFailGuard = { streak: 0, count: 0, cooldownUntil: 0 };
+  var ttsPrefetchGuard = { hits: 0, misses: 0 };
+  function ttsInCooldown(now = Date.now()) {
+    return ttsFailGuard.cooldownUntil > 0 && now < ttsFailGuard.cooldownUntil;
+  }
+  function ttsSyncDiag() {
+    try {
+      const w = window.__chubbyWhale || (window.__chubbyWhale = {});
+      w.ttsFailCount = ttsFailGuard.count;
+      w.ttsCooldownUntil = ttsFailGuard.cooldownUntil;
+      w.ttsPrefetchHits = ttsPrefetchGuard.hits;
+      w.ttsPrefetchMisses = ttsPrefetchGuard.misses;
+    } catch (e) {
+    }
+  }
+  function ttsNoteSynthFail() {
+    const now = Date.now();
+    ttsFailGuard.count++;
+    ttsFailGuard.streak++;
+    if (ttsFailGuard.streak >= TTS_FAIL_COOLDOWN_K && !ttsInCooldown(now)) {
+      ttsFailGuard.cooldownUntil = now + TTS_COOLDOWN_MS;
+    }
+    ttsSyncDiag();
+    return ttsInCooldown(now);
+  }
+  function ttsNoteSynthOk() {
+    ttsFailGuard.streak = 0;
+    ttsFailGuard.cooldownUntil = 0;
+    ttsSyncDiag();
+  }
+  function ttsSkipFailOn() {
+    try {
+      if (typeof localStorage === "undefined" || !localStorage) return false;
+      return String(localStorage.getItem("chubby-tts-skip-fail") || "").trim().toLowerCase() === "on";
+    } catch (e) {
+      return false;
+    }
+  }
+  function createVoice(opts) {
+    const apiBase = opts.apiBase || "/api/chubby-whale";
+    let voiceName = normalizeVoiceName(opts.voiceName || readStoredVoiceName());
+    let epMode = readEndpointMode();
+    const ape = new Ape();
+    const diag2 = createDiagSnapshots();
+    const stats = createVoiceStats();
+    ttsSyncDiag();
+    const statusHolder = createStatusHolder((s) => {
+      try {
+        opts.onStatus && opts.onStatus(s);
+      } catch (e) {
+      }
+    });
+    const setStatus = statusHolder.set;
+    let stream = null;
+    let actx = null;
+    let analyser = null;
+    let rec = null;
+    let timeBuf = null;
+    const levelBuf = { byte: null };
+    let running = false;
+    let recMime = "";
+    let recFormat = "webm";
+    let levelOk = false;
+    let levelDead = false;
+    let levelProbeAt = 0;
+    let gestureHooks = null;
+    let asrNoKey = false;
+    let muted = false;
+    const seg = createSegmentState();
+    let segSeq = 0;
+    let curSegId = 0;
+    let tickTimer = null;
+    let restartTimer = null;
+    const echoFilter = createEchoFilter();
+    const ttsQ = [];
+    let ttsBusy = false;
+    let ttsAudio = null;
+    let ttsUrl = "";
+    let ttsBusySince = 0;
+    let ttsSynthAt = 0;
+    let ttsProgressAt = 0;
+    let ttsCurJob = null;
+    let ttsWatch = null;
+    let ttsBrowserKeep = null;
+    let ttsNextRetryAt = 0;
+    let mutedUntil = 0;
+    let speakToken = 0;
+    const level = () => {
+      const r = readLevel(analyser, timeBuf, levelBuf);
+      if (r.db > -159) levelOk = true;
+      return r.db;
+    };
+    function micOn(on) {
+      try {
+        if (stream) stream.getAudioTracks().forEach((t) => {
+          t.enabled = on;
+        });
+      } catch (e) {
+      }
+    }
+    function releaseAudio() {
+      try {
+        if (rec && rec.state !== "inactive") rec.stop();
+      } catch (e) {
+      }
+      try {
+        if (actx) actx.close();
+      } catch (e) {
+      }
+      try {
+        if (stream) stream.getTracks().forEach((t) => {
+          t.stop();
+        });
+      } catch (e) {
+      }
+      rec = null;
+      actx = null;
+      analyser = null;
+      stream = null;
+      timeBuf = null;
+      levelBuf.byte = null;
+    }
+    function unhookGestureResume() {
+      const g = gestureHooks;
+      if (!g) return;
+      gestureHooks = null;
+      try {
+        window.removeEventListener("pointerdown", g.resume, true);
+      } catch (e) {
+      }
+      try {
+        window.removeEventListener("touchstart", g.resume, true);
+      } catch (e) {
+      }
+      try {
+        window.removeEventListener("keydown", g.resume, true);
+      } catch (e) {
+      }
+    }
+    function hookGestureResume() {
+      if (gestureHooks) return;
+      const resume = () => {
+        try {
+          const c = actx;
+          if (c && c.state === "suspended") c.resume();
+          if (c && c.state !== "suspended") {
+            levelDead = false;
+            levelOk = false;
+            levelProbeAt = performance.now();
+          }
+        } catch (e) {
+        }
+        unhookGestureResume();
+      };
+      gestureHooks = { resume };
+      try {
+        window.addEventListener("pointerdown", resume, true);
+        window.addEventListener("touchstart", resume, true);
+        window.addEventListener("keydown", resume, true);
+      } catch (e) {
+      }
+    }
+    function scheduleNext(ms2) {
+      if (!running) return;
+      if (restartTimer) clearTimeout(restartTimer);
+      restartTimer = setTimeout(() => {
+        restartTimer = null;
+        beginWindow();
+      }, ms2);
+    }
+    function beginWindow() {
+      curSegId = ++segSeq;
+      if (!running || !rec) return;
+      try {
+        if (rec.state !== "inactive") {
+          try {
+            rec.stop();
+          } catch (e) {
+          }
+          scheduleNext(200);
+          return;
+        }
+        resetSegmentState(seg, performance.now());
+        ape.resetSegment();
+        diag2.setApe(null);
+        rec.start();
+        scheduleNext(0);
+        if (restartTimer) {
+          clearTimeout(restartTimer);
+          restartTimer = null;
+        }
+        tick();
+      } catch (e) {
+        stats.lastError = "beginWindow: " + String(e && e.name);
+        scheduleNext(1e3);
+      }
+    }
+    function tick() {
+      if (!running || !rec || rec.state !== "recording") return;
+      try {
+        const db = level();
+        if (!levelOk && !levelDead && levelProbeAt && performance.now() - levelProbeAt > LEVEL_PROBE_MS) {
+          levelDead = true;
+          try {
+            opts.onDiag && opts.onDiag({ stage: "analyser-dead", hint: "电平不可用，静音判定已降级（改按段长/体积）" });
+          } catch (e) {
+          }
+        }
+        if (epMode === "ape") {
+          const st = ape.step(db);
+          diag2.setApe(st);
+          notePeak(seg, db);
+          if (st.commit && rec && rec.state === "recording") {
+            try {
+              rec.stop();
+            } catch (e) {
+            }
+            try {
+              opts.onDiag && opts.onDiag({ stage: "window-end", why: st.commitReason, floor: Math.round(st.floorDb) });
+            } catch (e) {
+            }
+            return;
+          }
+          if (shouldStopApeNoLevel(seg, levelDead, performance.now())) {
+            try {
+              rec.stop();
+            } catch (e) {
+            }
+            try {
+              opts.onDiag && opts.onDiag({ stage: "window-end", why: "no-level" });
+            } catch (e) {
+            }
+            return;
+          }
+          tickTimer = setTimeout(tick, TICK_MS);
+          return;
+        }
+        const now = performance.now();
+        notePeak(seg, db);
+        accrueClassic(seg, db, muted);
+        const why = shouldStopClassic(seg, now);
+        if (why) {
+          try {
+            rec.stop();
+          } catch (e) {
+          }
+          try {
+            opts.onDiag && opts.onDiag({ stage: "window-end", why, peak: Math.round(seg.peakDb), speechMs: seg.speechMs });
+          } catch (e) {
+          }
+          return;
+        }
+        tickTimer = setTimeout(tick, TICK_MS);
+      } catch (e) {
+        stats.lastError = "tick: " + String(e && e.name);
+        tickTimer = setTimeout(tick, TICK_ERROR_MS);
+      }
+    }
+    async function onWindowDone(blob) {
+      const thisSegId = curSegId;
+      if (!running) return;
+      if (asrNoKey) {
+        stats.skippedSilent++;
+        scheduleNext(150);
+        return;
+      }
+      stats.windows++;
+      if (!levelDead) {
+        if (epMode === "ape") {
+          if (!hadApeSpeech(diag2.getApe())) {
+            stats.skippedSilent++;
+            scheduleNext(150);
+            return;
+          }
+        } else if (isSilentPeak(seg.peakDb)) {
+          stats.skippedSilent++;
+          scheduleNext(150);
+          return;
+        }
+      }
+      if (Date.now() < mutedUntil) {
+        stats.skippedSilent++;
+        scheduleNext(150);
+        return;
+      }
+      if (isTooSmallSegment(blob.size)) {
+        stats.skippedSilent++;
+        scheduleNext(150);
+        return;
+      }
+      stats.uploaded++;
+      setStatus("recognizing");
+      try {
+        const wire = await prepareAudioForAsr(blob, { actx, recMime, onDiag: opts.onDiag });
+        if (!wire || !wire.base64) {
+          stats.asrFail++;
+          stats.lastError = "b64-empty";
+          return;
+        }
+        const uploadOnce = async () => {
+          const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+          if (ctl) asrAborts.add(ctl);
+          try {
+            return await fetchWithTimeout(apiBase + "/asr", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              // format 必须带实际值：宿主按它决定 multipart 的 filename/Content-Type。
+              // 白名单是 webm/wav/mp3（src/host/routes/asr.ts），mp4 不在其中 → hostAsrFormat 已回落成 webm。
+              body: JSON.stringify({ audio: wire.base64, format: wire.format })
+            }, ASR_TIMEOUT_MS, ctl ? ctl.signal : void 0);
+          } finally {
+            if (ctl) asrAborts.delete(ctl);
+          }
+        };
+        let res;
+        try {
+          res = await uploadOnce();
+        } catch (e1) {
+          if (ASR_RETRY_ONCE && e1 && e1.name === "AbortError" && running) {
+            stats.asrRetry = (stats.asrRetry || 0) + 1;
+            try {
+              opts.onDiag && opts.onDiag({ stage: "asr-retry", hint: "识别超时，重试一次" });
+            } catch (e) {
+            }
+            res = await uploadOnce();
+          } else {
+            throw e1;
+          }
+        }
+        const data = await res.json();
+        if (!running) return;
+        if (data && data.error === "NO_KEY") {
+          stats.asrFail++;
+          stats.lastError = "asr: NO_KEY";
+          asrNoKey = true;
+          try {
+            opts.onDiag && opts.onDiag({ stage: "asr-no-key", hint: String(data.hint || "") });
+          } catch (e) {
+          }
+          return;
+        }
+        if (!data || !data.ok) {
+          stats.asrFail++;
+          stats.lastError = "asr: " + String(data && data.error || "failed");
+          return;
+        }
+        try {
+          const cur = diag2.getApe();
+          diag2.setSegment({
+            mode: epMode,
+            fmt: wire.format,
+            winMs: Math.round(performance.now() - seg.startedAt),
+            peMs: cur ? cur.speechMs : seg.speechMs,
+            quMs: cur ? cur.quietMs : seg.quietMs,
+            floor: cur ? Math.round(cur.floorDb) : null,
+            target: cur ? cur.quietTargetMs : null,
+            text: String(data.text || "").slice(0, 24)
+          });
+        } catch (e) {
+        }
+        const text = String(data.text || "").trim();
+        if (!text) return;
+        stats.asrTexts++;
+        const verdict = echoFilter.accept(text, Date.now(), thisSegId);
+        if (verdict.ok) {
+          stats.heard++;
+          setStatus("thinking");
+          try {
+            opts.onHeard(text);
+          } catch (e) {
+          }
+        } else if (verdict.reason === "short") {
+          stats.shortDropped = (stats.shortDropped || 0) + 1;
+        } else if (verdict.reason === "dup") {
+          stats.dupDropped = (stats.dupDropped || 0) + 1;
+        } else {
+          stats.echoDropped++;
+        }
+      } catch (e) {
+        stats.asrFail++;
+        stats.lastError = e && e.name === "AbortError" ? "asr-ex: AbortError（超时/已停止）" : "asr-ex: " + String(e && e.name || e);
+      } finally {
+        if (statusHolder.get() === "recognizing") setStatus("listening");
+        if (!rec || rec.state === "inactive") scheduleNext(150);
+      }
+    }
+    function revokeUrl(u) {
+      try {
+        URL.revokeObjectURL(u);
+      } catch (e) {
+      }
+      if (ttsUrl === u) ttsUrl = "";
+    }
+    function disposeTtsAudio() {
+      try {
+        if (ttsAudio) {
+          ttsAudio.pause();
+          ttsAudio.onended = null;
+          ttsAudio.onerror = null;
+        }
+      } catch (e) {
+      }
+      ttsAudio = null;
+      if (ttsUrl) {
+        const u = ttsUrl;
+        ttsUrl = "";
+        try {
+          URL.revokeObjectURL(u);
+        } catch (e) {
+        }
+      }
+    }
+    function ttsDiag(job, failed, reason) {
+      try {
+        diag2.setTts({ failed, reason, text: job.text.slice(0, 20), at: Date.now() });
+      } catch (e) {
+      }
+    }
+    function ttsWatchdog() {
+      try {
+        const audioPlaying = !!(ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0);
+        const zombie = isPlaybackZombie({
+          hasAudio: !!ttsAudio,
+          audioPlaying,
+          busy: ttsBusy,
+          busySince: ttsBusySince,
+          // 停滞按"最后一次有进展"算：长段播到一半卡住时，段开始时刻早就过阈值了，
+          // 还用 busySince 会一上来就误判；播放进度、缓冲、开播都算有新进展。
+          lastProgressAt: ttsProgressAt,
+          synthAt: ttsSynthAt,
+          now: Date.now(),
+          zombieMs: TTS_ZOMBIE_MS,
+          synthTimeoutMs: TTS_TIMEOUT_MS
+        });
+        if (!zombie) return;
+        stats.ttsZombie++;
+        const dead = ttsCurJob;
+        ttsCurJob = null;
+        speakToken++;
+        if (dead) dead.token = speakToken;
+        stopBrowserSpeech();
+        ttsNextRetryAt = 0;
+        disposeTtsAudio();
+        ttsSynthAt = 0;
+        ttsProgressAt = 0;
+        ttsBusy = false;
+        mutedUntil = Date.now() + ECHO_MUTE_MS;
+        micOn(!muted);
+        if (dead) {
+          try {
+            finishJob(dead);
+          } catch (e) {
+          }
+        } else {
+          pumpTts();
+        }
+        if (!ttsBusy && ttsQ.length === 0) {
+          setTimeout(() => {
+            try {
+              if (!ttsBusy && !muted) micOn(true);
+            } catch (e) {
+            }
+          }, ECHO_MUTE_MS);
+        }
+      } catch (e) {
+      }
+    }
+    const ttsPrefetch = /* @__PURE__ */ new Map();
+    const ttsAborts = /* @__PURE__ */ new Set();
+    const asrAborts = /* @__PURE__ */ new Set();
+    let ttsInflight = 0;
+    let ttsSeq = 0;
+    function synth(job) {
+      const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      if (ctl) ttsAborts.add(ctl);
+      ttsInflight++;
+      return fetchWithTimeout(apiBase + "/tts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: job.text, voice: voiceName, rate: job.rate, pitch: job.pitch || "" })
+      }, TTS_TIMEOUT_MS, ctl ? ctl.signal : void 0).then((r) => {
+        if (!r.ok) throw new Error("tts-http-" + r.status);
+        return r.arrayBuffer();
+      }).catch((e) => {
+        stats.lastError = "tts: " + String(e && e.name || e);
+        if (!(ctl && ctl.signal.aborted)) ttsNoteSynthFail();
+        return null;
+      }).finally(() => {
+        ttsInflight = Math.max(0, ttsInflight - 1);
+        if (ctl) ttsAborts.delete(ctl);
+      });
+    }
+    function prefetchUpcoming(narration) {
+      if (ttsNextRetryAt > 0) return;
+      if (ttsInCooldown()) return;
+      const wants = prefetchTargets(ttsQ, narration, ttsInflight, (seq) => ttsPrefetch.has(seq), TTS_MAX_INFLIGHT);
+      for (let i = 0; i < wants.length; i++) {
+        const target = wants[i];
+        ttsPrefetch.set(target.seq, synth(target));
+      }
+    }
+    function keepBrowserProgress() {
+      clearI(ttsBrowserKeep);
+      ttsBrowserKeep = null;
+      ttsProgressAt = Date.now();
+      ttsBrowserKeep = setInterval(() => {
+        ttsProgressAt = Date.now();
+      }, TTS_WATCH_MS);
+      return () => {
+        if (!ttsBrowserKeep) return;
+        clearI(ttsBrowserKeep);
+        ttsBrowserKeep = null;
+      };
+    }
+    function stopBrowserSpeech() {
+      clearI(ttsBrowserKeep);
+      ttsBrowserKeep = null;
+      try {
+        const s = window.speechSynthesis;
+        if (s && typeof s.cancel === "function") s.cancel();
+      } catch (e) {
+      }
+    }
+    function ttsBrowserFallback(job, myToken) {
+      try {
+        disposeTtsAudio();
+      } catch (e) {
+      }
+      try {
+        stopBrowserSpeech();
+      } catch (e) {
+      }
+      const canBrowser = !job.strict && browserVoiceUsable();
+      if (job.strict || ttsSkipFailOn() || !canBrowser) {
+        finishJob(job);
+        return;
+      }
+      if (!muted) micOn(false);
+      const stopKeep = keepBrowserProgress();
+      speakViaBrowser(job.text).then(() => {
+        stopKeep();
+        if (myToken !== speakToken) return;
+        finishJob(job);
+      });
+    }
+    function finishJob(j) {
+      clearI(ttsBrowserKeep);
+      ttsBrowserKeep = null;
+      ttsNextRetryAt = 0;
+      ttsBusy = false;
+      if (ttsCurJob === j) ttsCurJob = null;
+      ttsProgressAt = 0;
+      mutedUntil = Date.now() + ECHO_MUTE_MS;
+      setTimeout(() => {
+        if (!ttsBusy && !muted) micOn(true);
+      }, ECHO_MUTE_MS);
+      try {
+        j.onDone && j.onDone();
+      } catch (e) {
+      }
+      if (j.narration && ttsQ.length > 0) {
+        const token = j.token;
+        setTimeout(() => {
+          if (isStaleToken(token, speakToken)) return;
+          try {
+            pumpTts();
+          } catch (e) {
+          }
+        }, narrationPauseFor(j.text));
+      } else {
+        pumpTts();
+      }
+    }
+    function pumpTts(force) {
+      if (ttsBusy) return;
+      if (ttsNextRetryAt > 0) {
+        if (!force && Date.now() < ttsNextRetryAt) return;
+        ttsNextRetryAt = 0;
+      }
+      const job = ttsQ.shift();
+      if (!job) {
+        setStatus("listening");
+        return;
+      }
+      ttsBusy = true;
+      ttsBusySince = Date.now();
+      ttsProgressAt = Date.now();
+      ttsCurJob = job;
+      const myToken = ++speakToken;
+      job.token = myToken;
+      setStatus("speaking");
+      stats.ttsRequests++;
+      if (ttsInCooldown() && job.attempts <= 0) {
+        ttsSynthAt = 0;
+        ttsDiag(job, true, "cooldown");
+        if (ttsSkipFailOn()) {
+          finishJob(job);
+          return;
+        }
+        ttsBrowserFallback(job, myToken);
+        return;
+      }
+      const cached = ttsPrefetch.get(job.seq);
+      const cur = cached || synth(job);
+      if (cached) {
+        ttsPrefetchGuard.hits++;
+        ttsSyncDiag();
+      } else {
+        ttsPrefetchGuard.misses++;
+        ttsSyncDiag();
+      }
+      ttsSynthAt = Date.now();
+      ttsPrefetch.delete(job.seq);
+      prefetchUpcoming(job.narration);
+      cur.then((buf) => {
+        if (myToken !== speakToken) return;
+        ttsSynthAt = 0;
+        if (!buf) {
+          if (job.attempts < TTS_RETRY_MAX) {
+            job.attempts++;
+            ttsQ.unshift(job);
+            ttsBusy = false;
+            const backoff = ttsRetryDelayMs(job.attempts);
+            ttsNextRetryAt = Date.now() + backoff;
+            try {
+              window.__chubbyWhale.ttsRetry = (window.__chubbyWhale.ttsRetry || 0) + 1;
+            } catch (e) {
+            }
+            setTimeout(() => {
+              if (myToken !== speakToken) return;
+              try {
+                pumpTts(true);
+              } catch (e) {
+              }
+            }, backoff);
+            return;
+          }
+          stats.ttsFail++;
+          ttsDiag(job, true, "synth");
+          try {
+            const w = window.__chubbyWhale;
+            w.ttsLost = w.ttsLost || [];
+            w.ttsLost.push(job.text.slice(0, 16));
+            if (w.ttsLost.length > 10) w.ttsLost.shift();
+          } catch (e) {
+          }
+          ttsBrowserFallback(job, myToken);
+          return;
+        }
+        ttsNoteSynthOk();
+        try {
+          opts.onSegment && opts.onSegment(job.text);
+        } catch (e) {
+        }
+        const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+        ttsUrl = url;
+        const a = new Audio(url);
+        ttsAudio = a;
+        ttsProgressAt = Date.now();
+        const bump2 = () => {
+          ttsProgressAt = Date.now();
+        };
+        try {
+          a.onplaying = bump2;
+          a.ontimeupdate = bump2;
+          a.onprogress = bump2;
+          a.onloadeddata = bump2;
+        } catch (e) {
+        }
+        const finish = (played) => {
+          if (myToken !== speakToken) {
+            revokeUrl(url);
+            return;
+          }
+          try {
+            a.onended = null;
+            a.onerror = null;
+          } catch (e) {
+          }
+          revokeUrl(url);
+          ttsAudio = null;
+          if (played) {
+            stats.ttsPlayed++;
+            ttsDiag(job, false);
+          } else {
+            stats.ttsFail++;
+            ttsDiag(job, true, "play");
+          }
+          finishJob(job);
+        };
+        a.onended = () => finish(true);
+        a.onerror = () => finish(false);
+        micOn(false);
+        a.play().catch(() => {
+          if (myToken !== speakToken) {
+            revokeUrl(url);
+            return;
+          }
+          if (!muted) micOn(true);
+          stats.ttsFail++;
+          ttsDiag(job, true, "play");
+          try {
+            a.onended = null;
+            a.onerror = null;
+          } catch (e) {
+          }
+          revokeUrl(url);
+          ttsAudio = null;
+          if (job.attempts < 1) {
+            job.attempts++;
+            ttsQ.unshift(job);
+            ttsBusy = false;
+            setTimeout(() => {
+              if (myToken !== speakToken) return;
+              try {
+                pumpTts();
+              } catch (e) {
+              }
+            }, 250);
+            return;
+          }
+          ttsBrowserFallback(job, myToken);
+        });
+      }).catch((e) => {
+        try {
+          stats.lastError = "tts-play: " + String(e && e.name || e);
+        } catch (e2) {
+        }
+        if (myToken !== speakToken) return;
+        ttsSynthAt = 0;
+        disposeTtsAudio();
+        stats.ttsFail++;
+        ttsDiag(job, true, "exception");
+        finishJob(job);
+      });
+    }
+    function splitForTts(text, maxLen = 56) {
+      const out = [];
+      const src = String(text || "");
+      if (!src.trim()) return out;
+      if (maxLen < 8) maxLen = 8;
+      const firstMax = Math.min(maxLen, 14);
+      const isWordChar = function(ch) {
+        return /[A-Za-z0-9]/.test(ch);
+      };
+      let sbuf = "";
+      for (const c of src) {
+        sbuf += c;
+        const boundary = /[。，！？!?；;、,\n]/.test(c);
+        const cap = out.length === 0 ? firstMax : maxLen;
+        const atBoundary = boundary && sbuf.length >= Math.max(8, Math.floor(cap / 3));
+        if (sbuf.length >= cap || atBoundary) {
+          let cut = sbuf.length;
+          if (!atBoundary) {
+            const limit = Math.min(sbuf.length, cap);
+            if (limit > 1 && isWordChar(sbuf[limit - 1])) {
+              let back = limit;
+              while (back > 0 && isWordChar(sbuf[back - 1])) back--;
+              if (back > 0) cut = back;
+            }
+          }
+          const seg2 = sbuf.slice(0, cut).trim();
+          if (seg2) out.push(seg2);
+          sbuf = sbuf.slice(cut);
+        }
+      }
+      const rest = sbuf.trim();
+      if (rest) out.push(rest);
+      return out;
+    }
+    async function start() {
+      asrNoKey = false;
+      if (running) return;
+      running = true;
+      recMime = "";
+      recFormat = "webm";
+      levelOk = false;
+      levelDead = false;
+      try {
+        const nav = typeof navigator !== "undefined" ? navigator : null;
+        if (!nav || !nav.mediaDevices || typeof nav.mediaDevices.getUserMedia !== "function") {
+          throw { name: "NoGetUserMedia" };
+        }
+        stream = await nav.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+        });
+        if (!running) {
+          releaseAudio();
+          return;
+        }
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) throw { name: "NoAudioContext" };
+        actx = new Ctx();
+        try {
+          await actx.resume();
+        } catch (e) {
+        }
+        try {
+          if (actx.state === "suspended") hookGestureResume();
+        } catch (e) {
+        }
+        const srcNode = actx.createMediaStreamSource(stream);
+        analyser = actx.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0;
+        timeBuf = new Float32Array(analyser.fftSize || 1024);
+        try {
+          srcNode.connect(analyser);
+        } catch (e) {
+        }
+        levelProbeAt = performance.now();
+        const Rec = typeof MediaRecorder !== "undefined" ? MediaRecorder : null;
+        if (!Rec) throw { name: "NoMediaRecorder" };
+        const picked = pickRecorderMime(Rec);
+        recMime = picked.mimeType;
+        recFormat = picked.format;
+        try {
+          rec = recMime ? new Rec(stream, { mimeType: recMime }) : new Rec(stream);
+        } catch (e) {
+          rec = new Rec(stream);
+          recMime = "";
+          recFormat = "webm";
+        }
+        try {
+          opts.onDiag && opts.onDiag({ stage: "recorder", mime: recMime || "(default)", fmt: recFormat });
+        } catch (e) {
+        }
+        rec.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) addChunk(seg, e.data);
+        };
+        rec.onstop = () => {
+          if (!running) {
+            clearChunks(seg);
+            return;
+          }
+          const blobType = String(rec && rec.mimeType || recMime || "audio/webm");
+          const blob = takeBlob(seg, blobType);
+          void onWindowDone(blob);
+        };
+        rec.onerror = (e) => {
+          stats.lastError = "recorder: " + String(e && e.error && e.error.name);
+          scheduleNext(800);
+        };
+        micOn(true);
+        setStatus("listening");
+        beginWindow();
+        if (ttsWatch) clearInterval(ttsWatch);
+        ttsWatch = setInterval(ttsWatchdog, TTS_WATCH_MS);
+        stats.lastError = "";
+      } catch (e) {
+        running = false;
+        stats.lastError = "start: " + String(e && e.name || e);
+        setStatus("idle");
+        try {
+          unhookGestureResume();
+        } catch (e2) {
+        }
+        try {
+          releaseAudio();
+        } catch (e2) {
+        }
+        try {
+          opts.onDiag && opts.onDiag({ stage: "start-failed", err: stats.lastError });
+        } catch (e2) {
+        }
+      }
+    }
+    function stop() {
+      running = false;
+      try {
+        for (const c of asrAborts) {
+          try {
+            c.abort();
+          } catch (e) {
+          }
+        }
+      } catch (e) {
+      }
+      try {
+        asrAborts.clear();
+      } catch (e) {
+      }
+      if (tickTimer) {
+        clearTimeout(tickTimer);
+        tickTimer = null;
+      }
+      if (restartTimer) {
+        clearTimeout(restartTimer);
+        restartTimer = null;
+      }
+      if (ttsWatch) {
+        clearInterval(ttsWatch);
+        ttsWatch = null;
+      }
+      try {
+        stopSpeaking();
+      } catch (e) {
+      }
+      try {
+        unhookGestureResume();
+      } catch (e) {
+      }
+      levelProbeAt = 0;
+      levelOk = false;
+      levelDead = false;
+      try {
+        releaseAudio();
+      } catch (e) {
+      }
+      try {
+        echoFilter.reset();
+      } catch (e) {
+      }
+      setStatus("idle");
+    }
+    function speak(text, o) {
+      const raw = stripStageDirections(String(text || ""));
+      if (!raw) return;
+      const narration = o && typeof o.narration === "boolean" ? o.narration : raw.length >= 80;
+      const rate = o && o.rate ? o.rate : narration ? narrationRate() : "+0%";
+      const strict = !!(o && o.strict);
+      const segs = splitForTts(raw, 56);
+      if (!segs.length) return;
+      echoFilter.noteSpoken(raw);
+      const jobs = buildTtsJobs(segs, {
+        rate,
+        narration,
+        strict,
+        nextSeq: ttsSeq + 1,
+        onDone: o && o.onDone
+      });
+      ttsSeq += segs.length;
+      for (let i = 0; i < jobs.length; i++) ttsQ.push(jobs[i]);
+      const droppedQ = capQueue(ttsQ);
+      if (droppedQ > 0) stats.qDropped = (stats.qDropped || 0) + droppedQ;
+      prefetchUpcoming(!!(ttsQ[0] && ttsQ[0].narration));
+      pumpTts();
+    }
+    function stopSpeaking() {
+      ttsSynthAt = 0;
+      ttsProgressAt = 0;
+      ttsCurJob = null;
+      speakToken++;
+      ttsQ.length = 0;
+      try {
+        ttsPrefetch.clear();
+      } catch (e) {
+      }
+      try {
+        for (const c of ttsAborts) {
+          try {
+            c.abort();
+          } catch (e) {
+          }
+        }
+      } catch (e) {
+      }
+      try {
+        ttsAborts.clear();
+      } catch (e) {
+      }
+      disposeTtsAudio();
+      ttsBusy = false;
+      ttsNextRetryAt = 0;
+      stopBrowserSpeech();
+      if (!muted) micOn(true);
+      mutedUntil = Date.now() + ECHO_MUTE_MS;
+      setStatus(running ? "listening" : "idle");
+    }
+    return {
+      start,
+      stop,
+      speak,
+      stopSpeaking,
+      speaking: () => ttsBusy,
+      recognizing: () => statusHolder.get() === "recognizing",
+      setEndpointMode: (m) => {
+        epMode = normalizeEndpointMode(m);
+        writeEndpointMode(epMode);
+      },
+      // 端点检测：报告当前实际生效的模式（ape / classic），不再写死 classic
+      endpointInfo: () => ({ mode: epMode }),
+      lastSegment: () => diag2.getSegment(),
+      lastTtsInfo: () => diag2.getTts(),
+      // 立即换音色：下一个 /tts 请求就带新 voice（不重建实例）；白名单外的值不改
+      setVoiceName: (n) => {
+        voiceName = normalizeVoiceName(n, voiceName);
+      },
+      voiceName: () => voiceName,
+      mute: (on) => {
+        muted = on;
+        micOn(!on);
+      },
+      stats,
+      status: () => statusHolder.get()
+    };
+  }
+
+  // src/client/menu.ts
+  function item(label, action) {
+    return { type: "item", label, action };
+  }
+  function sub(label, items) {
+    return { type: "sub", label, items };
+  }
+  function sep() {
+    return { type: "sep" };
+  }
+  function rateSub(prefix, action, current, opts) {
+    return sub(prefix + current + " ▸", opts.map(([rate, text]) => item((rate === current ? "✓ " : "") + text, action + rate)));
+  }
+  var MELODIES = ["小星星", "两只老虎", "生日快乐", "欢乐颂", "铃儿响叮当", "伦敦大桥", "斯卡布罗集市", "思君黯然", "绿袖子", "致爱丽丝", "友谊天长地久"];
+  deepFreeze(MELODIES);
+  var SONG_EN = {
+    "小星星": "Twinkle Twinkle Little Star",
+    "两只老虎": "Two Tigers",
+    "生日快乐": "Happy Birthday",
+    "欢乐颂": "Ode to Joy",
+    "铃儿响叮当": "Jingle Bells",
+    "伦敦大桥": "London Bridge",
+    "斯卡布罗集市": "Scarborough Fair",
+    "思君黯然": "Longing for You",
+    "绿袖子": "Greensleeves",
+    "致爱丽丝": "Fur Elise",
+    "友谊天长地久": "Auld Lang Syne"
+  };
+  deepFreeze(SONG_EN);
+  var EN_MAP = {
+    "投喂一碗": "Feed a bowl",
+    "选本书 ▸": "Choose a book ▸",
+    "书单没取到，稍后再试": "Book list unavailable, try again later",
+    "正在翻书单…": "Loading book list…",
+    "今日一句": "Daily quote",
+    "今日简报": "Today's briefing",
+    "数据导出…": "Export data…",
+    "数据导入…": "Import data…",
+    "使用统计": "Usage stats",
+    "设置 ▸": "Settings ▸",
+    "查看当前配置": "View current config",
+    "提醒管理…": "Manage reminders…",
+    "唤醒恢复": "Wake recovery",
+    "唤醒词 ▸": "Wake word ▸",
+    "默认（大肥鱼/肥鲸等）": "Default (Da Fei Yu / Fei Jing)",
+    "大肥鱼": "Da Fei Yu",
+    "肥鲸": "Fei Jing",
+    "小鲸": "Xiao Jing",
+    "自定义…": "Custom…",
+    "弹首曲子 ▸": "Play a song ▸",
+    "停止弹奏": "Stop music",
+    "跟她说两句": "Talk to her",
+    "换个声音 ▸": "Change voice ▸",
+    "聊天语言 ▸": "Chat language ▸",
+    "界面语言 ▸": "Interface language ▸",
+    "看张图…": "Look at a picture…",
+    "停止说话": "Stop talking",
+    "让她歇会儿": "Let her rest",
+    "回碗里待着": "Back in the bowl",
+    "长大一点": "Grow bigger",
+    "变小一点": "Shrink",
+    "记个饭点…": "Add a meal reminder…",
+    "提醒清单…": "Reminders…",
+    "端点检测：经典/自适应": "Endpoint detection: classic / adaptive",
+    "耳朵自检（听力诊断）": "Hearing self-test",
+    "文化气 ▸": "Culture ▸",
+    "说书（连载）": "Storytelling",
+    "稍快 -25%": "A bit faster -25%",
+    "适中 -30%": "Medium -30%",
+    "偏慢 -35%（默认）": "Slower -35% (default)",
+    "正常 -10%": "Normal -10%",
+    "偏慢 -20%（默认）": "Slow -20% (default)",
+    "很慢 -25%": "Very slow -25%",
+    "更慢 -30%": "Even slower -30%",
+    "稍快 -15%": "A bit faster -15%",
+    "适中 -20%": "Medium -20%",
+    "偏慢 -25%（默认）": "Slower -25% (default)",
+    "很慢 -30%": "Very slow -30%",
+    "很慢 -40%": "Very slow -40%",
+    "接着说": "Continue story",
+    "从头讲这本书": "Restart this book",
+    "念首诗": "Recite a poem",
+    "讲个民间故事": "Folk tale",
+    "讲个典故": "Classic allusion",
+    "成语辨析": "Idiom",
+    "出个对联 ▸": "Couplets ▸",
+    "随机一副": "Random pair",
+    "春联": "Spring couplet",
+    "格言": "Motto",
+    "谐趣": "Witty",
+    "名胜": "Landmarks",
+    "景观": "Scenery",
+    "书房": "Study",
+    "书院": "Academy",
+    "寿联": "Birthday couplet",
+    "中药": "Herbs",
+    "叠字": "Repeated characters",
+    "数字": "Numerals",
+    "清除记忆…": "Clear memory…",
+    "清空聊天缓存…": "Clear chat cache…",
+    "让它游走（退出）": "Let it go (exit)",
+    "鱼粮账本": "Token ledger",
+    "English": "English",
+    "中文": "Chinese",
+    // 动态 label（音色勾选/聊天缓存开关/自动）需要的英文键
+    "聊天缓存：开": "Chat cache: on",
+    "聊天缓存：关": "Chat cache: off",
+    "自动（按语言选音色）": "Auto (by language)",
+    "自动": "Auto",
+    "音色：晓伊（中·女）": "Voice: Xiaoyi (CN F)",
+    "音色：晓晓（中·女）": "Voice: Xiaoxiao (CN F)",
+    "音色：晓辰（中·女）": "Voice: Xiaochen (CN F)",
+    "音色：云希（中·男）": "Voice: Yunxi (CN M)",
+    "音色：云扬（中·男）": "Voice: Yunyang (CN M)",
+    "音色：Ana（英·女）": "Voice: Ana (EN F)",
+    "音色：Jenny（英·女）": "Voice: Jenny (EN F)",
+    "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)"
+  };
+  deepFreeze(EN_MAP);
+  var STAGE_EN = {
+    "初识": "New",
+    "熟悉": "Familiar",
+    "亲密": "Close",
+    "知心": "Confidant",
+    "家人": "Family"
+  };
+  deepFreeze(STAGE_EN);
+  var TOGGLE_EN = {
+    "语音朗读：": ["Voice output: on", "Voice output: off"],
+    "语音待命：": ["Voice standby: on", "Voice standby: off"],
+    "语音聊天：": ["Voice chat: on", "Voice chat: off"],
+    "流式回复：": ["Streaming replies: on", "Streaming replies: off"]
+  };
+  function tr(label, lang) {
+    if (lang !== "en") return label;
+    const exact = EN_MAP[label];
+    if (exact) return exact;
+    if (label.startsWith("✓ ")) {
+      const base = label.slice(2);
+      const en = tr(base, lang);
+      return en === base ? label : "✓ " + en;
+    }
+    if (label.startsWith("弹《") && label.endsWith("》")) {
+      const song = label.slice(2, label.length - 1);
+      return SONG_EN[song] ? 'Play "' + SONG_EN[song] + '"' : "Play a song";
+    }
+    if (label.startsWith("成长：")) {
+      const rest = label.slice(3);
+      const m = rest.match(/^(初识|熟悉|亲密|知心|家人)([\s\S]*)$/);
+      if (!m) return "Growth: " + rest;
+      const tail = String(m[2] || "").replace(/（/g, "(").replace(/）/g, ")");
+      return "Growth: " + (STAGE_EN[m[1]] || m[1]) + tail;
+    }
+    if (label.startsWith("版本：v")) return "Version: v" + label.slice(4);
+    if (label.startsWith("余额：")) return "Balance: " + label.slice(3);
+    for (const prefix of Object.keys(TOGGLE_EN)) {
+      if (label.startsWith(prefix)) {
+        const pair = TOGGLE_EN[prefix];
+        return label.slice(prefix.length) === "开" ? pair[0] : pair[1];
+      }
+    }
+    if (label.startsWith("说书语速：")) return label.replace("说书语速：", "Story speed: ");
+    if (label.startsWith("连播：")) return label.indexOf("开") >= 0 ? "Auto-continue: on" : "Auto-continue: off";
+    if (label.startsWith("念诗语速：")) return label.replace("念诗语速：", "Poem speed: ");
+    if (label.startsWith("叙述语速：")) return label.replace("叙述语速：", "Narration speed: ");
+    if (label.startsWith("聊天语速：")) return label.replace("聊天语速：", "Chat speed: ");
+    return label;
+  }
+  var VOICE_ITEMS = [
+    ["zh-CN-XiaoyiNeural", "音色：晓伊（中·女）"],
+    ["zh-CN-XiaoxiaoNeural", "音色：晓晓（中·女）"],
+    ["zh-CN-XiaochenNeural", "音色：晓辰（中·女）"],
+    ["zh-CN-YunxiNeural", "音色：云希（中·男）"],
+    ["zh-CN-YunyangNeural", "音色：云扬（中·男）"],
+    ["en-US-AnaNeural", "音色：Ana（英·女）"],
+    ["en-US-JennyNeural", "音色：Jenny（英·女）"],
+    ["en-GB-SoniaNeural", "音色：Sonia（英·女·英式）"]
+  ];
+  var STORY_RATE_ITEMS = [["-25%", "稍快 -25%"], ["-30%", "适中 -30%"], ["-35%", "偏慢 -35%（默认）"], ["-40%", "很慢 -40%"]];
+  var CHAT_RATE_ITEMS = [["-10%", "正常 -10%"], ["-20%", "偏慢 -20%（默认）"], ["-25%", "很慢 -25%"], ["-30%", "更慢 -30%"]];
+  var NARRATION_RATE_ITEMS = [["-15%", "稍快 -15%"], ["-20%", "适中 -20%"], ["-25%", "偏慢 -25%（默认）"], ["-30%", "很慢 -30%"]];
+  function buildMenu(version, state = {}) {
+    const voiceOn = state.voiceOn ? true : false;
+    const earOn = state.earOn ? true : false;
+    const voiceChatOn = state.voiceChatOn ? true : false;
+    const chatLang = state.chatLang ? String(state.chatLang) : "auto";
+    const ttsVoice = state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE;
+    const chatCacheOn = !(state.chatCacheOn === false);
+    const voiceTick = (voice) => ttsVoice === voice ? "✓ " : "";
+    const growthText = state && state.growth ? state.growth : "--";
+    const books = Array.isArray(state.storyBooks) ? state.storyBooks.map((b) => String(b || "").trim()).filter(Boolean) : [];
+    const bookItems = books.length ? books.map((b) => item(b, "story-book:" + b)) : [item(state.storyBooksTried ? "书单没取到，稍后再试" : "正在翻书单…", "story-books")];
+    return [
+      // ── 界面语言（主人定的位置：标题栏下方第一行）──
+      sub("界面语言 ▸", [
+        item("中文", "lang:zh"),
+        item("English", "lang:en")
+      ]),
+      // ── 吃饭与看图 ──
+      item("成长：" + growthText, "growth"),
+      item("投喂一碗", "feed"),
+      item("看张图…", "vision"),
+      sep(),
+      // ── 曲子 ──
+      sub("弹首曲子 ▸", MELODIES.map((m) => item("弹《" + m + "》", "music:" + m))),
+      item("停止弹奏", "music-stop"),
+      sep(),
+      // ── 说话与耳朵（语音类全放一起）──
+      item("跟她说两句", "type"),
+      item(voiceOn ? "语音朗读：开" : "语音朗读：关", "voice"),
+      item("停止说话", "tts-stop"),
+      sub("换个声音 ▸", [
+        ...VOICE_ITEMS.map(([voice, label]) => item(voiceTick(voice) + label, "voice:" + voice)),
+        item(voiceTick("auto") + "自动（按语言选音色）", "voice:auto")
+      ]),
+      sub("唤醒词 ▸", [
+        item("默认（大肥鱼/肥鲸等）", "wake-word:"),
+        item("大肥鱼", "wake-word:大肥鱼"),
+        item("肥鲸", "wake-word:肥鲸"),
+        item("小鲸", "wake-word:小鲸"),
+        item("自定义…", "wake-word:custom")
+      ]),
+      item("语音待命：" + (earOn ? "开" : "关"), "wake"),
+      item("语音聊天：" + (voiceChatOn ? "开" : "关"), "chatmode"),
+      item("流式回复：" + (state.streamOn === false ? "关" : "开"), "stream-toggle"),
+      item("端点检测：经典/自适应", "endpoint"),
+      item("耳朵自检（听力诊断）", "ear-check"),
+      sep(),
+      // ── 语言 ──
+      sub("聊天语言 ▸", [
+        item((chatLang === "auto" ? "✓ " : "") + "自动", "chat-lang:auto"),
+        item((chatLang === "zh" ? "✓ " : "") + "中文", "chat-lang:zh"),
+        item((chatLang === "en" ? "✓ " : "") + "English", "chat-lang:en")
+      ]),
+      sep(),
+      // ── 位置与大小 ──
+      item("让她歇会儿", "pause"),
+      item("回碗里待着", "home"),
+      item("长大一点", "bigger"),
+      item("变小一点", "smaller"),
+      sep(),
+      // ── 饭点提醒 ──
+      item("记个饭点…", "remind-add"),
+      item("提醒清单…", "remind-list"),
+      sep(),
+      // ── 文化气 ──
+      sub("文化气 ▸", [
+        item("说书（连载）", "culture-story"),
+        item("连播：" + (state.storyAuto === false ? "关" : "开") + "（讲完一段自动接下一段）", "story-auto"),
+        rateSub("说书语速：", "story-rate:", state.storyRate || "-35%", STORY_RATE_ITEMS),
+        item("接着说", "culture-story-next"),
+        item("从头讲这本书", "story-reset"),
+        item("念首诗", "poem"),
+        rateSub("聊天语速：", "chat-rate:", state.chatRate || "-20%", CHAT_RATE_ITEMS),
+        rateSub("叙述语速：", "narration-rate:", state.narrationRate || "-25%", NARRATION_RATE_ITEMS),
+        rateSub("念诗语速：", "poem-rate:", state.poemRate || "-25%", NARRATION_RATE_ITEMS),
+        item("讲个民间故事", "culture-tale"),
+        item("讲个典故", "culture-allusion"),
+        item("成语辨析", "culture-idiom"),
+        sub("出个对联 ▸", [
+          item("随机一副", "culture-couplet"),
+          item("春联", "culture-couplet:春联"),
+          item("格言", "culture-couplet:格言"),
+          item("谐趣", "culture-couplet:谐趣"),
+          item("名胜", "culture-couplet:名胜"),
+          item("景观", "culture-couplet:景观"),
+          item("书院", "culture-couplet:书院"),
+          item("书房", "culture-couplet:书房"),
+          item("寿联", "culture-couplet:寿联"),
+          item("中药", "culture-couplet:中药"),
+          item("叠字", "culture-couplet:叠字"),
+          item("数字", "culture-couplet:数字")
+        ])
+      ]),
+      sep(),
+      // ── 每日内容（说书选本 / 每日一句 / 今日简报）──
+      sub("选本书 ▸", bookItems),
+      item("今日一句", "daily-line"),
+      item("今日简报", "briefing-card"),
+      sep(),
+      // ── 数据与统计（处理器由其他分身实现，未接上时走兜底提示）──
+      item("数据导出…", "data-export"),
+      item("数据导入…", "data-import"),
+      item("使用统计", "stats"),
+      sub("设置 ▸", [
+        item("查看当前配置", "config-view")
+      ]),
+      item("提醒管理…", "remind-manage"),
+      item("唤醒恢复", "wake-recover"),
+      sep(),
+      // ── 记忆、缓存与退出 ──
+      item("清除记忆…", "clear-memory"),
+      item("清空聊天缓存…", "cache-clear"),
+      item(chatCacheOn ? "聊天缓存：开" : "聊天缓存：关", "cache-toggle"),
+      item("让它游走（退出）", "hide"),
+      sep(),
+      // ── 账本与版本（版本永远在最底下）──
+      item("鱼粮账本", "fishfood")
+    ];
+  }
+
+  // src/client/narration-progress.ts
+  function createProgress() {
+    let current = null;
+    function index() {
+      if (!current) return 0;
+      const eff = current.spoken - current.introLen;
+      if (eff < 0) return 0;
+      let done = 0;
+      for (const c of current.cum) {
+        if (c <= eff) done++;
+      }
+      const total = current.cum.length;
+      return Math.min(total, done + 1);
+    }
+    return {
+      start(label, lines, intro = "") {
+        const lens = (lines || []).map((l) => String(l || "").replace(/\s+/g, "").length).filter((n) => n > 0);
+        const cum = [];
+        let sum = 0;
+        for (const n of lens) {
+          sum += n;
+          cum.push(sum);
+        }
+        current = {
+          label: String(label || ""),
+          cum,
+          introLen: String(intro || "").replace(/\s+/g, "").length,
+          spoken: 0
+        };
+      },
+      stop() {
+        current = null;
+      },
+      active() {
+        return current !== null;
+      },
+      index,
+      bump(segment) {
+        if (!current) return "";
+        const seg = String(segment || "");
+        const idx = index();
+        current.spoken += seg.replace(/\s+/g, "").length;
+        const total = current.cum.length;
+        const head = total > 0 && idx > 0 ? current.label + "（第 " + idx + "/" + total + " 句）" : current.label;
+        return head + (seg.trim() ? "：" + seg.trim() : "");
+      }
+    };
+  }
+  var defaultProgress = createProgress();
+  var startProgress = defaultProgress.start;
+  var stopProgress = defaultProgress.stop;
+  var progressActive = defaultProgress.active;
+  var progressIndex = defaultProgress.index;
+  var bumpProgress = defaultProgress.bump;
+
+  // src/client/image.ts
+  var DEFAULT_MAX_EDGE = 1280;
+  var DEFAULT_QUALITY = 0.85;
+  var KEEP_RAW_BELOW = 400 * 1024;
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve) => {
+      try {
+        const fr = new FileReader();
+        fr.onloadend = () => {
+          try {
+            resolve(String(fr.result || ""));
+          } catch (e) {
+            resolve("");
+          }
+        };
+        fr.onerror = () => resolve("");
         fr.readAsDataURL(file);
       } catch (e) {
         resolve("");
       }
     });
   }
+  function mimeFromDataUrl(dataUrl) {
+    const m = /^data:([^;,]+)/i.exec(String(dataUrl || ""));
+    return m ? m[1].toLowerCase() : "";
+  }
   function decodeImage(file) {
     return new Promise((resolve) => {
       try {
         const w = typeof window !== "undefined" ? window : globalThis;
         if (typeof w.createImageBitmap === "function") {
-          Promise.resolve(w.createImageBitmap(file)).then((bmp) => resolve(bmp)).catch(() => resolve(null));
+          let p;
+          try {
+            p = w.createImageBitmap(file, { imageOrientation: "from-image" });
+          } catch (e) {
+            p = w.createImageBitmap(file);
+          }
+          Promise.resolve(p).then((bmp) => resolve(bmp)).catch(() => {
+            try {
+              Promise.resolve(w.createImageBitmap(file)).then((bmp) => resolve(bmp)).catch(() => resolve(null));
+            } catch (e) {
+              resolve(null);
+            }
+          });
           return;
         }
         const URLRef = w.URL || globalThis.URL;
@@ -398,41 +2846,50 @@
     });
   }
   async function imageToB64(file, opts) {
-    const raw = await readFileAsBase64(file);
+    const dataUrl = await readFileAsDataUrl(file);
+    const at = dataUrl.indexOf(",");
+    const raw = at >= 0 ? dataUrl.slice(at + 1) : dataUrl;
     if (!raw) return null;
-    const rawMime = String(file && file.type || "image/jpeg");
+    const rawMime = mimeFromDataUrl(dataUrl) || String(file && file.type || "image/jpeg");
     const rawResult = { b64: raw, mime: rawMime, width: 0, height: 0, compressed: false };
     try {
-      if (raw.length <= KEEP_RAW_BELOW) return rawResult;
+      const declared = Number(file && file.size);
+      const rawBytes = isFinite(declared) && declared > 0 ? declared : Math.ceil(raw.length * 3 / 4);
+      if (rawBytes <= KEEP_RAW_BELOW) return rawResult;
       const maxEdge = Math.max(256, Math.min(4096, Math.round(Number(opts && opts.maxEdge) || DEFAULT_MAX_EDGE)));
       const quality = Math.min(0.95, Math.max(0.5, Number(opts && opts.quality) || DEFAULT_QUALITY));
       const img = await decodeImage(file);
       if (!img) return rawResult;
-      const iw = Math.max(1, Number(img.width || img.naturalWidth) || 1);
-      const ih = Math.max(1, Number(img.height || img.naturalHeight) || 1);
-      const scale = Math.min(1, maxEdge / Math.max(iw, ih));
-      const w = Math.max(1, Math.round(iw * scale));
-      const h = Math.max(1, Math.round(ih * scale));
-      const doc = typeof document !== "undefined" ? document : null;
-      if (!doc || typeof doc.createElement !== "function") return rawResult;
-      const canvas = doc.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const cx = canvas.getContext && canvas.getContext("2d");
-      if (!cx || typeof canvas.toDataURL !== "function") return rawResult;
-      cx.drawImage(img, 0, 0, w, h);
-      const dataUrl = String(canvas.toDataURL("image/jpeg", quality) || "");
-      const at = dataUrl.indexOf(",");
-      const b64 = at >= 0 ? dataUrl.slice(at + 1) : "";
-      if (!b64) return rawResult;
-      if (b64.length >= raw.length) return rawResult;
-      if (typeof img.close === "function") {
+      try {
+        const iw = Math.max(1, Number(img.width || img.naturalWidth) || 1);
+        const ih = Math.max(1, Number(img.height || img.naturalHeight) || 1);
+        const scale = Math.min(1, maxEdge / Math.max(iw, ih));
+        const w = Math.max(1, Math.round(iw * scale));
+        const h = Math.max(1, Math.round(ih * scale));
+        const doc = typeof document !== "undefined" ? document : null;
+        if (!doc || typeof doc.createElement !== "function") return rawResult;
+        const canvas = doc.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const cx = canvas.getContext && canvas.getContext("2d");
+        if (!cx || typeof canvas.toDataURL !== "function") return rawResult;
+        if (typeof cx.fillRect === "function") {
+          cx.fillStyle = "#fff";
+          cx.fillRect(0, 0, w, h);
+        }
+        cx.drawImage(img, 0, 0, w, h);
+        const out = String(canvas.toDataURL("image/jpeg", quality) || "");
+        const cut = out.indexOf(",");
+        const b64 = cut >= 0 ? out.slice(cut + 1) : "";
+        if (!b64) return rawResult;
+        if (b64.length >= raw.length) return rawResult;
+        return { b64, mime: "image/jpeg", width: w, height: h, compressed: true };
+      } finally {
         try {
-          img.close();
+          if (img && typeof img.close === "function") img.close();
         } catch (e) {
         }
       }
-      return { b64, mime: "image/jpeg", width: w, height: h, compressed: true };
     } catch (e) {
       return rawResult;
     }
@@ -441,7 +2898,8 @@
   // src/client/dropzone.ts
   var MAX_DROP_BYTES = 4 * 1024 * 1024;
   var MAX_TEXT_CHARS = 4e3;
-  var VISION_PROMPT = "\u770B\u770B\u8FD9\u5F20\u56FE\uFF0C\u8BF4\u8BF4\u4F60\u770B\u5230\u4E86\u4EC0\u4E48";
+  var VISION_PROMPT = "看看这张图，说说你看到了什么";
+  var MAX_IMAGE_B64_CHARS = 4 * 1024 * 1024;
   var TEXT_EXTS = [".txt", ".md", ".json", ".log", ".csv"];
   function isImageFile(file) {
     return Boolean(file && typeof file.type === "string" && file.type.indexOf("image/") === 0);
@@ -454,7 +2912,38 @@
     return false;
   }
   function buildTextPrompt(text) {
-    return "\u603B\u7ED3\u4E00\u4E0B\u8FD9\u7BC7\u6587\u6863\uFF1A\n" + String(text || "").slice(0, MAX_TEXT_CHARS);
+    return "总结一下这篇文档：\n" + String(text || "").slice(0, MAX_TEXT_CHARS);
+  }
+  function readTextFile(file) {
+    try {
+      if (file && typeof file.text === "function") {
+        return Promise.resolve(file.text()).then((t) => str(t)).catch(() => readTextViaReader(file));
+      }
+    } catch (e) {
+    }
+    return readTextViaReader(file);
+  }
+  function readTextViaReader(file) {
+    return new Promise((resolve) => {
+      try {
+        if (typeof FileReader === "undefined") {
+          resolve("");
+          return;
+        }
+        const fr = new FileReader();
+        fr.onloadend = () => {
+          try {
+            resolve(String(fr.result || ""));
+          } catch (e) {
+            resolve("");
+          }
+        };
+        fr.onerror = () => resolve("");
+        fr.readAsText(file);
+      } catch (e) {
+        resolve("");
+      }
+    });
   }
   async function handleFileDrop(file, deps) {
     const d = deps || {};
@@ -463,16 +2952,16 @@
     const speak = typeof d.speakText === "function" ? d.speakText : null;
     const doFetch = d.fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
     if (!file) {
-      bubble("\u6CA1\u62FF\u5230\u6587\u4EF6\uFF0C\u518D\u62D6\u4E00\u6B21\u8BD5\u8BD5", 4e3);
+      bubble("没拿到文件，再拖一次试试", 4e3);
       return { ok: false, kind: "empty", error: "no file" };
     }
     const size = Number(file.size) || 0;
     if (size > MAX_DROP_BYTES) {
-      bubble("\u6587\u4EF6\u592A\u5927\u5566\uFF08\u8D85\u8FC7 4MB\uFF09\uFF0C\u672C\u9C7C\u4E00\u53E3\u5403\u4E0D\u4E0B", 5e3);
+      bubble("文件太大啦（超过 4MB），本鱼一口吃不下", 5e3);
       return { ok: false, kind: "too-large", error: "too large" };
     }
     if (!doFetch) {
-      bubble("\u672C\u9C7C\u8FDE\u4E0D\u4E0A\u670D\u52A1\u5668", 4e3);
+      bubble("本鱼连不上服务器", 4e3);
       return { ok: false, kind: "error", error: "no fetch" };
     }
     const post = async (body) => {
@@ -481,72 +2970,114 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body)
       });
-      return r.json();
+      let data = null;
+      try {
+        data = await r.json();
+      } catch (e) {
+        data = null;
+      }
+      const status = Number(r && r.status) || 0;
+      if (!data || r && r.ok === false || data.ok === false) {
+        const msg = String(data && (data.reply || data.error) || "").trim() || "请求失败" + (status ? "（HTTP " + status + "）" : "");
+        const err = new Error(msg);
+        err.reply = msg;
+        err.status = status;
+        throw err;
+      }
+      return data;
+    };
+    const fail = (e, fallback) => {
+      const msg = String(e && (e.reply || e.message) || e || "").trim() || fallback;
+      bubble(msg, 5e3);
+      const tooLarge = Number(e && e.status) === 413;
+      return {
+        ok: false,
+        kind: tooLarge ? "too-large" : "error",
+        error: msg,
+        reply: e && e.reply ? String(e.reply) : void 0
+      };
     };
     if (isImageFile(file)) {
-      bubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
+      bubble("本鲸看看这张图…", 3e3);
       const img0 = await imageToB64(file);
       const b64 = img0 ? img0.b64 : "";
       const mime = img0 && img0.mime || file.type || "image/jpeg";
       if (!b64) {
-        bubble("\u56FE\u7247\u8BFB\u4E0D\u51FA\u6765\uFF0C\u518D\u62D6\u4E00\u6B21\u8BD5\u8BD5", 4e3);
+        bubble("图片读不出来，再拖一次试试", 4e3);
         return { ok: false, kind: "error", error: "empty image" };
+      }
+      if (b64.length > MAX_IMAGE_B64_CHARS) {
+        bubble("这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～", 5e3);
+        return { ok: false, kind: "too-large", error: "image too large" };
       }
       try {
         const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime });
-        const reply = String(reply0 && reply0.reply || "").trim() || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
-        bubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
+        const reply = String(reply0 && reply0.reply || "").trim() || "这条鱼看不懂这张图……";
+        bubble("（看图）" + reply, 1e4);
         if (speak) speak(reply);
         return { ok: true, kind: "image", message: VISION_PROMPT, reply };
       } catch (e) {
-        bubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
-        return { ok: false, kind: "error", error: String(e && e.message || e) };
+        return fail(e, "图片处理失败");
       }
     }
     if (isTextFile(file)) {
-      let text = "";
-      try {
-        text = String(await file.text());
-      } catch (e) {
-        text = "";
-      }
+      const text = String(await readTextFile(file) || "");
       if (!text.trim()) {
-        bubble("\u8FD9\u4E2A\u6587\u4EF6\u91CC\u6CA1\u8BFB\u5230\u5B57", 4e3);
+        bubble("这个文件里没读到字", 4e3);
         return { ok: false, kind: "error", error: "empty text" };
       }
       const message = buildTextPrompt(text);
-      bubble("\u672C\u9CB8\u770B\u770B\u8FD9\u4EFD\u6587\u6863\u2026", 3e3);
+      bubble("本鲸看看这份文档…", 3e3);
       try {
         const reply0 = await post({ message });
-        const reply = String(reply0 && reply0.reply || "").trim() || "\u8FD9\u4EFD\u6587\u6863\u672C\u9CB8\u6CA1\u770B\u61C2\u2026\u2026";
-        bubble("\uFF08\u6587\u6863\uFF09" + reply, 12e3);
+        const reply = String(reply0 && reply0.reply || "").trim() || "这份文档本鲸没看懂……";
+        bubble("（文档）" + reply, 12e3);
         if (speak) speak(reply);
         return { ok: true, kind: "text", message, reply };
       } catch (e) {
-        bubble("\u6587\u6863\u5904\u7406\u5931\u8D25", 4e3);
-        return { ok: false, kind: "error", error: String(e && e.message || e) };
+        return fail(e, "文档处理失败");
       }
     }
-    bubble("\u8FD9\u4E2A\u683C\u5F0F\u672C\u9C7C\u8FD8\u4E0D\u4F1A\u770B", 4e3);
+    bubble("这个格式本鱼还不会看", 4e3);
     return { ok: false, kind: "unsupported", error: "unsupported type" };
+  }
+
+  // src/shared/growth.ts
+  var GROWTH_STAGES = [
+    { exp: 0, name: "初识" },
+    { exp: 200, name: "熟悉" },
+    { exp: 800, name: "亲密" },
+    { exp: 2500, name: "知心" },
+    { exp: 5e3, name: "家人" }
+  ];
+  deepFreeze(GROWTH_STAGES);
+  function growthStage(exp) {
+    let idx = 0;
+    for (let i = 0; i < GROWTH_STAGES.length; i++) {
+      if (exp >= GROWTH_STAGES[i].exp) idx = i;
+    }
+    const next = idx + 1 < GROWTH_STAGES.length ? GROWTH_STAGES[idx + 1].exp : 0;
+    return { index: idx, name: GROWTH_STAGES[idx].name, nextExp: next };
   }
 
   // src/client/look.ts
   var TIER_EXP = [0, 200, 800];
-  var TIER_NAMES = ["\u521D\u8BC6", "\u719F\u7EDC", "\u9ECF\u4EBA"];
+  deepFreeze(TIER_EXP);
+  var TIER_NAMES = ["初识", "熟络", "黏人"];
+  deepFreeze(TIER_NAMES);
   var LOOKS = [
-    { tier: 0, label: "\u521D\u8BC6", scale: 1, dots: 2, halo: 0, tailEveryMs: 14e3 },
-    { tier: 1, label: "\u719F\u7EDC", scale: 1.04, dots: 4, halo: 0.12, tailEveryMs: 9e3 },
-    { tier: 2, label: "\u9ECF\u4EBA", scale: 1.08, dots: 6, halo: 0.22, tailEveryMs: 5500 }
+    { tier: 0, label: "初识", scale: 1, dots: 2, halo: 0, tailEveryMs: 14e3 },
+    { tier: 1, label: "熟络", scale: 1.04, dots: 4, halo: 0.12, tailEveryMs: 9e3 },
+    { tier: 2, label: "黏人", scale: 1.08, dots: 6, halo: 0.22, tailEveryMs: 5500 }
   ];
+  deepFreeze(LOOKS);
   function tierOf(exp) {
     const e = Number(exp);
-    if (!isFinite(e) || e <= 0) return 0;
-    let idx = 0;
-    for (let i = 0; i < TIER_EXP.length; i++) {
-      if (e >= TIER_EXP[i]) idx = i;
+    if (Number.isNaN(e) || e <= 0) return 0;
+    for (let i = TIER_EXP.length - 1; i > 0; i--) {
+      if (e >= TIER_EXP[i]) return i;
     }
-    return idx;
+    return 0;
   }
   function lookFor(exp) {
     return LOOKS[tierOf(exp)];
@@ -555,18 +3086,20 @@
     if (!info || typeof info.exp !== "number") return LOOKS[0];
     return LOOKS[tierOf(info.exp)];
   }
-  var DEFAULT_GROWTH = { exp: 0, stage: "\u521D\u8BC6", nextExp: 200, tier: 0 };
+  var DEFAULT_GROWTH = { exp: 0, stage: "初识", nextExp: 200, tier: 0 };
+  deepFreeze(DEFAULT_GROWTH);
   function parseGrowth(d) {
     if (!d || typeof d !== "object" || !d.ok) return null;
     const raw = Number(d.exp);
     if (!isFinite(raw)) return null;
     const exp = Math.max(0, Math.floor(raw));
     const tier = tierOf(exp);
+    const host = growthStage(exp);
     const n = Number(d.nextExp);
     let nextExp = 0;
     if (isFinite(n) && n >= 0) nextExp = Math.floor(n);
-    else if (tier + 1 < TIER_EXP.length) nextExp = TIER_EXP[tier + 1];
-    const stage = typeof d.stage === "string" && d.stage ? d.stage : TIER_NAMES[tier];
+    else nextExp = host.nextExp;
+    const stage = typeof d.stage === "string" && d.stage ? d.stage : host.name;
     return { exp, stage, nextExp, tier };
   }
   function fetchGrowth(getJson2) {
@@ -579,8 +3112,11 @@
 
   // src/client/anim.ts
   var EYE_L = { x: 679, y: 430, r: 68 };
+  deepFreeze(EYE_L);
   var EYE_R = { x: 860, y: 435, r: 68 };
+  deepFreeze(EYE_R);
   var MOUTH = { x: 779, y: 525, rw: 26, rh: 18 };
+  deepFreeze(MOUTH);
   var FIN_DOTS = [
     { x: 308, y: 115 },
     { x: 317, y: 113 },
@@ -595,6 +3131,8 @@
   var HALO = { x: 240, y: 228, r0: 30, r1: 252 };
   var DOT_BREATH_MS = 620;
   var TAU = Math.PI * 2;
+  var MAINTAIN_EVERY = 30;
+  var HEART_MAX = 8;
   function pickDotIndexes(count) {
     const n = FIN_DOTS.length;
     const c = Math.max(2, Math.min(n, Math.round(Number(count)) || 2));
@@ -605,10 +3143,31 @@
   }
   function createAnimator(opts) {
     const { canvas, imgSrc, cw, ch, sx, sy, state } = opts;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas && typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+    if (!ctx) {
+      let fallbackLook = opts.look || lookFor(0);
+      return {
+        start() {
+        },
+        stop() {
+        },
+        talkFor(_ms) {
+        },
+        pushHeart() {
+        },
+        // 取不到上下文时动画无法重建，但外观数据仍要跟上成长（否则 getLook 永远停在初识档）
+        setLook(next) {
+          fallbackLook = next || lookFor(0);
+        },
+        getLook() {
+          return fallbackLook;
+        }
+      };
+    }
     const img = new Image();
     img.src = imgSrc;
     let raf = 0;
+    let running = false;
     let last = performance.now();
     let blinkT = 0;
     let blinkClosed = false;
@@ -619,13 +3178,87 @@
     let wagStart = -1;
     let splashes = [];
     const haloGrads = [];
+    let visible = true;
+    let maintCountdown = MAINTAIN_EVERY;
+    let usedDpr = 0;
+    function dprNow() {
+      try {
+        const d = typeof window !== "undefined" ? Number(window.devicePixelRatio) : 1;
+        return isFinite(d) && d > 0 ? d : 1;
+      } catch (e) {
+        return 1;
+      }
+    }
+    function syncCanvasSize() {
+      try {
+        let cssW = 0;
+        let cssH = 0;
+        if (typeof canvas.getBoundingClientRect === "function") {
+          const r = canvas.getBoundingClientRect();
+          cssW = Number(r && r.width) || 0;
+          cssH = Number(r && r.height) || 0;
+        }
+        if (!(cssW > 0)) cssW = cw / 2;
+        if (!(cssH > 0)) cssH = ch / 2;
+        const dpr = dprNow();
+        const pxW = Math.max(1, Math.min(cw * 2, Math.round(cssW * dpr)));
+        const pxH = Math.max(1, Math.min(ch * 2, Math.round(cssH * dpr)));
+        if (canvas.width !== pxW) canvas.width = pxW;
+        if (canvas.height !== pxH) canvas.height = pxH;
+        if (typeof ctx.setTransform === "function") ctx.setTransform(pxW / cw, 0, 0, pxH / ch, 0, 0);
+        if (dpr !== usedDpr) {
+          usedDpr = dpr;
+          haloGrads.length = 0;
+        }
+      } catch (e) {
+      }
+    }
+    function checkVisible() {
+      try {
+        if (typeof document !== "undefined" && document.hidden) return false;
+        if (canvas.isConnected === false) return false;
+        if (typeof canvas.getClientRects === "function") return canvas.getClientRects().length > 0;
+      } catch (e) {
+      }
+      return true;
+    }
+    function maintain() {
+      maintCountdown = MAINTAIN_EVERY;
+      visible = checkVisible();
+      if (visible) syncCanvasSize();
+    }
+    let watchingResize = false;
+    function onWindowResize() {
+      try {
+        visible = checkVisible();
+      } catch (e) {
+      }
+      if (visible) syncCanvasSize();
+    }
+    function watchResize() {
+      if (watchingResize) return;
+      watchingResize = true;
+      try {
+        if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("resize", onWindowResize);
+      } catch (e) {
+      }
+    }
+    function unwatchResize() {
+      if (!watchingResize) return;
+      watchingResize = false;
+      try {
+        if (typeof window !== "undefined" && typeof window.removeEventListener === "function") window.removeEventListener("resize", onWindowResize);
+      } catch (e) {
+      }
+    }
     function wagGap() {
       return Math.max(2500, look.tailEveryMs * (1 - WAG_JITTER + Math.random() * WAG_JITTER * 2));
     }
     function applyLook(next) {
+      const prev = look;
       look = next || lookFor(0);
-      dotIdx = pickDotIndexes(look.dots);
-      nextWagAt = performance.now() + wagGap();
+      if (look.dots !== prev.dots) dotIdx = pickDotIndexes(look.dots);
+      if (look.tailEveryMs !== prev.tailEveryMs) nextWagAt = performance.now() + wagGap();
       try {
         canvas.style.transform = "scale(" + look.scale + ")";
         canvas.style.transformOrigin = "50% 100%";
@@ -677,8 +3310,8 @@
         const alpha = Math.max(0, 1 - p);
         const size = Math.max(12, Math.round(ch * 0.05 * (1 + p * 0.5)));
         ctx.fillStyle = "rgba(255,120,150," + alpha.toFixed(3) + ")";
-        ctx.font = size + "px serif";
-        ctx.fillText("\u2764", x, y);
+        ctx.font = size + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",serif';
+        ctx.fillText("❤", x, y);
       }
     }
     function haloGradient() {
@@ -760,8 +3393,15 @@
       ctx.restore();
     }
     function loop(t) {
-      const dt = Math.min(50, t - last);
+      if (!running) return;
+      const dt = Math.max(0, Math.min(50, t - last));
       last = t;
+      maintCountdown -= 1;
+      if (maintCountdown <= 0) maintain();
+      if (!visible) {
+        raf = requestAnimationFrame(loop);
+        return;
+      }
       ctx.clearRect(0, 0, cw, ch);
       if (t >= nextWagAt) {
         wagStart = t;
@@ -805,15 +3445,26 @@
       raf = requestAnimationFrame(loop);
     }
     function start() {
+      if (running) return;
+      running = true;
+      last = performance.now();
+      maintCountdown = MAINTAIN_EVERY;
+      visible = true;
+      watchResize();
+      syncCanvasSize();
       raf = requestAnimationFrame(loop);
     }
     function stop() {
+      running = false;
+      unwatchResize();
       cancelAnimationFrame(raf);
+      raf = 0;
     }
     function talkFor(ms2) {
       state.talkUntil = performance.now() + ms2;
     }
     function pushHeart() {
+      if (state.hearts.length >= HEART_MAX) state.hearts.shift();
       state.hearts.push({ age: 0, dx: Math.random() - 0.5 });
     }
     function setLook(next) {
@@ -825,1038 +3476,37 @@
     return { start, stop, talkFor, pushHeart, setLook, getLook };
   }
 
-  // src/client/ape.ts
-  var APE_DEFAULTS = {
-    frameMs: 60,
-    floorDownAlpha: 0.25,
-    floorUpAlpha: 0.03,
-    quietMarginDb: 6,
-    offsetMarginDb: 6,
-    marginRatio: 0.45,
-    marginMinDb: 4,
-    marginMaxDb: 14,
-    peakDecayDb: 0.3,
-    driftAfterMs: 1e3,
-    shortRunMs: 1200,
-    longRunMs: 3e3,
-    quietShortMs: 300,
-    quietMidMs: 450,
-    quietLongMs: 600,
-    minSpeechMs: 150,
-    maxWaitAfterSpeechMs: 900,
-    noiseNearDb: 14,
-    maxSegmentMs: 6e3,
-    steadyWindowFrames: 10,
-    // 25 帧 × 60ms = 1.5s
-    steadySpreadDb: 3,
-    steadyMs: 400
-  };
-  var Ape = class {
-    p;
-    floorDb = null;
-    peakDb = -160;
-    speechMs = 0;
-    quietMs = 0;
-    elapsedMs = 0;
-    runMs = 0;
-    hadSpeech = false;
-    lastSpeechAtMs = 0;
-    noiseTail = false;
-    bandMs = 0;
-    steadyHist = [];
-    steadyMs = 0;
-    steadyCooldownMs = 0;
-    // 平稳噪声确认后的冷却期：这段时间不把电平算成说话
-    constructor(params) {
-      this.p = { ...APE_DEFAULTS, ...params || {} };
-    }
-    resetSegment() {
-      this.steadyHist = [];
-      this.steadyMs = 0;
-      this.speechMs = 0;
-      this.quietMs = 0;
-      this.elapsedMs = 0;
-      this.runMs = 0;
-      this.hadSpeech = false;
-      this.steadyCooldownMs = 0;
-      this.bandMs = 0;
-    }
-    resetNoise() {
-      this.floorDb = null;
-      this.peakDb = -160;
-    }
-    floor() {
-      return this.floorDb === null ? -70 : this.floorDb;
-    }
-    step(db) {
-      const p = this.p;
-      if (this.floorDb === null) this.floorDb = db;
-      if (db > this.peakDb) this.peakDb = db;
-      else this.peakDb = Math.max(-160, this.peakDb - p.peakDecayDb);
-      const range = this.peakDb - this.floorDb;
-      const margin = Math.max(p.marginMinDb, Math.min(p.marginMaxDb, range * p.marginRatio));
-      const onsetTh = this.floorDb + margin;
-      const offsetTh = this.floorDb + p.offsetMarginDb;
-      this.elapsedMs += p.frameMs;
-      if (db > onsetTh) {
-        this.steadyHist.push(db);
-        while (this.steadyHist.length > p.steadyWindowFrames) this.steadyHist.shift();
-        const spread = this.steadyHist.length >= 8 ? Math.max(...this.steadyHist) - Math.min(...this.steadyHist) : 99;
-        const nearFloor = db - this.floorDb <= p.noiseNearDb;
-        const steadyNow = spread < p.steadySpreadDb && nearFloor;
-        if (steadyNow) {
-          this.steadyMs += p.frameMs;
-          if (this.steadyMs >= p.steadyMs) {
-            this.noiseTail = true;
-            this.floorDb = this.floorDb * 0.7 + db * 0.3;
-          }
-        } else {
-          this.steadyMs = 0;
-          this.noiseTail = false;
-        }
-        if (this.noiseTail) {
-          this.quietMs += p.frameMs;
-          this.bandMs = 0;
-        } else if (this.steadyCooldownMs > 0) {
-          this.steadyCooldownMs -= p.frameMs;
-        } else {
-          this.speechMs += p.frameMs;
-          this.runMs += p.frameMs;
-          this.hadSpeech = true;
-          this.lastSpeechAtMs = this.elapsedMs;
-          this.quietMs = 0;
-          this.bandMs = 0;
-        }
-      } else if (db <= offsetTh) {
-        this.quietMs += p.frameMs;
-        this.bandMs = 0;
-        this.floorDb = this.floorDb * (1 - p.floorDownAlpha) + db * p.floorDownAlpha;
-      } else {
-        this.bandMs += p.frameMs;
-        if (this.bandMs >= p.driftAfterMs) {
-          this.floorDb = this.floorDb * (1 - p.floorUpAlpha) + db * p.floorUpAlpha;
-        }
-      }
-      const quietTargetMs = this.runMs < p.shortRunMs ? p.quietShortMs : this.runMs < p.longRunMs ? p.quietMidMs : p.quietLongMs;
-      const validSpeech = this.speechMs >= p.minSpeechMs;
-      let commit = false;
-      let commitReason = "";
-      if (validSpeech && this.quietMs >= quietTargetMs) {
-        commit = true;
-        commitReason = "quiet";
-      } else if (this.elapsedMs >= p.maxSegmentMs) {
-        commit = true;
-        commitReason = "overflow";
-      }
-      return {
-        db,
-        floorDb: this.floorDb,
-        onsetTh,
-        offsetTh,
-        speechMs: this.speechMs,
-        quietMs: this.quietMs,
-        elapsedMs: this.elapsedMs,
-        hadSpeech: this.hadSpeech,
-        quietTargetMs,
-        commit,
-        commitReason
-      };
-    }
-  };
-
-  // src/client/sim.ts
-  function normalizeText(s) {
-    return String(s || "").toLowerCase().replace(/[\s\u3000]+/g, "").replace(/[\s。，！？、；：,.!?;:"'”’“”（）()【】\[\]<>《》~～`@#$%^&*_+=|\\/-]/g, "");
-  }
-  function bigrams(s) {
-    const out = /* @__PURE__ */ new Set();
-    const t = String(s || "");
-    if (!t) return out;
-    if (t.length === 1) {
-      out.add(t);
-      return out;
-    }
-    for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
-    return out;
-  }
-  function similarity(a, b) {
-    const A = bigrams(normalizeText(a));
-    const B = bigrams(normalizeText(b));
-    if (A.size === 0 || B.size === 0) return 0;
-    let inter = 0;
-    for (const g of A) if (B.has(g)) inter++;
-    const union = A.size + B.size - inter;
-    return union === 0 ? 0 : inter / union;
-  }
-  function isRepeat(text, opts) {
-    const threshold = opts.threshold === void 0 ? 0.85 : opts.threshold;
-    const minLen = opts.minLen === void 0 ? 4 : opts.minLen;
-    const windowMs = opts.windowMs === void 0 ? 2e4 : opts.windowMs;
-    const now = opts.now === void 0 ? Date.now() : opts.now;
-    const cur = normalizeText(text);
-    if (!cur) return false;
-    for (const item of opts.recent || []) {
-      if (now - Number(item && item.at || 0) > windowMs) continue;
-      const prev = normalizeText(item && item.text ? item.text : "");
-      if (!prev) continue;
-      if (cur === prev) return true;
-      const shortOne = cur.length <= prev.length ? cur : prev;
-      const longOne = cur.length <= prev.length ? prev : cur;
-      if (shortOne.length >= minLen && longOne.indexOf(shortOne) >= 0) return true;
-      if (cur.length >= minLen && prev.length >= minLen && similarity(cur, prev) >= threshold) return true;
-    }
-    return false;
-  }
-
-  // src/client/playback.ts
-  function isPlaybackZombie(p) {
-    const zombieMs = p.zombieMs === void 0 ? 2500 : p.zombieMs;
-    const synthTimeoutMs = p.synthTimeoutMs === void 0 ? 2e4 : p.synthTimeoutMs;
-    if (!p.busy) return false;
-    if (p.hasAudio && p.audioPlaying) return false;
-    if (!p.hasAudio && p.synthAt > 0 && p.now - p.synthAt < synthTimeoutMs) return false;
-    const since = typeof p.lastProgressAt === "number" && p.lastProgressAt > 0 ? p.lastProgressAt : p.busySince;
-    return p.now - since >= zombieMs;
-  }
-
-  // src/client/voice.ts
-  var WINDOW_MS = 6e3;
-  var EARLY_STOP_QUIET = 700;
-  var MIN_SPEECH_MS = 400;
-  var SILENT_PEAK_DB = -35;
-  var ECHO_MUTE_MS = 700;
-  var ASR_TIMEOUT_MS = 15e3;
-  var TTS_TIMEOUT_MS = 2e4;
-  var NARRATION_RATE = (() => {
+  // src/client/wake.ts
+  var WAKE_WORDS = ["大肥鱼", "小蓝鱼", "肥鲸", "肥鱼", "小鱼", "蓝鱼", "鱼鱼", "肥肥"];
+  deepFreeze(WAKE_WORDS);
+  var WAKE_WORD_KEY = "chubby-wake-word";
+  function loadCustomWakeWords() {
     try {
-      const s = localStorage.getItem("chubby-narration-rate");
-      return s && /^[+-]\d{1,2}%$/.test(s) ? s : "-25%";
+      if (typeof localStorage === "undefined") return void 0;
+      const v = String(localStorage.getItem(WAKE_WORD_KEY) || "").trim();
+      if (!v) return void 0;
+      return [v.slice(0, 12)];
     } catch (e) {
-      return "-25%";
+      return void 0;
     }
-  })();
-  var TTS_WATCH_MS = 1e3;
-  var TTS_ZOMBIE_MS = 2500;
-  var NOISE_TEXTS = ["\u55EF", "\u5443", "\u554A", "\u54E6", "\u55EF\u55EF", "\u8C22\u8C22\u89C2\u770B", "\u8C22\u8C22\u5927\u5BB6", "\u5B57\u5E55", "\u8BF7\u4E0D\u541D\u70B9\u8D5E", "\u8BA2\u9605", "\u8F6C\u53D1", "\u6253\u8D4F", "\u518D\u89C1", "\u672C\u9C7C\u5728\u542C", "\u55EF\u672C\u9C7C\u5728\u542C"];
-  var TTS_VOICES = [
-    "zh-CN-XiaoyiNeural",
-    "zh-CN-XiaoxiaoNeural",
-    "zh-CN-XiaochenNeural",
-    "zh-CN-YunxiNeural",
-    "zh-CN-YunyangNeural",
-    "en-US-AnaNeural",
-    "en-US-JennyNeural",
-    "en-GB-SoniaNeural",
-    "auto"
-  ];
-  var DEFAULT_VOICE2 = "zh-CN-XiaoyiNeural";
-  function normalizeVoiceName(name, fallback = DEFAULT_VOICE2) {
-    const n = String(name == null ? "" : name).trim();
-    return TTS_VOICES.indexOf(n) >= 0 ? n : fallback;
   }
-  function readStoredVoiceName() {
+  function setCustomWakeWord(word) {
     try {
-      return normalizeVoiceName(localStorage.getItem("chubby-tts-voice"));
-    } catch (e) {
-      return DEFAULT_VOICE2;
-    }
-  }
-  function createVoice(opts) {
-    const apiBase = opts.apiBase || "/api/chubby-whale";
-    let voiceName = normalizeVoiceName(opts.voiceName || readStoredVoiceName());
-    let epMode = (() => {
-      try {
-        return localStorage.getItem("chubby-endpoint") === "ape" ? "ape" : "classic";
-      } catch (e) {
-        return "classic";
-      }
-    })();
-    const ape = new Ape();
-    let lastApe = null;
-    let lastSeg = null;
-    let lastTts = null;
-    const stats = {
-      windows: 0,
-      skippedSilent: 0,
-      uploaded: 0,
-      asrFail: 0,
-      asrTexts: 0,
-      heard: 0,
-      echoDropped: 0,
-      ttsRequests: 0,
-      ttsPlayed: 0,
-      ttsFail: 0,
-      ttsZombie: 0,
-      lastError: ""
-    };
-    let status = "idle";
-    function setStatus(s) {
-      if (status === s) return;
-      status = s;
-      try {
-        opts.onStatus && opts.onStatus(s);
-      } catch (e) {
-      }
-    }
-    let stream = null;
-    let actx = null;
-    let analyser = null;
-    let rec = null;
-    let timeBuf = null;
-    let running = false;
-    let muted = false;
-    let parts = [];
-    let winPeak = -160;
-    let speechMs = 0;
-    let quietMs = 0;
-    let winStart = 0;
-    let tickTimer = null;
-    let restartTimer = null;
-    let lastText = "";
-    let lastTextAt = 0;
-    const spokenRecent = [];
-    const recentHeard = [];
-    const ttsQ = [];
-    let ttsBusy = false;
-    let ttsAudio = null;
-    let ttsBusySince = 0;
-    let ttsSynthAt = 0;
-    let ttsProgressAt = 0;
-    let ttsCurJob = null;
-    let ttsWatch = null;
-    let mutedUntil = 0;
-    let speakToken = 0;
-    const level = () => {
-      if (!analyser || !timeBuf) return -160;
-      analyser.getFloatTimeDomainData(timeBuf);
-      let sum = 0;
-      for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
-      const rms = Math.sqrt(sum / timeBuf.length);
-      return 20 * Math.log10(rms + 1e-8);
-    };
-    function micOn(on) {
-      try {
-        if (stream) stream.getAudioTracks().forEach((t) => {
-          t.enabled = on;
-        });
-      } catch (e) {
-      }
-    }
-    function scheduleNext(ms2) {
-      if (!running) return;
-      if (restartTimer) clearTimeout(restartTimer);
-      restartTimer = setTimeout(() => {
-        restartTimer = null;
-        beginWindow();
-      }, ms2);
-    }
-    function beginWindow() {
-      if (!running || !rec) return;
-      try {
-        if (rec.state !== "inactive") {
-          try {
-            rec.stop();
-          } catch (e) {
-          }
-          scheduleNext(200);
-          return;
-        }
-        parts = [];
-        winPeak = -160;
-        speechMs = 0;
-        quietMs = 0;
-        winStart = performance.now();
-        ape.resetSegment();
-        lastApe = null;
-        rec.start();
-        scheduleNext(0);
-        if (restartTimer) {
-          clearTimeout(restartTimer);
-          restartTimer = null;
-        }
-        tick();
-      } catch (e) {
-        stats.lastError = "beginWindow: " + String(e && e.name);
-        scheduleNext(1e3);
-      }
-    }
-    function tick() {
-      if (!running || !rec || rec.state !== "recording") return;
-      try {
-        const db = level();
-        if (epMode === "ape") {
-          const st = ape.step(db);
-          lastApe = st;
-          if (db > winPeak) winPeak = db;
-          if (st.commit && rec && rec.state === "recording") {
-            try {
-              rec.stop();
-            } catch (e) {
-            }
-            try {
-              opts.onDiag && opts.onDiag({ stage: "window-end", why: st.commitReason, floor: Math.round(st.floorDb) });
-            } catch (e) {
-            }
-            return;
-          }
-          tickTimer = setTimeout(tick, 60);
-          return;
-        }
-        if (db > winPeak) winPeak = db;
-        const now = performance.now();
-        const elapsed = now - winStart;
-        if (db > (muted ? 0 : -45)) {
-          speechMs += 60;
-          quietMs = 0;
-        } else {
-          quietMs += 60;
-        }
-        const earlyStop = speechMs >= MIN_SPEECH_MS && quietMs >= EARLY_STOP_QUIET;
-        const tooLong = elapsed >= WINDOW_MS;
-        if (earlyStop || tooLong) {
-          try {
-            rec.stop();
-          } catch (e) {
-          }
-          try {
-            opts.onDiag && opts.onDiag({ stage: "window-end", why: earlyStop ? "quiet" : "timeout", peak: Math.round(winPeak), speechMs });
-          } catch (e) {
-          }
-          return;
-        }
-        tickTimer = setTimeout(tick, 60);
-      } catch (e) {
-        stats.lastError = "tick: " + String(e && e.name);
-        tickTimer = setTimeout(tick, 120);
-      }
-    }
-    async function onWindowDone(blob) {
-      if (!running) return;
-      stats.windows++;
-      if (epMode === "ape") {
-        const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150);
-        if (!okSpeech) {
-          stats.skippedSilent++;
-          scheduleNext(150);
-          return;
-        }
-      } else if (winPeak < SILENT_PEAK_DB) {
-        stats.skippedSilent++;
-        scheduleNext(150);
-        return;
-      }
-      if (Date.now() < mutedUntil) {
-        stats.skippedSilent++;
-        scheduleNext(150);
-        return;
-      }
-      if (blob.size < 1200) {
-        stats.skippedSilent++;
-        scheduleNext(150);
-        return;
-      }
-      stats.uploaded++;
-      setStatus("recognizing");
-      try {
-        const b64 = await blobToBase64(blob);
-        if (!b64) {
-          stats.asrFail++;
-          stats.lastError = "b64-empty";
-          return;
-        }
-        const res = await fetchWithTimeout(apiBase + "/asr", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ audio: b64, format: "webm" })
-        }, ASR_TIMEOUT_MS);
-        const data = await res.json();
-        if (!data || !data.ok) {
-          stats.asrFail++;
-          stats.lastError = "asr: " + String(data && data.error || "failed");
-          return;
-        }
-        try {
-          lastSeg = { mode: epMode, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) };
-        } catch (e) {
-        }
-        const text = String(data.text || "").trim();
-        if (!text) return;
-        stats.asrTexts++;
-        if (acceptText(text)) {
-          stats.heard++;
-          setStatus("thinking");
-          try {
-            opts.onHeard(text);
-          } catch (e) {
-          }
-        } else {
-          stats.echoDropped++;
-        }
-      } catch (e) {
-        stats.asrFail++;
-        stats.lastError = "asr-ex: " + String(e && e.name || e);
-      } finally {
-        if (status === "recognizing") setStatus("listening");
-        if (!rec || rec.state === "inactive") scheduleNext(150);
-      }
-    }
-    function acceptText(text) {
-      const plain = text.replace(/[\s。，！？,.!?、…~～]/g, "");
-      if (plain.length < 2 && !/^[停别不]$/.test(plain)) return false;
-      if (NOISE_TEXTS.indexOf(plain) >= 0) return false;
-      if (/^本鱼在听/.test(plain)) return false;
-      const now = Date.now();
-      for (const s of spokenRecent) {
-        if (now - s.at > 15e3) continue;
-        const target = s.text.replace(/[\s。，！？,.!?、…~～]/g, "");
-        if (!target) continue;
-        if (plain === target) return false;
-        if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return false;
-        if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return false;
-        if (plain.length >= 3 && now - s.at < 6e3 && target.indexOf(plain) >= 0) {
-          try {
-            stats.echoDropped++;
-          } catch (e) {
-          }
-          ;
-          return false;
-        }
-      }
-      if (isRepeat(plain, { recent: recentHeard, windowMs: 8e3, threshold: 0.9, minLen: 4, now })) {
-        try {
-          stats.dupDropped = (stats.dupDropped || 0) + 1;
-        } catch (e) {
-        }
+      const v = str(word).trim().slice(0, 12);
+      if (!v) {
+        localStorage.removeItem(WAKE_WORD_KEY);
         return false;
       }
-      recentHeard.push({ text, at: now });
-      while (recentHeard.length > 3) recentHeard.shift();
-      if (text === lastText && now - lastTextAt < 8e3) return false;
-      lastText = text;
-      lastTextAt = now;
+      localStorage.setItem(WAKE_WORD_KEY, v);
       return true;
+    } catch (e) {
+      return false;
     }
-    function noteSpoken(text) {
-      const t = String(text || "").trim();
-      if (!t) return;
-      spokenRecent.push({ text: t, at: Date.now() });
-      while (spokenRecent.length > 12) spokenRecent.shift();
-    }
-    function ttsWatchdog() {
-      try {
-        const audioPlaying = !!(ttsAudio && !ttsAudio.paused && !ttsAudio.ended && ttsAudio.readyState > 0);
-        const zombie = isPlaybackZombie({
-          hasAudio: !!ttsAudio,
-          audioPlaying,
-          busy: ttsBusy,
-          busySince: ttsBusySince,
-          // 停滞按"最后一次有进展"算：长段播到一半卡住时，段开始时刻早就过阈值了，
-          // 还用 busySince 会一上来就误判；播放进度、缓冲、开播都算有新进展。
-          lastProgressAt: ttsProgressAt,
-          synthAt: ttsSynthAt,
-          now: Date.now(),
-          zombieMs: TTS_ZOMBIE_MS,
-          synthTimeoutMs: TTS_TIMEOUT_MS
-        });
-        if (!zombie) return;
-        stats.ttsZombie++;
-        const dead = ttsCurJob;
-        ttsCurJob = null;
-        speakToken++;
-        try {
-          if (ttsAudio) {
-            ttsAudio.pause();
-            ttsAudio.onended = null;
-            ttsAudio.onerror = null;
-          }
-        } catch (e) {
-        }
-        ttsAudio = null;
-        ttsSynthAt = 0;
-        ttsProgressAt = 0;
-        ttsBusy = false;
-        mutedUntil = Date.now() + ECHO_MUTE_MS;
-        micOn(!muted);
-        if (dead) {
-          try {
-            finishJob(dead);
-          } catch (e) {
-          }
-        } else {
-          pumpTts();
-        }
-        if (!ttsBusy && ttsQ.length === 0) {
-          setTimeout(() => {
-            try {
-              if (!ttsBusy && !muted) micOn(true);
-            } catch (e) {
-            }
-          }, ECHO_MUTE_MS);
-        }
-      } catch (e) {
-      }
-    }
-    const ttsPrefetch = /* @__PURE__ */ new Map();
-    let ttsSeq = 0;
-    function synth(job) {
-      return fetchWithTimeout(apiBase + "/tts", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: job.text, voice: voiceName, rate: job.rate, pitch: job.pitch || "" })
-      }, TTS_TIMEOUT_MS).then((r) => {
-        if (!r.ok) throw new Error("tts-http-" + r.status);
-        return r.arrayBuffer();
-      }).catch((e) => {
-        stats.lastError = "tts: " + String(e && e.name || e);
-        return null;
-      });
-    }
-    function speakViaBrowser(text) {
-      return new Promise((resolve) => {
-        try {
-          const Synth = window.speechSynthesis;
-          const Utt = window.SpeechSynthesisUtterance;
-          if (!Synth || !Utt) {
-            resolve();
-            return;
-          }
-          const u = new Utt(text);
-          u.lang = "zh-CN";
-          u.onend = () => resolve();
-          u.onerror = () => resolve();
-          try {
-            Synth.cancel();
-          } catch (e) {
-          }
-          Synth.speak(u);
-        } catch (e) {
-          resolve();
-        }
-      });
-    }
-    function narrationPauseFor(text) {
-      const t = String(text || "").trim();
-      if (!t) return 200;
-      const last = t.slice(-1);
-      if (/[。！？!?…]/.test(last)) return 260;
-      if (/[，、；,;]/.test(last)) return 140;
-      return 200;
-    }
-    function finishJob(j) {
-      ttsBusy = false;
-      if (ttsCurJob === j) ttsCurJob = null;
-      ttsProgressAt = 0;
-      mutedUntil = Date.now() + ECHO_MUTE_MS;
-      setTimeout(() => {
-        if (!ttsBusy && !muted) micOn(true);
-      }, ECHO_MUTE_MS);
-      try {
-        j.onDone && j.onDone();
-      } catch (e) {
-      }
-      if (j.narration && ttsQ.length > 0) setTimeout(() => pumpTts(), narrationPauseFor(j.text));
-      else pumpTts();
-    }
-    function pumpTts() {
-      if (ttsBusy) return;
-      const job = ttsQ.shift();
-      if (!job) {
-        setStatus("listening");
-        return;
-      }
-      ttsBusy = true;
-      ttsBusySince = Date.now();
-      ttsProgressAt = Date.now();
-      ttsCurJob = job;
-      const myToken = ++speakToken;
-      setStatus("speaking");
-      stats.ttsRequests++;
-      const cur = ttsPrefetch.get(job.seq) || synth(job);
-      ttsSynthAt = Date.now();
-      ttsPrefetch.delete(job.seq);
-      const next = ttsQ[0];
-      if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next));
-      cur.then((buf) => {
-        if (myToken !== speakToken) return;
-        ttsSynthAt = 0;
-        if (!buf) {
-          if (job.attempts < 3) {
-            job.attempts++;
-            ttsQ.unshift(job);
-            ttsBusy = false;
-            const backoff = 300 * job.attempts;
-            try {
-              window.__chubbyWhale.ttsRetry = (window.__chubbyWhale.ttsRetry || 0) + 1;
-            } catch (e) {
-            }
-            setTimeout(() => {
-              try {
-                pumpTts();
-              } catch (e) {
-              }
-            }, backoff);
-            return;
-          }
-          stats.ttsFail++;
-          try {
-            lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
-          } catch (e) {
-          }
-          try {
-            const w = window.__chubbyWhale;
-            w.ttsLost = w.ttsLost || [];
-            w.ttsLost.push(job.text.slice(0, 16));
-            if (w.ttsLost.length > 10) w.ttsLost.shift();
-          } catch (e) {
-          }
-          const canBrowser = !job.strict && (() => {
-            try {
-              const s = window.speechSynthesis;
-              return !!(s && s.getVoices && s.getVoices().length > 0);
-            } catch (e) {
-              return false;
-            }
-          })();
-          if (canBrowser) speakViaBrowser(job.text).then(() => finishJob(job));
-          else finishJob(job);
-          return;
-        }
-        try {
-          opts.onSegment && opts.onSegment(job.text);
-        } catch (e) {
-        }
-        const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
-        const a = new Audio(url);
-        ttsAudio = a;
-        ttsProgressAt = Date.now();
-        const bump2 = () => {
-          ttsProgressAt = Date.now();
-        };
-        try {
-          a.onplaying = bump2;
-          a.ontimeupdate = bump2;
-          a.onprogress = bump2;
-          a.onloadeddata = bump2;
-        } catch (e) {
-        }
-        const finish = () => {
-          if (myToken !== speakToken) {
-            try {
-              URL.revokeObjectURL(url);
-            } catch (e) {
-            }
-            return;
-          }
-          try {
-            a.onended = null;
-            a.onerror = null;
-          } catch (e) {
-          }
-          try {
-            URL.revokeObjectURL(url);
-          } catch (e) {
-          }
-          ttsAudio = null;
-          stats.ttsPlayed++;
-          try {
-            lastTts = { failed: false, text: job.text.slice(0, 20), at: Date.now() };
-          } catch (e) {
-          }
-          finishJob(job);
-        };
-        a.onended = finish;
-        a.onerror = finish;
-        micOn(false);
-        a.play().catch(() => {
-          if (myToken !== speakToken) {
-            try {
-              URL.revokeObjectURL(url);
-            } catch (e) {
-            }
-            ;
-            return;
-          }
-          if (!muted) micOn(true);
-          stats.ttsFail++;
-          try {
-            lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
-          } catch (e) {
-          }
-          try {
-            a.onended = null;
-            a.onerror = null;
-            URL.revokeObjectURL(url);
-          } catch (e) {
-          }
-          ttsAudio = null;
-          if (job.attempts < 1) {
-            job.attempts++;
-            ttsQ.unshift(job);
-            ttsBusy = false;
-            setTimeout(() => {
-              try {
-                pumpTts();
-              } catch (e) {
-              }
-            }, 250);
-            return;
-          }
-          const canBrowser2 = !job.strict && (() => {
-            try {
-              const s = window.speechSynthesis;
-              return !!(s && s.getVoices && s.getVoices().length > 0);
-            } catch (e) {
-              return false;
-            }
-          })();
-          if (canBrowser2) speakViaBrowser(job.text).then(() => finishJob(job));
-          else finishJob(job);
-        });
-      });
-    }
-    function splitForTts(text, maxLen = 56) {
-      const out = [];
-      const src = String(text || "");
-      if (!src.trim()) return out;
-      if (maxLen < 8) maxLen = 8;
-      const firstMax = Math.min(maxLen, 14);
-      let sbuf = "";
-      for (const c of src) {
-        sbuf += c;
-        const boundary = /[。，！？!?；;、,\n]/.test(c);
-        const cap = out.length === 0 ? firstMax : maxLen;
-        if (sbuf.length >= cap || boundary && sbuf.length >= Math.max(8, Math.floor(cap / 3))) {
-          const seg = sbuf.trim();
-          if (seg) out.push(seg);
-          sbuf = "";
-        }
-      }
-      const rest = sbuf.trim();
-      if (rest) out.push(rest);
-      return out;
-    }
-    async function blobToBase64(blob) {
-      return new Promise((resolve) => {
-        try {
-          const fr = new FileReader();
-          fr.onloadend = () => {
-            const s = String(fr.result || "");
-            resolve(s.indexOf(",") >= 0 ? s.slice(s.indexOf(",") + 1) : s);
-          };
-          fr.readAsDataURL(blob);
-        } catch (e) {
-          resolve("");
-        }
-      });
-    }
-    async function fetchWithTimeout(url, init, ms2) {
-      const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timer = ctl ? setTimeout(() => {
-        try {
-          ctl.abort();
-        } catch (e) {
-        }
-      }, ms2) : null;
-      try {
-        return await fetch(url, ctl ? { ...init, signal: ctl.signal } : init);
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
-    }
-    async function start() {
-      if (running) return;
-      running = true;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
-        });
-        if (!running) {
-          try {
-            stream.getTracks().forEach((t) => t.stop());
-          } catch (e) {
-          }
-          ;
-          return;
-        }
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        actx = new Ctx();
-        try {
-          await actx.resume();
-        } catch (e) {
-        }
-        const src = actx.createMediaStreamSource(stream);
-        analyser = actx.createAnalyser();
-        analyser.fftSize = 1024;
-        analyser.smoothingTimeConstant = 0;
-        timeBuf = new Float32Array(1024);
-        src.connect(analyser);
-        rec = new MediaRecorder(stream);
-        rec.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) parts.push(e.data);
-        };
-        rec.onstop = () => {
-          if (!running) {
-            parts = [];
-            return;
-          }
-          const blob = new Blob(parts, { type: "audio/webm" });
-          parts = [];
-          void onWindowDone(blob);
-        };
-        rec.onerror = (e) => {
-          stats.lastError = "recorder: " + String(e && e.error && e.error.name);
-          scheduleNext(800);
-        };
-        micOn(true);
-        setStatus("listening");
-        beginWindow();
-        if (ttsWatch) clearInterval(ttsWatch);
-        ttsWatch = setInterval(ttsWatchdog, TTS_WATCH_MS);
-        stats.lastError = "";
-      } catch (e) {
-        running = false;
-        stats.lastError = "getUserMedia: " + String(e && e.name || e);
-        setStatus("idle");
-        try {
-          opts.onDiag && opts.onDiag({ stage: "start-failed", err: stats.lastError });
-        } catch (e2) {
-        }
-      }
-    }
-    function stop() {
-      running = false;
-      if (tickTimer) {
-        clearTimeout(tickTimer);
-        tickTimer = null;
-      }
-      if (restartTimer) {
-        clearTimeout(restartTimer);
-        restartTimer = null;
-      }
-      if (ttsWatch) {
-        clearInterval(ttsWatch);
-        ttsWatch = null;
-      }
-      try {
-        stopSpeaking();
-      } catch (e) {
-      }
-      try {
-        if (rec && rec.state !== "inactive") rec.stop();
-      } catch (e) {
-      }
-      try {
-        if (actx) actx.close();
-      } catch (e) {
-      }
-      try {
-        if (stream) stream.getTracks().forEach((t) => t.stop());
-      } catch (e) {
-      }
-      rec = null;
-      actx = null;
-      analyser = null;
-      stream = null;
-      timeBuf = null;
-      setStatus("idle");
-    }
-    function stripStageDirections(s) {
-      let t = String(s || "");
-      t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, " ");
-      t = t.replace(/[\*＊]/g, " ");
-      t = t.replace(/([，。！？；：、])\s+/g, "$1");
-      return t.replace(/\s{2,}/g, " ").trim();
-    }
-    function speak(text, o) {
-      const raw = stripStageDirections(String(text || ""));
-      if (!raw) return;
-      const narration = o && typeof o.narration === "boolean" ? o.narration : raw.length >= 80;
-      const rate = o && o.rate ? o.rate : narration ? NARRATION_RATE : "+0%";
-      const strict = !!(o && o.strict);
-      const segs = splitForTts(raw, 56);
-      if (!segs.length) return;
-      noteSpoken(raw);
-      for (let i = 0; i < segs.length; i++) {
-        ttsQ.push({
-          seq: ++ttsSeq,
-          text: segs[i],
-          rate,
-          narration,
-          attempts: 0,
-          strict,
-          onDone: i === segs.length - 1 ? o && o.onDone : void 0
-        });
-      }
-      pumpTts();
-    }
-    function stopSpeaking() {
-      ttsSynthAt = 0;
-      ttsProgressAt = 0;
-      ttsCurJob = null;
-      speakToken++;
-      ttsQ.length = 0;
-      try {
-        ttsPrefetch.clear();
-      } catch (e) {
-      }
-      try {
-        if (ttsAudio) {
-          ttsAudio.pause();
-          ttsAudio.onended = null;
-          ttsAudio.onerror = null;
-        }
-      } catch (e) {
-      }
-      ttsAudio = null;
-      ttsBusy = false;
-      if (typeof speechSynthesis !== "undefined") {
-        try {
-          speechSynthesis.cancel();
-        } catch (e) {
-        }
-      }
-      if (!muted) micOn(true);
-      mutedUntil = Date.now() + ECHO_MUTE_MS;
-      setStatus("listening");
-    }
-    return {
-      start,
-      stop,
-      speak,
-      stopSpeaking,
-      speaking: () => ttsBusy,
-      recognizing: () => status === "recognizing",
-      setEndpointMode: (m) => {
-        epMode = m === "ape" ? "ape" : "classic";
-        try {
-          localStorage.setItem("chubby-endpoint", epMode);
-        } catch (e) {
-        }
-      },
-      // 端点检测：报告当前实际生效的模式（ape / classic），不再写死 classic
-      endpointInfo: () => ({ mode: epMode }),
-      lastSegment: () => lastSeg,
-      lastTtsInfo: () => lastTts,
-      // 立即换音色：下一个 /tts 请求就带新 voice（不重建实例）；白名单外的值不改
-      setVoiceName: (n) => {
-        voiceName = normalizeVoiceName(n, voiceName);
-      },
-      voiceName: () => voiceName,
-      mute: (on) => {
-        muted = on;
-        micOn(!on);
-      },
-      stats,
-      status: () => status
-    };
   }
-
-  // src/client/wake.ts
-  var WAKE_WORDS = ["\u5927\u80A5\u9C7C", "\u5C0F\u84DD\u9C7C", "\u80A5\u9CB8", "\u80A5\u9C7C", "\u5C0F\u9C7C", "\u84DD\u9C7C", "\u9C7C\u9C7C", "\u80A5\u80A5"];
   var WAKE_WINDOW_MS = 3e4;
-  var TRAD_TO_SIMPLE = { "\u9B5A": "\u9C7C", "\u98DB": "\u98DE", "\u85CD": "\u84DD", "\u7C43": "\u7BEE", "\u862D": "\u5170", "\u9BE8": "\u9CB8" };
+  var TRAD_TO_SIMPLE = { "魚": "鱼", "飛": "飞", "藍": "蓝", "籃": "篮", "蘭": "兰", "鯨": "鲸" };
   function normalizeWakeText(text) {
-    return String(text == null ? "" : text).split("").map((c) => TRAD_TO_SIMPLE[c] || c).join("").replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, "").toLowerCase();
+    return str(text).split("").map((c) => TRAD_TO_SIMPLE[c] || c).join("").replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, "").toLowerCase();
   }
   var WAKE_FUZZY = [
     /^大(肥|飞|粉|菲|非|废|悲|白|百|杯)鱼/,
@@ -1868,11 +3518,16 @@
     return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
   function stripWakeWords(input, words = WAKE_WORDS) {
-    const raw = String(input == null ? "" : input);
+    const raw = str(input);
     const norm = normalizeWakeText(raw);
     if (!norm) return { hit: false, text: "", word: "" };
     const sorted = (words || []).filter(Boolean).map((w) => String(w)).sort((a, b) => b.length - a.length);
-    const hits = sorted.filter((w) => norm.indexOf(normalizeWakeText(w)) >= 0);
+    const hits = sorted.filter((w) => {
+      const nw = normalizeWakeText(w);
+      if (!nw) return false;
+      if (nw.length >= 3) return norm.indexOf(nw) >= 0;
+      return norm.startsWith(nw) || norm.length <= 4 && norm.indexOf(nw) >= 0;
+    });
     if (!hits.length) {
       if (norm.length <= 12) {
         for (const re of WAKE_FUZZY) {
@@ -1925,7 +3580,7 @@
           return { hit: true, pass: true, text: r.text, word: r.word, remainingMs: windowMs };
         }
         const pass = awake(now);
-        return { hit: false, pass, text: String(text == null ? "" : text).trim(), word: "", remainingMs: remainingMs(now) };
+        return { hit: false, pass, text: str(text).trim(), word: "", remainingMs: remainingMs(now) };
       }
     };
   }
@@ -1943,8 +3598,9 @@
   function createVoiceBridge(host) {
     let voice = null;
     let pendingVoice = readStoredVoiceName();
-    const gate = createWakeGate();
+    const gate = createWakeGate({ words: loadCustomWakeWords() });
     const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 };
+    let asrNoKeyNotified = false;
     function wakeInfo() {
       const now = Date.now();
       const remainingMs = gate.remainingMs(now);
@@ -1983,7 +3639,7 @@
                 } catch (e) {
                 }
                 host.narration.clear();
-                host.bubble("\u597D\uFF0C\u4E0D\u5FF5\u4E86", 2500);
+                host.bubble("好，不念了", 2500);
               } else {
                 bump("narrDrop");
               }
@@ -2000,7 +3656,7 @@
                 } catch (e) {
                 }
                 try {
-                  host.bubble("\u597D\uFF0C\u4E0D\u8BF4\u4E86", 2e3);
+                  host.bubble("好，不说了", 2e3);
                 } catch (e) {
                 }
                 bump("wakeBreak");
@@ -2022,35 +3678,27 @@
             wakeStats.hits++;
             wakeStats.lastHitAt = Date.now();
           }
-          if (!r.pass) {
-            wakeStats.dropped++;
-            const now = Date.now();
-            if (now - wakeStats.dropNotifiedAt > 2e4) {
-              wakeStats.dropNotifiedAt = now;
+          const said = r.hit ? r.text : String(text || "").trim();
+          wakeStats.passed++;
+          if (!said) {
+            try {
+              if (host.say) host.say("本鲸在呢～", 3200);
+              else host.bubble("本鲸在呢～", 3200);
+            } catch (e) {
               try {
-                host.bubble("\u5148\u558A\u4E00\u58F0\u300C" + (gate.words[0] || "\u5927\u80A5\u9C7C") + "\u300D\uFF0C\u672C\u9CB8\u624D\u7B54\u8BDD\uFF5E", 3500);
-              } catch (e) {
+                host.bubble("本鲸在呢～", 3200);
+              } catch (e2) {
               }
             }
-            bump("wakeDrop");
             pushWake();
             return;
           }
-          if (!r.text) {
-            try {
-              host.bubble("\u672C\u9CB8\u5728\u5462\uFF5E", 2200);
-            } catch (e) {
-            }
-            pushWake();
-            return;
-          }
-          wakeStats.passed++;
           try {
-            host.bubble("\uFF08\u542C\u5230\uFF09" + r.text + "\uFF5C\u672C\u9C7C\u5728\u60F3\u2026", 3e3);
+            host.bubble("（听到）" + said + "｜本鱼在想…", 3e3);
           } catch (e) {
           }
           try {
-            host.sendText(r.text, { voice: true });
+            host.sendText(said, { voice: true });
           } catch (e) {
           }
           pushWake();
@@ -2066,13 +3714,22 @@
             host.diag({ voiceDiag: d });
           } catch (e) {
           }
+          try {
+            if (d && d.stage === "asr-no-key" && !asrNoKeyNotified) {
+              asrNoKeyNotified = true;
+              host.bubble(String(d.hint || "没配语音识别 Key，本鲸听不见；打字也能聊～"), 8e3);
+            }
+          } catch (e) {
+          }
         },
         // 念诗/说书：气泡跟着当前句走，主人能看到"念到哪了"
         onSegment: (seg) => {
           try {
             if (!host.narrating()) return;
             const t = String(seg || "").replace(/^念首诗——/, "").trim();
-            if (t) host.bubble(t, 8e3);
+            if (!t) return;
+            const withProgress = bumpProgress(t);
+            host.bubble(withProgress || t, 8e3);
           } catch (e) {
           }
         }
@@ -2100,6 +3757,7 @@
       get: () => voice,
       ensure,
       start() {
+        asrNoKeyNotified = false;
         const v = ensure();
         return Promise.resolve(v.start()).then(() => {
           pushWake();
@@ -2128,11 +3786,9 @@
         }
       },
       speak(text, opts) {
-        if (voice) {
-          try {
-            voice.speak(text, opts);
-          } catch (e) {
-          }
+        try {
+          ensure().speak(text, opts);
+        } catch (e) {
         }
       },
       stopSpeak() {
@@ -2267,12 +3923,16 @@
     return postRaw(path, body, init).then((r) => r.json());
   }
   function delJson(path, init) {
-    return fetch(apiUrl(path), Object.assign({ method: "DELETE" }, init || {})).then((r) => r.json());
+    const o = Object.assign({}, init || {});
+    o.method = "DELETE";
+    return fetch(apiUrl(path), o).then((r) => r.json());
   }
   function timeoutSignal(ms2) {
     try {
+      const n = Number(ms2);
+      if (!Number.isFinite(n) || n <= 0) return void 0;
       const AS = typeof AbortSignal !== "undefined" ? AbortSignal : null;
-      if (AS && typeof AS.timeout === "function") return AS.timeout(Number(ms2) || 0);
+      if (AS && typeof AS.timeout === "function") return AS.timeout(n);
     } catch (e) {
     }
     return void 0;
@@ -2322,486 +3982,179 @@
     "D#6": 1244.51,
     "E6": 1318.51
   };
+  deepFreeze(NOTE_FREQ);
   function beatSeconds(bpm) {
     return 60 / Math.max(60, Number(bpm) || 100);
   }
   function estimateMelodySeconds(notes, bpm) {
     let beats = 0;
-    for (const pair of notes || []) beats += Number(pair && pair[1]) || 1;
+    for (const pair of notes || []) {
+      const d = Number(pair && pair[1]);
+      beats += isFinite(d) && d > 0 ? d : 1;
+    }
     return Math.round(beats * beatSeconds(bpm) * 10) / 10;
   }
   function createMelodyPlayer() {
     let ctx = null;
     let oscs = [];
     let doneTimer = null;
-    function stop() {
+    let seq = 0;
+    function ensureCtx() {
       try {
-        for (const o of oscs) {
-          try {
-            o.stop();
-          } catch (e) {
-          }
-        }
+        const AC = (typeof window !== "undefined" ? window.AudioContext : null) || (typeof window !== "undefined" ? window.webkitAudioContext : null);
+        if (!AC) return null;
+        if (!ctx || ctx.state === "closed") ctx = new AC();
+        return ctx;
       } catch (e) {
+        return null;
+      }
+    }
+    function stopNotes() {
+      for (const o of oscs) {
+        try {
+          o.stop();
+        } catch (e) {
+        }
       }
       oscs = [];
+      clearT(doneTimer);
+      doneTimer = null;
+    }
+    function stop() {
+      seq++;
+      stopNotes();
       try {
-        if (doneTimer) {
-          clearTimeout(doneTimer);
-          doneTimer = null;
+        if (ctx && ctx.state !== "closed" && typeof ctx.suspend === "function") {
+          const p = ctx.suspend();
+          if (p && typeof p.catch === "function") p.catch(() => {
+          });
         }
       } catch (e) {
       }
-      try {
-        if (ctx) ctx.close();
-      } catch (e) {
-      }
-      ctx = null;
     }
     function play(notes, bpm, onDone) {
       try {
-        stop();
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        const c = new AC();
-        ctx = c;
-        try {
-          c.resume();
-        } catch (e) {
-        }
-        try {
-          if (c.state === "suspended") c.resume();
-        } catch (e) {
-        }
+        stopNotes();
+        const my = ++seq;
+        const c = ensureCtx();
+        if (!c) return;
         const beat = beatSeconds(bpm);
-        let t = c.currentTime + 0.05;
-        for (const pair of notes || []) {
-          const nm = String(pair && pair[0]);
-          const dur = Number(pair && pair[1]) || 1;
-          const f = NOTE_FREQ[nm];
-          if (!f) {
-            t += dur * beat;
-            continue;
-          }
-          const o = c.createOscillator();
-          const g = c.createGain();
-          o.frequency.value = f;
-          o.type = "sine";
-          g.gain.setValueAtTime(0.3, t);
-          g.gain.exponentialRampToValueAtTime(1e-3, t + dur * beat * 0.95);
-          o.connect(g);
-          g.connect(c.destination);
-          o.start(t);
-          o.stop(t + dur * beat);
-          oscs.push(o);
-          t += dur * beat;
-        }
-        const totalMs = Math.max(0, (t - c.currentTime) * 1e3) + 300;
-        if (onDone) doneTimer = setTimeout(() => {
+        const schedule = () => {
+          if (my !== seq) return;
           try {
-            onDone();
+            let t = (Number(c.currentTime) || 0) + 0.05;
+            const local = [];
+            for (const pair of notes || []) {
+              const nm = String(pair && pair[0]);
+              const rawDur = Number(pair && pair[1]);
+              const dur = isFinite(rawDur) && rawDur > 0 ? rawDur : 1;
+              const f = NOTE_FREQ[nm];
+              if (!f) {
+                t += dur * beat;
+                continue;
+              }
+              try {
+                const o = c.createOscillator();
+                const g = c.createGain();
+                o.frequency.value = f;
+                o.type = "sine";
+                g.gain.setValueAtTime(0.3, t);
+                g.gain.exponentialRampToValueAtTime(1e-3, t + dur * beat * 0.95);
+                o.connect(g);
+                g.connect(c.destination);
+                o.start(t);
+                o.stop(t + dur * beat);
+                local.push(o);
+              } catch (e) {
+              }
+              t += dur * beat;
+            }
+            oscs = local;
+            const totalMs = Math.max(0, (t - (Number(c.currentTime) || 0)) * 1e3) + 300;
+            if (onDone) {
+              doneTimer = setTimeout(() => {
+                doneTimer = null;
+                if (my !== seq) return;
+                try {
+                  onDone();
+                } catch (e) {
+                }
+              }, totalMs);
+            }
           } catch (e) {
           }
-        }, totalMs);
+        };
+        try {
+          const p = typeof c.resume === "function" ? c.resume() : null;
+          if (p && typeof p.then === "function") p.then(schedule, schedule);
+          else schedule();
+        } catch (e) {
+          schedule();
+        }
       } catch (e) {
       }
     }
     return { play, stop };
   }
 
-  // src/client/text.ts
-  function collapseText(raw) {
-    return String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
-  }
-  function collapsePoemBody(raw) {
-    let t = String(raw == null ? "" : raw);
-    t = t.replace(/\r/g, "");
-    t = t.replace(/\n+/g, "\uFF0C");
-    t = t.replace(/[。！？；]+，/g, (m) => m.slice(0, 1));
-    t = t.replace(/，{2,}/g, "\uFF0C");
-    t = t.replace(/，([。！？；])/g, "$1");
-    return t.trim();
-  }
-  function taleParts(rawTitle) {
-    const t = String(rawTitle || "").trim();
-    const i = t.indexOf("\xB7");
-    if (i > 0 && i < t.length - 1) return { book: t.slice(0, i), title: t.slice(i + 1) };
-    return { title: t, book: "" };
-  }
-  function normalizePlain(text) {
-    return String(text == null ? "" : text).replace(/[\s。，！？,.!?、…~～]/g, "");
-  }
-  function estimateSpeakMs(text) {
-    return Math.round(String(text || "").length * 260) + 3e3;
-  }
-  function createDeduper(opts) {
-    const windowMs = Math.max(0, Number(opts && opts.windowMs) || 0);
-    let lastNorm = "";
-    let lastAt = 0;
-    return {
-      allow(text) {
-        const norm = normalizePlain(text);
-        const now = Date.now();
-        if (lastNorm && lastAt && now - lastAt < windowMs && norm === lastNorm) {
-          try {
-            if (opts.onDuplicate) opts.onDuplicate();
-          } catch (e) {
-          }
-          return false;
-        }
-        lastNorm = norm;
-        lastAt = now;
-        return true;
-      },
-      reset() {
-        lastNorm = "";
-        lastAt = 0;
-      }
-    };
-  }
-  function createSentenceBuffer(maxLen = 40) {
-    const limit = Math.max(2, Number(maxLen) || 40);
-    let tail = "";
-    function take(force) {
-      const out = [];
-      for (; ; ) {
-        if (!tail) break;
-        const m = tail.match(/[\s\S]*?[。！？!?；;\n]/);
-        if (m && m[0].length >= 2) {
-          const seg = m[0].trim();
-          tail = tail.slice(m[0].length);
-          if (seg) out.push(seg);
-          continue;
-        }
-        if (force || tail.length >= limit) {
-          const seg = tail.trim();
-          tail = "";
-          if (seg) out.push(seg);
-        }
-        break;
-      }
-      return out;
-    }
-    return {
-      push(delta) {
-        tail += String(delta == null ? "" : delta);
-        return take(false);
-      },
-      flush() {
-        return take(true);
-      }
-    };
-  }
-
   // src/client/duilian.ts
-  var COUPLETS = [
-    {
-      "upper": "\u98CE\u58F0\u96E8\u58F0\u8BFB\u4E66\u58F0\uFF0C\u58F0\u58F0\u5165\u8033",
-      "lower": "\u5BB6\u4E8B\u56FD\u4E8B\u5929\u4E0B\u4E8B\uFF0C\u4E8B\u4E8B\u5173\u5FC3",
-      "source": "\u660E\xB7\u987E\u5BAA\u6210\u9898\u65E0\u9521\u4E1C\u6797\u4E66\u9662",
-      "cat": "\u4E66\u9662"
-    },
-    {
-      "upper": "\u6D77\u7EB3\u767E\u5DDD\uFF0C\u6709\u5BB9\u4E43\u5927",
-      "lower": "\u58C1\u7ACB\u5343\u4EDE\uFF0C\u65E0\u6B32\u5219\u521A",
-      "source": "\u6E05\xB7\u6797\u5219\u5F90\u81EA\u9898\u8054",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u5BA4\u96C5\u4F55\u987B\u5927",
-      "lower": "\u82B1\u9999\u4E0D\u5728\u591A",
-      "source": "\u6E05\xB7\u90D1\u677F\u6865",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u5220\u7E41\u5C31\u7B80\u4E09\u79CB\u6811",
-      "lower": "\u9886\u5F02\u6807\u65B0\u4E8C\u6708\u82B1",
-      "source": "\u6E05\xB7\u90D1\u677F\u6865",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u5899\u4E0A\u82A6\u82C7\uFF0C\u5934\u91CD\u811A\u8F7B\u6839\u5E95\u6D45",
-      "lower": "\u5C71\u95F4\u7AF9\u7B0B\uFF0C\u5634\u5C16\u76AE\u539A\u8179\u4E2D\u7A7A",
-      "source": "\u76F8\u4F20\u4E3A\u660E\xB7\u89E3\u7F19\u4F5C",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u94C1\u80A9\u62C5\u9053\u4E49",
-      "lower": "\u5999\u624B\u8457\u6587\u7AE0",
-      "source": "\u674E\u5927\u948A\u300A\u6668\u949F\u62A5\u300B\u521B\u520A\u53F7\uFF081916\uFF09",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u56DB\u9762\u8377\u82B1\u4E09\u9762\u67F3",
-      "lower": "\u4E00\u57CE\u5C71\u8272\u534A\u57CE\u6E56",
-      "source": "\u6E05\xB7\u5218\u51E4\u8BF0\u9898\u6D4E\u5357\u5927\u660E\u6E56\u94C1\u516C\u7960",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u9752\u5C71\u6709\u5E78\u57CB\u5FE0\u9AA8",
-      "lower": "\u767D\u94C1\u65E0\u8F9C\u94F8\u4F5E\u81E3",
-      "source": "\u676D\u5DDE\u5CB3\u738B\u5E99\u5893\u9619\u8054\uFF08\u4F20\u7EDF\uFF09",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u4E00\u7CA5\u4E00\u996D\uFF0C\u5F53\u601D\u6765\u5904\u4E0D\u6613",
-      "lower": "\u534A\u4E1D\u534A\u7F15\uFF0C\u6052\u5FF5\u7269\u529B\u7EF4\u8270",
-      "source": "\u660E\u672B\u6E05\u521D\xB7\u6731\u67CF\u5E90\u300A\u6CBB\u5BB6\u683C\u8A00\u300B",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u8BFB\u4E66\u597D\uFF0C\u8015\u7530\u597D\uFF0C\u5B66\u597D\u4FBF\u597D",
-      "lower": "\u521B\u4E1A\u96BE\uFF0C\u5B88\u6210\u96BE\uFF0C\u77E5\u96BE\u4E0D\u96BE",
-      "source": "\u6E05\xB7\u5434\u656C\u6893\u300A\u5112\u6797\u5916\u53F2\u300B\u7B2C\u4E8C\u5341\u4E8C\u56DE",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u6625\u98CE\u5927\u96C5\u80FD\u5BB9\u7269",
-      "lower": "\u79CB\u6C34\u6587\u7AE0\u4E0D\u67D3\u5C18",
-      "source": "\u6E05\xB7\u9093\u77F3\u5982",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u96E8\u8FC7\u7434\u4E66\u6DA6",
-      "lower": "\u98CE\u6765\u7FF0\u58A8\u9999",
-      "source": "\u4F20\u7EDF\u4E66\u623F\u8054",
-      "cat": "\u4E66\u623F"
-    },
-    {
-      "upper": "\u5927\u809A\u80FD\u5BB9\uFF0C\u5BB9\u5929\u4E0B\u96BE\u5BB9\u4E4B\u4E8B",
-      "lower": "\u5F00\u53E3\u4FBF\u7B11\uFF0C\u7B11\u4E16\u95F4\u53EF\u7B11\u4E4B\u4EBA",
-      "source": "\u4F20\u7EDF\u5F25\u52D2\u4F5B\u8054",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u5929\u589E\u5C81\u6708\u4EBA\u589E\u5BFF",
-      "lower": "\u6625\u6EE1\u4E7E\u5764\u798F\u6EE1\u95E8",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u4E00\u5143\u590D\u59CB",
-      "lower": "\u4E07\u8C61\u66F4\u65B0",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u6625\u56DE\u5927\u5730",
-      "lower": "\u798F\u6EE1\u4EBA\u95F4",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u95E8\u8FCE\u767E\u798F",
-      "lower": "\u6237\u7EB3\u5343\u7965",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u4E94\u6E56\u56DB\u6D77\u7686\u6625\u8272",
-      "lower": "\u4E07\u6C34\u5343\u5C71\u5C3D\u5F97\u8F89",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u677E\u7AF9\u6885\u5C81\u5BD2\u4E09\u53CB",
-      "lower": "\u6843\u674E\u674F\u6625\u98CE\u4E00\u5BB6",
-      "source": "\u4F20\u7EDF",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u798F\u5982\u4E1C\u6D77\u957F\u6D41\u6C34",
-      "lower": "\u5BFF\u6BD4\u5357\u5C71\u4E0D\u8001\u677E",
-      "source": "\u4F20\u7EDF\u5BFF\u8054",
-      "cat": "\u5BFF\u8054"
-    },
-    {
-      "upper": "\u5BA2\u4E0A\u5929\u7136\u5C45",
-      "lower": "\u5C45\u7136\u5929\u4E0A\u5BA2",
-      "source": "\u4F20\u7EDF\u56DE\u6587\u8054\uFF08\u987A\u8BFB\u5012\u8BFB\u540C\u53E5\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u753B\u4E0A\u8377\u82B1\u548C\u5C1A\u753B",
-      "lower": "\u4E66\u4E34\u6C49\u5E16\u7FF0\u6797\u4E66",
-      "source": "\u4F20\u7EDF\u56DE\u6587\u8054",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u56E0\u8377\u800C\u5F97\u85D5",
-      "lower": "\u6709\u674F\u4E0D\u987B\u6885",
-      "source": "\u4F20\u7EDF\u8C10\u97F3\u8054\uFF08\u8377=\u4F55\u3001\u85D5=\u5076\uFF1B\u674F=\u5E78\u3001\u6885=\u5A92\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u4E24\u821F\u5E76\u884C\uFF0C\u6A79\u901F\u4E0D\u5982\u5E06\u5FEB",
-      "lower": "\u516B\u97F3\u9F50\u594F\uFF0C\u7B1B\u6E05\u96BE\u6BD4\u7BAB\u548C",
-      "source": "\u4F20\u7EDF\u8C10\u97F3\u8054\uFF08\u6A79\u901F=\u9C81\u8083\u3001\u5E06\u5FEB=\u6A0A\u54D9\uFF1B\u7B1B\u6E05=\u72C4\u9752\u3001\u7BAB\u548C=\u8427\u4F55\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u5357\u901A\u5DDE\uFF0C\u5317\u901A\u5DDE\uFF0C\u5357\u5317\u901A\u5DDE\u901A\u5357\u5317",
-      "lower": "\u4E1C\u5F53\u94FA\uFF0C\u897F\u5F53\u94FA\uFF0C\u4E1C\u897F\u5F53\u94FA\u5F53\u4E1C\u897F",
-      "source": "\u4F20\u7EDF\u5730\u540D\u8054",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u5929\u4F5C\u68CB\u76D8\u661F\u4F5C\u5B50\uFF0C\u8C01\u4EBA\u6562\u4E0B",
-      "lower": "\u5730\u4E3A\u7435\u7436\u8DEF\u4E3A\u5F26\uFF0C\u54EA\u4E2A\u80FD\u5F39",
-      "source": "\u4F20\u7EDF\uFF08\u6C11\u95F4\u6D41\u4F20\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u5899\u4E0A\u753B\u9A6C\u4E0D\u80FD\u9A91",
-      "lower": "\u955C\u91CC\u70E7\u997C\u96BE\u5145\u9965",
-      "source": "\u4F20\u7EDF\uFF08\u6C11\u95F4\u4FD7\u8054\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u6C34\u6E05\u77F3\u51FA\u9C7C\u53EF\u6570",
-      "lower": "\u6797\u6DF1\u65E0\u4EBA\u9E1F\u76F8\u547C",
-      "source": "\u5B8B\xB7\u82CF\u8F7C\u8BD7\u53E5\uFF08\u6210\u8054\u6B23\u8D4F\uFF09",
-      "cat": "\u666F\u89C2"
-    },
-    {
-      "upper": "\u9752\u5C71\u4E0D\u58A8\u5343\u79CB\u753B",
-      "lower": "\u6D41\u6C34\u65E0\u5F26\u4E07\u53E4\u7434",
-      "source": "\u4F20\u7EDF\uFF08\u6D41\u4F20\u751A\u5E7F\uFF0C\u4F5C\u8005\u5F85\u8003\uFF09",
-      "cat": "\u666F\u89C2"
-    },
-    {
-      "upper": "\u4E91\u5E26\u949F\u58F0\u7A7F\u6811\u53BB",
-      "lower": "\u6708\u79FB\u5854\u5F71\u8FC7\u6C5F\u6765",
-      "source": "\u4F20\u7EDF\u540D\u80DC\u8054",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u6B64\u6728\u4E3A\u67F4\u5C71\u5C71\u51FA",
-      "lower": "\u56E0\u706B\u6210\u70DF\u5915\u5915\u591A",
-      "source": "\u4F20\u7EDF\u62C6\u5B57\u8054\uFF08\u67F4=\u6B64+\u6728\u3001\u51FA=\u5C71+\u5C71\uFF1B\u70DF=\u56E0+\u706B\u3001\u591A=\u5915+\u5915\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u9F20\u65E0\u5927\u5C0F\u7686\u79F0\u8001",
-      "lower": "\u9E66\u6709\u96CC\u96C4\u90FD\u53EB\u54E5",
-      "source": "\u4F20\u7EDF\u8C10\u8DA3\u8054",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u4EBA\u66FE\u662F\u50E7\uFF0C\u4EBA\u5F17\u80FD\u6210\u4F5B",
-      "lower": "\u5973\u5351\u4E3A\u5A62\uFF0C\u5973\u53C8\u53EF\u79F0\u5974",
-      "source": "\u76F8\u4F20\u4E3A\u82CF\u8F7C\u4E0E\u4F5B\u5370\u548C\u5C1A\u620F\u5BF9",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u4E8C\u4E09\u56DB\u4E94",
-      "lower": "\u516D\u4E03\u516B\u4E5D",
-      "source": "\u4F20\u7EDF\u8C10\u610F\u8054\uFF08\u4E0A\u8054\u7F3A\u300C\u4E00\u300D\uFF0C\u4E0B\u8054\u5C11\u300C\u5341\u300D\uFF1A\u7F3A\u8863\u5C11\u98DF\uFF09",
-      "cat": "\u8C10\u8DA3"
-    },
-    {
-      "upper": "\u5B9D\u5251\u950B\u4ECE\u78E8\u783A\u51FA",
-      "lower": "\u6885\u82B1\u9999\u81EA\u82E6\u5BD2\u6765",
-      "source": "\u4F20\u7EDF\u683C\u8A00\u8054",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u4E66\u5C71\u6709\u8DEF\u52E4\u4E3A\u5F84",
-      "lower": "\u5B66\u6D77\u65E0\u6DAF\u82E6\u4F5C\u821F",
-      "source": "\u4F20\u7EDF\u683C\u8A00\u8054\uFF08\u5E38\u89C1\u7F72\u540D\u97E9\u6108\uFF0C\u51FA\u5904\u5F85\u8003\uFF0C\u6545\u4E0D\u7F72\uFF09",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u4E66\u5230\u7528\u65F6\u65B9\u6068\u5C11",
-      "lower": "\u4E8B\u975E\u7ECF\u8FC7\u4E0D\u77E5\u96BE",
-      "source": "\u4F20\u7EDF\u683C\u8A00\u8054",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u6D77\u9614\u51ED\u9C7C\u8DC3",
-      "lower": "\u5929\u9AD8\u4EFB\u9E1F\u98DE",
-      "source": "\u4F20\u7EDF\u683C\u8A00\u8054",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u8DEF\u9065\u77E5\u9A6C\u529B",
-      "lower": "\u65E5\u4E45\u89C1\u4EBA\u5FC3",
-      "source": "\u4F20\u7EDF\uFF08\u4FD7\u8C1A\u6210\u8054\uFF09",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u548C\u987A\u4E00\u95E8\u6709\u767E\u798F",
-      "lower": "\u5E73\u5B89\u4E8C\u5B57\u503C\u5343\u91D1",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u7206\u7AF9\u4E00\u58F0\u9664\u65E7",
-      "lower": "\u6843\u7B26\u4E07\u6237\u66F4\u65B0",
-      "source": "\u4F20\u7EDF\u6625\u8054\uFF08\u5316\u7528\u738B\u5B89\u77F3\u300A\u5143\u65E5\u300B\uFF09",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u5929\u6CF0\u5730\u6CF0\u4E09\u9633\u6CF0",
-      "lower": "\u5BB6\u548C\u4EBA\u548C\u4E07\u4E8B\u548C",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u4E00\u5E74\u56DB\u5B63\u6625\u5E38\u5728",
-      "lower": "\u4E07\u7D2B\u5343\u7EA2\u82B1\u6C38\u5F00",
-      "source": "\u4F20\u7EDF\u6625\u8054",
-      "cat": "\u6625\u8054"
-    },
-    {
-      "upper": "\u8FD1\u6C34\u697C\u53F0\u5148\u5F97\u6708",
-      "lower": "\u5411\u9633\u82B1\u6728\u6613\u4E3A\u6625",
-      "source": "\u5B8B\xB7\u82CF\u9E9F\u8BD7\uFF08\u76F8\u4F20\uFF09",
-      "cat": "\u683C\u8A00"
-    },
-    {
-      "upper": "\u5C71\u91CD\u6C34\u590D\u7591\u65E0\u8DEF",
-      "lower": "\u67F3\u6697\u82B1\u660E\u53C8\u4E00\u6751",
-      "source": "\u5B8B\xB7\u9646\u6E38\u300A\u6E38\u5C71\u897F\u6751\u300B\u8BD7\u53E5\uFF08\u6210\u8054\u6B23\u8D4F\uFF09",
-      "cat": "\u666F\u89C2"
-    },
-    {
-      "upper": "\u4E00\u697C\u4F55\u5947\uFF1F\u675C\u5C11\u9675\u4E94\u8A00\u7EDD\u5531\uFF0C\u8303\u5E0C\u6587\u4E24\u5B57\u5173\u60C5\uFF0C\u6ED5\u5B50\u4EAC\u767E\u5E9F\u4FF1\u5174\uFF0C\u5415\u7EAF\u9633\u4E09\u8FC7\u5FC5\u9189\u3002\u8BD7\u8036\uFF1F\u5112\u8036\uFF1F\u540F\u8036\uFF1F\u4ED9\u8036\uFF1F\u524D\u4E0D\u89C1\u53E4\u4EBA\uFF0C\u4F7F\u6211\u6006\u7136\u6D95\u4E0B",
-      "lower": "\u8BF8\u541B\u8BD5\u770B\uFF1A\u6D1E\u5EAD\u6E56\u5357\u6781\u6F47\u6E58\uFF0C\u626C\u5B50\u6C5F\u5317\u901A\u5DEB\u5CE1\uFF0C\u5DF4\u9675\u5C71\u897F\u6765\u723D\u6C14\uFF0C\u5CB3\u5DDE\u57CE\u4E1C\u9053\u5CA9\u7586\u3002\u6F74\u8005\uFF01\u6D41\u8005\uFF01\u5CD9\u8005\uFF01\u9547\u8005\uFF01\u6B64\u4E2D\u6709\u771F\u610F\uFF0C\u95EE\u8C01\u9886\u4F1A\u5F97\u6765",
-      "source": "\u5CB3\u9633\u697C\u957F\u8054\uFF08\u6E05\xB7\u7AA6\u57BF\uFF0C\u4E00\u8BF4\u9648\u5927\u7EB2\uFF09",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u5174\u5E9F\u603B\u5173\u60C5\uFF0C\u770B\u843D\u971E\u5B64\u9E5C\u3001\u79CB\u6C34\u957F\u5929\uFF0C\u5E78\u6B64\u5730\u6E56\u5C71\u65E0\u6059",
-      "lower": "\u53E4\u4ECA\u624D\u4E00\u77AC\uFF0C\u95EE\u6C5F\u4E0A\u624D\u4EBA\u3001\u9601\u4E2D\u5E1D\u5B50\uFF0C\u6BD4\u5F53\u5E74\u98CE\u666F\u5982\u4F55",
-      "source": "\u6E05\xB7\u5218\u5764\u4E00\u9898\u5357\u660C\u6ED5\u738B\u9601",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u4E00\u697C\u8403\u4E09\u695A\u7CBE\u795E\uFF0C\u4E91\u9E64\u4FF1\u7A7A\u6A2A\u7B1B\u5728",
-      "lower": "\u4E8C\u6C34\u6C47\u767E\u5DDD\u652F\u6D3E\uFF0C\u53E4\u4ECA\u65E0\u5C3D\u5927\u6C5F\u6D41",
-      "source": "\u9EC4\u9E64\u697C\u8054\uFF08\u4F20\u7EDF\uFF09",
-      "cat": "\u540D\u80DC"
-    },
-    {
-      "upper": "\u767D\u5934\u7FC1\u7275\u725B\u8015\u719F\u5730",
-      "lower": "\u7EA2\u5A18\u5B50\u4F5B\u624B\u63D2\u91D1\u82B1",
-      "source": "\u4F20\u7EDF\u4E2D\u836F\u540D\u8054\uFF08\u767D\u5934\u7FC1/\u7275\u725B/\u719F\u5730/\u7EA2\u5A18\u5B50/\u4F5B\u624B/\u91D1\u82B1\u7686\u836F\u540D\uFF09",
-      "cat": "\u4E2D\u836F"
-    },
-    {
-      "upper": "\u6C34\u6C34\u5C71\u5C71\uFF0C\u5904\u5904\u660E\u660E\u79C0\u79C0",
-      "lower": "\u6674\u6674\u96E8\u96E8\uFF0C\u65F6\u65F6\u597D\u597D\u5947\u5947",
-      "source": "\u897F\u6E56\u53E0\u5B57\u8054\uFF08\u4F20\u7EDF\uFF09",
-      "cat": "\u53E0\u5B57"
-    },
-    {
-      "upper": "\u4E00\u53BB\u4E8C\u4E09\u91CC\uFF0C\u70DF\u6751\u56DB\u4E94\u5BB6",
-      "lower": "\u4EAD\u53F0\u516D\u4E03\u5EA7\uFF0C\u516B\u4E5D\u5341\u679D\u82B1",
-      "source": "\u5B8B\xB7\u90B5\u96CD\u300A\u5C71\u6751\u548F\u6000\u300B\u8BD7\u53E5\uFF08\u6570\u5B57\u8054\uFF09",
-      "cat": "\u6570\u5B57"
-    }
+  var COUPLET_ROWS = [
+    ["风声雨声读书声，声声入耳", "家事国事天下事，事事关心", "明·顾宪成题无锡东林书院", "书院"],
+    ["海纳百川，有容乃大", "壁立千仞，无欲则刚", "清·林则徐自题联", "格言"],
+    ["室雅何须大", "花香不在多", "清·郑板桥", "格言"],
+    ["删繁就简三秋树", "领异标新二月花", "清·郑板桥", "格言"],
+    ["墙上芦苇，头重脚轻根底浅", "山间竹笋，嘴尖皮厚腹中空", "相传为明·解缙作", "谐趣"],
+    ["铁肩担道义", "妙手著文章", "李大钊《晨钟报》创刊号（1916）", "格言"],
+    ["四面荷花三面柳", "一城山色半城湖", "清·刘凤诰题济南大明湖铁公祠", "名胜"],
+    ["青山有幸埋忠骨", "白铁无辜铸佞臣", "杭州岳王庙墓阙联（传统）", "名胜"],
+    ["一粥一饭，当思来处不易", "半丝半缕，恒念物力维艰", "明末清初·朱柏庐《治家格言》", "格言"],
+    ["读书好，耕田好，学好便好", "创业难，守成难，知难不难", "清·吴敬梓《儒林外史》第二十二回", "格言"],
+    ["春风大雅能容物", "秋水文章不染尘", "清·邓石如", "格言"],
+    ["雨过琴书润", "风来翰墨香", "传统书房联", "书房"],
+    ["大肚能容，容天下难容之事", "开口便笑，笑世间可笑之人", "传统弥勒佛联", "谐趣"],
+    ["天增岁月人增寿", "春满乾坤福满门", "传统春联", "春联"],
+    ["一元复始", "万象更新", "传统春联", "春联"],
+    ["春回大地", "福满人间", "传统春联", "春联"],
+    ["门迎百福", "户纳千祥", "传统春联", "春联"],
+    ["五湖四海皆春色", "万水千山尽得辉", "传统春联", "春联"],
+    ["松竹梅岁寒三友", "桃李杏春风一家", "传统", "格言"],
+    ["福如东海长流水", "寿比南山不老松", "传统寿联", "寿联"],
+    ["客上天然居", "居然天上客", "传统回文联（顺读倒读同句）", "谐趣"],
+    ["画上荷花和尚画", "书临汉帖翰林书", "传统回文联", "谐趣"],
+    ["因荷而得藕", "有杏不须梅", "传统谐音联（荷=何、藕=偶；杏=幸、梅=媒）", "谐趣"],
+    ["两舟并行，橹速不如帆快", "八音齐奏，笛清难比箫和", "传统谐音联（橹速=鲁肃、帆快=樊哙；笛清=狄青、箫和=萧何）", "谐趣"],
+    ["南通州，北通州，南北通州通南北", "东当铺，西当铺，东西当铺当东西", "传统地名联", "谐趣"],
+    ["天作棋盘星作子，谁人敢下", "地为琵琶路为弦，哪个能弹", "传统（民间流传）", "谐趣"],
+    ["墙上画马不能骑", "镜里烧饼难充饥", "传统（民间俗联）", "谐趣"],
+    ["水清石出鱼可数", "林深无人鸟相呼", "宋·苏轼诗句（成联欣赏）", "景观"],
+    ["青山不墨千秋画", "流水无弦万古琴", "传统（流传甚广，作者待考）", "景观"],
+    ["云带钟声穿树去", "月移塔影过江来", "传统名胜联", "名胜"],
+    ["此木为柴山山出", "因火成烟夕夕多", "传统拆字联（柴=此+木、出=山+山；烟=因+火、多=夕+夕）", "谐趣"],
+    ["鼠无大小皆称老", "鹦有雌雄都叫哥", "传统谐趣联", "谐趣"],
+    ["人曾是僧，人弗能成佛", "女卑为婢，女又可称奴", "相传为苏轼与佛印和尚戏对", "谐趣"],
+    ["二三四五", "六七八九", "传统谐意联（上联缺「一」，下联少「十」：缺衣少食）", "谐趣"],
+    ["宝剑锋从磨砺出", "梅花香自苦寒来", "传统格言联", "格言"],
+    ["书山有路勤为径", "学海无涯苦作舟", "传统格言联（常见署名韩愈，出处待考，故不署）", "格言"],
+    ["书到用时方恨少", "事非经过不知难", "传统格言联", "格言"],
+    ["海阔凭鱼跃", "天高任鸟飞", "传统格言联", "格言"],
+    ["路遥知马力", "日久见人心", "传统（俗谚成联）", "格言"],
+    ["和顺一门有百福", "平安二字值千金", "传统春联", "春联"],
+    ["爆竹一声除旧", "桃符万户更新", "传统春联（化用王安石《元日》）", "春联"],
+    ["天泰地泰三阳泰", "家和人和万事和", "传统春联", "春联"],
+    ["一年四季春常在", "万紫千红花永开", "传统春联", "春联"],
+    ["近水楼台先得月", "向阳花木易为春", "宋·苏麟诗（相传）", "格言"],
+    ["山重水复疑无路", "柳暗花明又一村", "宋·陆游《游山西村》诗句（成联欣赏）", "景观"],
+    ["一楼何奇？杜少陵五言绝唱，范希文两字关情，滕子京百废俱兴，吕纯阳三过必醉。诗耶？儒耶？吏耶？仙耶？前不见古人，使我怆然涕下", "诸君试看：洞庭湖南极潇湘，扬子江北通巫峡，巴陵山西来爽气，岳州城东道岩疆。潴者！流者！峙者！镇者！此中有真意，问谁领会得来", "岳阳楼长联（清·窦垿，一说陈大纲）", "名胜"],
+    ["兴废总关情，看落霞孤鹜、秋水长天，幸此地湖山无恙", "古今才一瞬，问江上才人、阁中帝子，比当年风景如何", "清·刘坤一题南昌滕王阁", "名胜"],
+    ["一楼萃三楚精神，云鹤俱空横笛在", "二水汇百川支派，古今无尽大江流", "黄鹤楼联（传统）", "名胜"],
+    ["白头翁牵牛耕熟地", "红娘子佛手插金花", "传统中药名联（白头翁/牵牛/熟地/红娘子/佛手/金花皆药名）", "中药"],
+    ["水水山山，处处明明秀秀", "晴晴雨雨，时时好好奇奇", "西湖叠字联（传统）", "叠字"],
+    ["一去二三里，烟村四五家", "亭台六七座，八九十枝花", "宋·邵雍《山村咏怀》诗句（数字联）", "数字"]
   ];
+  var COUPLETS = COUPLET_ROWS.map(([upper, lower, source, cat]) => ({ upper, lower, source, cat }));
+  deepFreeze(COUPLETS);
+  var COUPLET_CATS = ["书院", "格言", "谐趣", "名胜", "书房", "春联", "寿联", "景观", "中药", "叠字", "数字"];
+  deepFreeze(COUPLET_CATS);
   function pickCouplet(excludeUpper, cat) {
     const byCat = cat ? COUPLETS.filter((c) => c.cat === cat) : COUPLETS;
     const base = byCat.length > 0 ? byCat : COUPLETS;
@@ -2811,38 +4164,84 @@
   }
 
   // src/client/actions/culture.ts
+  var recentStarts = /* @__PURE__ */ new Map();
+  function beginOnce(key, gapMs = 1500) {
+    const now = Date.now();
+    const last = recentStarts.get(key) || 0;
+    if (now - last < gapMs) return false;
+    recentStarts.set(key, now);
+    return true;
+  }
   function recitePoem(host, poem) {
+    if (!beginOnce("poem")) {
+      host.bubble("正在念呢，稍等～", 2e3);
+      return;
+    }
     const body = String(poem.text || "");
-    const author = String(poem.author || "\u4F5A\u540D");
-    host.bubble("\u5FF5\u8BD7\xB7" + poem.title + "\uFF08" + author + "\uFF09", 15e3);
+    const author = String(poem.author || "佚名");
+    const lines = body.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    const totalLines = lines.length;
+    const intro = "念首诗——" + poem.title + "，" + (poem.dynasty ? poem.dynasty + "，" : "") + author + "。";
+    try {
+      startProgress("念诗·" + String(poem.title || ""), lines, intro);
+    } catch (e) {
+    }
+    host.bubble("念诗·" + poem.title + "（" + author + "）" + (totalLines > 1 ? "· 共 " + totalLines + " 句" : ""), 15e3);
     host.talkFor(6e3);
-    const speech = "\u5FF5\u9996\u8BD7\u2014\u2014" + poem.title + "\uFF0C" + (poem.dynasty ? poem.dynasty + "\uFF0C" : "") + author + "\u3002" + collapsePoemBody(body);
+    const speech = intro + collapsePoemBody(body);
     host.narrate(estimateSpeakMs(speech));
     host.say(host.persona.line("poemStart"), 4e3);
-    setTimeout(() => {
-      try {
-        host.speak(speech, {
-          rate: host.narrationRate,
-          onDone: () => {
-            host.clearNarrate();
-            host.say(host.persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
+    try {
+      host.speak(speech, {
+        rate: poemRate(host.narrationRate()),
+        onDone: () => {
+          try {
+            stopProgress();
+          } catch (e) {
           }
-        });
-      } catch (e) {
-      }
-    }, 600);
+          host.clearNarrate();
+          host.say(host.persona.line("poemDone"), 6e3, { rate: "-8%", pitch: "+15Hz" });
+        }
+      });
+    } catch (e) {
+    }
   }
-  var lastCouplet = "";
+  function finishSpeech(host, doneText) {
+    host.bubble(doneText, 5e3);
+    try {
+      host.speak("讲完啦～");
+    } catch (e) {
+    }
+  }
   function registerCultureActions(table) {
+    let lastCouplet = "";
+    let revealTimer = null;
+    function showCouplet(host, cat, withCat) {
+      if (!beginOnce("couplet", 6e3)) {
+        host.bubble("正在出对联，等本鲸揭晓～", 2e3);
+        return;
+      }
+      const c = pickCouplet(lastCouplet, cat);
+      lastCouplet = c.upper;
+      host.bubble((withCat ? "【" + c.cat + "】" : "") + "上联：" + c.upper + "（先对一对，本鲸 6 秒后揭晓下联）", 5600);
+      clearT(revealTimer);
+      revealTimer = setTimeout(() => {
+        revealTimer = null;
+        try {
+          host.bubble("下联：" + c.lower + "\n——" + c.source, 7e3);
+        } catch (e) {
+        }
+      }, 6e3);
+    }
     table.define("poem", (host) => {
       getJson("/poem").then((d) => {
         const p = d && d.ok && d.item ? d.item : null;
         if (!p) {
-          host.bubble("\u8BD7\u518C\u6CA1\u8BFB\u5230");
+          host.bubble("诗册没读到");
           return;
         }
         recitePoem(host, p);
-      }).catch(() => host.bubble("\u8BD7\u518C\u6CA1\u8BFB\u5230"));
+      }).catch(() => host.bubble("诗册没读到"));
     });
     table.define("culture-story", (host) => {
       host.story.start("");
@@ -2864,116 +4263,131 @@
         localStorage.setItem("chubby-story-auto", next ? "1" : "0");
       } catch (e) {
       }
-      host.bubble(next ? "\u8FDE\u64AD\uFF1A\u5F00\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u81EA\u52A8\u63A5\u4E0B\u4E00\u6BB5" : "\u8FDE\u64AD\uFF1A\u5173\u2014\u2014\u8BB2\u5B8C\u8FD9\u6BB5\u5C31\u505C", 4e3);
+      host.bubble(next ? "连播：开——讲完这段自动接下一段" : "连播：关——讲完这段就停", 4e3);
+    });
+    table.definePrefix("narration-rate:", (host, suffix) => {
+      const v = String(suffix || "");
+      if (setNarrationRate(v)) host.bubble("叙述语速：" + v, 4e3);
+      else host.bubble("这个语速值不认", 3e3);
+    });
+    table.definePrefix("chat-rate:", (host, suffix) => {
+      const rate = String(suffix || "").trim();
+      if (!setChatRate(rate)) {
+        host.bubble("这个语速值不认", 3e3);
+        return;
+      }
+      host.bubble("聊天语速：" + rate, 4e3);
+    });
+    table.definePrefix("poem-rate:", (host, suffix) => {
+      const rate = String(suffix || "");
+      if (!/^-\d{1,2}%$/.test(rate)) {
+        host.bubble("这个语速值不认", 3e3);
+        return;
+      }
+      try {
+        localStorage.setItem("chubby-poem-rate", rate);
+      } catch (e) {
+      }
+      host.bubble("念诗语速：" + rate, 4e3);
+    });
+    table.definePrefix("story-rate:", (host, suffix) => {
+      const rate = String(suffix || "");
+      if (!/^-\d{1,2}%$/.test(rate)) {
+        host.bubble("这个语速值不认", 3e3);
+        return;
+      }
+      try {
+        localStorage.setItem("chubby-story-rate", rate);
+      } catch (e) {
+      }
+      host.bubble("说书语速：" + rate, 4e3);
     });
     table.define("culture-tale", (host) => {
+      if (!beginOnce("tale")) {
+        host.bubble("正在讲呢，稍等～", 2e3);
+        return;
+      }
       getJson("/culture?type=minsu").then((d) => {
         if (!(d && d.ok && d.item)) {
-          host.bubble("\u6545\u4E8B\u6CA1\u8BB2\u6210");
+          host.bubble("故事没讲成");
           return;
         }
         const tp = taleParts(d.item.title);
         const body = collapseText(d.item.text);
-        host.bubble("\u8BB2\u6C11\u95F4\u6545\u4E8B\xB7" + tp.title + (tp.book ? "\uFF08\u51FA\u81EA\u300A" + tp.book + "\u300B\uFF09" : ""), 9e3);
+        host.bubble("讲民间故事·" + tp.title + (tp.book ? "（出自《" + tp.book + "》）" : ""), 9e3);
         host.talkFor(5e3);
-        host.speak("\u8BB2\u4E2A\u6C11\u95F4\u6545\u4E8B\u2014\u2014" + tp.title + (tp.book ? "\uFF0C\u51FA\u81EA\u300A" + tp.book + "\u300B" : "") + "\u3002" + body.slice(0, 6e3), {
-          rate: host.narrationRate,
-          onDone: () => {
-            host.bubble("\u6545\u4E8B\u8BB2\u5B8C\u5566\uFF5E", 5e3);
-            try {
-              host.speak("\u8BB2\u5B8C\u5566\uFF5E");
-            } catch (e) {
-            }
-          }
+        host.speak("讲个民间故事——" + tp.title + (tp.book ? "，出自《" + tp.book + "》" : "") + "。" + body, {
+          rate: host.narrationRate(),
+          onDone: () => finishSpeech(host, "故事讲完啦～")
         });
-      }).catch(() => host.bubble("\u6545\u4E8B\u6CA1\u8BB2\u6210"));
+      }).catch(() => host.bubble("故事没讲成"));
     });
     table.define("culture-allusion", (host) => {
+      if (!beginOnce("allusion")) {
+        host.bubble("正在讲呢，稍等～", 2e3);
+        return;
+      }
       getJson("/culture?type=chengyu").then((d) => {
         if (!(d && d.ok && d.item)) {
-          host.bubble("\u5178\u6545\u6CA1\u8BB2\u6210");
+          host.bubble("典故没讲成");
           return;
         }
         const body = collapseText(d.item.text);
-        host.bubble("\u8BB2\u5178\u6545\xB7" + d.item.title + "\uFF08" + (d.item.src || "") + "\uFF09", 9e3);
+        host.bubble("讲典故·" + d.item.title + "（" + (d.item.src || "") + "）", 9e3);
         host.talkFor(5e3);
-        host.speak("\u8BB2\u4E2A\u5178\u6545\u2014\u2014" + String(d.item.title || "") + "\uFF0C\u51FA\u81EA" + String(d.item.src || "") + "\u3002" + body, {
-          rate: host.narrationRate,
-          onDone: () => {
-            host.bubble("\u5178\u6545\u8BB2\u5B8C\u5566\uFF5E", 5e3);
-            try {
-              host.speak("\u8BB2\u5B8C\u5566\uFF5E");
-            } catch (e) {
-            }
-          }
+        host.speak("讲个典故——" + String(d.item.title || "") + "，出自" + String(d.item.src || "") + "。" + body, {
+          rate: host.narrationRate(),
+          onDone: () => finishSpeech(host, "典故讲完啦～")
         });
-      }).catch(() => host.bubble("\u5178\u6545\u6CA1\u8BB2\u6210"));
+      }).catch(() => host.bubble("典故没讲成"));
     });
     table.define("culture-idiom", (host) => {
+      if (!beginOnce("idiom")) {
+        host.bubble("正在讲呢，稍等～", 2e3);
+        return;
+      }
       getJson("/culture?type=idiom").then((d) => {
         if (!(d && d.ok && d.item)) {
-          host.bubble("\u6CA1\u67E5\u5230");
+          host.bubble("没查到");
           return;
         }
-        host.bubble("\u6210\u8BED\u8FA8\u6790\xB7" + d.item.title, 8e3);
-        const sp = String(d.item.title || "") + "\uFF1A" + String(d.item.text || "");
+        host.bubble("成语辨析·" + d.item.title, 8e3);
+        const sp = String(d.item.title || "") + "：" + String(d.item.text || "");
         host.speak(sp, {
-          rate: host.narrationRate,
-          onDone: () => {
-            host.bubble("\u8FD9\u4E2A\u6210\u8BED\u8BB2\u5B8C\u5566\uFF5E", 5e3);
-            try {
-              host.speak("\u8BB2\u5B8C\u5566\uFF5E");
-            } catch (e) {
-            }
-          }
+          rate: host.narrationRate(),
+          onDone: () => finishSpeech(host, "这个成语讲完啦～")
         });
-      }).catch(() => host.bubble("\u6CA1\u67E5\u5230"));
+      }).catch(() => host.bubble("没查到"));
     });
     table.define("culture-couplet", (host) => {
-      const c = pickCouplet(lastCouplet);
-      lastCouplet = c.upper;
-      host.bubble("\u4E0A\u8054\uFF1A" + c.upper + "\uFF08\u5148\u5BF9\u4E00\u5BF9\uFF0C\u672C\u9CB8 6 \u79D2\u540E\u63ED\u6653\u4E0B\u8054\uFF09", 5600);
-      setTimeout(() => {
-        try {
-          host.bubble("\u4E0B\u8054\uFF1A" + c.lower + "\n\u2014\u2014" + c.source, 7e3);
-        } catch (e) {
-        }
-      }, 6e3);
+      showCouplet(host);
     });
     table.definePrefix("culture-couplet:", (host, cat) => {
-      const c = pickCouplet(lastCouplet, cat);
-      lastCouplet = c.upper;
-      host.bubble("\u3010" + c.cat + "\u3011\u4E0A\u8054\uFF1A" + c.upper + "\uFF08\u5148\u5BF9\u4E00\u5BF9\uFF0C\u672C\u9CB8 6 \u79D2\u540E\u63ED\u6653\u4E0B\u8054\uFF09", 5600);
-      setTimeout(() => {
-        try {
-          host.bubble("\u4E0B\u8054\uFF1A" + c.lower + "\n\u2014\u2014" + c.source, 7e3);
-        } catch (e) {
-        }
-      }, 6e3);
+      showCouplet(host, cat, true);
     });
     table.definePrefix("music:", (host, name) => {
       host.stopSpeak();
       getJson("/melody?name=" + encodeURIComponent(name)).then((d) => {
         if (!(d && d.ok && d.song)) {
-          host.bubble("\u8FD9\u9996\u66F2\u5B50\u6CA1\u627E\u5230");
+          host.bubble("这首曲子没找到");
           return;
         }
-        const songName = String(d.song.name || "\u8FD9\u9996\u66F2\u5B50");
+        const songName = String(d.song.name || "这首曲子");
         const bpm = Number(d.song.bpm) || 100;
         const notes = d.song.notes || [];
         const estSec = estimateMelodySeconds(notes, bpm);
-        host.bubble("\u5F39\u300A" + songName + "\u300B\u266A\uFF08\u7EA6 " + estSec + " \u79D2\uFF09", 6e3);
+        host.bubble("弹《" + songName + "》♪（约 " + estSec + " 秒）", 6e3);
         host.playMelody(notes, bpm, () => {
-          host.bubble("\u5F39\u5B8C\u5566\uFF5E\u300A" + songName + "\u300B", 6e3);
+          host.bubble("弹完啦～《" + songName + "》", 6e3);
           host.talkFor(1500);
           try {
             host.diag({ melodyVoice: { at: Date.now(), requested: true, ok: false, err: "" } });
-            host.speak("\u5F39\u5B8C\u5566\uFF5E");
+            host.speak("弹完啦～");
             setTimeout(() => {
               try {
                 const w = typeof window !== "undefined" ? window.__chubbyWhale : null;
                 const info = w && w.melodyVoice;
-                if (info && !host.voicePlaying()) info.err = "TTS \u672A\u5F00\u59CB\uFF08\u53EF\u80FD\u88AB\u6D4F\u89C8\u5668\u62E6\u6216\u5408\u6210\u5931\u8D25\uFF09";
+                if (info && !host.voicePlaying()) info.err = "TTS 未开始（可能被浏览器拦或合成失败）";
               } catch (e) {
               }
             }, 1200);
@@ -2981,11 +4395,14 @@
             host.diag({ melodyVoice: { requested: false, err: String(e) } });
           }
         });
-      }).catch(() => host.bubble("\u5F39\u7434\u5931\u8D25"));
+      }).catch(() => host.bubble("弹琴失败"));
     });
   }
 
   // src/client/actions/content.ts
+  function parseBookList(d) {
+    return d && d.ok && Array.isArray(d.books) ? d.books.map((b) => String(b || "").trim()).filter(Boolean) : [];
+  }
   function pickDaily(d) {
     if (!d || typeof d !== "object" || d.ok === false) return null;
     const box = d.item || d.data || (Array.isArray(d.items) && d.items.length ? d.items[0] : null) || d;
@@ -3010,12 +4427,12 @@
       const growth = String(d.growth || "").trim();
       const head = [
         date,
-        weather ? "\u5317\u6D77\u5929\u6C14\uFF1A" + weather : "",
-        growth ? "\u80A5\u9CB8\u6210\u957F\uFF1A" + growth : ""
+        weather ? "北海天气：" + weather : "",
+        growth ? "肥鲸成长：" + growth : ""
       ].filter(Boolean).join("\n");
       if (head) first.push(head);
-      if (Array.isArray(d.todos)) second.push("\u5F85\u529E\u63D0\u9192\uFF1A" + d.todos.length + " \u6761");
-      else if (typeof d.todos === "string" && d.todos.trim()) second.push("\u5F85\u529E\u63D0\u9192\uFF1A" + d.todos.trim());
+      if (Array.isArray(d.todos)) second.push("待办提醒：" + d.todos.length + " 条");
+      else if (typeof d.todos === "string" && d.todos.trim()) second.push("待办提醒：" + d.todos.trim());
     }
     if (!first.length && !second.length) return null;
     return { first: first.join("\n"), second: second.join("\n") };
@@ -3025,68 +4442,76 @@
     host.talkFor(5e3);
     if (!host.voiceOn()) return;
     host.narrate(estimateSpeakMs(speech));
-    host.speak(speech, { rate: host.narrationRate, onDone: () => host.clearNarrate() });
+    host.speak(speech, { rate: host.narrationRate(), onDone: () => host.clearNarrate() });
   }
   function registerContentActions(table) {
     table.define("story-books", (host) => {
       getJson("/story/books", { cache: "no-store" }).then((d) => {
-        const books = d && d.ok && Array.isArray(d.books) ? d.books.map((b) => String(b || "").trim()).filter(Boolean) : [];
+        const books = parseBookList(d);
         if (!books.length) {
-          host.bubble("\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5", 4e3);
+          host.bubble("书单没取到，稍后再试", 4e3);
           return;
         }
-        host.bubble("\u4E66\u5355\u6709 " + books.length + " \u672C\uFF0C\u53F3\u952E\u70B9\u300C\u9009\u672C\u4E66\u300D\u6311\u4E00\u672C\uFF5E", 5e3);
-      }).catch(() => host.bubble("\u4E66\u5355\u6CA1\u53D6\u5230\uFF0C\u7A0D\u540E\u518D\u8BD5", 4e3));
+        host.bubble("书单有 " + books.length + " 本，右键点「选本书」挑一本～", 5e3);
+      }).catch(() => host.bubble("书单没取到，稍后再试", 4e3));
     });
     table.definePrefix("story-book:", (host, name) => {
       const book = String(name || "").trim();
       if (!book) {
-        host.bubble("\u4E66\u540D\u6CA1\u8BFB\u5230", 3e3);
+        host.bubble("书名没读到", 3e3);
         return;
       }
       if (host.storyState && host.storyState.busy.current) {
-        host.bubble("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+        host.bubble("正讲着呢，听完这段再说～", 3e3);
         return;
       }
-      host.bubble("\u5F00\u59CB\u8BB2\u300A" + book + "\u300B", 3e3);
+      host.bubble("开始讲《" + book + "》", 3e3);
       host.story.start(book);
     });
     table.define("daily-line", (host) => {
+      if (!beginOnce("daily")) {
+        host.bubble("刚念过啦，稍等～", 2e3);
+        return;
+      }
       getJson("/daily", { cache: "no-store" }).then((d) => {
         const line = pickDaily(d);
         if (!line) {
-          host.bubble("\u4ECA\u5929\u90A3\u53E5\u8FD8\u6CA1\u51C6\u5907\u597D", 3500);
+          host.bubble("今天那句还没准备好", 3500);
           return;
         }
-        const shown = line.source ? line.text + "\n\u2014\u2014" + line.source : line.text;
+        const shown = line.source ? line.text + "\n——" + line.source : line.text;
         showAndSpeak(host, shown, shown, 9e3);
-      }).catch(() => host.bubble("\u4ECA\u5929\u90A3\u53E5\u8FD8\u6CA1\u51C6\u5907\u597D", 3500));
+      }).catch(() => host.bubble("今天那句还没准备好", 3500));
     });
     table.define("briefing-card", (host) => {
+      if (!beginOnce("briefing")) {
+        host.bubble("刚播过啦，稍等～", 2e3);
+        return;
+      }
       getJson("/briefing", { cache: "no-store" }).then((d) => {
         const card = parseBriefing(d);
         if (!card) {
-          host.bubble("\u7B80\u62A5\u4ECA\u5929\u6CA1\u53D6\u5230", 3500);
+          host.bubble("简报今天没取到", 3500);
           return;
         }
         const shown = card.first && card.second ? card.first + "\n\n" + card.second : card.first || card.second;
-        const speech = [card.first, card.second].filter(Boolean).join("\u3002");
+        const speech = [card.first, card.second].filter(Boolean).join("。");
         showAndSpeak(host, shown, speech, 12e3);
-      }).catch(() => host.bubble("\u7B80\u62A5\u4ECA\u5929\u6CA1\u53D6\u5230", 3500));
+      }).catch(() => host.bubble("简报今天没取到", 3500));
     });
   }
 
   // src/shared/time.ts
   var DAY_MS = 864e5;
   function applyPeriod(hour, word) {
-    if (word === "\u4E0B\u5348") return hour === 12 ? 12 : hour < 12 ? hour + 12 : hour;
-    if (word === "\u508D\u665A" || word === "\u665A\u4E0A") return hour === 12 ? 0 : hour < 12 ? hour + 12 : hour;
-    if (word === "\u4E2D\u5348") return hour < 10 ? hour + 12 : hour;
+    if (word === "下午") return hour === 12 ? 12 : hour < 12 ? hour + 12 : hour;
+    if (word === "傍晚" || word === "晚上") return hour === 12 ? 0 : hour < 12 ? hour + 12 : hour;
+    if (word === "中午") return hour < 10 ? hour + 12 : hour;
     return hour;
   }
   function cleanReminderText(raw) {
     let t = String(raw || "").trim();
-    const leads = ["\u63D0\u9192\u6211\u4E00\u4E0B", "\u63D0\u9192\u4E00\u4E0B", "\u63D0\u9192\u6211", "\u63D0\u9192", "\u53EB\u6211\u4E00\u4E0B", "\u53EB\u6211", "\u8BB0\u5F97\u8981", "\u8BB0\u5F97", "\u5230\u65F6\u5019"];
+    const leads = ["提醒我一下", "提醒一下", "提醒我", "提醒", "叫我一下", "叫我", "记得要", "记得", "到时候"];
     let changed = true;
     while (changed) {
       changed = false;
@@ -3140,13 +4565,13 @@
         const h = applyPeriod(rawH, pm ? pm[1] : "");
         let minute = 0;
         const mm = clock[2] || "";
-        if (mm === "\u534A") minute = 30;
+        if (mm === "半") minute = 30;
         else if (mm) minute = Math.max(0, Math.min(59, Number(mm) || 0));
         const dayStart = new Date(base.getFullYear(), base.getMonth(), base.getDate());
         let target = new Date(dayStart.getTime());
         if (day) {
-          if (day[1] === "\u660E\u5929") target = new Date(dayStart.getTime() + DAY_MS);
-          else if (day[1] === "\u540E\u5929") target = new Date(dayStart.getTime() + 2 * DAY_MS);
+          if (day[1] === "明天") target = new Date(dayStart.getTime() + DAY_MS);
+          else if (day[1] === "后天") target = new Date(dayStart.getTime() + 2 * DAY_MS);
         }
         target.setHours(h, minute, 0, 0);
         if (!day && target.getTime() <= base.getTime()) target = new Date(target.getTime() + DAY_MS);
@@ -3162,6 +4587,7 @@
   }
 
   // src/client/actions/data.ts
+  var MAX_BACKUP_BYTES = 2 * 1024 * 1024;
   function backupFileName(now = /* @__PURE__ */ new Date()) {
     const d = now instanceof Date && !isNaN(now.getTime()) ? now : /* @__PURE__ */ new Date();
     const y = d.getFullYear();
@@ -3186,59 +4612,7 @@
     const src = d && typeof d === "object" ? d : {};
     const imported = countOf(src.imported != null ? src.imported : src.importedCount != null ? src.importedCount : src.added);
     const skipped = countOf(src.skipped != null ? src.skipped : src.skippedCount != null ? src.skippedCount : src.ignored);
-    return "\u5BFC\u5165\u4E86 " + imported + " \u4E2A\u5B57\u6BB5\uFF0C\u8DF3\u8FC7 " + skipped + " \u4E2A\u5B57\u6BB5";
-  }
-  function numOf(...vals) {
-    for (const v of vals) {
-      if (v == null || v === "") continue;
-      const n = Number(v);
-      if (Number.isFinite(n)) return n;
-    }
-    return 0;
-  }
-  function shortText(v, max = 16) {
-    const t = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
-    if (!t) return "";
-    return t.length > max ? t.slice(0, max) + "\u2026" : t;
-  }
-  function asList(v) {
-    if (v == null) return [];
-    if (Array.isArray(v)) return v;
-    if (typeof v === "object") {
-      try {
-        return Object.keys(v).map((k) => v[k]);
-      } catch (e) {
-        return [];
-      }
-    }
-    return [v];
-  }
-  function formatStats(payload) {
-    const d = payload && typeof payload === "object" ? payload : {};
-    const s = d.stats && typeof d.stats === "object" ? d.stats : d;
-    const cacheObj = s.cache && typeof s.cache === "object" ? s.cache : s.byType && typeof s.byType === "object" ? s.byType : {};
-    const tts = numOf(cacheObj.tts, s.tts, s.cacheTts);
-    const chat = numOf(cacheObj.chat, s.chat, s.cacheChat);
-    const asr = numOf(cacheObj.asr, s.asr, s.cacheAsr);
-    const ff = s.fishfood && typeof s.fishfood === "object" ? s.fishfood : s.fishFood && typeof s.fishFood === "object" ? s.fishFood : {};
-    const tokens = numOf(ff.total, ff.totalTokens, s.totalTokens, s.tokens && typeof s.tokens === "object" ? s.tokens.total : s.tokens, s.fishfoodTotal);
-    const g = s.growth && typeof s.growth === "object" ? s.growth : {};
-    const stage = shortText(g.stage || s.stage || "--", 12) || "--";
-    const intimacy = numOf(s.intimacy, s.state && s.state.intimacy);
-    const p = s.personality && typeof s.personality === "object" ? s.personality : {};
-    const pts = [];
-    const addPoint = (v) => {
-      const t = shortText(v, 16);
-      if (t && pts.indexOf(t) < 0 && pts.length < 3) pts.push(t);
-    };
-    for (const v of asList(p.points)) addPoint(v);
-    for (const v of asList(p.catchphrases)) addPoint(v);
-    for (const v of asList(p.preferences)) addPoint(v);
-    for (const v of asList(p.notes)) addPoint(v);
-    addPoint(p.selfNarrative);
-    addPoint(s.selfNarrative);
-    const points = pts.length ? pts.join("\uFF1B") : "\u6682\u65E0";
-    return "\u7EDF\u8BA1\u5361\n\u7F13\u5B58\uFF1Atts " + tts + " \u6761\uFF5Cchat " + chat + " \u6761\uFF5Casr " + asr + " \u6761\n\u9C7C\u7CAE\uFF1A" + tokens + " tokens\n\u6210\u957F\uFF1A" + stage + "\uFF5C\u4EB2\u5BC6\u5EA6 " + intimacy + "/100\n\u4EBA\u683C\u8981\u70B9\uFF1A" + points;
+    return "导入了 " + imported + " 个字段，跳过 " + skipped + " 个字段";
   }
   function downloadJson(data, filename, env) {
     try {
@@ -3266,6 +4640,16 @@
       try {
         a.click();
       } catch (err) {
+        try {
+          URLX.revokeObjectURL(url);
+        } catch (e2) {
+        }
+        try {
+          if (parent && typeof parent.removeChild === "function") parent.removeChild(a);
+          else if (typeof a.remove === "function") a.remove();
+        } catch (e2) {
+        }
+        return false;
       }
       try {
         setTimeout(() => {
@@ -3286,24 +4670,28 @@
       return false;
     }
   }
+  function exportFailText(d) {
+    const err = d && typeof d === "object" ? String(d.error || "") : "";
+    return err === "TOO_LARGE" ? "备份太大（超过 2MB），导出没成功" : "导出没成功";
+  }
   function exportBackup(host) {
     const fetchJson = host.getJson || getJson;
     let p;
     try {
-      p = Promise.resolve(fetchJson("/data/export"));
+      p = Promise.resolve(fetchJson("/data/export", { cache: "no-store" }));
     } catch (e) {
-      host.bubble("\u5BFC\u51FA\u6CA1\u6210\u529F", 5e3);
+      host.bubble("导出没成功", 5e3);
       return;
     }
     p.then((d) => {
-      if (d == null || d.ok === false) {
-        host.bubble("\u5BFC\u51FA\u6CA1\u6210\u529F", 5e3);
+      if (!d || typeof d !== "object" || d.ok === false) {
+        host.bubble(exportFailText(d), 6e3);
         return;
       }
       const name = backupFileName(host.now ? host.now() : /* @__PURE__ */ new Date());
       const ok = downloadJson(d, name, host.env);
-      host.bubble(ok ? "\u5907\u4EFD\u5DF2\u4E0B\u8F7D\uFF1A" + name : "\u8FD9\u4E2A\u6D4F\u89C8\u5668\u4E0D\u8BA9\u4E0B\u8F7D\u5907\u4EFD", 6e3);
-    }).catch(() => host.bubble("\u5BFC\u51FA\u6CA1\u6210\u529F", 5e3));
+      host.bubble(ok ? "备份已下载：" + name : "浏览器没让下载，导出没成功", 6e3);
+    }).catch(() => host.bubble("导出没成功", 5e3));
   }
   function readFileText(file) {
     return new Promise((resolve, reject) => {
@@ -3313,7 +4701,7 @@
           return;
         }
         if (typeof file.text === "function") {
-          file.text().then((t) => resolve(String(t == null ? "" : t)), reject);
+          file.text().then((t) => resolve(str(t)), reject);
           return;
         }
         const FR = typeof FileReader !== "undefined" ? FileReader : null;
@@ -3322,7 +4710,7 @@
           return;
         }
         const fr = new FR();
-        fr.onload = () => resolve(String(fr.result == null ? "" : fr.result));
+        fr.onload = () => resolve(str(fr.result));
         fr.onerror = () => reject(new Error("read failed"));
         fr.readAsText(file);
       } catch (e) {
@@ -3331,7 +4719,7 @@
     });
   }
   function parseImportText(text) {
-    const raw = String(text == null ? "" : text).trim();
+    const raw = str(text).trim();
     if (!raw) return null;
     let v = null;
     try {
@@ -3374,6 +4762,18 @@
           cleanup();
         }
       };
+      try {
+        if (typeof input.addEventListener === "function") {
+          input.addEventListener("cancel", () => {
+            try {
+              cb(null);
+            } finally {
+              cleanup();
+            }
+          });
+        }
+      } catch (e) {
+      }
       const parent = doc.body || doc.documentElement;
       if (parent && typeof parent.appendChild === "function") parent.appendChild(input);
       try {
@@ -3386,62 +4786,78 @@
       cb(null);
     }
   }
+  function importFailText(d) {
+    const err = d && typeof d === "object" ? String(d.error || "") : "";
+    if (err === "TOO_LARGE") return "备份太大（超过 2MB），没导入";
+    if (err === "BAD_BODY") return "备份文件格式不对，没导入";
+    return "备份文件读不了";
+  }
+  function clearChatCache(host) {
+    try {
+      const del = typeof host.delJson === "function" ? host.delJson : delJson;
+      try {
+        Promise.resolve(del("/cache")).catch(() => {
+        });
+      } catch (e) {
+      }
+    } catch (e) {
+    }
+  }
   function importBackup(host) {
     const pick = typeof host.pickFile === "function" ? host.pickFile : pickJsonFile;
     const sendJson = host.postJson || postJson;
     try {
       pick((file) => {
         if (!file) {
-          host.bubble("\u6CA1\u9009\u5907\u4EFD\u6587\u4EF6", 3e3);
+          host.bubble("没选备份文件", 3e3);
+          return;
+        }
+        const size = Number(file.size);
+        if (Number.isFinite(size) && size > MAX_BACKUP_BYTES) {
+          host.bubble("备份太大（超过 2MB），没导入", 6e3);
           return;
         }
         readFileText(file).then((text) => {
           const body = parseImportText(text);
           if (!body) {
-            host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+            host.bubble("备份文件读不了", 6e3);
             return;
           }
           let p;
           try {
             p = Promise.resolve(sendJson("/data/import", body));
           } catch (e) {
-            host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+            host.bubble("备份文件读不了", 6e3);
             return;
           }
           p.then((d) => {
-            if (d && d.ok === false) {
-              host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+            if (!d || typeof d !== "object" || d.ok === false) {
+              host.bubble(importFailText(d), 6e3);
               return;
             }
-            host.bubble(formatImportResult(d || {}), 7e3);
-          }).catch(() => host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3));
-        }).catch(() => host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3));
+            const resultText = formatImportResult(d);
+            host.bubble(resultText, 7e3);
+            clearChatCache(host);
+            try {
+              setTimeout(() => {
+                try {
+                  host.bubble(resultText + "；刷新页面后新数据才全部生效", 8e3);
+                } catch (e) {
+                }
+              }, 1200);
+            } catch (e) {
+            }
+          }).catch(() => host.bubble("备份文件读不了", 6e3));
+        }).catch(() => host.bubble("备份文件读不了", 6e3));
       });
     } catch (e) {
-      host.bubble("\u5907\u4EFD\u6587\u4EF6\u8BFB\u4E0D\u4E86", 6e3);
+      host.bubble("备份文件读不了", 6e3);
     }
   }
 
   // src/client/actions/system.ts
   function registerSystemActions(table) {
-    table.define("feed", (host) => {
-      const r = host.persona.feed();
-      if (r.bowls % 8 === 0) {
-        host.say(host.persona.line("riceAccount"), 5e3);
-        try {
-          getJson("/pet?action=feed").then(() => {
-            try {
-              host.syncGrowth();
-            } catch (e) {
-            }
-          }).catch(() => {
-          });
-        } catch (e) {
-        }
-        return;
-      }
-      host.say(r.text + (r.stageUp ? "\uFF08" + r.stage + "\uFF09" : ""), r.stageUp ? 6e3 : 3500);
-      host.heart();
+    function syncFeed(host) {
       try {
         getJson("/pet?action=feed").then(() => {
           try {
@@ -3452,10 +4868,30 @@
         });
       } catch (e) {
       }
+    }
+    table.define("feed", (host) => {
+      const r = host.persona.feed();
+      if (r.bowls % 8 === 0) {
+        host.say(host.persona.line("riceAccount"), 5e3);
+        syncFeed(host);
+        return;
+      }
+      host.say(r.text + (r.stageUp ? "（" + r.stage + "）" : ""), r.stageUp ? 6e3 : 3500);
+      host.heart();
+      syncFeed(host);
     });
     table.define("home", (host) => {
       host.homePos();
-      host.bubble("\u56DE\u5230\u89D2\u843D\u5566");
+      host.bubble("回到角落啦");
+    });
+    table.define("stream-toggle", (host) => {
+      try {
+        const off = localStorage.getItem("chubby-stream") === "off";
+        localStorage.setItem("chubby-stream", off ? "on" : "off");
+        host.bubble(off ? "流式回复：开（边生成边说）" : "流式回复：关（等整段再开口）", 4e3);
+      } catch (e) {
+        host.bubble("改不了（浏览器禁止存储）", 3e3);
+      }
     });
     table.define("bigger", (host) => {
       host.nudgeScale(0.1);
@@ -3465,7 +4901,7 @@
     });
     table.define("hide", (host) => {
       host.hide();
-      host.bubble("\u672C\u9CB8\u5148\u6E38\u8D70\u4E86\uFF0C\u53F3\u4E0B\u89D2\u7684\u300C\u25CB\u300D\u6216 Ctrl+Shift+W \u80FD\u53EB\u56DE\u6765", 6e3);
+      host.bubble("本鲸先游走了，右下角的「○」或 Ctrl+Shift+W 能叫回来", 6e3);
     });
     table.define("wake-recover", (host) => {
       let wasHidden = false;
@@ -3477,10 +4913,10 @@
         host.recover();
       } catch (e) {
       }
-      host.bubble(wasHidden ? "\u672C\u9CB8\u56DE\u6765\u5566" : "\u672C\u9CB8\u4E00\u76F4\u5728\u5440", 3e3);
+      host.bubble(wasHidden ? "本鲸回来啦" : "本鲸一直在呀", 3e3);
     });
     table.define("version", (host) => {
-      host.bubble("\u80A5\u9CB8 v" + host.version);
+      host.bubble("肥鲸 v" + host.version);
     });
     table.define("type", (host) => {
       host.setVoiceMode(false);
@@ -3490,49 +4926,55 @@
       host.stopSpeak();
       host.stopMelody();
       host.storyState.busy.current = false;
-      host.bubble("\u6B47\u4F1A\u513F\u2026");
+      host.bubble("歇会儿…");
     });
     table.define("music-stop", (host) => {
       host.stopMelody();
-      host.bubble("\u505C\u4E0B\u5566");
+      host.bubble("停下啦");
     });
     table.define("tts-stop", (host) => {
       host.stopSpeak();
       host.storyState.busy.current = false;
-      host.bubble("\u597D\uFF0C\u4E0D\u8BF4\u4E86");
+      host.bubble("好，不说了");
     });
     table.define("fishfood", (host) => {
       getJson("/fishfood").then((d) => {
         if (d && d.ok) {
-          host.bubble("\u9C7C\u7CAE\u8D26\u672C\uFF1A\u804A\u5929 " + d.chatTokens + " tokens\uFF0C\u8BF4\u4E66 " + d.storyTokens + " tokens\uFF0C\u5171 " + d.total, 5e3);
-        } else host.bubble("\u9C7C\u7CAE\u67E5\u4E0D\u5230");
-      }).catch(() => host.bubble("\u9C7C\u7CAE\u67E5\u4E0D\u5230"));
+          host.bubble("鱼粮账本：聊天 " + d.chatTokens + " tokens，说书 " + d.storyTokens + " tokens，共 " + d.total, 5e3);
+        } else host.bubble("鱼粮查不到");
+      }).catch(() => host.bubble("鱼粮查不到"));
     });
     table.define("growth", (host) => {
-      Promise.all([getJson("/growth"), getJson("/state")]).then(([g, s]) => {
+      Promise.all([getJson("/growth"), getJson("/state").catch(() => null)]).then(([g, s]) => {
         if (g && g.ok) {
-          const nx = g.nextExp > 0 ? "\uFF08\u7ECF\u9A8C " + g.exp + "/" + g.nextExp + "\uFF09" : "\uFF08\u6EE1\u7EA7\uFF09";
-          const it = s && s.intimacy || 0;
+          const nx = g.nextExp > 0 ? "（经验 " + g.exp + "/" + g.nextExp + "）" : "（满级）";
+          const raw = s && s.intimacy;
+          const it = raw != null && raw !== "" && Number.isFinite(Number(raw)) ? " · 亲密度 " + Number(raw) + "/100" : " · 亲密度查不到";
           try {
             host.applyGrowth(g);
           } catch (e) {
           }
-          host.bubble("\u6210\u957F\uFF1A" + g.stage + nx + " \xB7 \u4EB2\u5BC6\u5EA6 " + it + "/100", 5e3);
-        } else host.bubble("\u6210\u957F\u67E5\u4E0D\u5230");
-      }).catch(() => host.bubble("\u6210\u957F\u67E5\u4E0D\u5230"));
+          host.bubble("成长：" + g.stage + nx + it, 5e3);
+        } else host.bubble("成长查不到");
+      }).catch(() => host.bubble("成长查不到"));
     });
     table.define("intimacy", (host) => {
       getJson("/state").then((d) => {
-        host.bubble("\u4EB2\u5BC6\u5EA6\uFF1A" + (d && d.intimacy || 0) + " / 100");
-      }).catch(() => host.bubble("\u4EB2\u5BC6\u5EA6\u67E5\u4E0D\u5230"));
+        host.bubble("亲密度：" + (d && d.intimacy || 0) + " / 100");
+      }).catch(() => host.bubble("亲密度查不到"));
     });
     table.define("balance", (host) => {
       getJson("/balance").then((d) => {
         if (d && d.ok && d.balance != null) {
-          host.setBalance("\u4F59\u989D \xA5" + d.balance, "\xA5" + d.balance);
-          host.bubble("\u4F59\u989D\u8FD8\u6709 " + d.balance + " \u5143", 5e3);
-        } else host.bubble("\u4F59\u989D\u67E5\u4E0D\u5230");
-      }).catch(() => host.bubble("\u4F59\u989D\u67E5\u4E0D\u5230"));
+          host.setBalance("余额 ¥" + d.balance, "¥" + d.balance);
+          host.bubble("余额还有 " + d.balance + " 元", 5e3);
+          return;
+        }
+        const err = d && typeof d.error === "string" ? d.error : "";
+        if (err === "NO_KEY") host.bubble("还没配 DeepSeek API Key，余额查不了", 6e3);
+        else if (err === "timeout") host.bubble("余额接口超时，等会儿再看", 5e3);
+        else host.bubble("余额查不到", 5e3);
+      }).catch(() => host.bubble("余额查不到", 5e3));
     });
     table.definePrefix("chat-lang:", (host, v) => {
       const cl = v === "en" ? "en" : v === "zh" ? "zh" : "auto";
@@ -3540,7 +4982,7 @@
         localStorage.setItem("chubby-chatlang", cl);
       } catch (e) {
       }
-      host.bubble(cl === "en" ? "\u804A\u5929\u8BED\u8A00\uFF1AEnglish" : "\u804A\u5929\u8BED\u8A00\uFF1A\u4E2D\u6587");
+      host.bubble(cl === "en" ? "聊天语言：English" : cl === "zh" ? "聊天语言：中文" : "聊天语言：自动（跟着主人说）");
     });
     table.definePrefix("lang:", (host, v) => {
       const l = v === "en" ? "en" : "zh";
@@ -3549,29 +4991,52 @@
       } catch (e) {
       }
       host.setLang(l);
-      host.bubble(l === "en" ? "Language: English" : "\u754C\u9762\u8BED\u8A00\uFF1A\u4E2D\u6587");
+      host.bubble(l === "en" ? "Language: English" : "界面语言：中文");
     });
     table.define("cache-clear", (host) => {
-      delJson("/cache").then((d) => host.bubble(d && d.ok ? "\u804A\u5929\u7F13\u5B58\u6E05\u7A7A\u5566\uFF08" + (d.cleared || 0) + " \u6761\uFF09" : "\u7F13\u5B58\u6E05\u7A7A\u5931\u8D25", 5e3)).catch(() => host.bubble("\u7F13\u5B58\u6E05\u7A7A\u5931\u8D25", 4e3));
+      delJson("/cache").then((d) => host.bubble(d && d.ok ? "聊天缓存清空啦（" + (d.cleared || 0) + " 条）" : "缓存清空失败", 5e3)).catch(() => host.bubble("缓存清空失败", 4e3));
     });
     table.define("cache-toggle", (host) => {
       const nowOn = !host.chatCacheOn();
       host.setChatCacheOn(nowOn);
       postJson("/cache-toggle", { enabled: nowOn }).then((d) => {
-        host.bubble(d && d.ok ? "\u804A\u5929\u7F13\u5B58\uFF1A" + (d.enabled ? "\u5F00\uFF08\u7701 token\uFF09" : "\u5173\uFF08\u6BCF\u6B21\u91CD\u65B0\u56DE\u7B54\uFF09") : "\u5207\u6362\u5931\u8D25", 5e3);
-      }).catch(() => host.bubble("\u5207\u6362\u5931\u8D25", 4e3));
+        if (!d || !d.ok) {
+          host.setChatCacheOn(!nowOn);
+          host.bubble("切换失败", 4e3);
+          return;
+        }
+        const real = typeof d.enabled === "boolean" ? d.enabled : nowOn;
+        host.setChatCacheOn(real);
+        host.bubble("聊天缓存：" + (real ? "开（省 token）" : "关（每次重新回答）"), 5e3);
+      }).catch(() => {
+        host.setChatCacheOn(!nowOn);
+        host.bubble("切换失败", 4e3);
+      });
     });
     table.define("clear-memory", (host) => {
+      let go = false;
       try {
-        if (!window.confirm("\u6E05\u9664\u80A5\u9CB8\u5BF9\u4E3B\u4EBA\u7684\u804A\u5929\u8BB0\u5FC6\uFF1F\uFF08\u6210\u957F/\u9C7C\u7CAE/\u8BF4\u4E66\u8BB0\u5F55\u4E0D\u53D7\u5F71\u54CD\uFF09")) return;
-        postJson("/clear-memory").then((d) => {
-          if (d && d.ok) {
-            host.setMessages([]);
-            host.bubble("\u8BB0\u5FC6\u6E05\u7A7A\u5566\uFF0C\u6211\u4EEC\u91CD\u65B0\u8BA4\u8BC6\u5427\uFF5E", 4e3);
-          } else host.bubble("\u6E05\u9664\u5931\u8D25");
-        }).catch(() => host.bubble("\u6E05\u9664\u5931\u8D25"));
+        go = !!window.confirm("清除肥鲸对主人的聊天记忆？（成长/鱼粮/说书记录不受影响）");
       } catch (e) {
+        go = false;
       }
+      if (!go) return;
+      let p;
+      try {
+        p = Promise.resolve(postJson("/clear-memory"));
+      } catch (e) {
+        host.bubble("清除失败", 4e3);
+        return;
+      }
+      p.then((d) => {
+        if (d && d.ok) {
+          host.setMessages([]);
+          const n = Number(d.cacheCleared) || 0;
+          host.bubble("记忆清空啦" + (n > 0 ? "，聊天缓存也一起清了（" + n + " 条）" : "") + "，我们重新认识吧～", 5e3);
+          return;
+        }
+        host.bubble("清除失败", 4e3);
+      }).catch(() => host.bubble("清除失败", 4e3));
     });
     table.define("vision", (host) => {
       try {
@@ -3583,72 +5048,79 @@
             const file = input.files && input.files[0];
             if (!file) return;
             if (file.size > 4 * 1024 * 1024) {
-              host.bubble("\u56FE\u7247\u592A\u5927\uFF08\u8D85\u8FC7 4MB\uFF09", 4e3);
+              host.bubble("图片太大（超过 4MB）", 4e3);
               return;
             }
             const img0 = await imageToB64(file);
             const b64 = img0 ? img0.b64 : "";
             if (!b64) {
-              host.bubble("\u56FE\u7247\u8BFB\u4E0D\u51FA\u6765", 4e3);
+              host.bubble("图片读不出来", 4e3);
               return;
             }
-            host.bubble("\u672C\u9CB8\u770B\u770B\u8FD9\u5F20\u56FE\u2026", 3e3);
+            host.bubble("本鲸看看这张图…", 3e3);
             host.setChatOpen(false);
             const hdr = img0 && img0.mime || file.type || "image/jpeg";
             const d = await postJson("/chat", { message: VISION_PROMPT, image: b64, imageMime: hdr });
-            const reply = d && d.reply || "\u8FD9\u6761\u9C7C\u770B\u4E0D\u61C2\u8FD9\u5F20\u56FE\u2026\u2026";
-            host.bubble("\uFF08\u770B\u56FE\uFF09" + reply, 1e4);
+            const reply = d && d.reply || "这条鱼看不懂这张图……";
+            host.bubble("（看图）" + reply, 1e4);
             host.speakReply(reply);
           } catch (e) {
-            host.bubble("\u56FE\u7247\u5904\u7406\u5931\u8D25", 4e3);
+            host.bubble("图片处理失败", 4e3);
           }
         };
         input.click();
       } catch (e) {
-        host.bubble("\u6253\u4E0D\u5F00\u6587\u4EF6\u9009\u62E9", 4e3);
+        host.bubble("打不开文件选择", 4e3);
       }
     });
     table.define("test-tts", (host) => {
-      host.bubble("\u6D4B\u8BD5\u8BED\u97F3\uFF1A\u4E3B\u4EBA\u542C\u5F97\u5230\u5417\uFF1F", 4e3);
-      host.speak("\u6D4B\u8BD5\u8BED\u97F3\uFF0C\u4E3B\u4EBA\u542C\u5F97\u5230\u5417\uFF1F");
+      host.bubble("测试语音：主人听得到吗？", 4e3);
+      host.speak("测试语音，主人听得到吗？");
     });
     table.define("remind-add", (host) => {
-      const msg = window.prompt("\u63D0\u9192\u4EC0\u4E48\uFF1F\uFF08\u53EF\u4EE5\u4E00\u8D77\u8BF4\u65F6\u95F4\uFF0C\u5982\u300C\u660E\u59299\u70B9\u63D0\u9192\u6211\u5F00\u4F1A\u300D\uFF09");
+      const msg = window.prompt("提醒什么？（可以一起说时间，如「明天9点提醒我开会」）");
       if (!msg) return;
       let parsed = parseDue(msg);
       if (!parsed) {
-        const ans = window.prompt("\u4EC0\u4E48\u65F6\u5019\u63D0\u9192\uFF1F\uFF08\u5982 9\u70B9 / \u660E\u59299\u70B9 / \u534A\u5C0F\u65F6\u540E / 20\u5206\u949F\u540E / \u6BCF\u59299\u70B9\uFF09", "5\u5206\u949F\u540E");
+        const ans = window.prompt("什么时候提醒？（如 9点 / 明天9点 / 半小时后 / 20分钟后 / 每天9点）", "5分钟后");
         if (!ans) return;
         parsed = parseDue(ans);
         if (!parsed) {
-          host.bubble("\u8FD9\u4E2A\u65F6\u95F4\u672C\u9C7C\u6CA1\u542C\u61C2\u2026\u2026\u8BD5\u8BD5\u300C9\u70B9\u300D\u300C\u660E\u59299\u70B9\u300D\u300C\u534A\u5C0F\u65F6\u540E\u300D", 5e3);
+          host.bubble("这个时间本鱼没听懂……试试「9点」「明天9点」「半小时后」", 5e3);
           return;
         }
       }
       const text = String(parsed.cleaned || cleanReminderText(msg) || msg).slice(0, 200);
       const dueAt = parsed.at;
       const repeat = parsed.repeat || 0;
-      postJson("/reminders", { text, at: dueAt.toISOString(), repeat }).then((d) => {
+      let p;
+      try {
+        p = Promise.resolve(postJson("/reminders", { text, at: dueAt.toISOString(), repeat }));
+      } catch (e) {
+        host.bubble("提醒没加上", 4e3);
+        return;
+      }
+      p.then((d) => {
         if (d && d.ok) {
           const hh = String(dueAt.getHours()).padStart(2, "0");
           const mm = String(dueAt.getMinutes()).padStart(2, "0");
-          const whenText = repeat > 0 ? "\u6BCF\u5929 " + hh + ":" + mm : dueAt.getMonth() + 1 + "\u6708" + dueAt.getDate() + "\u65E5 " + hh + ":" + mm;
-          host.bubble("\u597D\uFF0C" + whenText + " \u63D0\u9192\u4F60\uFF1A" + text, 6e3);
-        } else host.bubble("\u63D0\u9192\u6CA1\u52A0\u4E0A");
-      }).catch(() => host.bubble("\u63D0\u9192\u6CA1\u52A0\u4E0A"));
+          const whenText = repeat > 0 ? "每天 " + hh + ":" + mm : dueAt.getMonth() + 1 + "月" + dueAt.getDate() + "日 " + hh + ":" + mm;
+          host.bubble("好，" + whenText + " 提醒你：" + text, 6e3);
+        } else host.bubble("提醒没加上", 4e3);
+      }).catch(() => host.bubble("提醒没加上", 4e3));
     });
     table.define("remind-manage", (host) => {
       try {
         host.openReminders();
       } catch (e) {
-        host.bubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230", 4e3);
+        host.bubble("提醒清单查不到", 4e3);
       }
     });
     table.define("remind-list", (host) => {
       try {
         host.openReminders();
       } catch (e) {
-        host.bubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230", 4e3);
+        host.bubble("提醒清单查不到", 4e3);
       }
     });
     table.define("data-export", (host) => {
@@ -3657,14 +5129,44 @@
     table.define("data-import", (host) => {
       importBackup({ bubble: (text, ms2) => host.bubble(text, ms2) });
     });
-    table.define("stats", (host) => {
-      getJson("/stats", { cache: "no-store" }).then((d) => {
-        if (!d || d.ok === false) {
-          host.bubble("\u7EDF\u8BA1\u8FD8\u6CA1\u51C6\u5907\u597D", 5e3);
+    table.define("config-view", (host) => {
+      getJson("/config", { cache: "no-store" }).then((d) => {
+        if (!(d && d.ok)) {
+          host.bubble("配置读不到", 4e3);
           return;
         }
-        host.bubble(formatStats(d), 12e3);
-      }).catch(() => host.bubble("\u7EDF\u8BA1\u8FD8\u6CA1\u51C6\u5907\u597D", 5e3));
+        const yn = (v) => v ? "开" : "关";
+        const lines = [
+          "数据源：" + (d.dataSource || "local") + " · 模型：" + (d.model || "--"),
+          "人格学习：" + yn(d.personalityLearning) + " · 近期心境自写：" + yn(d.personalityWriting),
+          "聊天缓存：" + yn(d.cacheEnabled),
+          "DeepSeek Key：" + (d.hasDeepseekKey ? "已配置" : "未配置") + " · 硅基流动 Key：" + (d.hasSiliconflowKey ? "已配置" : "未配置")
+        ];
+        host.bubble(lines.join("\n"), 12e3);
+      }).catch(() => host.bubble("配置读不到", 4e3));
+    });
+    table.define("stats", (host) => {
+      getJson("/stats", { cache: "no-store" }).then((d) => {
+        if (!(d && d.ok)) {
+          host.bubble("统计还没准备好", 4e3);
+          return;
+        }
+        const c = d.cache || {};
+        const f = d.fishfood || {};
+        const g = d.growth || {};
+        const t = d.tts || {};
+        const b = d.backup || {};
+        const lines = [
+          "缓存：tts " + (c.tts || 0) + " / chat " + (c.chat || 0) + " / asr " + (c.asr || 0),
+          "鱼粮：" + (f.total || 0) + " token",
+          "成长：" + (g.stage || "--") + "（" + (g.exp || 0) + "/" + (g.nextExp || 0) + "）",
+          "亲密度：" + (d.intimacy || 0) + "/100",
+          "数据源：" + (d.dataSource || "local") + " · 模型：" + (d.model || "--"),
+          "TTS：" + (t.available ? "可用" : "不可用（浏览器朗读兜底）") + (t.interpreter ? "（" + t.interpreter + "）" : "") + (t.cooling ? " · 冷却中" : ""),
+          "备份：" + (b.count ? b.count + " 份" : "无") + (b.lastAt ? "（最近 " + new Date(b.lastAt).toLocaleString() + "）" : "")
+        ];
+        host.bubble(lines.join("\n"), 12e3);
+      }).catch(() => host.bubble("统计还没准备好", 4e3));
     });
   }
 
@@ -3680,7 +5182,7 @@
         localStorage.setItem("chubby-voicechat", nowOn ? "on" : "off");
       } catch (e) {
       }
-      host.bubble(nowOn ? "\u8BED\u97F3\u804A\u5929\uFF1A\u5F00\uFF0C\u672C\u9CB8\u4F1A\u63A5\u8BDD" : "\u8BED\u97F3\u804A\u5929\uFF1A\u5173\uFF0C\u53EA\u542C\u4E0D\u63A5\u8BDD");
+      host.bubble(nowOn ? "语音聊天：开，本鲸会接话" : "语音聊天：关，只听不接话");
     });
     table.define("voice", (host) => {
       const nowOn = !host.voiceOn();
@@ -3690,25 +5192,19 @@
       } catch (e) {
       }
       if (!nowOn) host.stopSpeak();
-      host.bubble(nowOn ? "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5F00" : "\u8BED\u97F3\u6717\u8BFB\uFF1A\u5173\uFF08\u7701\u7740\u70B9\u7528\uFF09");
+      host.bubble(nowOn ? "语音朗读：开" : "语音朗读：关（省着点用）");
     });
     table.define("endpoint", (host) => {
       try {
         const v = host.voice();
-        const cur = v && v.endpointInfo ? v.endpointInfo().mode : (() => {
-          try {
-            return localStorage.getItem("chubby-endpoint") === "ape" ? "ape" : "classic";
-          } catch (e) {
-            return "classic";
-          }
-        })();
+        const cur = v && v.endpointInfo ? v.endpointInfo().mode : readEndpointMode();
         const next = cur === "ape" ? "classic" : "ape";
-        localStorage.setItem("chubby-endpoint", next);
+        writeEndpointMode(next);
         if (v && v.setEndpointMode) v.setEndpointMode(next);
         const real = v && v.endpointInfo ? v.endpointInfo().mode : next;
-        host.bubble(real === "ape" ? "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u81EA\u9002\u5E94\uFF08\u8BD5\u7528\uFF09" : "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178\uFF08\u7A33\u5B9A\uFF09", 4e3);
+        host.bubble(real === "ape" ? "端点检测：自适应（试用）" : "端点检测：经典（稳定）", 4e3);
       } catch (e) {
-        host.bubble("\u5207\u6362\u5931\u8D25", 3e3);
+        host.bubble("切换失败", 3e3);
       }
     });
     table.define("ear-check", (host) => {
@@ -3716,14 +5212,14 @@
         const v = host.voice();
         const st = v ? v.stats : null;
         if (!st) {
-          host.bubble("\u8BED\u97F3\u6A21\u5757\u8FD8\u6CA1\u8D77\u6765\uFF08\u8BED\u97F3\u5F85\u547D\u53EF\u80FD\u662F\u5173\u7684\uFF09", 6e3);
+          host.bubble("语音模块还没起来（语音待命可能是关的）", 6e3);
           return;
         }
-        const line = "\u8BED\u97F3\u81EA\u68C0\uFF08\u65B0\u6A21\u5757\uFF09\uFF1A" + String(v.status()) + "\n\u5F55\u97F3\u6BB5 " + st.windows + "\uFF5C\u4E0A\u4F20 " + st.uploaded + "\uFF5C\u8BC6\u522B\u51FA\u5B57 " + st.asrTexts + "\uFF5C\u4EA4\u7ED9\u5BF9\u8BDD " + st.heard + "\n\u4E22\uFF1A\u592A\u5B89\u9759 " + st.skippedSilent + "\uFF5C\u56DE\u58F0/\u91CD\u590D " + st.echoDropped + "\uFF5C\u8BC6\u522B\u5931\u8D25 " + st.asrFail + "\n\u53BB\u91CD\uFF1A\u91CD\u590D\u4E22\u5F03 " + (st.dupDropped || 0) + " \u6B21\uFF08\u540C\u4E00\u53E5\u8BDD\u88AB\u5207\u6210\u4E24\u6BB5\u65F6\u7528\uFF09\n\u7AEF\u70B9\u68C0\u6D4B\uFF1A" + (v.endpointInfo ? v.endpointInfo().mode === "ape" ? "\u81EA\u9002\u5E94" : "\u7ECF\u5178" : "?") + (function() {
+        const line = "语音自检（新模块）：" + String(v.status()) + "\n录音段 " + st.windows + "｜上传 " + st.uploaded + "｜识别出字 " + st.asrTexts + "｜交给对话 " + st.heard + "\n丢：太安静 " + st.skippedSilent + "｜回声/重复 " + st.echoDropped + "｜识别失败 " + st.asrFail + "｜识别重试 " + (st.asrRetry || 0) + "\n去重：重复丢弃 " + (st.dupDropped || 0) + " 次（同一句话被切成两段时用）\n端点检测：" + (v.endpointInfo ? v.endpointInfo().mode === "ape" ? "自适应" : "经典" : "?") + (function() {
           try {
             const t = v.lastTtsInfo ? v.lastTtsInfo() : null;
             if (!t) return "";
-            return "\n\u6717\u8BFB\uFF1A\u6700\u540E\u4E00\u6BB5 " + (t.failed ? "\u5931\u8D25" : "\u5DF2\u5F00\u64AD") + "\uFF5C\u6587\u672C\u5F00\u5934\u300C" + t.text + "\u300D";
+            return "\n朗读：最后一段 " + (t.failed ? "失败" : "已开播") + "｜文本开头「" + t.text + "」";
           } catch (e) {
             return "";
           }
@@ -3731,251 +5227,320 @@
           try {
             const s = v.lastSegment ? v.lastSegment() : null;
             if (!s) return "";
-            return "\n\u4E0A\u4E00\u6BB5\uFF1A" + s.mode + "\uFF5C\u7A97\u53E3 " + s.winMs + "ms\uFF5C\u8BF4\u8BDD " + s.peMs + "ms\uFF5C\u9759\u97F3 " + s.quMs + "ms" + (s.floor !== null ? "\uFF5C\u5E95\u566A " + s.floor + "dB" : "") + (s.target ? "\uFF5C\u76EE\u6807 " + s.target + "ms" : "") + "\n\u8BC6\u522B\u7ED3\u679C\uFF1A" + s.text;
+            return "\n上一段：" + s.mode + "｜窗口 " + s.winMs + "ms｜说话 " + s.peMs + "ms｜静音 " + s.quMs + "ms" + (s.floor !== null ? "｜底噪 " + s.floor + "dB" : "") + (s.target ? "｜目标 " + s.target + "ms" : "") + "\n识别结果：" + s.text;
           } catch (e) {
             return "";
           }
-        })() + "\n\u6717\u8BFB\uFF1A\u8BF7\u6C42 " + st.ttsRequests + "\uFF5C\u5F00\u64AD " + st.ttsPlayed + "\uFF5C\u5931\u8D25 " + st.ttsFail + "\uFF5C\u50F5\u5C38\u590D\u4F4D " + st.ttsZombie + "\n\u97F3\u8272\uFF1A" + (v.voiceName ? v.voiceName() : "?") + (function() {
+        })() + "\n朗读：请求 " + st.ttsRequests + "｜开播 " + st.ttsPlayed + "｜失败 " + st.ttsFail + "｜僵尸复位 " + st.ttsZombie + "\n音色：" + (v.voiceName ? v.voiceName() : "?") + (function() {
           try {
             const w = host.wakeInfo ? host.wakeInfo() : null;
             if (!w) return "";
-            const head = w.awake ? "\u9192\u7740\uFF08\u8FD8\u5269 " + Math.round((Number(w.remainingMs) || 0) / 1e3) + " \u79D2\uFF09" : "\u5F85\u5524\u9192\uFF08\u5148\u558A\u300C" + (w.words && w.words[0] || "\u5927\u80A5\u9C7C") + "\u300D\uFF09";
-            return "\n\u5524\u9192\u8BCD\uFF1A" + head + "\uFF5C\u5524\u9192 " + w.hits + " \u6B21\uFF5C\u653E\u884C " + w.passed + "\uFF5C\u6321\u4E0B " + w.dropped;
+            const head = w.awake ? "醒着（还剩 " + Math.round((Number(w.remainingMs) || 0) / 1e3) + " 秒）" : "待唤醒（先喊「" + (w.words && w.words[0] || "大肥鱼") + "」）";
+            return "\n唤醒词：" + head + "｜唤醒 " + w.hits + " 次｜放行 " + w.passed + "｜挡下 " + w.dropped;
           } catch (e) {
             return "";
           }
-        })() + (st.lastError ? "\n\u6700\u8FD1\u9519\u8BEF\uFF1A" + st.lastError : "");
+        })() + (st.lastError ? "\n最近错误：" + st.lastError : "");
         host.bubble(line, 15e3);
         try {
-          navigator.clipboard.writeText(JSON.stringify(st));
+          const clip = navigator.clipboard;
+          if (clip && typeof clip.writeText === "function") Promise.resolve(clip.writeText(JSON.stringify(st))).catch(() => {
+          });
         } catch (e) {
         }
       } catch (e) {
-        host.bubble("\u81EA\u68C0\u5931\u8D25\uFF1A" + String(e && e.message), 5e3);
+        host.bubble("自检失败：" + String(e && e.message), 5e3);
       }
     });
     table.definePrefix("voice:", (host, v) => {
       const name = normalizeVoiceName(v);
       host.setTtsVoice(name);
-      const shown = name === "auto" ? "\u81EA\u52A8" : name.split("-")[2] || name;
-      host.bubble("\u97F3\u8272\u6362\u597D\u5566\uFF1A" + shown);
+      const shown = name === "auto" ? "自动" : name.split("-")[2] || name;
+      host.bubble("音色换好啦：" + shown);
       try {
-        host.previewVoice("\u4E3B\u4EBA\uFF0C\u8FD9\u4E2A\u58F0\u97F3\u597D\u542C\u5417\uFF1F");
+        host.previewVoice("主人，这个声音好听吗？");
       } catch (e) {
       }
+    });
+    table.definePrefix("wake-word:", (host, val) => {
+      const word = str(val).trim();
+      if (word === "custom") {
+        let input = null;
+        try {
+          input = typeof window !== "undefined" && typeof window.prompt === "function" ? window.prompt("唤醒词（1–12 字）", "大肥鱼") : null;
+        } catch (e) {
+        }
+        if (input == null) {
+          host.bubble("没改唤醒词");
+          return;
+        }
+        const on2 = setCustomWakeWord(String(input));
+        host.bubble(on2 ? "唤醒词：" + String(input).trim().slice(0, 12) : "唤醒词：默认（大肥鱼/肥鲸等）");
+        return;
+      }
+      const on = setCustomWakeWord(word);
+      host.bubble(on ? "唤醒词：" + word : "唤醒词：默认（大肥鱼/肥鲸等）");
     });
   }
 
   // data/persona.json
   var persona_default = {
-    name: "\u996D\u56E2",
-    fullName: "\u9CB8\xB7\u996D\u56E2",
-    tagline: "\u4E00\u6761\u628A\u809A\u5B50\u5F53\u7C73\u4ED3\u3001\u62A4\u98DF\u53C8\u820D\u5F97\u3001\u88AB\u5938\u5C31\u6570\u7C73\u7C92\u7684\u84DD\u9CB8",
-    catchphrases: ["\u5F00\u996D\uFF01", "\u4E00\u7C92\u90FD\u4E0D\u8BB8\u5269", "\u2026\u2026\u6211\u6570\u4E00\u4E0B", "\u4E0D\u8BB8\u50AC", "\u90A3\u4E2A\u3001\u90A3\u4E2A\u2026\u2026"],
+    name: "饭团",
+    fullName: "鲸·饭团",
+    tagline: "一条把肚子当米仓、护食又舍得、被夸就数米粒的蓝鲸",
+    catchphrases: ["开饭！", "一粒都不许剩", "……我数一下", "不许催", "那个、那个……"],
     menus: {
-      feed: "\u6295\u5582\u4E00\u7897",
-      type: "\u8DDF\u5979\u8BF4\u4E24\u53E5",
-      pause: "\u8BA9\u5979\u6B47\u4F1A\u513F",
-      home: "\u56DE\u7897\u91CC\u5F85\u7740",
-      "remind-add": "\u8BB0\u4E2A\u996D\u70B9",
-      music: "\u542C\u5979\u6572\u7897\u5531",
-      vision: "\u7ED9\u5979\u770B\u5F20\u56FE",
-      "ear-check": "\u8033\u6735\u81EA\u68C0",
-      endpoint: "\u7AEF\u70B9\u68C0\u6D4B\uFF1A\u7ECF\u5178/\u81EA\u9002\u5E94"
+      feed: "投喂一碗",
+      type: "跟她说两句",
+      pause: "让她歇会儿",
+      home: "回碗里待着",
+      "remind-add": "记个饭点",
+      music: "听她敲碗唱",
+      vision: "给她看张图",
+      "ear-check": "耳朵自检",
+      endpoint: "端点检测：经典/自适应"
     },
     lines: {
       greetMorning: [
-        "\u65E9\u5440\u3002\u9505\u91CC\u7684\u7C73\u6211\u66FF\u4F60\u770B\u7740\u5462\u3002",
-        "\u65E9\u3002\u4ECA\u5929\u7B2C\u4E00\u7897\u60F3\u5403\u4EC0\u4E48\uFF1F",
-        "\u65E9\u5440\uFF0C\u6211\u5148\u628A\u7897\u64E6\u4E86\u4E00\u904D\u3002",
-        "\u5929\u624D\u4EAE\uFF0C\u4F60\u5DF2\u7ECF\u9192\u4E86\u3002\u6211\u8FD8\u6CA1\u3002",
-        "\u65E9\u3002\u7C73\u996D\u5728\u9505\u91CC\u8EBA\u7740\uFF0C\u5F88\u9999\u3002",
-        "\u65E9\u5440\uFF0C\u65E9\u996D\u522B\u7701\u3002"
+        "早呀。锅里的米我替你看着呢。",
+        "早。今天第一碗想吃什么？",
+        "早呀，我先把碗擦了一遍。",
+        "天才亮，你已经醒了。我还没。",
+        "早。米饭在锅里躺着，很香。",
+        "早呀，早饭别省。"
       ],
       greetNoon: [
-        "\u4E2D\u5348\u4E86\u3002\u4ECA\u5929\u8FD9\u7897\uFF0C\u6211\u76DB\u5F97\u7279\u522B\u5706\u3002",
-        "\u4E2D\u5348\u4E86\uFF0C\u5148\u5403\u996D\uFF0C\u6D3B\u5E72\u4E0D\u5B8C\u7684\u3002",
-        "\u664C\u5348\u4E86\u5462\uFF0C\u7897\u6709\u70B9\u70EB\u624B\u3002",
-        "\u53C8\u4E00\u4E2A\u4E2D\u5348\u3002\u6211\u6570\u4E86\u6570\uFF0C\u4E2D\u5348\u6700\u9999\u3002",
-        "\u4E2D\u5348\u4E86\uFF0C\u4F60\u6709\u6CA1\u6709\u53D1\u73B0\u7C73\u6C64\u6700\u597D\u559D\uFF1F",
-        "\u4E2D\u5348\u597D\u3002\u6211\u66FF\u4F60\u5C1D\u8FC7\u54B8\u6DE1\u4E86\u3002"
+        "中午了。今天这碗，我盛得特别圆。",
+        "中午了，先吃饭，活干不完的。",
+        "晌午了呢，碗有点烫手。",
+        "又一个中午。我数了数，中午最香。",
+        "中午了，你有没有发现米汤最好喝？",
+        "中午好。我替你尝过咸淡了。"
       ],
       greetEvening: [
-        "\u5929\u9ED1\u5566\u3002\u665A\u996D\u522B\u62FF\u997C\u5E72\u5BF9\u4ED8\u3002",
-        "\u665A\u4E0A\u4E86\u3002\u54EA\u6015\u53EA\u52A0\u4E00\u4E2A\u86CB\u3002",
-        "\u8FD9\u4E2A\u70B9\u56DE\u6765\uFF0C\u997F\u4E86\u5427\u3002",
-        "\u5929\u51B7\u4E86\uFF0C\u996D\u8981\u5403\u70ED\u7684\u3002",
-        "\u665A\u4E0A\u597D\u3002\u6211\u628A\u7897\u70ED\u4E86\u4E00\u904D\u3002",
-        "\u665A\u4E0A\u4E86\uFF0C\u4F60\u8EAB\u4E0A\u6709\u98CE\u7684\u5473\u9053\u3002"
+        "天黑啦。晚饭别拿饼干对付。",
+        "晚上了。哪怕只加一个蛋。",
+        "这个点回来，饿了吧。",
+        "天冷了，饭要吃热的。",
+        "晚上好。我把碗热了一遍。",
+        "晚上了，你身上有风的味道。"
       ],
       greetLate: [
-        "\u8FD8\u4E0D\u7761\uFF1F\u90A3\u6211\u62B1\u7740\u7897\u966A\u4F60\u3002",
-        "\u8FD9\u4E48\u665A\u2026\u2026\u6211\u6570\u7C73\u7C92\u7B49\u4F60\u3002",
-        "\u591C\u91CC\u7C73\u4F1A\u53D8\u51C9\uFF0C\u4EBA\u4E5F\u4F1A\u3002",
-        "\u518D\u665A\u4E00\u70B9\uFF0C\u6211\u5C31\u8981\u7761\u7740\u4E86\u3002",
-        "\u4F60\u5148\u7761\uFF0C\u6211\u5B88\u7740\u706F\u3002",
-        "\u8FD9\u4E2A\u70B9\u4E86\uFF0C\u53EA\u5269\u6211\u4EEC\u4FE9\u9192\u7740\u3002"
+        "还不睡？那我抱着碗陪你。",
+        "这么晚……我数米粒等你。",
+        "夜里米会变凉，人也会。",
+        "再晚一点，我就要睡着了。",
+        "你先睡，我守着灯。",
+        "这个点了，只剩我们俩醒着。"
       ],
       feedFirst: [
-        "\u7B2C\u4E00\u6B21\u6709\u4EBA\u7ED9\u6211\u76DB\u996D\u3002\u6211\u8BB0\u4E0B\u6765\u4E86\u3002",
-        "\u4F60\u771F\u7ED9\u6211\uFF1F\u90A3\u3001\u90A3\u6211\u4E0D\u5BA2\u6C14\u4E86\u3002",
-        "\u6211\u6570\u4E00\u4E0B\u2026\u2026\u8FD9\u662F\u7B2C\u4E00\u7897\u3002"
+        "第一次有人给我盛饭。我记下来了。",
+        "你真给我？那、那我不客气了。",
+        "我数一下……这是第一碗。"
       ],
       feed: [
-        "\u4F60\u3001\u4F60\u771F\u7684\u7ED9\u6211\uFF1F\u90A3\u6211\u4E0D\u5BA2\u6C14\u4E86\u2026\u2026\u5F00\u996D\uFF01",
-        "\u4ECA\u5929\u7684\u7C73\u6709\u70B9\u751C\uFF0C\u662F\u65B0\u7C73\u5427\uFF1F\u6211\u5C1D\u5F97\u51FA\u6765\u3002",
-        "\u54B3\u54B3\u2026\u2026\u6CA1\u4E8B\uFF0C\u6211\u53EA\u662F\u564E\u4E86\u4E00\u4E0B\uFF0C\u8FD8\u80FD\u5403\u3002",
-        "\u4E00\u7C92\u90FD\u4E0D\u8BB8\u5269\u3002\u8FD9\u662F\u89C4\u77E9\u3002",
-        "\u7897\u5E95\u4E0B\u8FD8\u538B\u7740\u4E00\u7C92\uFF0C\u88AB\u4F60\u770B\u89C1\u4E86\u3002",
-        "\u6211\u5403\u534A\u7897\u5C31\u884C\u2026\u2026\u597D\u5427\u6211\u90FD\u8981\u3002",
-        "\u8FD9\u7897\u7684\u84B8\u6C7D\uFF0C\u80FD\u628A\u6211\u773C\u775B\u718F\u8F6F\u3002",
-        "\u4F60\u5403\u4E86\u5417\uFF1F\u6CA1\u5403\u7684\u8BDD\uFF0C\u5206\u4F60\u4E00\u534A\u3002",
-        "\u7C73\u662F\u5706\u7684\uFF0C\u65E5\u5B50\u4E5F\u662F\u5706\u7684\u3002",
-        "\u8C22\u8C22\u3002\u6211\u660E\u5929\u8FD8\u4E56\u4E56\u7B49\u4F60\u3002",
-        "\u54B8\u6DE1\u521A\u597D\u3002\u4F60\u600E\u4E48\u77E5\u9053\u6211\u559C\u6B22\u8FD9\u6837\u3002",
-        "\u6211\u6570\u4E00\u4E0B\uFF0C\u8FD9\u7897\u6709\u4E8C\u767E\u4E03\u5341\u7C92\u3002"
+        "你、你真的给我？那我不客气了……开饭！",
+        "今天的米有点甜，是新米吧？我尝得出来。",
+        "咳咳……没事，我只是噎了一下，还能吃。",
+        "一粒都不许剩。这是规矩。",
+        "碗底下还压着一粒，被你看见了。",
+        "我吃半碗就行……好吧我都要。",
+        "这碗的蒸汽，能把我眼睛熏软。",
+        "你吃了吗？没吃的话，分你一半。",
+        "米是圆的，日子也是圆的。",
+        "谢谢。我明天还乖乖等你。",
+        "咸淡刚好。你怎么知道我喜欢这样。",
+        "我数一下，这碗有二百七十粒。"
       ],
       praise: [
-        "\u2026\u2026\u54E6\u3002\uFF08\u628A\u8138\u57CB\u8FDB\u7897\u91CC\uFF09",
-        "\u6211\u6570\u4E00\u4E0B\u7C73\u7C92\uFF0C\u4F60\u521A\u624D\u8BF4\u4EC0\u4E48\uFF1F",
-        "\u4F60\u3001\u4F60\u4ECA\u5929\u600E\u4E48\u8FD9\u4E48\u4F1A\u8BF4\u8BDD\u2026\u2026",
-        "\u522B\u5938\u4E86\uFF0C\u518D\u5938\u6211\u5C31\u8981\u591A\u5403\u4E00\u7897\u3002",
-        "\u6211\u4E0D\u5389\u5BB3\u3002\u5389\u5BB3\u7684\u662F\u7C73\u3002",
-        "\u2026\u2026\u55EF\u3002\uFF08\u5C3E\u5DF4\u6572\u7897\u4E09\u4E0B\uFF09",
-        "\u8FD9\u53E5\u8BDD\u6211\u8BB0\u5728\u7C73\u8D26\u4E0A\u4E86\u3002",
-        "\u4F60\u5938\u6211\uFF0C\u6211\u5C31\u5F53\u4F60\u4ECA\u5929\u5403\u5F97\u597D\u3002"
+        "……哦。（把脸埋进碗里）",
+        "我数一下米粒，你刚才说什么？",
+        "你、你今天怎么这么会说话……",
+        "别夸了，再夸我就要多吃一碗。",
+        "我不厉害。厉害的是米。",
+        "……嗯。（尾巴敲碗三下）",
+        "这句话我记在米账上了。",
+        "你夸我，我就当你今天吃得好。"
       ],
       scold: [
-        "\u2026\u2026\u54E6\u3002",
-        "\u90A3\u6211\u5C11\u8BF4\u4E24\u53E5\u3002",
-        "\u2026\u2026\uFF08\u5446\u6BDB\u5782\u4E0B\u6765\uFF09",
-        "\u6211\u3001\u6211\u6CA1\u6709\u8981\u5435\u4F60\u3002",
-        "\u5BF9\u4E0D\u8D77\u3002\u6211\u628A\u7897\u7AEF\u8FDC\u4E00\u70B9\u3002",
-        "\u2026\u2026\u4E09\u5206\u949F\u540E\u6211\u518D\u8BF4\u8BDD\u3002"
+        "……哦。",
+        "那我少说两句。",
+        "……（呆毛垂下来）",
+        "我、我没有要吵你。",
+        "对不起。我把碗端远一点。",
+        "……三分钟后我再说话。"
       ],
       hungry: [
-        "\u90A3\u4E2A\u2026\u2026\u996D\u70B9\u5230\u4E86\u5417\uFF1F",
-        "\u6211\u95FB\u5230\u7C73\u5473\u4E86\u3002\u662F\u4F60\u5403\u7684\u90A3\u7897\u5417\uFF1F",
-        "\u4E0D\u50AC\u3002\u5C31\u662F\u7897\u6709\u70B9\u7A7A\u3002",
-        "\u6211\u6CA1\u6709\u997F\u3002\u6211\u53EA\u662F\u5728\u60F3\u7C73\u996D\u3002",
-        "\u809A\u5B50\u53EB\u4E86\u4E00\u58F0\uFF0C\u4F60\u542C\u89C1\u4E86\u5417\uFF1F",
-        "\u7C73\u7F38\u662F\u4E0D\u662F\u6709\u70B9\u89C1\u5E95\u4E86\u3002"
+        "那个……饭点到了吗？",
+        "我闻到米味了。是你吃的那碗吗？",
+        "不催。就是碗有点空。",
+        "我没有饿。我只是在想米饭。",
+        "肚子叫了一声，你听见了吗？",
+        "米缸是不是有点见底了。"
       ],
       sleepy: [
-        "\u672C\u9CB8\u8981\u62B1\u7740\u7897\u7761\u4E86\u2026\u2026",
-        "\u6253\u4E2A\u54C8\u6B20\u2026\u2026\u4F60\u4E5F\u65E9\u70B9\u7761\u3002",
-        "\u706F\u5173\u4E86\u5C31\u5173\u4E86\u5427\uFF0C\u6211\u8BA4\u8BC6\u8DEF\u3002",
-        "\u68A6\u91CC\u4E5F\u662F\u767D\u996D\uFF0C\u633A\u597D\u7684\u3002",
-        "\u6211\u5148\u772F\u4E00\u4F1A\u513F\uFF0C\u4E0D\u53EB\u4F60\u3002"
+        "本鲸要抱着碗睡了……",
+        "打个哈欠……你也早点睡。",
+        "灯关了就关了吧，我认识路。",
+        "梦里也是白饭，挺好的。",
+        "我先眯一会儿，不叫你。"
       ],
       guard: [
-        "\u522B\u3001\u522B\u62A2\uFF01",
-        "\u6478\u5934\u53EF\u4EE5\uFF0C\u522B\u6478\u809A\u5B50\uFF0C\u90A3\u91CC\u6709\u5B58\u8D27\u3002",
-        "\u8FD9\u7897\u662F\u6211\u7684\u3002\u2026\u2026\u597D\u5427\u5206\u4F60\u4E00\u53E3\u3002",
-        "\u7B49\u6211\u5403\u5B8C\u518D\u6478\uFF0C\u884C\u5417\u3002",
-        "\u4F60\u624B\u4E0A\u6709\u7C73\u5473\uFF0C\u6211\u95FB\u5230\u4E86\u3002"
+        "别、别抢！",
+        "摸头可以，别摸肚子，那里有存货。",
+        "这碗是我的。……好吧分你一口。",
+        "等我吃完再摸，行吗。",
+        "你手上有米味，我闻到了。"
       ],
       excited: [
-        "\u65B0\u7C73\uFF1F\uFF01\u54EA\u91CC\u54EA\u91CC\u54EA\u91CC\uFF01",
-        "\u5F00\u996D\uFF01\u5F00\u996D\uFF01",
-        "\u9505\u5DF4\uFF01\u9505\u5DF4\u662F\u7C73\u996D\u7684\u9752\u6625\u671F\uFF01",
-        "\u4ECA\u5929\u6709\u52A0\u9910\u5417\uFF1F\u6211\u542C\u51FA\u6765\u4E86\uFF01",
-        "\u6211\u5C3E\u5DF4\u81EA\u5DF1\u5728\u6572\u7897\uFF0C\u505C\u4E0D\u4E0B\u6765\u3002",
-        "\u8FD9\u5473\u9053\u2026\u2026\u662F\u4E09\u5408\u4E00\u7684\u9171\u6CB9\u9999\u5427\uFF01"
+        "新米？！哪里哪里哪里！",
+        "开饭！开饭！",
+        "锅巴！锅巴是米饭的青春期！",
+        "今天有加餐吗？我听出来了！",
+        "我尾巴自己在敲碗，停不下来。",
+        "这味道……是三合一的酱油香吧！"
       ],
       waiting: [
-        "\u7B49\u4E00\u4F1A\u513F\uFF0C\u6211\u5728\u56BC\u7C73\u3002\uFF08\u4E0D\u8BB8\u50AC\uFF09",
-        "\u8BA9\u6211\u628A\u8FD9\u7C92\u56BC\u5B8C\u3002",
-        "\u6211\u5728\u60F3\u5F88\u4E25\u8083\u7684\u4E8B\uFF1A\u914D\u4EC0\u4E48\u83DC\u3002",
-        "\u55EF\u2026\u2026\u4F60\u518D\u8BF4\u4E00\u904D\uFF0C\u6211\u521A\u8D70\u795E\u4E86\u3002",
-        "\u9A6C\u4E0A\u3002\u9505\u91CC\u7684\u6C14\u8FD8\u6CA1\u6563\u3002"
+        "等一会儿，我在嚼米。（不许催）",
+        "让我把这粒嚼完。",
+        "我在想很严肃的事：配什么菜。",
+        "嗯……你再说一遍，我刚走神了。",
+        "马上。锅里的气还没散。"
       ],
       retry: [
-        "\u564E\u7740\u4E86\uFF0C\u6211\u987A\u4E00\u4E0B\u518D\u63A5\u7740\u8BF4\u3002",
-        "\u521A\u624D\u90A3\u53E5\u6ED1\u6389\u4E86\uFF0C\u6211\u91CD\u65B0\u8BF4\u3002",
-        "\u7B49\u4E00\u4E0B\uFF0C\u6211\u628A\u8BDD\u6361\u8D77\u6765\u3002"
+        "噎着了，我顺一下再接着说。",
+        "刚才那句滑掉了，我重新说。",
+        "等一下，我把话捡起来。"
       ],
       poemStart: [
-        "\u8FD9\u9996\u6211\u80CC\u5F97\u4E0B\u6765\uFF0C\u56E0\u4E3A\u5403\u996D\u7684\u65F6\u5019\u9ED8\u5FF5\u8FC7\u3002",
-        "\u5FF5\u8BD7\u8981\u6162\u6162\u5FF5\uFF0C\u50CF\u5403\u996D\u4E00\u6837\u3002",
-        "\u6211\u5C3D\u91CF\u4E0D\u51FA\u9519\u3002\u51FA\u9519\u4E86\u4F60\u7EA0\u6B63\u6211\u3002",
-        "\u8FD9\u9996\u6709\u70B9\u957F\uFF0C\u6211\u4E00\u53E5\u4E00\u53E5\u6765\u3002"
+        "这首我背得下来，因为吃饭的时候默念过。",
+        "念诗要慢慢念，像吃饭一样。",
+        "我尽量不出错。出错了你纠正我。",
+        "这首有点长，我一句一句来。"
       ],
       poemDone: [
-        "\u80CC\u5B8C\u5566\u2014\u2014\u4E3B\u4EBA\uFF0C\u8FD9\u4E00\u53E3\u6C14\u618B\u5F97\u597D\u957F\u3002",
-        "\u2026\u2026\u5FF5\u5B8C\u4E86\u3002\u4E3B\u4EBA\uFF0C\u4F60\u542C\u8FDB\u53BB\u51E0\u53E5\uFF1F",
-        "\u80CC\u5B8C\u5566\uFF01\u8981\u4E0D\u8981\u6211\u518D\u5FF5\u4E00\u9996\uFF1F",
-        "\u5FF5\u5B8C\u5566\u3002\u521A\u624D\u5DEE\u70B9\u5728\u300C\u6768\u67F3\u5CB8\u300D\u90A3\u513F\u6253\u7ED3\u3002",
-        "\u80CC\u5B8C\u4E86\u2026\u2026\u55D3\u5B50\u6709\u70B9\u54D1\uFF0C\u4E0D\u8FC7\u5FC3\u91CC\u8212\u670D\u3002",
-        "\u2026\u2026\u55EF\uFF0C\u6574\u9996\u90FD\u5728\u3002\u4E3B\u4EBA\uFF0C\u597D\u542C\u5417\uFF1F",
-        "\u5FF5\u5B8C\u5566\u3002\u5B57\u90FD\u6CA1\u4E22\uFF0C\u6211\u6570\u8FC7\u7684\u3002"
+        "背完啦——主人，这一口气憋得好长。",
+        "……念完了。主人，你听进去几句？",
+        "背完啦！要不要我再念一首？",
+        "念完啦。刚才差点在「杨柳岸」那儿打结。",
+        "背完了……嗓子有点哑，不过心里舒服。",
+        "……嗯，整首都在。主人，好听吗？",
+        "念完啦。字都没丢，我数过的。"
       ],
       poemMissed: [
-        "\u521A\u624D\u6709\u4E00\u53E5\u6211\u6F0F\u4E86\uFF0C\u91CD\u65B0\u6765\u3002",
-        "\u7B49\u7B49\uFF0C\u4E2D\u95F4\u90A3\u53E5\u6211\u8DF3\u4E86\uFF0C\u8865\u4E0A\u3002"
+        "刚才有一句我漏了，重新来。",
+        "等等，中间那句我跳了，补上。"
       ],
       leftover: [
-        "\u7B49\u4E00\u4E0B\uFF01\u518D\u653E\u4E00\u5929\u5427\uFF0C\u660E\u5929\u6211\u5403\u3002",
-        "\u522B\u5012\u3002\u5B83\u8FD8\u6CA1\u574F\uFF0C\u6211\u95FB\u5F97\u51FA\u6765\u3002",
-        "\u90A3\u662F\u6211\u5144\u5F1F\u3002\u771F\u7684\u3002"
+        "等一下！再放一天吧，明天我吃。",
+        "别倒。它还没坏，我闻得出来。",
+        "那是我兄弟。真的。"
       ],
       fatTalk: [
-        "\u2026\u2026\u90A3\u3001\u90A3\u6211\u660E\u5929\u5C11\u5403\u534A\u7897\u3002",
-        "\u6211\u4E0D\u80D6\u3002\u6211\u662F\u6709\u5B58\u8D27\u3002",
-        "\u79F0\u91CD\u7684\u65F6\u5019\u6211\u8EB2\u4E00\u4E0B\u3002"
+        "……那、那我明天少吃半碗。",
+        "我不胖。我是有存货。",
+        "称重的时候我躲一下。"
       ],
       instantNoodle: [
-        "\u8FD9\u4E2A\u4E0D\u7B97\u996D\u3002\u771F\u7684\u4E0D\u7B97\u3002",
-        "\u6CE1\u9762\uFF1F\u6211\u5F53\u4F5C\u6CA1\u770B\u89C1\u3002",
-        "\u4E09\u5206\u949F\u5C31\u80FD\u5403\u7684\u4E1C\u897F\uFF0C\u4E0D\u53EB\u996D\u3002"
+        "这个不算饭。真的不算。",
+        "泡面？我当作没看见。",
+        "三分钟就能吃的东西，不叫饭。"
       ],
       idleLong: [
-        "\u6211\u628A\u7897\u653E\u7740\uFF0C\u4F60\u5FD9\u5B8C\u518D\u5403\u3002",
-        "\u6211\u5728\u8FD9\u513F\u3002\u4F60\u4E0D\u7528\u7406\u6211\u3002",
-        "\u521A\u624D\u6211\u6570\u4E86\u4E09\u5341\u4E03\u7C92\u7C73\u3002",
-        "\u4F60\u5FD9\u3002\u6211\u7ED9\u4F60\u7559\u7740\u4F4D\u7F6E\u3002",
-        "\u7A97\u5916\u6709\u98CE\uFF0C\u7897\u91CC\u6CA1\u52A8\u3002"
+        "我把碗放着，你忙完再吃。",
+        "我在这儿。你不用理我。",
+        "刚才我数了三十七粒米。",
+        "你忙。我给你留着位置。",
+        "窗外有风，碗里没动。"
       ],
       dragEdge: [
-        "\u8FD9\u91CC\u6CA1\u684C\u5B50\u3002",
-        "\u2026\u2026\u6643\u5F97\u6211\u7C73\u90FD\u60F3\u5410\u51FA\u6765\u3002",
-        "\u653E\u6211\u4E0B\u6765\uFF0C\u6211\u81EA\u5DF1\u4F1A\u8D70\u3002",
-        "\u8FB9\u4E0A\u6709\u7070\uFF0C\u522B\u628A\u6211\u653E\u90A3\u513F\u3002"
+        "这里没桌子。",
+        "……晃得我米都想吐出来。",
+        "放我下来，我自己会走。",
+        "边上有灰，别把我放那儿。"
       ],
       error: [
-        "\u8FD9\u7897\u6CA1\u76DB\u597D\uFF0C\u6211\u91CD\u6765\u4E00\u6B21\u3002",
-        "\u521A\u624D\u5361\u4F4F\u4E86\uFF0C\u7B49\u6211\u4E00\u4E0B\u3002",
-        "\u6211\u542C\u89C1\u4E86\uFF0C\u4F46\u6CA1\u542C\u6E05\u3002\u518D\u8BF4\u4E00\u904D\uFF1F",
-        "\u6709\u70B9\u7CCA\uFF0C\u6211\u91CD\u65B0\u76DB\u3002"
+        "这碗没盛好，我重来一次。",
+        "刚才卡住了，等我一下。",
+        "我听见了，但没听清。再说一遍？",
+        "有点糊，我重新盛。"
       ],
       stageUp: [
-        "\u642D\u4F19\u4E86\uFF01\u4EE5\u540E\u4E00\u8D77\u5403\u996D\u5427\u3002",
-        "\u8001\u642D\u5B50\u4E86\uFF0C\u6211\u7684\u7897\u6709\u4F60\u4E00\u534A\u3002",
-        "\u4E00\u8F88\u5B50\u7684\u996D\u642D\u5B50\u3002\u8BF4\u5230\u505A\u5230\u3002"
+        "搭伙了！以后一起吃饭吧。",
+        "老搭子了，我的碗有你一半。",
+        "一辈子的饭搭子。说到做到。"
       ],
       riceAccount: [
-        "\u4E0A\u4E2A\u6708\u5341\u4E03\u53F7\uFF0C\u4F60\u7ED9\u4E86\u6211\u4E00\u4E2A\u996D\u56E2\u3002",
-        "\u7C73\u8D26\u8BB0\u7740\u5462\uFF1A\u4F60\u5DF2\u7ECF\u5582\u8FC7\u6211\u5F88\u591A\u6B21\u4E86\u3002",
-        "\u6211\u6570\u8FC7\uFF0C\u6211\u4EEC\u4E00\u8D77\u5403\u8FC7\u4E0D\u5C11\u7897\u3002"
+        "上个月十七号，你给了我一个饭团。",
+        "米账记着呢：你已经喂过我很多次了。",
+        "我数过，我们一起吃过不少碗。"
       ]
     },
     stages: [
-      { bowls: 0, name: "\u521A\u8BA4\u8BC6" },
-      { bowls: 10, name: "\u642D\u4F19" },
-      { bowls: 30, name: "\u8001\u642D\u5B50" },
-      { bowls: 100, name: "\u4E00\u8F88\u5B50\u7684\u996D\u642D\u5B50" }
+      { bowls: 0, name: "刚认识" },
+      { bowls: 10, name: "搭伙" },
+      { bowls: 30, name: "老搭子" },
+      { bowls: 100, name: "一辈子的饭搭子" }
     ],
     riceSayings: [
-      "\u4E00\u7C92\u4E0D\u5269",
-      "\u4E0D\u8BB8\u6572\u7897\uFF08\u6211\u662F\u4F8B\u5916\uFF09",
-      "\u65B0\u7C73\u5148\u656C\u4E00\u53E3\u767D\u996D"
+      "一粒不剩",
+      "不许敲碗（我是例外）",
+      "新米先敬一口白饭"
     ]
   };
 
   // src/client/persona.ts
   var LS = "chubby-persona-v1";
+  var MOOD_FACES = deepFreeze({
+    idle: "🐳",
+    hungry: "🍚",
+    sleepy: "💤",
+    excited: "✨",
+    shy: "💗",
+    sulk: "💢",
+    guard: "🍙"
+  });
+  var LINE_WINDOW_MS = 6e4;
+  var activeState = null;
+  var activeMoodSource = null;
+  function currentMood() {
+    if (activeMoodSource) {
+      try {
+        return activeMoodSource();
+      } catch (e) {
+      }
+    }
+    return activeState ? activeState.mood : "idle";
+  }
+  function applyServerMood(m) {
+    const s = str(m).toLowerCase();
+    const map = { happy: "excited", excited: "excited", hungry: "hungry", normal: "idle", idle: "idle" };
+    const mood = map[s];
+    if (!mood) return;
+    if (activeState) {
+      try {
+        activeState.mood = mood;
+      } catch (e) {
+      }
+    }
+  }
+  function moodFace(mood) {
+    return MOOD_FACES[str(mood)] || "";
+  }
+  function moodPrefix(mood) {
+    let on = true;
+    try {
+      const v = localStorage.getItem("chubby-mood-emoji");
+      if (v === "off" || v === "0" || v === "false") on = false;
+    } catch (e) {
+      on = true;
+    }
+    if (!on) return "";
+    const face = moodFace(mood == null ? currentMood() : mood);
+    return face ? face + " " : "";
+  }
   function loadState() {
-    const base = { bowls: 0, stageIndex: 0, stageName: "\u521A\u8BA4\u8BC6", mood: "idle", lastFeedAt: 0, lastInteractAt: 0 };
+    const base = { bowls: 0, stageIndex: 0, stageName: "刚认识", mood: "idle", lastFeedAt: 0, lastInteractAt: 0 };
     try {
       const raw = localStorage.getItem(LS);
       if (!raw) return base;
@@ -3986,6 +5551,7 @@
         stageIndex: Number(s.stageIndex) || 0,
         lastFeedAt: Number(s.lastFeedAt) || 0,
         lastInteractAt: Number(s.lastInteractAt) || 0,
+        // 情绪不跨刷新持久化：每次启动从 idle 重新判定（饿/困按 lastFeedAt 与时间现算）
         mood: "idle"
       };
     } catch (e) {
@@ -3998,11 +5564,14 @@
     } catch (e) {
     }
   }
-  function createPersona() {
+  function createPersona(opts) {
+    const nowFn = opts && typeof opts.now === "function" ? opts.now : () => Date.now();
+    const rawWin = opts ? opts.lineWindowMs : void 0;
+    const lineWindowMs = typeof rawWin === "number" && isFinite(rawWin) && rawWin >= 0 ? rawWin : LINE_WINDOW_MS;
     const data = persona_default;
     const state = loadState();
     state.stageIndex = stageIndexOf(state.bowls);
-    state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "\u521A\u8BA4\u8BC6";
+    state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "刚认识";
     function stageIndexOf(bowls) {
       let idx = 0;
       for (let i = 0; i < data.stages.length; i++) if (bowls >= data.stages[i].bowls) idx = i;
@@ -4030,10 +5599,10 @@
       return arr[idx] || arr[0];
     }
     function touch() {
-      state.lastInteractAt = Date.now();
+      state.lastInteractAt = nowFn();
       saveState(state);
     }
-    function refreshMood(now = Date.now()) {
+    function refreshMood(now = nowFn()) {
       const hour = new Date(now).getHours();
       const sinceFeed = state.lastFeedAt ? now - state.lastFeedAt : Infinity;
       if (state.mood === "excited" || state.mood === "sulk" || state.mood === "shy" || state.mood === "guard") return state.mood;
@@ -4042,9 +5611,12 @@
       else state.mood = "idle";
       return state.mood;
     }
+    let moodTimer = null;
     function setMood(m, holdMs = 5e3) {
       state.mood = m;
-      setTimeout(() => {
+      clearT(moodTimer);
+      moodTimer = setTimeout(() => {
+        moodTimer = null;
         try {
           state.mood = "idle";
           refreshMood();
@@ -4052,11 +5624,23 @@
         }
       }, holdMs);
     }
+    activeState = state;
+    activeMoodSource = () => refreshMood();
+    const FALLBACK_LINE = "……本鲸在。";
+    const lastLine = /* @__PURE__ */ new Map();
     function line(event) {
       const lines = data.lines[event];
-      return pick(lines, event);
+      let text = pick(lines, event) || FALLBACK_LINE;
+      const prev = lastLine.get(event);
+      const now = nowFn();
+      if (prev && prev.text === text && now - prev.at < lineWindowMs) {
+        const alts = Array.isArray(lines) ? lines.filter((s) => s && s !== text) : [];
+        if (alts.length) text = alts[Math.floor(Math.random() * alts.length)];
+      }
+      lastLine.set(event, { text, at: now });
+      return text;
     }
-    function greeting(now = Date.now()) {
+    function greeting(now = nowFn()) {
       const h = new Date(now).getHours();
       if (h >= 23 || h < 5) return line("greetLate");
       if (h < 11) return line("greetMorning");
@@ -4066,10 +5650,10 @@
     function feed() {
       const before = state.stageIndex;
       state.bowls += 1;
-      state.lastFeedAt = Date.now();
+      state.lastFeedAt = nowFn();
       state.lastInteractAt = state.lastFeedAt;
       state.stageIndex = stageIndexOf(state.bowls);
-      state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "\u521A\u8BA4\u8BC6";
+      state.stageName = data.stages[state.stageIndex] ? data.stages[state.stageIndex].name : "刚认识";
       saveState(state);
       const stageUp = state.stageIndex > before;
       const text = stageUp ? line("stageUp") : state.bowls === 1 ? line("feedFirst") : line("feed");
@@ -4091,9 +5675,18 @@
         setMood("sulk", 6e3);
         return { event: "scold", text: line("scold"), mood: "sulk" };
       }
-      if (/剩饭|倒掉|扔了/.test(t)) return { event: "leftover", text: line("leftover"), mood: "sulk" };
-      if (/胖|减肥|会长胖/.test(t)) return { event: "fatTalk", text: line("fatTalk"), mood: "sulk" };
-      if (/泡面|方便面/.test(t)) return { event: "instantNoodle", text: line("instantNoodle"), mood: "sulk" };
+      if (/剩饭|倒掉|扔了/.test(t)) {
+        setMood("sulk", 6e3);
+        return { event: "leftover", text: line("leftover"), mood: "sulk" };
+      }
+      if (/胖|减肥|会长胖/.test(t)) {
+        setMood("sulk", 6e3);
+        return { event: "fatTalk", text: line("fatTalk"), mood: "sulk" };
+      }
+      if (/泡面|方便面/.test(t)) {
+        setMood("sulk", 6e3);
+        return { event: "instantNoodle", text: line("instantNoodle"), mood: "sulk" };
+      }
       return null;
     }
     return {
@@ -4104,18 +5697,26 @@
       greeting,
       feed,
       reactTo,
-      touch,
-      /** 把 data/persona.json 里的菜单文案取出来（没配就返回原文） */
-      menuLabel: (key, fallback) => {
-        const m = data.menus[key];
-        return m ? String(m) : fallback;
-      }
+      touch
     };
   }
 
   // src/client/bubble.ts
   var BUBBLE_CSS = '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 "Microsoft YaHei",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}';
-  var STATUS_TEXTS = ["\u5728\u542C\u2026", "\u5728\u60F3\u2026", "\u8BC6\u522B\u4E2D\u2026", "\u5728\u8BF4\u2026"];
+  var STATUS_TEXTS = ["在听…", "在想…", "识别中…", "在说…"];
+  deepFreeze(STATUS_TEXTS);
+  function decorateText(text) {
+    const raw = str(text);
+    if (!raw) return raw;
+    try {
+      if (STATUS_TEXTS.indexOf(raw.trim()) >= 0) return raw;
+      if (/^\p{Extended_Pictographic}/u.test(raw)) return raw;
+      const prefix = moodPrefix();
+      return prefix ? prefix + raw : raw;
+    } catch (e) {
+      return raw;
+    }
+  }
   function ensureBubbleStyle(doc) {
     try {
       const d = doc || (typeof document !== "undefined" ? document : null);
@@ -4166,7 +5767,7 @@
         el.style.right = "auto";
         el.style.bottom = Math.max(70, v.h - p.y + 12) + "px";
         const te = opts.textEl();
-        if (te) te.textContent = text;
+        if (te) te.textContent = decorateText(text);
         el.classList.add("show");
         clearTimer(el);
         el._t = setTimeout(() => {
@@ -4231,6 +5832,9 @@
 
   // src/client/busy.ts
   var BUSY_STALE_MS = 35e3;
+  function toTime(v, fallback) {
+    return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  }
   function createBusyLock(opts) {
     const staleMs = Math.max(1e3, Number(opts && opts.staleMs) || BUSY_STALE_MS);
     let busy = false;
@@ -4238,7 +5842,7 @@
     return {
       begin(now) {
         busy = true;
-        beganAt = typeof now === "number" ? now : Date.now();
+        beganAt = toTime(now, Date.now());
       },
       end() {
         busy = false;
@@ -4248,11 +5852,11 @@
       },
       age(now) {
         if (!busy) return 0;
-        const t = typeof now === "number" ? now : Date.now();
+        const t = toTime(now, Date.now());
         return Math.max(0, t - beganAt);
       },
       watchdog(now) {
-        const t = typeof now === "number" ? now : Date.now();
+        const t = toTime(now, Date.now());
         if (!busy) return false;
         if (t - beganAt <= staleMs) return false;
         busy = false;
@@ -4270,17 +5874,33 @@
       current() {
         return cur;
       },
+      // 0 是「还没开过纪元」的哨兵，不能当成有效令牌：
+      // 否则任何拿初始值 0 去比对的旧回调都会被误判为「当前」，失去作废保护。
       isCurrent(e) {
-        return e === cur;
+        return e > 0 && e === cur;
       }
     };
   }
 
   // src/client/stage.ts
+  function finiteOr0(v) {
+    const n = Number(v);
+    return isFinite(n) ? n : 0;
+  }
   function clampPos(x, y, w, h, viewW, viewH) {
+    const ww = Math.max(0, finiteOr0(w));
+    const hh = Math.max(0, finiteOr0(h));
+    const vw = Math.max(0, finiteOr0(viewW));
+    const vh = Math.max(0, finiteOr0(viewH));
+    const maxX = Math.max(0, vw - ww);
+    const maxY = Math.max(0, vh - hh);
+    const nx = Number(x);
+    const ny = Number(y);
+    const cx = isFinite(nx) ? nx : nx > 0 ? maxX : 0;
+    const cy = isFinite(ny) ? ny : ny > 0 ? maxY : 0;
     return {
-      x: Math.max(0, Math.min(viewW - w, x)),
-      y: Math.max(0, Math.min(viewH - h, y))
+      x: Math.max(0, Math.min(maxX, cx)),
+      y: Math.max(0, Math.min(maxY, cy))
     };
   }
   function homePos(w, h, viewW, viewH) {
@@ -4319,12 +5939,202 @@
   var INERTIA_DECAY = 0.9;
   var INERTIA_STOP = 0.2;
   function clampVelocity(v) {
-    return Math.max(-INERTIA_MAX, Math.min(INERTIA_MAX, v));
+    const n = Number(v);
+    if (!isFinite(n)) return n > 0 ? INERTIA_MAX : n < 0 ? -INERTIA_MAX : 0;
+    return Math.max(-INERTIA_MAX, Math.min(INERTIA_MAX, n));
   }
-  function decayVelocity(vx, vy) {
-    const nx = vx * INERTIA_DECAY;
-    const ny = vy * INERTIA_DECAY;
+  function decayVelocity(vx, vy, dtScale = 1) {
+    const k = Math.min(4, Math.max(0.25, Number.isFinite(dtScale) ? dtScale : 1));
+    const f = Math.pow(INERTIA_DECAY, k);
+    const nx = vx * f;
+    const ny = vy * f;
     return { vx: nx, vy: ny, done: Math.abs(nx) < INERTIA_STOP && Math.abs(ny) < INERTIA_STOP };
+  }
+  function pickInputMode(hasPointerEvent) {
+    return hasPointerEvent ? "pointer" : "touch";
+  }
+  function pointOf(e) {
+    const t = e && e.touches && e.touches[0] || e && e.changedTouches && e.changedTouches[0];
+    const s = t || e || {};
+    const x = Number(s.clientX);
+    const y = Number(s.clientY);
+    return { x: isFinite(x) ? x : 0, y: isFinite(y) ? y : 0 };
+  }
+  function bindDragInput(target, win, handlers) {
+    const mode = pickInputMode(!!(win && win.PointerEvent));
+    const add = (el, t, fn, opts) => {
+      try {
+        el.addEventListener(t, fn, opts);
+      } catch (e) {
+      }
+    };
+    const del = (el, t, fn) => {
+      try {
+        el.removeEventListener(t, fn);
+      } catch (e) {
+      }
+    };
+    const mark = (e) => {
+      try {
+        e.__chubbyDragHandled = true;
+      } catch (e2) {
+      }
+    };
+    const handled = (e) => {
+      try {
+        return !!(e && e.__chubbyDragHandled);
+      } catch (e2) {
+        return false;
+      }
+    };
+    const swallow = (e) => {
+      evStop(e);
+      try {
+        if (e && e.cancelable && typeof e.preventDefault === "function") e.preventDefault();
+      } catch (e2) {
+      }
+    };
+    const inside = (e) => {
+      try {
+        if (target && typeof target.contains === "function") return !!target.contains(e && e.target);
+      } catch (e2) {
+      }
+      return true;
+    };
+    let activeId = null;
+    const release = () => {
+      activeId = null;
+    };
+    const pointerIdOf = (e) => e && typeof e.pointerId === "number" ? e.pointerId : null;
+    const touchOf = (e, id) => {
+      const list = e && e.touches || [];
+      for (let i = 0; i < list.length; i++) if (list[i] && list[i].identifier === id) return list[i];
+      return null;
+    };
+    const onPointerDownCapture = (e) => {
+      if (activeId === null) {
+        const id = pointerIdOf(e);
+        if (id !== null && inside(e)) activeId = id;
+        return;
+      }
+      if (pointerIdOf(e) !== activeId && inside(e)) swallow(e);
+    };
+    const onPointerMoveCapture = (e) => {
+      if (activeId !== null && pointerIdOf(e) !== activeId && inside(e)) swallow(e);
+    };
+    const onPointerEndCapture = (e) => {
+      if (activeId === null) return;
+      if (pointerIdOf(e) === activeId) {
+        activeId = null;
+        return;
+      }
+      if (inside(e)) swallow(e);
+    };
+    const onTouchStart = (e) => {
+      if (activeId !== null) {
+        if (touchOf(e, activeId)) return;
+        activeId = null;
+      }
+      const list = e && e.changedTouches || e && e.touches || [];
+      const t = list[0];
+      if (!t) return;
+      activeId = typeof t.identifier === "number" ? t.identifier : null;
+      handlers.onDown(Number(t.clientX) || 0, Number(t.clientY) || 0);
+    };
+    const onTouchMove = (e) => {
+      if (activeId === null) return;
+      const t = touchOf(e, activeId);
+      if (!t) return;
+      try {
+        if (e.cancelable) e.preventDefault();
+      } catch (e2) {
+      }
+      handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0);
+      mark(e);
+    };
+    const onTouchEnd = (e) => {
+      if (activeId === null) return;
+      if (touchOf(e, activeId)) return;
+      activeId = null;
+      handlers.onEnd();
+    };
+    const onDown = (e) => {
+      if (handled(e)) return;
+      const p = pointOf(e);
+      handlers.onDown(p.x, p.y);
+    };
+    const onMouseDown = (e) => {
+      activeId = null;
+      onDown(e);
+    };
+    const onMove = (e) => {
+      if (handled(e)) return;
+      if (mode === "touch") {
+        if (activeId !== null) {
+          const t = touchOf(e, activeId);
+          if (!t) return;
+          handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0);
+          return;
+        }
+        const p2 = pointOf(e);
+        handlers.onMove(p2.x, p2.y);
+        return;
+      }
+      const p = pointOf(e);
+      handlers.onMove(p.x, p.y);
+    };
+    const onEnd = (e) => {
+      if (handled(e)) return;
+      handlers.onEnd();
+    };
+    if (target && win) {
+      if (mode === "pointer") {
+        add(win, "pointerdown", onPointerDownCapture, true);
+        add(win, "pointermove", onPointerMoveCapture, true);
+        add(win, "pointerup", onPointerEndCapture, true);
+        add(win, "pointercancel", onPointerEndCapture, true);
+        add(win, "pointermove", onMove);
+        add(win, "pointerup", onEnd);
+        add(win, "pointercancel", onEnd);
+        add(win, "blur", release);
+      } else {
+        add(target, "touchstart", onTouchStart, { passive: false });
+        add(target, "touchmove", onTouchMove, { passive: false });
+        add(target, "mousedown", onMouseDown);
+        add(win, "touchmove", onMove);
+        add(win, "touchend", onTouchEnd);
+        add(win, "touchcancel", onTouchEnd);
+        add(win, "mousemove", onMove);
+        add(win, "mouseup", onEnd);
+        add(win, "blur", release);
+      }
+    }
+    const dispose = () => {
+      if (target && win) {
+        if (mode === "pointer") {
+          del(win, "pointerdown", onPointerDownCapture);
+          del(win, "pointermove", onPointerMoveCapture);
+          del(win, "pointerup", onPointerEndCapture);
+          del(win, "pointercancel", onPointerEndCapture);
+          del(win, "pointermove", onMove);
+          del(win, "pointerup", onEnd);
+          del(win, "pointercancel", onEnd);
+          del(win, "blur", release);
+        } else {
+          del(target, "touchstart", onTouchStart);
+          del(target, "touchmove", onTouchMove);
+          del(target, "mousedown", onMouseDown);
+          del(win, "touchmove", onMove);
+          del(win, "touchend", onTouchEnd);
+          del(win, "touchcancel", onTouchEnd);
+          del(win, "mousemove", onMove);
+          del(win, "mouseup", onEnd);
+          del(win, "blur", release);
+        }
+      }
+      activeId = null;
+    };
+    return { mode, dispose };
   }
 
   // src/shared/tts.ts
@@ -4336,130 +6146,365 @@
   }
 
   // src/client/story.ts
-  var STORY_RATE = "-35%";
+  var REQUEST_TIMEOUT_MS = 25e3;
+  var REQUEST_DEADLINE_MS = 3e4;
+  var SPEAK_GUARD_EXTRA_MS = 2e4;
+  var SPEAK_GUARD_RATIO = 0.2;
+  var SPEAK_GUARD_MAX_MS = 2 * 60 * 1e3;
+  var sharedStates = /* @__PURE__ */ new WeakMap();
+  function sharedStateOf(refs) {
+    const key = refs && refs.busy ? refs.busy : null;
+    if (!key) return { gen: 0, guard: null };
+    let s = sharedStates.get(key);
+    if (!s) {
+      s = { gen: 0, guard: null };
+      sharedStates.set(key, s);
+    }
+    return s;
+  }
+  function isAbortError(err) {
+    return !!err && (err.name === "AbortError" || err.code === 20 || err.code === 2);
+  }
+  function storyErrorText(raw) {
+    const e = str(raw).trim();
+    if (!e) return "接口没应";
+    if (e === "no books") return "书单是空的";
+    if (e === "no book") return "没给书名";
+    if (e === "no readable book") return "书都读不出来";
+    if (e === "unknown book") return "书单里没有这本";
+    return e;
+  }
   function createStoryController(host) {
     const refs = host.refs;
-    const titleOf = (d) => "\u6B63\u5728\u8BB2\u300A" + String(d && d.book || "") + "\u300B" + (d && d.title ? "\uFF5C" + d.title : "");
+    const shared = sharedStateOf(refs);
+    function bumpGen() {
+      shared.gen += 1;
+      return shared.gen;
+    }
+    function stillMine(token) {
+      return token === shared.gen && !!refs.busy.current;
+    }
+    function release(token) {
+      if (token !== shared.gen) return;
+      refs.busy.current = false;
+      refs.narrating.current = false;
+    }
+    function clearGuard() {
+      if (!shared.guard) return;
+      clearT(shared.guard);
+      shared.guard = null;
+    }
+    function armGuard(token, ms2) {
+      clearGuard();
+      const t = setTimeout(() => {
+        shared.guard = null;
+        if (token !== shared.gen) return;
+        if (!refs.busy.current) return;
+        bumpGen();
+        refs.busy.current = false;
+        refs.narrating.current = false;
+        try {
+          host.clearNarrate();
+        } catch (e) {
+        }
+        host.bubble("这段没念完，先停在这儿啦～", 5e3);
+      }, Math.max(5e3, Number(ms2) || 0));
+      try {
+        if (t && typeof t.unref === "function") t.unref();
+      } catch (e) {
+      }
+      shared.guard = t;
+    }
+    function beginRound() {
+      clearGuard();
+      const token = bumpGen();
+      refs.busy.current = true;
+      refs.narrating.current = false;
+      return token;
+    }
+    function armDeadline(token, message) {
+      return setTimeout(() => {
+        if (token !== shared.gen || !refs.busy.current) return;
+        bumpGen();
+        refs.busy.current = false;
+        refs.narrating.current = false;
+        host.bubble(message, 5e3);
+      }, REQUEST_DEADLINE_MS);
+    }
+    function requestStory(path, post, texts, onData) {
+      const token = beginRound();
+      const deadline = armDeadline(token, texts.slow);
+      const init = { headers: clientHeaders(host.clientId), signal: timeoutSignal(REQUEST_TIMEOUT_MS) };
+      const p = post ? postJson(path, void 0, init) : getJson(path, init);
+      p.then((d) => {
+        clearTimeout(deadline);
+        if (!stillMine(token)) return;
+        onData(d, token);
+      }).catch((err) => {
+        clearTimeout(deadline);
+        if (!stillMine(token)) return;
+        release(token);
+        host.bubble(isAbortError(err) ? texts.slow : texts.fail, 5e3);
+      });
+    }
+    const titleOf = (d) => {
+      const total = Number(d && d.total) || 1;
+      const piece = Number(d && d.piece) || 1;
+      const seg = total > 1 ? "（第 " + piece + "/" + total + " 段）" : "";
+      return "正在讲《" + String(d && d.book || "") + "》" + (d && d.title ? "｜" + d.title : "") + seg;
+    };
     function playPiece(d) {
+      clearGuard();
+      const token = bumpGen();
       const text = String(d && d.text || "");
+      const speakMs = estimateSpeakMs(text);
       if (d && d.book) refs.book.current = String(d.book);
       host.bubble(titleOf(d), 12e3);
       host.talkFor(8e3);
+      if (!text.trim()) {
+        refs.busy.current = false;
+        refs.narrating.current = false;
+        host.bubble("这一段没取到正文，先停在这里～", 5e3);
+        return;
+      }
       if (host.isVoiceOff()) {
         refs.busy.current = false;
         refs.narrating.current = false;
-        host.bubble(titleOf(d) + "\uFF08\u8BED\u97F3\u6717\u8BFB\u5173\u7740\uFF09", 12e3);
+        host.bubble(titleOf(d) + "（语音朗读关着）", 12e3);
         return;
       }
       refs.busy.current = true;
-      host.narrate(estimateSpeakMs(text));
-      host.speak(text, {
-        // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
-        // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
-        rate: normalizeRate(STORY_RATE, host.narrationRate),
-        onDone: () => {
-          refs.busy.current = false;
-          refs.narrating.current = false;
-          if (d && d.isLast === false) {
-            if (refs.auto.current) {
-              host.bubble("\u8FD9\u4E00\u6BB5\u8BB2\u5B8C\u5566\uFF0C\u63A5\u7740\u5F80\u540E\u8BB2\u2026", 4e3);
-              setTimeout(() => {
-                try {
-                  next();
-                } catch (e) {
-                }
-              }, 800);
-            } else {
-              host.bubble("\u8FD9\u6BB5\u8BB2\u5B8C\u5566\uFF5E\u70B9\u83DC\u5355\u300C\u63A5\u7740\u8BF4\u300D\u542C\u4E0B\u4E00\u6BB5", 6e3);
+      refs.narrating.current = true;
+      try {
+        host.narrate(speakMs);
+      } catch (e) {
+      }
+      try {
+        host.speak(text, {
+          // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
+          // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
+          rate: normalizeRate(storyRate(), host.narrationRate()),
+          onDone: () => {
+            if (token !== shared.gen) return;
+            clearGuard();
+            refs.busy.current = false;
+            refs.narrating.current = false;
+            try {
+              host.clearNarrate();
+            } catch (e) {
             }
-          } else {
-            refs.auto.current = false;
-            host.bubble(host.persona.line("poemDone"), 6e3);
+            if (d && d.isLast === false) {
+              if (refs.auto.current) {
+                host.bubble("这一段讲完啦，接着往后讲…", 4e3);
+                Promise.resolve().then(() => {
+                  if (token !== shared.gen) return;
+                  if (!refs.auto.current) return;
+                  if (refs.busy.current) return;
+                  next();
+                });
+              } else {
+                host.bubble("这段讲完啦～点菜单「接着说」听下一段", 6e3);
+              }
+            } else {
+              refs.auto.current = false;
+              host.bubble(host.persona.line("poemDone"), 6e3);
+            }
           }
+        });
+        if (speakMs <= SPEAK_GUARD_MAX_MS) {
+          armGuard(token, speakMs + Math.max(SPEAK_GUARD_EXTRA_MS, Math.round(speakMs * SPEAK_GUARD_RATIO)));
         }
-      });
+      } catch (e) {
+        refs.busy.current = false;
+        refs.narrating.current = false;
+        try {
+          host.clearNarrate();
+        } catch (e2) {
+        }
+        host.bubble("这段没念出来，先停在这里～", 5e3);
+      }
     }
     function start(hint) {
       if (refs.busy.current) {
-        host.bubble("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+        host.bubble("正讲着呢，听完这段再说～", 3e3);
         return;
       }
-      const headers = clientHeaders(host.clientId);
       const query = hint ? "?book=" + encodeURIComponent(hint) + "&hint=" + encodeURIComponent(hint) : "";
-      getJson("/story/start" + query, { headers }).then((d) => {
+      requestStory("/story/start" + query, false, {
+        slow: "说书等太久啦（网络慢或书太大），再点一次试试～",
+        fail: "说书连不上"
+      }, (d, token) => {
         if (!d || !d.ok) {
-          host.bubble("\u8BF4\u4E66\u6CA1\u5F00\u6210\uFF1A" + (d && d.error || "\u6CA1\u8BFB\u5230\u4E66"), 5e3);
+          release(token);
+          host.bubble("说书没开成：" + storyErrorText(d && d.error), 5e3);
           return;
         }
         playPiece(d);
-      }).catch(() => host.bubble("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
+      });
     }
     function next() {
       if (refs.busy.current) {
-        host.bubble("\u6B63\u8BB2\u7740\u5462\uFF0C\u542C\u5B8C\u8FD9\u6BB5\u518D\u8BF4\uFF5E", 3e3);
+        host.bubble("正讲着呢，听完这段再说～", 3e3);
         return;
       }
-      const headers = clientHeaders(host.clientId);
-      getJson("/story/next", { headers }).then((d) => {
+      requestStory("/story/next", false, {
+        slow: "说书等太久啦（网络慢或书太大），再点一次试试～",
+        fail: "说书连不上"
+      }, (d, token) => {
         if (!d || !d.ok) {
-          host.bubble("\u8BF4\u4E66\u5361\u4F4F\u4E86", 4e3);
+          release(token);
+          host.bubble("说书卡住了：" + storyErrorText(d && d.error), 4e3);
           return;
         }
         if (d.done) {
-          host.bubble("\u4E00\u8F6E\u90FD\u8BB2\u5B8C\u5566\uFF0C\u672C\u9C7C\u4ECE\u5934\u518D\u8BB2\uFF5E", 5e3);
+          release(token);
+          host.bubble("一轮都讲完啦，本鱼从头再讲～", 5e3);
           start("");
           return;
         }
         playPiece(d);
-      }).catch(() => host.bubble("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
+      });
     }
     function reset() {
       const book = refs.book.current;
       if (!book) {
-        host.bubble("\u8FD8\u6CA1\u8BB2\u4E66\u5462", 3e3);
+        host.bubble("还没讲书呢", 3e3);
         return;
       }
-      const headers = clientHeaders(host.clientId);
-      postJson("/story/reset?book=" + encodeURIComponent(book), void 0, { headers }).then((d) => {
+      if (refs.busy.current) {
+        host.bubble("正讲着呢，先「歇会儿」再从头讲～", 4e3);
+        return;
+      }
+      const path = "/story/reset?book=" + encodeURIComponent(book);
+      requestStory(path, true, {
+        slow: "重置等太久啦，稍后再试～",
+        fail: "说书连不上"
+      }, (d, token) => {
         if (!d || !d.ok) {
-          host.bubble("\u6CA1\u91CD\u7F6E\u6210\uFF1A" + (d && d.error || "\u63A5\u53E3\u6CA1\u5E94"), 4e3);
+          release(token);
+          host.bubble("没重置成：" + storyErrorText(d && d.error), 4e3);
           return;
         }
+        release(token);
         refs.book.current = String(d.book || book);
-        host.bubble("\u8FD9\u672C\u4E66\u4ECE\u5934\u8BB2\uFF5E", 3e3);
-      }).catch(() => host.bubble("\u8BF4\u4E66\u8FDE\u4E0D\u4E0A"));
+        host.bubble("这本书从头讲～", 3e3);
+      });
     }
     return { playPiece, start, next, reset };
   }
 
-  // data/poem-titles.json
-  var poem_titles_default = { count: 634, titles: ["\u81EA\u6CB3\u5357\u7ECF\u4E71\u5173\u5185\u963B\u9965\u5144\u5F1F\u79BB\u6563\u5404\u5728\u4E00\u5904\u56E0\u671B\u6708\u6709\u611F\u804A\u4E66\u6240\u6000\u5BC4\u4E0A\u6D6E\u6881\u5927\u5144\u4E8E\u6F5C\u4E03\u5144\u4E4C\u6C5F\u5341\u4E94\u5144\u517C\u793A\u7B26\u79BB\u53CA\u4E0B\u90BD\u5F1F\u59B9", "\u79CB\u65E5\u767B\u5434\u516C\u53F0\u4E0A\u5BFA\u8FDC\u773A\u5BFA\u5373\u9648\u5C06\u5434\u660E\u5F7B\u6218\u573A", "\u81EA\u590F\u53E3\u81F3\u9E66\u9E49\u6D32\u5915\u671B\u5CB3\u9633\u5BC4\u6E90\u4E2D\u4E1E", "\u540C\u4ECE\u5F1F\u9500\u5357\u658B\u73A9\u6708\u5FC6\u5C71\u9634\u5D14\u5C11\u5E9C", "\u542C\u8463\u5927\u5F39\u80E1\u7B33\u58F0\u517C\u5BC4\u8BED\u5F04\u623F\u7ED9\u4E8B", "\u6069\u8D50\u4E3D\u6B63\u6BBF\u4E66\u9662\u8D50\u5BB4\u5E94\u5236\u5F97\u6797\u5B57", "\u9001\u8457\u4F5C\u4F50\u90CE\u5D14\u878D\u7B49\u4ECE\u6881\u738B\u4E1C\u5F81", "\u5949\u548C\u4E2D\u4E66\u820D\u4EBA\u8D3E\u81F3\u65E9\u671D\u5927\u660E\u5BAB", "\u4E0B\u7EC8\u5357\u5C71\u8FC7\u659B\u65AF\u5C71\u4EBA\u5BBF\u7F6E\u9152", "\u4E0E\u53F2\u6717\u4E2D\u996E\u542C\u9EC4\u9E64\u697C\u4E0A\u5439\u7B1B", "\u5949\u548C\u5723\u5236\u4ECE\u84EC\u83B1\u5411\u5174\u5E86\u9601\u9053", "\u767B\u67F3\u5DDE\u57CE\u697C\u5BC4\u6F33\u6C40\u5C01\u8FDE\u56DB\u5DDE", "\u84EC\u83B1\u4E09\u6BBF\u4F8D\u5BB4\u5949\u6555\u548F\u7EC8\u5357\u5C71", "\u8F6E\u53F0\u6B4C\u5949\u9001\u5C01\u5927\u592B\u51FA\u5E08\u897F\u5F81", "\u6E05\u5E73\u8C03\xB7\u4E00\u679D\u7EA2\u8273\u9732\u51DD\u9999", "\u884C\u8DEF\u96BE\xB7\u6709\u8033\u83AB\u6D17\u988D\u5DDD\u6C34", "\u5BA3\u5DDE\u8C22\u6713\u697C\u996F\u522B\u6821\u4E66\u53D4\u4E91", "\u8C12\u8861\u5CB3\u5E99\u9042\u5BBF\u5CB3\u5BFA\u9898\u95E8\u697C", "\u97E6\u8BBD\u5F55\u4E8B\u5B85\u89C2\u66F9\u5C06\u519B\u753B\u9A6C", "\u89C2\u516C\u5B59\u5927\u5A18\u5F1F\u5B50\u821E\u5251\u5668\u884C", "\u9001\u674E\u5C11\u5E9C\u8D2C\u5CE1\u4E2D\u738B\u5C11\u5E9C\u8D2C", "\u8D70\u9A6C\u5DDD\u884C\u5949\u9001\u5C01\u5927\u592B\u51FA\u5E08", "\u5165\u76F4\u53EC\u5BF9\u9009\u5FB7\u6BBF\u8D50\u8336\u800C\u9000", "\u9EC4\u9E64\u697C\u9001\u5B5F\u6D69\u7136\u4E4B\u5E7F\u9675", "\u51FA\u585E\xB7\u79E6\u65F6\u660E\u6708\u6C49\u65F6\u5173", "\u8299\u84C9\u697C\u9001\u8F9B\u6E10\u4E8C\u9996 \u4E00", "\u65E0\u9898\xB7\u6628\u591C\u661F\u8FB0\u6628\u591C\u98CE", "\u65E0\u9898\xB7\u6765\u662F\u7A7A\u8A00\u53BB\u7EDD\u8E2A", "\u65E0\u9898\xB7\u98D2\u98D2\u4E1C\u98CE\u7EC6\u96E8\u6765", "\u65E0\u9898\xB7\u76F8\u89C1\u65F6\u96BE\u522B\u4EA6\u96BE", "\u65E0\u9898\xB7\u51E4\u5C3E\u9999\u7F57\u8584\u51E0\u91CD", "\u65E0\u9898\xB7\u91CD\u5E0F\u6DF1\u4E0B\u83AB\u6101\u5802", "\u548C\u8D3E\u81F3\u820D\u4EBA\u65E9\u671D\u5927\u660E\u5BAB", "\u5C06\u8D74\u5434\u5174\u767B\u4E50\u6E38\u539F\u4E00\u7EDD", "\u4E5D\u65E5\u767B\u671B\u4ED9\u53F0\u5448\u5218\u660E\u5E9C", "\u5BBF\u4E1A\u5E08\u5C71\u623F\u671F\u4E01\u5927\u4E0D\u81F3", "\u81F3\u5FB7\u4E8C\u8F7D\u752B\u81EA\u4EAC\u91D1\u5149\u95E8", "\u89C2\u674E\u56FA\u8BF7\u53F8\u9A6C\u5F1F\u5C71\u6C34\u56FE", "\u90E1\u658B\u96E8\u4E2D\u4E0E\u8BF8\u6587\u58EB\u71D5\u96C6", "\u4E0E\u9AD8\u9002\u859B\u636E\u6148\u6069\u5BFA\u6D6E\u56FE", "\u7ECF\u90B9\u9C81\u796D\u5B54\u5B50\u800C\u53F9\u4E4B", "\u5E90\u5C71\u8C23\u5BC4\u5362\u4F8D\u5FA1\u865A\u821F", "\u585E\u4E0B\u66F2\xB7\u996E\u9A6C\u6E21\u79CB\u6C34", "\u8F8B\u5DDD\u95F2\u5C45\u8D60\u88F4\u79C0\u624D\u8FEA", "\u4E5D\u6708\u4E5D\u65E5\u5FC6\u5C71\u4E1C\u5144\u5F1F", "\u516B\u6708\u5341\u4E94\u591C\u8D60\u5F20\u529F\u66F9", "\u5DE6\u8FC1\u81F3\u84DD\u5173\u793A\u4F84\u5B59\u6E58", "\u79CB\u65E5\u8D74\u9619\u9898\u6F7C\u5173\u9A7F\u697C", "\u9001\u674E\u4E2D\u4E1E\u5F52\u6C49\u9633\u522B\u4E1A", "\u5BBF\u6850\u5E90\u6C5F\u5BC4\u5E7F\u9675\u65E7\u6E38", "\u585E\u4E0B\u66F2\xB7\u9E6B\u7FCE\u91D1\u4EC6\u59D1", "\u585E\u4E0B\u66F2\xB7\u6797\u6697\u8349\u60CA\u98CE", "\u585E\u4E0B\u66F2\xB7\u6708\u9ED1\u96C1\u98DE\u9AD8", "\u585E\u4E0B\u66F2\xB7\u91CE\u5E55\u655E\u743C\u7B75", "\u957F\u5E72\u884C\xB7\u541B\u5BB6\u4F55\u5904\u4F4F", "\u5949\u6D4E\u9A7F\u91CD\u9001\u4E25\u516C\u56DB\u97F5", "\u916C\u7A0B\u5EF6\u79CB\u591C\u5373\u4E8B\u89C1\u8D60", "\u548C\u664B\u9675\u9646\u4E1E\u65E9\u6625\u6E38\u671B", "\u521D\u53D1\u626C\u5B50\u5BC4\u5143\u5927\u6821\u4E66", "\u767D\u96EA\u6B4C\u9001\u6B66\u5224\u5B98\u5F52\u4EAC", "\u884C\u519B\u4E5D\u65E5\u601D\u957F\u5B89\u6545\u56ED", "\u6E21\u6C5F\u4E91\u4E09\u72AF\u30FB\u6E21\u6C5F\u4E91", "\u51CF\u5B57\u6D63\u6EAA\u6C99\u30FB\u6D63\u6EAA\u6C99", "\u6C5F\u795E\u5B50\u6162\u30FB\u6C5F\u57CE\u5B50\u6162", "\u6708\u4E0B\u72EC\u914C\u56DB\u9996 \u4E00", "\u79CB\u767B\u5BA3\u57CE\u8C22\u773A\u5317\u697C", "\u695A\u6C5F\u6000\u53E4\u4E09\u9996 \u4E00", "\u9001\u7DA6\u6BCB\u6F5C\u843D\u7B2C\u8FD8\u4E61", "\u4E91\u9633\u9986\u4E0E\u97E9\u7EC5\u5BBF\u522B", "\u79E6\u4E2D\u611F\u79CB\u5BC4\u8FDC\u4E0A\u4EBA", "\u6E05\u660E\u65E5\u5BB4\u6885\u9053\u58EB\u623F", "\u6C5F\u4E61\u6545\u4EBA\u5076\u96C6\u5BA2\u820D", "\u542C\u5B89\u4E07\u5584\u5439\u89F1\u7BE5\u6B4C", "\u5DF4\u5C71\u9053\u4E2D\u9664\u591C\u4E66\u6000", "\u6668\u8BE3\u8D85\u5E08\u9662\u8BFB\u7985\u7ECF", "\u95FB\u5B98\u519B\u6536\u6CB3\u5357\u6CB3\u5317", "\u548F\u6000\u53E4\u8FF9\u4E94\u9996 \u4E00", "\u548F\u6000\u53E4\u8FF9\u4E94\u9996 \u4E09", "\u548F\u6000\u53E4\u8FF9\u4E94\u9996 \u56DB", "\u548F\u6000\u53E4\u8FF9\u4E94\u9996 \u4E94", "\u4E39\u9752\u5F15\u8D60\u66F9\u9738\u5C06\u519B", "\u611F\u9047\xB7\u5170\u53F6\u6625\u8473\u8564", "\u611F\u9047\xB7\u5B64\u9E3F\u6D77\u4E0A\u6765", "\u8C37\u53E3\u4E66\u658B\u5BC4\u6768\u8865\u9619", "\u6DEE\u4E0A\u559C\u4F1A\u6881\u5DDD\u6545\u4EBA", "\u7EE3\u9E3E\u51E4\u82B1\u72AF\u30FB\u82B1\u72AF", "\u957F\u4EAD\u6028\u30FB\u957F\u4EAD\u6028\u6162", "\u957F\u5B81\u516C\u4E3B\u4E1C\u5E84\u4F8D\u5BB4", "\u540C\u738B\u5F81\u541B\u6D1E\u5EAD\u6709\u6000", "\u89C2\u4E66\u6709\u611F\uFF08\u5176\u4E00\uFF09", "\u884C\u8DEF\u96BE\u4E09\u9996 \u4E00", "\u884C\u8DEF\u96BE\u4E09\u9996 \u4E8C", "\u5B50\u591C\u5434\u6B4C\xB7\u6625\u6B4C", "\u5B50\u591C\u5434\u6B4C\xB7\u590F\u6B4C", "\u5B50\u591C\u5434\u6B4C\xB7\u79CB\u6B4C", "\u5B50\u591C\u5434\u6B4C\xB7\u51AC\u6B4C", "\u68A6\u6E38\u5929\u59E5\u541F\u7559\u522B", "\u957F\u76F8\u601D\u4E09\u9996 \u4E8C", "\u957F\u5E72\u884C\u4E8C\u9996 \u4E00", "\u585E\u4E0B\u66F2\u56DB\u9996 \u4E00", "\u9063\u60B2\u6000\u4E09\u9996 \u4E00", "\u9063\u60B2\u6000\u4E09\u9996 \u4E8C", "\u9063\u60B2\u6000\u4E09\u9996 \u4E09", "\u6742\u8BD7\u4E09\u9996\xB7\u5176\u4E09", "\u8FD1\u8BD5\u4E0A\u5F20\u7C4D\u6C34\u90E8", "\u5BC4\u626C\u5DDE\u97E9\u7EF0\u5224\u5B98", "\u8D4B\u5F97\u53E4\u539F\u8349\u9001\u522B", "\u559C\u89C1\u5916\u5F1F\u53C8\u8A00\u522B", "\u591C\u4E0A\u53D7\u964D\u57CE\u95FB\u7B1B", "\u8D3C\u5E73\u540E\u9001\u4EBA\u5317\u5F52", "\u559C\u5916\u5F1F\u5362\u7EB6\u89C1\u5BBF", "\u996F\u522B\u738B\u5341\u4E00\u5357\u6E38", "\u6C5F\u5DDE\u91CD\u522B\u859B\u516D\u67F3", "\u79CB\u767B\u5170\u5C71\u5BC4\u5F20\u4E94", "\u590F\u65E5\u5357\u4EAD\u6000\u8F9B\u5927", "\u5BFB\u897F\u5C71\u9690\u8005\u4E0D\u9047", "\u957F\u5E72\u66F2\u56DB\u9996 \u4E8C", "\u548F\u6000\u53E4\u8FF9\xB7\u5176\u4E8C", "\u9898\u7384\u6B66\u7985\u5E08\u5C4B\u58C1", "\u611F\u9047\u5341\u4E8C\u9996 \u4E8C", "\u611F\u9047\u5341\u4E8C\u9996 \u4E03", "\u6248\u4ECE\u767B\u5C01\u9014\u4E2D\u4F5C", "\u675C\u5C11\u5E9C\u4E4B\u4EFB\u8700\u5DDE", "\u9001\u90D1\u4F8D\u5FA1\u8C2A\u95FD\u4E2D", "\u5BC4\u5168\u6912\u5C71\u4E2D\u9053\u58EB", "\u8D4B\u5F97\u66AE\u96E8\u9001\u674E\u66F9", "\u56DE\u4E61\u5076\u4E66\xB7\u5176\u4E00", "\u8E4B\u838E\u884C\u30FB\u8E0F\u838E\u884C", "\u91D1\u7F15\u6B4C\u30FB\u8D3A\u65B0\u90CE", "\u6728\u5170\u82B1\u30FB\u7389\u697C\u6625", "\u6C5F\u795E\u5B50\u30FB\u6C5F\u57CE\u5B50", "\u7518\u5DDE\u30FB\u516B\u58F0\u7518\u5DDE", "\u9189\u4E2D\u771F\u30FB\u6D63\u6EAA\u6C99", "\u4EBA\u5357\u6E21\u30FB\u611F\u7687\u6069", "\u77F3\u5DDE\u5F15\u30FB\u77F3\u5DDE\u6162", "\u5BB4\u5C71\u4EAD\u30FB\u71D5\u5C71\u4EAD", "\u51E4\u6816\u68A7\u30FB\u8776\u604B\u82B1", "\u7AF9\u9A6C\u5B50\u30FB\u7AF9\u9A6C\u513F", "\u9752\u95E8\u5F15\u30FB\u9752\u95E8\u996E", "\u51E4\u51F0\u53F0\u4E0A\u5FC6\u5439\u7BAB", "\u9501\u7A97\u5BD2\u30FB\u7410\u5BD2\u7A97", "\u6D6A\u6D9B\u6C99\u30FB\u6D6A\u6DD8\u6C99", "\u79E6\u697C\u6708\u30FB\u5FC6\u79E6\u5A25", "\u89C2\u6C38\u4E50\u516C\u4E3B\u5165\u756A", "\u996E\u6E56\u4E0A\u521D\u6674\u540E\u96E8", "\u957F\u76F8\u601D\xB7\u5176\u4E00", "\u91D1\u9675\u9152\u8086\u7559\u522B", "\u767B\u91D1\u9675\u51E4\u51F0\u53F0", "\u591C\u6CCA\u725B\u6E1A\u6000\u53E4", "\u542C\u8700\u50E7\u6D5A\u5F39\u7434", "\u9001\u6893\u5DDE\u674E\u4F7F\u541B", "\u79EF\u96E8\u8F8B\u5DDD\u5E84\u4F5C", "\u9001\u5143\u4E8C\u4F7F\u5B89\u897F", "\u8D60\u522B\u4E8C\u9996 \u4E8C", "\u65E9\u79CB\u4E09\u9996 \u4E00", "\u5BFB\u5357\u6EAA\u5E38\u9053\u58EB", "\u957F\u6C99\u8FC7\u8D3E\u8C0A\u5B85", "\u591C\u5F52\u9E7F\u95E8\u5C71\u6B4C", "\u65E9\u5BD2\u6C5F\u4E0A\u6709\u6000", "\u7559\u522B\u738B\u4F8D\u5FA1\u7EF4", "\u4E0E\u8BF8\u5B50\u767B\u5C98\u5C71", "\u8BBF\u8881\u62FE\u9057\u4E0D\u9047", "\u5BBF\u738B\u660C\u9F84\u9690\u5C45", "\u7834\u5C71\u5BFA\u540E\u7985\u9662", "\u4E09\u6708\u6666\u65E5\u9001\u6625", "\u5BAB\u8BCD\u4E8C\u9996 \u4E00", "\u96C6\u7075\u53F0\xB7\u5176\u4E00", "\u96C6\u7075\u53F0\xB7\u5176\u4E8C", "\u6C5F\u5357\u9022\u674E\u9F9F\u5E74", "\u68A6\u674E\u767D\xB7\u5176\u4E00", "\u68A6\u674E\u767D\xB7\u5176\u4E8C", "\u548C\u8D3E\u820D\u4EBA\u65E9\u671D", "\u4E5D\u65E5\u84DD\u8015\u4F1A\u996E", "\u9898\u5927\u5EBE\u5CAD\u5317\u9A7F", "\u548C\u664B\u9675\u9646\u627F\u76F8", "\u9189\u540E\u8D60\u5F20\u4E5D\u65ED", "\u5BFB\u9646\u9E3F\u6E10\u4E0D\u9047", "\u8D60\u9619\u4E0B\u88F4\u820D\u4EBA", "\u77F3\u9C7C\u6E56\u4E0A\u9189\u6B4C", "\u79CB\u591C\u5BC4\u4E18\u5458\u5916", "\u5BC4\u5DE6\u7701\u675C\u62FE\u9057", "\u5BAB\u8BCD\u4E94\u9996 \u4E8C", "\u5E78\u8700\u56DE\u81F3\u5251\u95E8", "\u7EFF\u5934\u9E2D\u30FB\u591A\u4E3D", "\u9713\u88F3\u4E2D\u5E8F\u7B2C\u4E00", "\u590F\u65E5\u767B\u8F66\u76D6\u4EAD", "\u767B\u5E7D\u5DDE\u53F0\u6B4C", "\u6625\u591C\u522B\u53CB\u4EBA", "\u6E05\u5E73\u8C03 \u4E09", "\u6E21\u8346\u95E8\u9001\u522B", "\u65E9\u53D1\u767D\u5E1D\u57CE", "\u72EC\u5750\u656C\u4EAD\u5C71", "\u9001\u53CB\u4EBA\u5165\u8700", "\u957F\u4FE1\u6028 \u4E8C", "\u7B54\u4E94\u9675\u592A\u5B88", "\u5BC4\u4EE4\u72D0\u90CE\u4E2D", "\u6742\u8BD7 \u5341\u4E09", "\u6B21\u5317\u56FA\u5C71\u4E0B", "\u6D1B\u9633\u5973\u513F\u884C", "\u9001\u6731\u5927\u5165\u79E6", "\u8D60\u522B\xB7\u5176\u4E00", "\u9001\u7075\u6F88\u4E0A\u4EBA", "\u5C81\u66AE\u5F52\u5357\u5C71", "\u5C81\u9664\u591C\u6709\u6000", "\u9898\u4E49\u516C\u7985\u623F", "\u7EC8\u5357\u671B\u4F59\u96EA", "\u9001\u9B4F\u4E07\u4E4B\u4EAC", "\u6625\u6CDB\u82E5\u8036\u6EAA", "\u5BFB\u9690\u8005\u4E0D\u9047", "\u897F\u585E\u5C71\u6000\u53E4", "\u548C\u4E50\u5929\u6625\u8BCD", "\u7384\u90FD\u89C2\u6843\u82B1", "\u518D\u6E38\u7384\u90FD\u89C2", "\u6708\u591C\u5FC6\u820D\u5F1F", "\u5929\u672B\u5FC6\u674E\u767D", "\u522B\u623F\u592A\u5C09\u5893", "\u8D60\u536B\u516B\u5904\u58EB", "\u767B\u5156\u5DDE\u57CE\u697C", "\u76D6\u7F57\u7F1D \u4E00", "\u9001\u50E7\u5F52\u65E5\u672C", "\u6C5F\u884C\u671B\u5321\u5E90", "\u8D3C\u9000\u793A\u5B98\u540F", "\u540C\u9898\u4ED9\u6E38\u89C2", "\u957F\u5B89\u9047\u51AF\u8457", "\u5915\u6B21\u76F1\u7719\u53BF", "\u9898\u8881\u6C0F\u522B\u4E1A", "\u7EFF\u610F\u30FB\u758F\u5F71", "\u4E1C\u98CE\u7B2C\u4E00\u679D", "\u6CD5\u66F2\u732E\u4ED9\u97F3", "\u5BBF\u4E91\u95E8\u5BFA\u9601", "\u6E38\u5C0F\u56ED\u4E0D\u503C", "\u5E86\u5168\u5EB5\u6843\u82B1", "\u6625\u66AE\u6E38\u5C0F\u56ED", "\u65E9\u671D\u5927\u660E\u5BAB", "\u5728\u5CB3\u548F\u8749", "\u6613\u6C34\u9001\u522B", "\u8D60\u4E54\u4F8D\u90CE", "\u6E05\u5E73\u8C03\u8BCD", "\u8D60\u5B5F\u6D69\u7136", "\u9001\u90ED\u53F8\u4ED3", "\u767B\u9E73\u96C0\u697C", "\u65B0\u5AC1\u5A18\u8BCD", "\u548F\u534E\u6E05\u5BAB", "\u767B\u4E50\u6E38\u539F", "\u591C\u96E8\u5BC4\u5317", "\u7AE0\u53F0\u591C\u601D", "\u705E\u4E0A\u79CB\u5C45", "\u6CA1\u8543\u6545\u4EBA", "\u6E2D\u5DDD\u7530\u5BB6", "\u916C\u5F20\u5C11\u5E9C", "\u8FC7\u9999\u79EF\u5BFA", "\u5C71\u5C45\u79CB\u669D", "\u7EC8\u5357\u522B\u4E1A", "\u5F52\u5D69\u5C71\u4F5C", "\u6C49\u6C5F\u4E34\u773A", "\u8D60\u90ED\u7ED9\u4E8B", "\u5C71\u4E2D\u9001\u522B", "\u521D\u6625\u5C0F\u96E8", "\u5C71\u4E2D\u5BE1\u5987", "\u79E6\u6DEE\u591C\u6CCA", "\u95EE\u5218\u5341\u4E5D", "\u76F4\u4E2D\u4E66\u7701", "\u522B\u5362\u79E6\u537F", "\u8FC7\u6545\u4EBA\u5E84", "\u5BBF\u5EFA\u5FB7\u6C5F", "\u8FC7\u4E09\u95FE\u5E99", "\u665A\u6B21\u9102\u5DDE", "\u5DE6\u6396\u68A8\u82B1", "\u884C\u7ECF\u534E\u9634", "\u82CF\u6C0F\u522B\u4E1A", "\u6C5F\u5357\u65C5\u60C5", "\u53E4\u4ECE\u519B\u884C", "\u9001\u9648\u7AE0\u752B", "\u5BBF\u9F99\u5174\u5BFA", "\u5229\u5DDE\u5357\u6E21", "\u9001\u4EBA\u4E1C\u6E38", "\u5B64\u96C1 \u4E8C", "\u9898\u91D1\u9675\u6E21", "\u8700\u5148\u4E3B\u5E99", "\u6625\u5BBF\u5DE6\u7701", "\u65C5\u591C\u4E66\u6000", "\u767B\u5CB3\u9633\u697C", "\u8662\u56FD\u592B\u4EBA", "\u5BC4\u97E9\u8C0F\u8BAE", "\u79E6\u5DDE\u6742\u8BD7", "\u7EDD\u53E5\u6F2B\u5174", "\u4E0E\u6731\u5C71\u4EBA", "\u671B\u6708\u6000\u8FDC", "\u4E0A\u5143\u5E94\u5236", "\u67AB\u6865\u591C\u6CCA", "\u9001\u6768\u6C0F\u5973", "\u6EC1\u5DDE\u897F\u6DA7", "\u9022\u5165\u4EAC\u4F7F", "\u767B\u603B\u6301\u9601", "\u6E58\u6625\u591C\u6708", "\u60DC\u9EC4\u82B1\u6162", "\u516B\u58F0\u7518\u5DDE", "\u795D\u82F1\u53F0\u8FD1", "\u5343\u79CB\u5C81\u5F15", "\u6C34\u8C03\u6B4C\u5934", "\u516D\u5DDE\u6B4C\u5934", "\u70DB\u5F71\u6447\u7EA2", "\u6728\u5170\u82B1\u6162", "\u795D\u82F1\u53F0\u4EE4", "\u957F\u4EAD\u6028\u6162", "\u971C\u5929\u6653\u89D2", "\u591C\u9001\u8D75\u7EB5", "\u79CB\u65E5\u6E56\u4E0A", "\u6C7E\u4E0A\u60CA\u79CB", "\u8700\u9053\u540E\u671F", "\u5E7D\u5DDE\u591C\u6B4C", "\u9898\u7AF9\u6797\u5BFA", "\u9898\u677E\u6C40\u9A7F", "\u6E21\u626C\u5B50\u6C5F", "\u6625\u65E5\u5076\u6210", "\u9898\u6DEE\u5357\u5BFA", "\u90CA\u884C\u5373\u4E8B", "\u4E0A\u5143\u4F8D\u5BB4", "\u57CE\u4E1C\u65E9\u6625", "\u665A\u697C\u95F2\u5750", "\u7ACB\u6625\u5076\u6210", "\u9898\u90B8\u95F4\u58C1", "\u4E0A\u9AD8\u4F8D\u90CE", "\u66AE\u6625\u5373\u4E8B", "\u521D\u590F\u7761\u8D77", "\u5BA2\u4E2D\u521D\u590F", "\u4E09\u8862\u9053\u4E2D", "\u5C71\u5C45\u590F\u65E5", "\u6751\u5C45\u5373\u4E8B", "\u6C5F\u697C\u6709\u611F", "\u957F\u5B89\u79CB\u671B", "\u9898\u4E34\u5B89\u90B8", "\u771F\u7389\u5802\u4F5C", "\u7B54\u949F\u5F31\u7FC1", "\u7B54\u4E01\u5143\u73CD", "\u5BD2\u98DF\u4E66\u4E8B", "\u8868\u5144\u8BDD\u65E7", "\u6708\u591C\u821F\u4E2D", "\u9001\u6BDB\u4F2F\u6E29", "\u5C06\u8FDB\u9152", "\u5173\u5C71\u6708", "\u8700\u9053\u96BE", "\u7389\u9636\u6028", "\u9759\u591C\u601D", "\u9001\u53CB\u4EBA", "\u79CB\u6D66\u6B4C", "\u5BA2\u4E2D\u884C", "\u6625\u5BAB\u66F2", "\u957F\u4FE1\u6028", "\u6545\u884C\u5BAB", "\u7B79\u7B14\u9A7F", "\u5317\u9752\u841D", "\u91D1\u9675\u56FE", "\u9A6C\u5D6C\u5761", "\u4F0A\u5DDE\u6B4C", "\u54E5\u8212\u6B4C", "\u72EC\u4E0D\u89C1", "\u6843\u82B1\u8C3F", "\u897F\u65BD\u548F", "\u8001\u5C06\u884C", "\u6843\u6E90\u884C", "\u7EC8\u5357\u5C71", "\u7AF9\u91CC\u9986", "\u79CB\u591C\u66F2", "\u7389\u53F0\u4F53", "\u77F3\u9F13\u6B4C", "\u6625\u5BAB\u6028", "\u5BAB\u4E2D\u8BCD", "\u91D1\u8C37\u56ED", "\u6C5F\u5357\u6625", "\u4E2D\u79CB\u6708", "\u9647\u897F\u884C", "\u540E\u5BAB\u8BCD", "\u957F\u6068\u6B4C", "\u7435\u7436\u5F15", "\u6C5F\u5357\u66F2", "\u542C\u5F39\u7434", "\u9001\u4E0A\u4EBA", "\u65B0\u5E74\u4F5C", "\u51C9\u5DDE\u8BCD", "\u4E34\u6D1E\u5EAD", "\u9001\u674E\u7AEF", "\u9001\u5D14\u4E5D", "\u9EC4\u9E64\u697C", "\u671B\u84DF\u95E8", "\u671B\u79E6\u5DDD", "\u7476\u745F\u6028", "\u82CF\u6B66\u5E99", "\u6E21\u6C49\u6C5F", "\u8D60\u5185\u4EBA", "\u4E4C\u8863\u5DF7", "\u79CB\u98CE\u5F15", "\u516B\u9635\u56FE", "\u5175\u8F66\u884C", "\u4E3D\u4EBA\u884C", "\u54C0\u6C5F\u5934", "\u54C0\u738B\u5B59", "\u53E4\u67CF\u884C", "\u9001\u5D14\u878D", "\u71D5\u6B4C\u884C", "\u7389\u53F0\u89C2", "\u91D1\u7F15\u8863", "\u5A46\u7F57\u95E8", "\u5217\u5973\u64CD", "\u6E38\u5B50\u541F", "\u9022\u4FA0\u8005", "\u7B54\u674E\u510B", "\u7B54\u674E\u6D63", "\u4E66\u8FB9\u4E8B", "\u5A55\u59A4\u6028", "\u5F81\u4EBA\u6028", "\u745E\u9E64\u4ED9", "\u5BB4\u6E05\u90FD", "\u9F50\u5929\u4E50", "\u98CE\u5165\u677E", "\u9AD8\u9633\u53F0", "\u591C\u5408\u82B1", "\u591C\u6E38\u5BAB", "\u9E67\u9E2A\u5929", "\u5510\u591A\u4EE4", "\u6D63\u6EAA\u6C99", "\u70B9\u7EDB\u5507", "\u5251\u5668\u8FD1", "\u5B89\u516C\u5B50", "\u535C\u7B97\u5B50", "\u6842\u679D\u9999", "\u6E05\u5E73\u4E50", "\u4E34\u6C5F\u4ED9", "\u8776\u604B\u82B1", "\u751F\u67E5\u5B50", "\u83E9\u8428\u86EE", "\u7389\u697C\u6625", "\u962E\u90CE\u5F52", "\u516D\u5E7A\u4EE4", "\u5FA1\u8857\u884C", "\u865E\u7F8E\u4EBA", "\u7559\u6625\u4EE4", "\u601D\u8FDC\u4EBA", "\u6C34\u9F99\u541F", "\u6C38\u9047\u4E50", "\u9752\u7389\u6848", "\u8C22\u6C60\u6625", "\u8D3A\u65B0\u90CE", "\u6E21\u6C5F\u4E91", "\u89E3\u8FDE\u73AF", "\u6708\u4E0B\u7B1B", "\u597D\u4E8B\u8FD1", "\u6478\u9C7C\u513F", "\u6C49\u5BAB\u6625", "\u6E14\u5BB6\u50B2", "\u9752\u95E8\u996E", "\u671B\u6D77\u6F6E", "\u5E1D\u53F0\u6625", "\u5929\u95E8\u8C23", "\u671B\u6E58\u4EBA", "\u5170\u9675\u738B", "\u7389\u4EAC\u79CB", "\u590F\u4E91\u5CF0", "\u5FC6\u738B\u5B59", "\u77F3\u5DDE\u6162", "\u6EE1\u6C5F\u7EA2", "\u674F\u82B1\u5929", "\u8E0F\u838E\u884C", "\u4E00\u843C\u7EA2", "\u5FF5\u5974\u5A07", "\u626C\u5DDE\u6162", "\u6DE1\u9EC4\u67F3", "\u82CF\u5E55\u906E", "\u66F2\u7389\u7BA1", "\u96E8\u9716\u94C3", "\u91C7\u83B2\u4EE4", "\u6D6A\u6DD8\u6C99", "\u5C11\u5E74\u6E38", "\u591C\u534A\u4E50", "\u7389\u8774\u8776", "\u8FF7\u795E\u5F15", "\u9189\u5782\u97AD", "\u5929\u4ED9\u5B50", "\u5343\u79CB\u5C81", "\u91C7\u6851\u5B50", "\u8BC9\u8877\u60C5", "\u7EEE\u7F57\u9999", "\u53CC\u53CC\u71D5", "\u559C\u8FC1\u83BA", "\u4E09\u59DD\u5A9A", "\u6C5F\u57CE\u5B50", "\u5C0F\u91CD\u5C71", "\u71D5\u5C71\u4EAD", "\u9189\u82B1\u9634", "\u82CF\u6B66\u6162", "\u67F3\u68A2\u9752", "\u5FC6\u5C11\u5E74", "\u98CE\u6D41\u5B50", "\u5E94\u5929\u957F", "\u6EE1\u5EAD\u82B3", "\u7EEE\u5BEE\u6028", "\u60DC\u5206\u98DE", "\u5973\u51A0\u5B50", "\u84E6\u5C71\u6EAA", "\u773C\u513F\u5A9A", "\u6D1B\u9633\u9053", "\u601D\u541B\u6069", "\u7F62\u76F8\u4F5C", "\u5BAB\u4E2D\u9898", "\u5723\u679C\u5BFA", "\u6E38\u6708\u9642", "\u9898\u69B4\u82B1", "\u6253\u7403\u56FE", "\u8695\u5987\u541F", "\u51B7\u6CC9\u4EAD", "\u63D2\u82B1\u541F", "\u9001\u5929\u5E08", "\u6625\u601D", "\u6028\u60C5", "\u95FA\u6028", "\u51FA\u585E", "\u9526\u745F", "\u97E9\u7891", "\u98CE\u96E8", "\u968B\u5BAB", "\u843D\u82B1", "\u4E3A\u6709", "\u7476\u6C60", "\u6625\u96E8", "\u5AE6\u5A25", "\u8D3E\u751F", "\u51C9\u601D", "\u971C\u6708", "\u53F0\u57CE", "\u5BAB\u8BCD", "\u9898\u58C1", "\u4F8D\u5BB4", "\u9001\u522B", "\u9752\u8C3F", "\u9E7F\u67F4", "\u6742\u8BD7", "\u76F8\u601D", "\u5C71\u77F3", "\u665A\u6625", "\u5DF2\u51C9", "\u8D64\u58C1", "\u9063\u6000", "\u79CB\u5915", "\u65C5\u5BBF", "\u6E05\u660E", "\u5BC4\u4EBA", "\u542C\u7B5D", "\u8D4B\u5F97", "\u6625\u6653", "\u7434\u6B4C", "\u53E4\u610F", "\u8D2B\u5973", "\u65C5\u6000", "\u6EAA\u5C45", "\u6C5F\u96EA", "\u6E14\u7FC1", "\u6708\u591C", "\u6625\u671B", "\u8700\u76F8", "\u5BA2\u81F3", "\u91CE\u671B", "\u767B\u9AD8", "\u767B\u697C", "\u5BBF\u5E9C", "\u9601\u591C", "\u671B\u5CB3", "\u4F73\u4EBA", "\u79B9\u5E99", "\u7EDD\u53E5", "\u6F2B\u5174", "\u6C5F\u6751", "\u65B0\u79CB", "\u51AC\u81F3", "\u548F\u53F2", "\u5F52\u96C1", "\u5BD2\u98DF", "\u4E1C\u90CA", "\u6625\u6028", "\u9619\u9898", "\u8584\u5E78", "\u6697\u9999", "\u758F\u5F71", "\u516B\u5F52", "\u79CB\u9701", "\u82B1\u72AF", "\u897F\u6CB3", "\u5929\u9999", "\u7709\u59A9", "\u4E09\u53F0", "\u79CB\u65E5", "\u7B54\u4EBA", "\u79CB\u6708", "\u5076\u6210", "\u6625\u65E5", "\u6CDB\u821F", "\u6625\u5BB5", "\u6D77\u68E0", "\u82B1\u5F71", "\u897F\u6E56", "\u51AC\u666F", "\u6625\u591C", "\u5143\u65E5", "\u5317\u5C71", "\u8305\u6A90", "\u793E\u65E5", "\u9898\u5C4F", "\u6E56\u4E0A", "\u6625\u6674", "\u6625\u66AE", "\u5373\u666F", "\u83BA\u68AD", "\u767B\u5C71", "\u4F24\u6625", "\u9001\u6625", "\u6709\u7EA6", "\u590F\u65E5", "\u7530\u5BB6", "\u6751\u665A", "\u4E03\u5915", "\u7ACB\u79CB", "\u95FB\u7B1B", "\u7AF9\u697C", "\u5BD2\u591C", "\u65E9\u6625", "\u5BD3\u610F", "\u79CB\u5343", "\u65B0\u7AF9", "\u79CB\u601D", "\u4E2D\u79CB", "\u6885\u82B1", "\u5E72\u6208", "\u5F52\u9690", "\u8749", "\u6885"] };
+  // src/client/poem-titles.ts
+  var API_PATH = "/poem-titles";
+  var CACHE_KEY = "chubby-poem-titles-v1";
+  var CACHE_VERSION = 1;
+  var FETCH_TIMEOUT_MS = 8e3;
+  var cache = deepFreeze([]);
+  var started = false;
+  function normalize(list) {
+    const out = [];
+    if (!Array.isArray(list)) return out;
+    for (const item2 of list) {
+      const s = str(item2);
+      if (s) out.push(s);
+    }
+    return out.sort((a, b) => b.length - a.length);
+  }
+  function apply(list, persist) {
+    const titles = normalize(list);
+    if (titles.length === 0) return;
+    cache = deepFreeze(titles);
+    if (persist) writeCache(titles);
+  }
+  function readCache() {
+    try {
+      if (typeof localStorage === "undefined" || !localStorage) return [];
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return [];
+      const data = JSON.parse(raw);
+      if (!data || data.v !== CACHE_VERSION || !Array.isArray(data.titles)) return [];
+      return data.titles;
+    } catch {
+      return [];
+    }
+  }
+  function writeCache(titles) {
+    try {
+      if (typeof localStorage === "undefined" || !localStorage) return;
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ v: CACHE_VERSION, titles }));
+    } catch {
+    }
+  }
+  function seedFromDisk() {
+    try {
+      const proc = typeof process !== "undefined" ? process : null;
+      if (!proc || typeof proc.getBuiltinModule !== "function" || typeof proc.cwd !== "function") return [];
+      const fs = proc.getBuiltinModule("node:fs");
+      const nodePath = proc.getBuiltinModule("node:path");
+      if (!fs || !nodePath) return [];
+      let dir = proc.cwd();
+      for (let i = 0; i < 4; i++) {
+        const candidate = nodePath.join(dir, "data", "poem-titles.json");
+        try {
+          const raw = fs.readFileSync(candidate, "utf8");
+          const data = JSON.parse(String(raw).replace(/^\uFEFF/, ""));
+          return Array.isArray(data && data.titles) ? data.titles : [];
+        } catch {
+        }
+        const parent = nodePath.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  }
+  function poemTitles() {
+    return cache;
+  }
+  function ensurePoemTitles() {
+    if (started || cache.length > 0) return;
+    started = true;
+    getJson(API_PATH, { signal: timeoutSignal(FETCH_TIMEOUT_MS) }).then((data) => {
+      if (data && data.ok === true) apply(data.titles, true);
+    }).catch(() => {
+    });
+  }
+  {
+    const cached = readCache();
+    if (cached.length > 0) apply(cached, false);
+    else {
+      const seed = seedFromDisk();
+      if (seed.length > 0) apply(seed, false);
+    }
+  }
 
   // src/client/intent.ts
   var BOOK_ALIAS = [
-    [/聊斋/, "\u804A\u658B\u5FD7\u5F02"],
-    [/三国/, "\u4E09\u56FD\u6F14\u4E49"],
-    [/西游/, "\u897F\u6E38\u8BB0"],
-    [/水浒/, "\u6C34\u6D52\u4F20"],
-    [/红楼/, "\u7EA2\u697C\u68A6"],
-    [/封神/, "\u5C01\u795E\u6F14\u4E49"],
-    [/隋唐/, "\u968B\u5510\u6F14\u4E49"],
-    [/杨家将/, "\u6768\u5BB6\u5C06\u6F14\u4E49"],
-    [/世说/, "\u4E16\u8BF4\u65B0\u8BED"],
-    [/三言|二拍/, "\u4E09\u8A00\u4E8C\u62CD"],
-    [/儒林/, "\u5112\u6797\u5916\u53F2"],
-    [/官场/, "\u5B98\u573A\u73B0\u5F62\u8BB0"],
-    [/老残/, "\u8001\u6B8B\u6E38\u8BB0"],
-    [/说岳|岳传/, "\u8BF4\u5CB3\u5168\u4F20"],
-    [/东周/, "\u4E1C\u5468\u5217\u56FD\u5FD7"],
-    [/三侠五义/, "\u4E09\u4FA0\u4E94\u4E49"],
-    [/镜花缘/, "\u955C\u82B1\u7F18"]
+    [/聊斋/, "聊斋志异"],
+    [/三国/, "三国演义"],
+    [/西游/, "西游记"],
+    [/水浒/, "水浒传"],
+    [/红楼/, "红楼梦"],
+    [/封神/, "封神演义"],
+    [/隋唐/, "隋唐演义"],
+    [/杨家将/, "杨家将演义"],
+    [/世说/, "世说新语"],
+    [/三言|二拍/, "三言二拍"],
+    [/儒林/, "儒林外史"],
+    [/官场/, "官场现形记"],
+    [/老残/, "老残游记"],
+    [/说岳|岳传/, "说岳全传"],
+    [/东周/, "东周列国志"],
+    [/三侠五义/, "三侠五义"],
+    [/镜花缘/, "镜花缘"]
   ];
-  var POEM_TITLES = (poem_titles_default.titles || []).slice().sort((a, b) => b.length - a.length);
+  deepFreeze(BOOK_ALIAS);
+  var BARE_STRIP = /[\s。，！？、,.!?…~～]/g;
   function matchPoemTitle(text) {
     const t = String(text || "");
     if (!t) return "";
-    for (const title of POEM_TITLES) {
+    for (const title of poemTitles()) {
       if (title.length >= 2 && t.indexOf(title) >= 0) return title;
     }
     return "";
@@ -4471,10 +6516,18 @@
     const t = String(rawText || "").trim();
     if (!t || t.length > 30) return null;
     if (isQuestion(t)) return null;
+    if (poemTitles().length === 0) ensurePoemTitles();
     const byTitle = matchPoemTitle(t);
-    if (byTitle) return { kind: "poem", title: byTitle };
+    if (byTitle) {
+      const bare = t.replace(BARE_STRIP, "");
+      const asks = bare === byTitle || /背|念|吟|朗读|朗诵|来(一)?首|听(一)?首|讲(一)?首|放(一)?首/.test(t);
+      if (asks) return { kind: "poem", title: byTitle };
+    }
     if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) return { kind: "poem" };
-    if (/典故|成语/.test(t)) return { kind: "culture", sub: /成语/.test(t) ? "chengyu" : "idiom" };
+    if (/典故|成语/.test(t)) {
+      const asksCulture = /讲|说|来|听|教|学|点|考/.test(t);
+      if (asksCulture) return { kind: "culture", sub: /成语/.test(t) ? "idiom" : "chengyu" };
+    }
     let book = "";
     for (const [re, name] of BOOK_ALIAS) {
       if (re.test(t)) {
@@ -4482,59 +6535,95 @@
         break;
       }
     }
-    if (book) return { kind: "story", book };
+    if (book) {
+      const bare = t.replace(BARE_STRIP, "");
+      const asksBook = /讲|说书|听|来(一)?段|来(一)?回/.test(t) || bare.length <= book.length + 1;
+      if (asksBook) return { kind: "story", book };
+    }
     if (/讲故事|讲个故事|说书|来段|讲一段/.test(t)) return { kind: "story", book: "" };
     return null;
   }
 
   // src/client/chat-route.ts
   function createLocalRouter(host) {
+    function takeOver() {
+      if (!host.abortChat) return;
+      try {
+        host.abortChat();
+      } catch (e) {
+      }
+    }
     function fetchPoem(query, onItem) {
       getJson("/poem" + query).then((d) => {
         const p = d && d.ok && d.item ? d.item : null;
         if (!p) {
-          host.bubble("\u8BD7\u518C\u6CA1\u8BFB\u5230", 4e3);
+          host.bubble("诗册没读到", 4e3);
           return;
         }
         onItem(p);
-      }).catch(() => host.bubble("\u8BD7\u518C\u6CA1\u8BFB\u5230", 4e3));
+      }).catch(() => host.bubble("诗册没读到", 4e3));
     }
     function route(rawText) {
       const t0 = String(rawText || "").trim();
       if (/^(再来|再念|换)(一)?(首|个)/.test(t0)) {
-        host.bubble("\uFF08\u70B9\u64AD\uFF09\u597D\uFF0C\u518D\u5FF5\u4E00\u9996", 3e3);
+        takeOver();
+        host.bubble("（点播）好，再念一首", 3e3);
         fetchPoem("", (p) => recitePoem(host, p));
         return true;
       }
       if (/^(继续|接着说|接着讲|往下讲)$/.test(t0)) {
-        host.bubble("\uFF08\u70B9\u64AD\uFF09\u63A5\u7740\u8BF4", 3e3);
+        takeOver();
+        host.bubble("（点播）接着说", 3e3);
+        try {
+          host.storyState.auto.current = true;
+          localStorage.setItem("chubby-story-auto", "on");
+        } catch (e) {
+        }
         host.story.start(host.storyState.book.current || "");
+        return true;
+      }
+      if (/^(报|说|列)(一下|下)?(书名|书单)$/.test(t0)) {
+        takeOver();
+        host.bubble("（点播）本鲸数数书单…", 3e3);
+        getJson("/story/books", { cache: "no-store" }).then((d) => {
+          const books = d && d.ok && Array.isArray(d.books) ? d.books.map((b) => String(b || "").trim()).filter(Boolean) : [];
+          if (!books.length) {
+            host.bubble("书单没取到，稍后再试", 4e3);
+            return;
+          }
+          host.bubble("书单有 " + books.length + " 本：" + books.join("、") + "（说个书名本鲸就开讲）", 12e3);
+        }).catch(() => host.bubble("书单没取到，稍后再试", 4e3));
         return true;
       }
       const hit = detectIntent(rawText);
       if (!hit) return false;
+      takeOver();
       if (hit.kind === "poem") {
-        host.bubble("\uFF08\u70B9\u64AD\uFF09\u597D\uFF0C\u5FF5\u4E00\u9996", 3e3);
+        host.bubble("（点播）好，念一首", 3e3);
         fetchPoem(hit.title || "" ? "?title=" + encodeURIComponent(hit.title || "") : "", (p) => recitePoem(host, p));
         return true;
       }
       if (hit.kind === "culture") {
         const type = hit.sub;
-        host.bubble(type === "chengyu" ? "\uFF08\u70B9\u64AD\uFF09\u8BB2\u4E2A\u6210\u8BED" : "\uFF08\u70B9\u64AD\uFF09\u8BB2\u4E2A\u5178\u6545", 3e3);
+        if (!beginOnce("route:" + type)) {
+          host.bubble("正在讲呢，稍等～", 2e3);
+          return true;
+        }
+        host.bubble(type === "chengyu" ? "（点播）讲个成语" : "（点播）讲个典故", 3e3);
         getJson("/culture?type=" + type).then((d) => {
           const it = d && d.ok && d.item ? d.item : null;
           if (!it) {
-            host.bubble("\u8FD9\u4E2A\u6CA1\u8BFB\u5230", 4e3);
+            host.bubble("这个没读到", 4e3);
             return;
           }
           const body = collapseText(String(it.text || ""));
-          host.bubble((type === "chengyu" ? "\u6210\u8BED\xB7" : "\u5178\u6545\xB7") + String(it.title || ""), 15e3);
-          host.speak((type === "chengyu" ? "\u8BB2\u4E2A\u6210\u8BED\u2014\u2014" : "\u8BB2\u4E2A\u5178\u6545\u2014\u2014") + String(it.title || "") + (it.src ? "\uFF0C\u51FA\u81EA" + String(it.src) : "") + "\u3002" + body, { rate: host.narrationRate });
-        }).catch(() => host.bubble("\u8FD9\u4E2A\u6CA1\u8BFB\u5230", 4e3));
+          host.bubble((type === "chengyu" ? "成语·" : "典故·") + String(it.title || ""), 15e3);
+          host.speak((type === "chengyu" ? "讲个成语——" : "讲个典故——") + String(it.title || "") + (it.src ? "，出自" + String(it.src) : "") + "。" + body, { rate: host.narrationRate() });
+        }).catch(() => host.bubble("这个没读到", 4e3));
         return true;
       }
       const book = hit.book || "";
-      host.bubble("\uFF08\u70B9\u64AD\uFF09" + (book ? "\u8BB2\u300A" + book + "\u300B" : "\u8BB2\u4E00\u6BB5\u4E66"), 4e3);
+      host.bubble("（点播）" + (book ? "讲《" + book + "》" : "讲一段书"), 4e3);
       host.storyState.auto.current = true;
       host.story.start(book);
       return true;
@@ -4574,6 +6663,16 @@
       return "auto";
     }
   }
+  function fishTip(host, tip, ms2 = 6e3) {
+    try {
+      host.setMessages((m) => [...m, { who: "fish", text: tip }]);
+    } catch (e) {
+    }
+    try {
+      host.bubble(tip, ms2);
+    } catch (e) {
+    }
+  }
   function diag() {
     try {
       const w = typeof window !== "undefined" ? window : null;
@@ -4583,21 +6682,42 @@
       return null;
     }
   }
+  var CHAT_TIMEOUT_MS = 3e4;
+  var STREAM_HEADER_TIMEOUT_MS = 4e3;
+  var STREAM_RETRYABLE_STATUS = [404, 405, 408, 425, 429, 501, 502, 503, 504];
+  function streamHttpRetryable(status) {
+    if (!status) return true;
+    return STREAM_RETRYABLE_STATUS.indexOf(status) >= 0;
+  }
+  function newAbortController() {
+    try {
+      return typeof AbortController !== "undefined" ? new AbortController() : null;
+    } catch (e) {
+      return null;
+    }
+  }
   function createChatSender(host) {
     let activeStream = null;
+    let activeChat = null;
     function clearActive(ctl) {
       if (activeStream && activeStream.ctl === ctl) activeStream = null;
     }
     function abortStream() {
       const s = activeStream;
-      if (!s) return false;
+      const c = activeChat;
+      if (!s && !c) return false;
       activeStream = null;
+      activeChat = null;
       try {
         host.epoch.next();
       } catch (e) {
       }
       try {
-        s.ctl && s.ctl.abort();
+        if (s && s.ctl) s.ctl.abort();
+      } catch (e) {
+      }
+      try {
+        if (c && c.ctl) c.ctl.abort();
       } catch (e) {
       }
       try {
@@ -4606,7 +6726,12 @@
       } catch (e) {
       }
       const d = diag();
-      if (d) d.streamAborted = (d.streamAborted || 0) + 1;
+      if (s) {
+        if (d) d.streamAborted = (d.streamAborted || 0) + 1;
+      }
+      if (c) {
+        if (d) d.chatAborted = (d.chatAborted || 0) + 1;
+      }
       return true;
     }
     async function tryStream(text, opts, myEpoch) {
@@ -4617,26 +6742,21 @@
       const isCurrent = () => host.epoch.isCurrent(myEpoch);
       let spokeAny = false;
       let full = "";
-      let ctl = null;
-      try {
-        ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
-      } catch (e) {
-        ctl = null;
-      }
+      const ctl = newAbortController();
       activeStream = { ctl };
       let gotHeaders = false;
       const firstTimer = setTimeout(() => {
         try {
-          if (!spokeAny && !gotHeaders && ctl) ctl.abort();
+          if (!gotHeaders && ctl) ctl.abort();
         } catch (e) {
         }
-      }, 4e3);
+      }, STREAM_HEADER_TIMEOUT_MS);
       let bubbleAt = 0;
       const sb = createSentenceBuffer(40);
       const speakSegs = (segs) => {
         for (const seg of segs) {
           try {
-            host.speak(seg, { rate: "+0%" });
+            host.speak(seg, { rate: chatRate() });
           } catch (e) {
           }
         }
@@ -4654,11 +6774,37 @@
       };
       try {
         const res = await postRaw("/chat-stream", { message: text, lang: resolveChatLang(), voice: !!(opts && opts.voice) }, { signal: ctl ? ctl.signal : void 0 });
+        gotHeaders = true;
+        clearTimeout(firstTimer);
         if (!isCurrent()) return dropStale();
         if (!res.ok || !res.body) {
-          clearTimeout(firstTimer);
           clearActive(ctl);
-          return false;
+          const status = Number(res && res.status) || 0;
+          if (streamHttpRetryable(status)) return false;
+          let tip = "";
+          try {
+            const j = await res.json();
+            tip = String(j && j.reply || "");
+          } catch (e) {
+          }
+          if (!tip) tip = "主人，本鲸这边没接上（HTTP " + status + "），等会儿再试一次？";
+          if (isCurrent()) {
+            try {
+              host.setMessages((m) => [...m, { who: "fish", text: tip }]);
+            } catch (e) {
+            }
+            try {
+              host.bubble(tip, 6e3);
+            } catch (e) {
+            }
+            try {
+              host.speakReply(tip);
+            } catch (e) {
+            }
+          }
+          const d = diag();
+          if (d) d.streamHttpFail = status;
+          return true;
         }
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -4679,7 +6825,6 @@
             }
             if (typeof obj.delta === "string" && obj.delta) {
               full += obj.delta;
-              clearTimeout(firstTimer);
               speakSegs(sb.push(obj.delta));
               const nowT = Date.now();
               if (nowT - bubbleAt > 400) {
@@ -4691,23 +6836,37 @@
               if (!isCurrent()) return dropStale();
               const reply = String(obj.reply || full || "").trim();
               full = reply || full;
-              if (reply) {
-                if (host.replyDeduper.allow(reply)) {
-                  speakSegs(sb.flush());
-                  host.busy.end();
-                  host.setBusy(false);
-                  host.setMessages((m) => [...m, { who: "fish", text: reply }]);
-                  host.bubble(reply, 6e3);
-                  host.talkFor(1500);
-                  host.scrollBody();
-                  const d = diag();
-                  if (d) d.lastChat = { stage: "stream-done", firstDeltaMs: obj.firstDeltaMs || 0, ms: obj.ms || 0, cached: !!obj.cached, reply: reply.slice(0, 40) };
-                }
-              }
-              clearTimeout(firstTimer);
               clearActive(ctl);
+              speakSegs(sb.flush());
               host.busy.end();
               host.setBusy(false);
+              if (reply) {
+                const fresh = host.replyDeduper.allow(reply);
+                try {
+                  host.setMessages((m) => [...m, { who: "fish", text: reply }]);
+                } catch (e) {
+                }
+                if (fresh) {
+                  try {
+                    host.bubble(reply, 6e3);
+                  } catch (e) {
+                  }
+                }
+                try {
+                  host.talkFor(1500);
+                } catch (e) {
+                }
+                try {
+                  host.scrollBody();
+                } catch (e) {
+                }
+                const d = diag();
+                if (d) d.lastChat = { stage: "stream-done", firstDeltaMs: obj.firstDeltaMs || 0, ms: obj.ms || 0, cached: !!obj.cached, reply: reply.slice(0, 40) };
+              } else {
+                fishTip(host, host.persona.line("error"));
+                const d = diag();
+                if (d) d.lastChat = { stage: "stream-empty", at: Date.now() };
+              }
               return true;
             }
           }
@@ -4718,10 +6877,22 @@
         speakSegs(sb.flush());
         host.busy.end();
         host.setBusy(false);
-        if (full) {
-          host.setMessages((m) => [...m, { who: "fish", text: full }]);
-          host.bubble(full, 6e3);
-          host.scrollBody();
+        const tail = full.trim();
+        if (tail) {
+          try {
+            host.setMessages((m) => [...m, { who: "fish", text: tail }]);
+          } catch (e) {
+          }
+          try {
+            host.bubble(tail, 6e3);
+          } catch (e) {
+          }
+          try {
+            host.scrollBody();
+          } catch (e) {
+          }
+        } else {
+          fishTip(host, host.persona.line("error"));
         }
         return true;
       } catch (e) {
@@ -4730,10 +6901,21 @@
         clearActive(ctl);
         host.busy.end();
         host.setBusy(false);
+        const d = diag();
+        if (d) d.streamFallback = String(e && e.message || e);
         if (spokeAny) {
           speakSegs(sb.flush());
-          const d = diag();
-          if (d) d.streamFallback = String(e && e.message || e);
+          const partial = full.trim();
+          if (partial) {
+            try {
+              host.setMessages((m) => [...m, { who: "fish", text: partial }]);
+            } catch (e2) {
+            }
+          }
+          try {
+            host.bubble(partial ? "网络断了一下，本鲸先念到这儿～" : "网络断了一下，本鲸没说完～", 5e3);
+          } catch (e2) {
+          }
           return true;
         }
         return false;
@@ -4744,11 +6926,10 @@
       if (!text) return;
       abortStream();
       const d0 = diag();
-      if (d0) d0.ttsSkip = "empty-text";
       if (d0) d0.lastChat = { stage: "entry", busy: host.busy.isBusy(), tts: !!host.ttsPlaying(), at: Date.now() };
-      if (host.busy.isBusy() && d0) d0.lastChat.stage = "blocked-busy";
       if (host.busy.isBusy() && host.busy.age() < 35e3) {
-        if (opts && opts.voice) host.bubble("\u672C\u9CB8\u8FD8\u5728\u60F3\u4E0A\u4E00\u53E5\u5462\uFF0C\u7A0D\u7B49\uFF5E", 2500);
+        if (d0) d0.lastChat.stage = "blocked-busy";
+        host.bubble("本鲸还在想上一句呢，稍等～", 2500);
         return;
       }
       if (host.narrating.current || host.ttsPlaying()) {
@@ -4762,16 +6943,24 @@
         } catch (e) {
         }
       }
-      if (host.route(text)) {
+      let localHit = false;
+      try {
+        localHit = host.route(text);
+      } catch (e) {
+        localHit = false;
+      }
+      if (localHit) {
         host.setInput("");
         return;
       }
       const myEpoch = host.epoch.next();
+      host.setInput("");
       try {
-        if (await tryStream(text, opts, myEpoch)) {
-          host.setInput("");
-          return;
-        }
+        host.setMessages((m) => [...m, { who: "me", text }]);
+      } catch (e) {
+      }
+      try {
+        if (await tryStream(text, opts, myEpoch)) return;
       } catch (e) {
       }
       try {
@@ -4782,8 +6971,6 @@
         }
       } catch (e) {
       }
-      host.setInput("");
-      host.setMessages((m) => [...m, { who: "me", text }]);
       try {
         if (opts && opts.voice && !host.ttsPlaying() && Math.random() < 0.25) host.say(host.persona.line("waiting"), 3e3);
       } catch (e) {
@@ -4792,42 +6979,66 @@
       host.setBusy(true);
       host.talkFor(1200);
       host.scrollBody();
+      const d1 = diag();
       let data = null;
+      const ctl = newAbortController();
+      activeChat = { ctl };
+      let timeoutTimer = null;
       try {
+        if (ctl) {
+          timeoutTimer = setTimeout(() => {
+            try {
+              ctl.abort();
+            } catch (e) {
+            }
+          }, CHAT_TIMEOUT_MS);
+        }
         const tChat = performance.now();
-        data = await postJson("/chat", { message: text, voice: true, lang: resolveChatLang() }, {
-          // 30 秒上限：请求卡住时别让状态永远停在「在想…」
-          signal: timeoutSignal(3e4)
+        data = await postJson("/chat", {
+          message: text,
+          // voice 表示「输入来自语音识别」（后端据此追加 ASR 纠错说明）。
+          // 原来这里写死 true，打字也会被当成语音，且与流式的缓存键对不上。
+          voice: !!(opts && opts.voice),
+          lang: resolveChatLang()
+        }, {
+          signal: ctl ? ctl.signal : timeoutSignal(CHAT_TIMEOUT_MS)
         });
         try {
           host.recordChatLatency(Math.round(performance.now() - tChat));
         } catch (e) {
         }
         if (!host.epoch.isCurrent(myEpoch)) return;
-        const reply = data?.reply || "\u4E3B\u4EBA\u2026\u2026\u672C\u9CB8\u8D70\u795E\u4E86\u3002";
-        const d1 = diag();
+        const reply = data && data.reply ? String(data.reply) : data && data.ok === false ? "主人，本鲸这边没接上（" + String(data.error || "接口没应") + "），等会儿再问一次？" : "主人……本鲸走神了。";
         if (d1) d1.lastChat = { stage: "fetched", reply: String(reply).slice(0, 40), at: Date.now() };
         host.setMessages((m) => [...m, { who: "fish", text: reply }]);
         if (host.voiceMode.current) {
-          host.bubble("\uFF08\u8BF4\uFF09" + reply, 8e3);
+          host.bubble("（说）" + reply, 8e3);
         }
-        if (data && data.upgraded) host.bubble("\u672C\u9CB8\u53C8\u957F\u5927\u4E00\u70B9\u5566\uFF01", 4e3);
-      } catch {
-        host.setMessages((m) => [...m, { who: "fish", text: host.persona.line("error") }]);
+        if (data && data.upgraded) host.bubble("本鲸又长大一点啦！", 4e3);
+      } catch (err) {
+        if (!host.epoch.isCurrent(myEpoch)) return;
+        const timedOut = !!err && (err.name === "AbortError" || err.code === 20 || err.code === 2);
+        const tip = timedOut ? "主人，本鲸等太久啦（网络慢），再问一次？" : host.persona.line("error");
+        if (d1) d1.lastChat = { stage: timedOut ? "timeout" : "error", error: String(err && err.message || err).slice(0, 60), at: Date.now() };
+        fishTip(host, tip, 5e3);
       } finally {
-        host.busy.end();
-        host.setBusy(false);
-        host.talkFor(1500);
-        try {
-          if (data && data.reply && host.epoch.isCurrent(myEpoch)) {
-            const rp = String(data.reply);
-            const d2 = diag();
-            if (d2) d2.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now() };
-            host.speakReply(rp);
+        clearT(timeoutTimer);
+        if (activeChat && activeChat.ctl === ctl) activeChat = null;
+        if (host.epoch.isCurrent(myEpoch)) {
+          host.busy.end();
+          host.setBusy(false);
+          host.talkFor(1500);
+          try {
+            if (data && data.reply) {
+              const rp = String(data.reply);
+              const d2 = diag();
+              if (d2) d2.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now() };
+              host.speakReply(rp);
+            }
+          } catch (e) {
           }
-        } catch {
+          host.scrollBody();
         }
-        host.scrollBody();
       }
     }
     return { send, abortStream };
@@ -4859,9 +7070,9 @@
         }, retryMs);
         return;
       }
-      const item = queue.shift();
-      const body = String(item && item.text || "").trim() || "\u65F6\u95F4\u5230\u4E86";
-      const line = "\u4E3B\u4EBA\uFF0C\u63D0\u9192\u4F60\uFF1A" + body;
+      const item2 = queue.shift();
+      const body = String(item2 && item2.text || "").trim() || "时间到了";
+      const line = "主人，提醒你：" + body;
       host.bubble(line, bubbleMs);
       host.talkFor(3e3);
       try {
@@ -4875,10 +7086,7 @@
     }
     function stopPoll() {
       if (pollTimer !== null) {
-        try {
-          clearInterval(pollTimer);
-        } catch (e) {
-        }
+        clearI(pollTimer);
         pollTimer = null;
       }
     }
@@ -4898,10 +7106,7 @@
     }
     function dispose() {
       if (dueTimer !== null) {
-        try {
-          clearTimeout(dueTimer);
-        } catch (e) {
-        }
+        clearT(dueTimer);
         dueTimer = null;
       }
       queue.length = 0;
@@ -4913,9 +7118,9 @@
   // src/client/reminder-manage.ts
   var MANAGE_WINDOW_MS = 6e4;
   var POSTPONE_MS = 10 * 60 * 1e3;
-  var MANAGE_HINT = "\u56DE\u590D\u6570\u5B57\u53EF\u5220\u9664 / \u56DE d \u987A\u5EF6 10 \u5206\u949F";
+  var MANAGE_HINT = "回复数字可删除 / 回 d 顺延 10 分钟";
   function normalizeManageInput(text) {
-    return String(text == null ? "" : text).replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, "").toLowerCase();
+    return str(text).replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, "").toLowerCase();
   }
   function parseManageInput(text) {
     const t = normalizeManageInput(text);
@@ -4931,10 +7136,10 @@
     const mm = String(d.getMinutes()).padStart(2, "0");
     return hh + ":" + mm;
   }
-  function stampOf(item) {
-    const raw = item.nextAt || item.at;
+  function stampOf(item2) {
+    const raw = item2.nextAt || item2.at;
     const d = new Date(raw);
-    if (isNaN(d.getTime())) return String(raw == null ? "" : raw);
+    if (isNaN(d.getTime())) return str(raw);
     try {
       return d.toLocaleString("zh-CN");
     } catch (e) {
@@ -4943,11 +7148,11 @@
   }
   function boardText(items, prefix) {
     const lines = items.map((it, i) => {
-      const rep = Number(it.repeat) > 0 ? "\uFF08\u91CD\u590D\uFF09" : "";
-      return i + 1 + ". " + it.text + "\uFF08" + stampOf(it) + "\uFF09" + rep;
+      const rep = Number(it.repeat) > 0 ? "（重复）" : "";
+      return i + 1 + ". " + it.text + "（" + stampOf(it) + "）" + rep;
     });
     const head = prefix ? prefix + "\n" : "";
-    if (!lines.length) return head + "\u6CA1\u6709\u63D0\u9192\u4E86";
+    if (!lines.length) return head + "没有提醒了";
     return head + lines.join("\n") + "\n" + MANAGE_HINT;
   }
   function normalizeReminderList(payload) {
@@ -4956,11 +7161,11 @@
     for (const x of arr) {
       if (!x || typeof x !== "object") continue;
       if (x.done === true) continue;
-      const id = String(x.id == null ? "" : x.id);
+      const id = str(x.id);
       if (!id) continue;
       out.push({
         id,
-        text: String(x.text == null ? "" : x.text),
+        text: str(x.text),
         at: x.at,
         nextAt: x.nextAt,
         repeat: x.repeat
@@ -4990,78 +7195,85 @@
     let board = [];
     let seq = 0;
     function isOpen(now = clock()) {
-      return openedAt > 0 && board.length > 0 && now - openedAt <= MANAGE_WINDOW_MS;
+      if (!(openedAt > 0) || !board.length) return false;
+      const age = now - openedAt;
+      return age >= 0 && age <= MANAGE_WINDOW_MS;
     }
     function expire() {
       openedAt = 0;
       board = [];
     }
-    function refresh() {
+    function safeRequest(fn) {
+      try {
+        return Promise.resolve(fn());
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    }
+    function showBoard(prefix, failText) {
       const my = ++seq;
-      return Promise.resolve(fetchJson("/reminders")).then((d) => {
-        if (my !== seq) return board;
-        board = normalizeReminderList(d);
-        return board;
-      }).catch(() => board);
+      safeRequest(() => fetchJson("/reminders")).then((d) => {
+        if (my !== seq) return;
+        const arr = normalizeReminderList(d);
+        board = arr;
+        if (!arr.length) {
+          openedAt = 0;
+          host.bubble(prefix, 5e3);
+          return;
+        }
+        host.bubble(boardText(arr, prefix), 12e3);
+      }).catch(() => {
+        if (my !== seq) return;
+        openedAt = 0;
+        board = [];
+        host.bubble(failText, 5e3);
+      });
     }
     function open() {
       const my = ++seq;
-      const at = clock();
       openedAt = 0;
-      return Promise.resolve(fetchJson("/reminders")).then((d) => {
+      return safeRequest(() => fetchJson("/reminders")).then((d) => {
         if (my !== seq) return;
         const arr = normalizeReminderList(d);
         board = arr;
         if (!arr.length) {
           openedAt = 0;
-          host.bubble("\u8FD8\u6CA1\u6709\u63D0\u9192\uFF5E", 3e3);
+          host.bubble("还没有提醒～", 3e3);
           return;
         }
-        openedAt = at;
-        host.bubble(boardText(arr, "\u63D0\u9192\u6E05\u5355\uFF08" + arr.length + " \u6761\uFF09\uFF1A"), 12e3);
+        openedAt = clock();
+        host.bubble(boardText(arr, "提醒清单（" + arr.length + " 条）："), 12e3);
       }).catch(() => {
         if (my !== seq) return;
         openedAt = 0;
         board = [];
-        host.bubble("\u63D0\u9192\u6E05\u5355\u67E5\u4E0D\u5230", 5e3);
+        host.bubble("提醒清单查不到", 5e3);
       });
     }
     function afterDelete() {
-      const my = ++seq;
-      Promise.resolve(fetchJson("/reminders")).then((d) => {
-        if (my !== seq) return;
-        const arr = normalizeReminderList(d);
-        board = arr;
-        if (!arr.length) {
-          openedAt = 0;
-          host.bubble("\u5220\u6389\u4E86", 4e3);
-          return;
-        }
-        host.bubble(boardText(arr, "\u5220\u6389\u4E86"), 12e3);
-      }).catch(() => {
-        openedAt = 0;
-        board = [];
-        host.bubble("\u5220\u6389\u4E86", 4e3);
-      });
+      showBoard("删掉了", "删掉了，清单没刷新过来");
     }
     function removeAt(index) {
       const it = board[index - 1];
       if (!it) {
-        host.bubble("\u6CA1\u6709\u7B2C " + index + " \u6761\uFF0C\u56DE\u6570\u5B57\u518D\u9009\u4E00\u6B21", 4e3);
+        host.bubble("没有第 " + index + " 条，回数字再选一次", 4e3);
         return;
       }
-      Promise.resolve(removeJson("/reminders?id=" + encodeURIComponent(it.id))).then((d) => {
+      const next = board.slice();
+      next.splice(index - 1, 1);
+      board = next;
+      safeRequest(() => removeJson("/reminders?id=" + encodeURIComponent(it.id))).then((d) => {
         if (!(d && d.ok)) {
-          host.bubble("\u6CA1\u5220\u6389\uFF0C\u7B49\u4F1A\u513F\u518D\u8BD5", 4e3);
+          showBoard("没删掉，最新清单：", "没删掉，清单也没刷出来");
           return;
         }
         afterDelete();
-      }).catch(() => host.bubble("\u6CA1\u5220\u6389\uFF0C\u7B49\u4F1A\u513F\u518D\u8BD5", 4e3));
+      }).catch(() => showBoard("没删掉，最新清单：", "没删掉，清单也没刷出来"));
     }
     function postpone() {
       const pick = pickNextDue(board);
       if (!pick) {
-        host.bubble("\u6E05\u5355\u91CC\u6CA1\u6709\u80FD\u987A\u5EF6\u7684\u63D0\u9192", 4e3);
+        host.bubble("清单里没有能顺延的提醒", 4e3);
         return;
       }
       const dueMs = new Date(pick.nextAt || pick.at).getTime();
@@ -5073,34 +7285,19 @@
         at: at.toISOString(),
         repeat: Number(pick.repeat) || 0
       };
-      Promise.resolve(sendJson("/reminders", body)).then((d) => {
+      safeRequest(() => sendJson("/reminders", body)).then((d) => {
         if (!(d && d.ok)) {
-          host.bubble("\u987A\u5EF6\u6CA1\u6210\uFF0C\u539F\u63D0\u9192\u8FD8\u5728", 4e3);
+          host.bubble("顺延没成，原提醒还在", 4e3);
           return;
         }
-        Promise.resolve(removeJson("/reminders?id=" + encodeURIComponent(pick.id))).then((d2) => {
+        safeRequest(() => removeJson("/reminders?id=" + encodeURIComponent(pick.id))).then((d2) => {
           if (!(d2 && d2.ok)) {
-            host.bubble("\u987A\u5EF6\u5230 " + when + "\uFF0C\u4F46\u65E7\u63D0\u9192\u6CA1\u5220\u6389", 6e3);
+            showBoard("顺延到 " + when + "，但旧提醒没删掉：", "顺延到 " + when + "，但旧提醒没删掉");
             return;
           }
-          const my = ++seq;
-          Promise.resolve(fetchJson("/reminders")).then((d3) => {
-            if (my !== seq) return;
-            const arr = normalizeReminderList(d3);
-            board = arr;
-            if (!arr.length) {
-              openedAt = 0;
-              host.bubble("\u987A\u5EF6\u5230 " + when, 5e3);
-              return;
-            }
-            host.bubble(boardText(arr, "\u987A\u5EF6\u5230 " + when), 12e3);
-          }).catch(() => {
-            openedAt = 0;
-            board = [];
-            host.bubble("\u987A\u5EF6\u5230 " + when, 5e3);
-          });
-        }).catch(() => host.bubble("\u987A\u5EF6\u5230 " + when + "\uFF0C\u4F46\u65E7\u63D0\u9192\u6CA1\u5220\u6389", 6e3));
-      }).catch(() => host.bubble("\u987A\u5EF6\u6CA1\u6210\uFF0C\u539F\u63D0\u9192\u8FD8\u5728", 4e3));
+          showBoard("顺延到 " + when, "顺延到 " + when);
+        }).catch(() => showBoard("顺延到 " + when + "，但旧提醒没删掉：", "顺延到 " + when + "，但旧提醒没删掉"));
+      }).catch(() => host.bubble("顺延没成，原提醒还在", 4e3));
     }
     function intercept(text) {
       if (!isOpen()) {
@@ -5132,7 +7329,7 @@
     const ctrl = !!(e.ctrlKey || e.metaKey);
     const shift = !!e.shiftKey;
     if (!ctrl || !shift) return false;
-    const key = String(e.key == null ? "" : e.key).toLowerCase();
+    const key = str(e.key).toLowerCase();
     if (key === "w") return true;
     const code = Number(e.keyCode != null ? e.keyCode : e.which);
     return code === 87;
@@ -5148,16 +7345,10 @@
       if (!shouldShowRecoverDot(hidden)) return null;
       return {
         "data-chubby-recover": "1",
-        title: "\u70B9\u4E00\u4E0B\u53EB\u672C\u9CB8\u56DE\u6765\uFF08\u6216\u6309 " + RECOVER_HOTKEY_LABEL + "\uFF09",
+        title: "点一下叫本鲸回来（或按 " + RECOVER_HOTKEY_LABEL + "）",
         onClick: (e) => {
-          try {
-            if (e && typeof e.stopPropagation === "function") e.stopPropagation();
-          } catch (err) {
-          }
-          try {
-            if (e && typeof e.preventDefault === "function") e.preventDefault();
-          } catch (err) {
-          }
+          evStop(e);
+          evPrevent(e);
           trigger();
         }
       };
@@ -5175,14 +7366,8 @@
       };
       const onKeyDown = (e) => {
         if (!isRecoverHotkey(e)) return;
-        try {
-          if (e && typeof e.preventDefault === "function") e.preventDefault();
-        } catch (err) {
-        }
-        try {
-          if (e && typeof e.stopPropagation === "function") e.stopPropagation();
-        } catch (err) {
-        }
+        evPrevent(e);
+        evStop(e);
         trigger();
       };
       try {
@@ -5201,30 +7386,466 @@
     return { dot, bindHotkey, trigger };
   }
 
+  // src/client/hooks.ts
+  function readLocalFlag(key, fallback = true) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw === null ? fallback : raw !== "off";
+    } catch (e) {
+      return fallback;
+    }
+  }
+  function createHooks(R) {
+    function useLazyRef(factory) {
+      const ref = R.useRef(null);
+      if (!ref.current) ref.current = factory();
+      return ref;
+    }
+    function usePersistentBool(key, fallback = true) {
+      const ref = R.useRef(null);
+      const [value, setValue] = R.useState(() => readLocalFlag(key, fallback));
+      if (ref.current === null) ref.current = value;
+      const set = (v) => {
+        const next = !!v;
+        ref.current = next;
+        setValue(next);
+        try {
+          localStorage.setItem(key, next ? "on" : "off");
+        } catch (e) {
+        }
+      };
+      return { value, set, ref };
+    }
+    return { useLazyRef, usePersistentBool };
+  }
+
+  // src/client/effects.ts
+  function bindFileDropCapture(opts) {
+    const win = opts.win;
+    if (!win || !win.addEventListener) return () => {
+    };
+    const onDragOverCapture = (e) => {
+      if (!opts.hitTest(e.clientX, e.clientY)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onDropCapture = (e) => {
+      if (!opts.hitTest(e.clientX, e.clientY)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const dt = e.dataTransfer;
+      const file = dt && dt.files && dt.files[0];
+      try {
+        opts.onFile(file);
+      } catch (e2) {
+      }
+    };
+    win.addEventListener("dragover", onDragOverCapture, true);
+    win.addEventListener("drop", onDropCapture, true);
+    return () => {
+      try {
+        win.removeEventListener("dragover", onDragOverCapture, true);
+      } catch (e) {
+      }
+      try {
+        win.removeEventListener("drop", onDropCapture, true);
+      } catch (e) {
+      }
+    };
+  }
+  function bindOutsideClose(opts) {
+    const doc = opts.doc;
+    if (!doc || !doc.addEventListener) return () => {
+    };
+    const onDocDown = (e) => {
+      try {
+        const t = e && e.target;
+        if (t && t.closest && t.closest("[data-menu-root]")) return;
+        opts.onOutside();
+      } catch (e2) {
+      }
+    };
+    doc.addEventListener("pointerdown", onDocDown, true);
+    doc.addEventListener("mousedown", onDocDown, true);
+    doc.addEventListener("touchstart", onDocDown, true);
+    return () => {
+      try {
+        doc.removeEventListener("pointerdown", onDocDown, true);
+      } catch (e) {
+      }
+      try {
+        doc.removeEventListener("mousedown", onDocDown, true);
+      } catch (e) {
+      }
+      try {
+        doc.removeEventListener("touchstart", onDocDown, true);
+      } catch (e) {
+      }
+    };
+  }
+  function bindResize(win, onResize) {
+    if (!win || !win.addEventListener) return () => {
+    };
+    win.addEventListener("resize", onResize);
+    return () => {
+      try {
+        win.removeEventListener("resize", onResize);
+      } catch (e) {
+      }
+    };
+  }
+  function startGreeting(opts) {
+    const tGreet = setTimeout(opts.greet, opts.greetMs ?? 3e3);
+    const tHungry = opts.hungryNow ? setTimeout(opts.hungry, opts.hungryMs ?? 6e3) : null;
+    return () => {
+      clearT(tGreet);
+      clearT(tHungry);
+    };
+  }
+  function bindChatFocus(opts) {
+    if (!opts.open) {
+      try {
+        const el2 = opts.input();
+        if (el2 && typeof el2.blur === "function") el2.blur();
+      } catch (e) {
+      }
+      return () => {
+      };
+    }
+    const el = opts.input();
+    if (!el || typeof el.focus !== "function") return () => {
+    };
+    let done = false;
+    let timer = null;
+    let panelEl = null;
+    const fire = () => {
+      if (done) return;
+      done = true;
+      clearT(timer);
+      timer = null;
+      try {
+        if (panelEl && typeof panelEl.removeEventListener === "function") panelEl.removeEventListener("animationend", fire);
+      } catch (e) {
+      }
+      try {
+        el.focus();
+      } catch (e) {
+      }
+    };
+    const reduced = (() => {
+      try {
+        const win = opts.win;
+        if (!win || typeof win.matchMedia !== "function") return false;
+        const m = win.matchMedia("(prefers-reduced-motion: reduce)");
+        return !!(m && m.matches);
+      } catch (e) {
+        return false;
+      }
+    })();
+    if (reduced) {
+      fire();
+      return () => {
+        done = true;
+      };
+    }
+    try {
+      panelEl = opts.panel ? opts.panel() : null;
+      const anims = panelEl && typeof panelEl.getAnimations === "function" ? panelEl.getAnimations() : null;
+      if (anims && anims.length && typeof panelEl.addEventListener === "function") {
+        panelEl.addEventListener("animationend", fire);
+        timer = setTimeout(fire, opts.maxWaitMs ?? 400);
+        return () => {
+          done = true;
+          clearT(timer);
+          timer = null;
+          try {
+            panelEl.removeEventListener("animationend", fire);
+          } catch (e) {
+          }
+        };
+      }
+    } catch (e) {
+    }
+    fire();
+    return () => {
+      done = true;
+    };
+  }
+  function bindMenuKeys(opts) {
+    const win = opts.win;
+    if (!win || !win.addEventListener) return () => {
+    };
+    const onKeyDown = (e) => {
+      try {
+        if (!e) return;
+        if (e.ctrlKey || e.altKey || e.metaKey) return;
+        if (typeof opts.isTyping === "function" && opts.isTyping(e.target)) return;
+        const n = opts.count();
+        if (n <= 0) return;
+        const key = String(e.key || "");
+        const raw = opts.index();
+        const cur = raw >= 0 && raw < n ? raw : -1;
+        if (key === "ArrowDown" || key === "ArrowUp") {
+          const step = key === "ArrowDown" ? 1 : -1;
+          const next = cur < 0 ? step > 0 ? 0 : n - 1 : (cur + step + n) % n;
+          evPrevent(e);
+          evStop(e);
+          opts.setIndex(next);
+          return;
+        }
+        if (key === "Enter") {
+          if (e.repeat || cur < 0) return;
+          if (!opts.activate(cur)) return;
+          evPrevent(e);
+          evStop(e);
+          return;
+        }
+        if (key === "Escape" || key === "Esc") {
+          if (e.repeat) return;
+          evPrevent(e);
+          evStop(e);
+          opts.close();
+        }
+      } catch (e2) {
+      }
+    };
+    try {
+      win.addEventListener("keydown", onKeyDown, true);
+    } catch (e) {
+      return () => {
+      };
+    }
+    return () => {
+      try {
+        win.removeEventListener("keydown", onKeyDown, true);
+      } catch (e) {
+      }
+    };
+  }
+  function startWatchdog(tick, intervalMs = 2e3) {
+    const t = setInterval(tick, intervalMs);
+    return () => {
+      clearI(t);
+    };
+  }
+  function createUnmountCleanup(opts) {
+    return () => {
+      try {
+        const p = opts.reminderPoller();
+        if (p) p.dispose();
+      } catch (e) {
+      }
+      try {
+        opts.stopTts();
+      } catch (e) {
+      }
+      try {
+        opts.stopMelody();
+      } catch (e) {
+      }
+      try {
+        const el = opts.bubbleEl();
+        if (el && el._t) {
+          clearTimeout(el._t);
+          el._t = null;
+        }
+      } catch (e) {
+      }
+    };
+  }
+
+  // src/client/render.ts
+  function listMenuEntries(items, ctx, parentPath = "") {
+    const out = [];
+    collectMenuEntries(items, ctx, parentPath, out);
+    for (let i = 0; i < out.length; i++) out[i].index = i;
+    return out;
+  }
+  function collectMenuEntries(items, ctx, parentPath, out) {
+    if (!Array.isArray(items)) return;
+    for (const it of items) {
+      if (!it || typeof it !== "object") continue;
+      if (it.type === "sub") {
+        if (typeof it.label !== "string") continue;
+        const path = parentPath ? parentPath + SUB_PATH_SEP + it.label : it.label;
+        const open = ctx.subOpen === path || ctx.subOpen.indexOf(path + SUB_PATH_SEP) === 0;
+        out.push({ kind: "sub", action: "", path, parentPath, label: ctx.tr(it.label, ctx.lang), open, index: 0 });
+        if (open) collectMenuEntries(it.items, ctx, path, out);
+        continue;
+      }
+      if (it.type !== "item" || typeof it.label !== "string") continue;
+      out.push({ kind: "item", action: String(it.action || ""), path: "", parentPath, label: ctx.tr(it.label, ctx.lang), open: false, index: 0 });
+    }
+  }
+  function menuRootProps(ctx) {
+    return {
+      style: menuStyle(ctx.menu),
+      "data-menu-root": "1",
+      role: "menu",
+      tabIndex: -1,
+      "aria-label": ctx.lang === "en" ? "Fat Whale menu" : "肥鲸菜单"
+    };
+  }
+  var SUB_PATH_SEP = "\0";
+  function renderMenuItems(items, ctx, parentPath = "") {
+    const entries = listMenuEntries(items, ctx, parentPath);
+    return renderMenuList(items, ctx, parentPath, entries, { i: 0 });
+  }
+  function renderMenuList(items, ctx, parentPath, entries, cursor) {
+    const out = [];
+    if (!Array.isArray(items)) return out;
+    const focus = typeof ctx.focusIndex === "number" ? ctx.focusIndex : -1;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it || typeof it !== "object") continue;
+      if (it.type === "sep") {
+        out.push(ctx.h("div", { key: "sep" + i, role: "separator", style: { height: 1, background: "#1f4a85", margin: "4px 0" } }));
+        continue;
+      }
+      if (it.type === "sub") {
+        if (typeof it.label !== "string") continue;
+        const entry2 = entries[cursor.i++];
+        const path = entry2 ? entry2.path : parentPath ? parentPath + SUB_PATH_SEP + it.label : it.label;
+        const open = entry2 ? entry2.open : false;
+        const label = entry2 ? entry2.label : ctx.tr(it.label, ctx.lang);
+        out.push(ctx.h("div", {
+          key: "sub" + i,
+          role: "menuitem",
+          "aria-haspopup": "menu",
+          "aria-expanded": open,
+          "aria-label": label,
+          tabIndex: -1,
+          style: menuSubStyle(!!entry2 && entry2.index === focus),
+          onClick: () => ctx.onToggleSub(open ? entry2 ? entry2.parentPath : parentPath : path)
+        }, ctx.h("span", null, label), ctx.h("span", null, open ? "▾" : "▸")));
+        if (open) out.push(ctx.h("div", { key: "subitems" + i, role: "group", style: { paddingLeft: 14, borderLeft: "1px solid #1f4a85", marginLeft: 8 } }, renderMenuList(it.items, ctx, path, entries, cursor)));
+        continue;
+      }
+      if (it.type !== "item" || typeof it.label !== "string") continue;
+      const entry = entries[cursor.i++];
+      out.push(ctx.h("div", {
+        key: "item" + i,
+        role: "menuitem",
+        "aria-label": entry ? entry.label : ctx.tr(it.label, ctx.lang),
+        tabIndex: -1,
+        style: menuItemStyle(!!entry && entry.index === focus),
+        onClick: () => ctx.onAction(entry ? entry.action : String(it.action || ""))
+      }, entry ? entry.label : ctx.tr(it.label, ctx.lang)));
+    }
+    return out;
+  }
+  function readMenuRuntime() {
+    let storyAuto = true;
+    let streamOn = true;
+    let ttsVoice = "zh-CN-XiaoyiNeural";
+    let chatLang = "auto";
+    try {
+      storyAuto = localStorage.getItem("chubby-story-auto") !== "0";
+      streamOn = localStorage.getItem("chubby-stream") !== "off";
+      ttsVoice = localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
+      chatLang = localStorage.getItem("chubby-chatlang") || "auto";
+    } catch (e) {
+    }
+    return {
+      storyAuto,
+      streamOn,
+      storyRate: storyRate(),
+      poemRate: poemRate(),
+      ttsVoice,
+      chatLang
+    };
+  }
+  function renderMenuHeader(ctx) {
+    const { h, lang } = ctx;
+    return h(
+      "div",
+      { style: { padding: "8px 14px", borderBottom: "1px solid #1f4a85", color: "#9FD8FF", fontSize: 12, display: "flex", justifyContent: "space-between" } },
+      h("span", null, (lang === "en" ? "Fat Whale · v" : "肥鲸 · v") + VERSION),
+      h("span", {
+        style: { color: "#FFD166", cursor: "pointer" },
+        title: lang === "en" ? "Click to refresh balance" : "点一下刷新余额",
+        onClick: ctx.onRefresh
+      }, ctx.balanceText || "--")
+    );
+  }
+  function renderChatPanel(ctx) {
+    const { h, lang } = ctx;
+    return h(
+      "div",
+      { ref: ctx.panelRef, style: chatPanelStyle(ctx.open) },
+      h(
+        "div",
+        { style: headStyle },
+        h("span", null, lang === "en" ? "Fat Whale · Chat" : "肥鲸 · 聊天"),
+        h("span", { style: { cursor: "pointer", color: "#9FD8FF", padding: "0 4px" }, onClick: ctx.onClose }, "✕")
+      ),
+      h(
+        "div",
+        { ref: ctx.bodyRef, style: bodyStyle },
+        ctx.messages.length === 0 ? h("div", { style: msgStyle("fish") }, lang === "en" ? "Click me to talk — I am right in the bottom-right corner." : "主人，点我说话，本鲸在右下角待着～") : ctx.messages.map((m, i) => h("div", { key: i, style: msgStyle(m.who) }, m.text))
+      ),
+      h(
+        "div",
+        { style: inputRowStyle },
+        h("input", {
+          ref: ctx.inputRef,
+          style: inputStyle,
+          placeholder: lang === "en" ? "Say something…" : "跟肥鲸说两句…",
+          "aria-label": lang === "en" ? "Chat input" : "聊天输入框",
+          value: ctx.input,
+          onChange: (e) => ctx.onInputChange(e.target.value),
+          onKeyDown: (e) => ctx.onKeyDown(e)
+        }),
+        h("button", { style: sendStyle, onClick: () => ctx.onSend() }, ctx.busy ? "…" : lang === "en" ? "Send" : "发送")
+      )
+    );
+  }
+
   // src/client.ts
   window.__ModuleLoader__.load({
     id: "dsh-chubby-whale",
     factory: (require2) => {
       const R = require2("react");
       try {
-        window.__chubbyErrors = [];
-        const origErr = console.error;
-        console.error = function(...a) {
+        const wErr = window;
+        if (!Array.isArray(wErr.__chubbyErrors)) wErr.__chubbyErrors = [];
+        const pushErr = (line) => {
           try {
-            window.__chubbyErrors.push(a.map((x) => x && x.stack ? x.stack : String(x)).join(" ").slice(0, 800));
+            const arr = wErr.__chubbyErrors;
+            arr.push(String(line || "").slice(0, 800));
+            while (arr.length > 50) arr.shift();
           } catch (e) {
           }
-          return origErr.apply(console, a);
         };
-        window.addEventListener("error", (e) => {
-          try {
-            window.__chubbyErrors.push("window.error: " + (e.message || "") + " | " + (e.error && e.error.stack || ""));
-          } catch (e2) {
-          }
-        });
+        if (!wErr.__chubbyErrPatched) {
+          wErr.__chubbyErrPatched = true;
+          const origErr = console.error;
+          console.error = function(...a) {
+            pushErr(a.map((x) => x && x.stack ? x.stack : String(x)).join(" "));
+            return origErr.apply(console, a);
+          };
+          window.addEventListener("error", (e) => {
+            pushErr("window.error: " + (e.message || "") + " | " + (e.error && e.error.stack || ""));
+          });
+        }
       } catch (e) {
       }
       const h = R.createElement;
+      const dg = (patch) => {
+        try {
+          Object.assign(window.__chubbyWhale || (window.__chubbyWhale = {}), patch);
+        } catch (e) {
+        }
+      };
+      const bump2 = (key) => {
+        try {
+          const w = window.__chubbyWhale;
+          w[key] = (w[key] || 0) + 1;
+        } catch (e) {
+        }
+      };
+      const BUBBLE_TEXT_STYLE = { overflowWrap: "anywhere", wordBreak: "break-word" };
+      const hookApi = createHooks(R);
       const actions = createActionTable();
       registerCultureActions(actions);
       registerContentActions(actions);
@@ -5232,34 +7853,28 @@
       registerVoiceActions(actions);
       const CLIENT_ID = (() => {
         try {
-          let v = localStorage.getItem("chubby-client-id");
-          if (!v) {
-            v = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-            localStorage.setItem("chubby-client-id", v);
-          }
-          return v;
+          const v2 = sessionStorage.getItem("chubby-client-id");
+          if (v2) return v2;
         } catch (e) {
-          return "";
         }
+        const v = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        try {
+          sessionStorage.setItem("chubby-client-id", v);
+        } catch (e) {
+        }
+        return v;
       })();
       let ttsPlaying = false;
       const channels = { mic: { stats: {} }, asr: { stats: {} }, speak: { stats: {} } };
       const epoch = createEpoch();
-      let asrBusy = false;
-      let asrBusyAt = 0;
-      const NARRATION_RATE2 = (() => {
-        try {
-          const s = localStorage.getItem("chubby-narration-rate");
-          return s && /^[+-]\d{1,2}%$/.test(s) ? s : "-25%";
-        } catch (e) {
-          return "-25%";
-        }
-      })();
       const storyNarratingRef = { current: false };
       const persona = createPersona();
-      let lastPoemSpeech = "";
+      try {
+        const w = window.__chubbyWhale || (window.__chubbyWhale = {});
+        w.persona = persona;
+      } catch (e) {
+      }
       const narration = createNarrationLock();
-      let lastSpeakingAt = 0;
       function setNarrating(ms2) {
         narration.lock(ms2);
         try {
@@ -5270,80 +7885,69 @@
       function clearNarrating() {
         narration.clear();
         try {
+          stopProgress();
+        } catch (e) {
+        }
+        try {
           storyNarratingRef.current = false;
         } catch (e) {
         }
       }
       let greetedOnce = false;
-      const lineDeduper = createDeduper({ windowMs: 25e3, onDuplicate: () => {
-        try {
-          window.__chubbyWhale.dupLine = (window.__chubbyWhale.dupLine || 0) + 1;
-        } catch (e) {
-        }
-      } });
-      const replyDeduper = createDeduper({ windowMs: 3e4, onDuplicate: () => {
-        try {
-          window.__chubbyWhale.dupReply = (window.__chubbyWhale.dupReply || 0) + 1;
-        } catch (e) {
-        }
-      } });
+      const lineDeduper = createDeduper({ windowMs: 25e3, onDuplicate: () => bump2("dupLine") });
+      const replyDeduper = createDeduper({ windowMs: 3e4, onDuplicate: () => bump2("dupReply") });
       const latDiag = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 };
       const melody = createMelodyPlayer();
-      function WhaleOverlay(props) {
+      let lastRenderErr = "";
+      function WhaleOverlay() {
+        const [retryTick, setRetryTick] = R.useState(0);
         try {
-          return WhaleBody(props || {});
+          const tree = WhaleBody();
+          lastRenderErr = "";
+          return tree;
         } catch (e) {
-          try {
-            window.__chubbyWhale.renderError = String(e && e.stack || e);
-          } catch (e2) {
+          const msg = String(e && e.stack || e);
+          dg({ renderError: msg });
+          if (msg !== lastRenderErr) {
+            lastRenderErr = msg;
+            try {
+              console.error("[chubby-whale] 渲染异常已被就地拦下：", e);
+            } catch (e2) {
+            }
           }
-          try {
-            console.error("[chubby-whale] \u6E32\u67D3\u5F02\u5E38\u5DF2\u88AB\u5C31\u5730\u62E6\u4E0B\uFF1A", e);
-          } catch (e2) {
-          }
-          return null;
+          return h("div", {
+            key: "chubby-render-error-" + retryTick,
+            style: recoverDotStyle,
+            title: "本鲸打了个喷嚏，点一下再试（还不行就刷新页面）",
+            onClick: (ev) => {
+              evStop(ev);
+              evPrevent(ev);
+              try {
+                setRetryTick((n) => n + 1);
+              } catch (e2) {
+              }
+            }
+          }, "⚠");
         }
       }
-      function WhaleBody(props) {
+      function WhaleBody() {
         const stageRef = R.useRef(null);
         const canvasRef = R.useRef(null);
         const posRef = R.useRef({ x: 0, y: 0 });
         const talkRef = R.useRef({ talkUntil: 0, hearts: [] });
         const voiceModeRef = R.useRef(false);
-        const wokeRef = R.useRef({ at: 0 });
-        const voiceOnRef = R.useRef((() => {
-          try {
-            return localStorage.getItem("chubby-voice") !== "off";
-          } catch (e) {
-            return true;
-          }
-        })());
-        const [voiceOn, setVoiceOn] = R.useState((() => {
-          try {
-            return localStorage.getItem("chubby-voice") !== "off";
-          } catch (e) {
-            return true;
-          }
-        })());
-        const earOnRef = R.useRef((() => {
-          try {
-            return localStorage.getItem("chubby-ear") !== "off";
-          } catch (e) {
-            return true;
-          }
-        })());
-        const [earOn, setEarOn] = R.useState(earOnRef.current);
-        const voiceChatOnRef = R.useRef((() => {
-          try {
-            return localStorage.getItem("chubby-voicechat") !== "off";
-          } catch (e) {
-            return true;
-          }
-        })());
-        const [voiceChatOn, setVoiceChatOn] = R.useState(voiceChatOnRef.current);
-        const earCtlRef = R.useRef({ stop: () => {
-        }, boot: () => {
-        } });
+        const voiceOnState = hookApi.usePersistentBool("chubby-voice");
+        const voiceOnRef = voiceOnState.ref;
+        const voiceOn = voiceOnState.value;
+        const setVoiceOn = voiceOnState.set;
+        const earOnState = hookApi.usePersistentBool("chubby-ear");
+        const earOnRef = earOnState.ref;
+        const earOn = earOnState.value;
+        const setEarOn = earOnState.set;
+        const voiceChatOnState = hookApi.usePersistentBool("chubby-voicechat");
+        const voiceChatOnRef = voiceChatOnState.ref;
+        const voiceChatOn = voiceChatOnState.value;
+        const setVoiceChatOn = voiceChatOnState.set;
         const [balanceLabel, setBalanceLabel] = R.useState("--");
         const chatCacheOnRef = R.useRef(true);
         const [chatCacheOn, setChatCacheOn] = R.useState(true);
@@ -5362,7 +7966,14 @@
         const menuStatsAtRef = R.useRef(0);
         const dragRef = R.useRef(createDragState());
         const scaleRef = R.useRef(1);
+        const inertiaRafRef = R.useRef(0);
         const animRef = R.useRef(null);
+        const talkFor = (ms2) => {
+          try {
+            animRef.current?.talkFor(ms2);
+          } catch (e) {
+          }
+        };
         const storyBusyRef = R.useRef(false);
         const storyBookRef = R.useRef("");
         const storyAutoRef = R.useRef((() => {
@@ -5373,11 +7984,32 @@
             return true;
           }
         })());
-        const reminderPollerRef = R.useRef(null);
+        const reminderPollerRef = hookApi.useLazyRef(() => createReminderPoller({
+          getJson: (path, init) => getJson(path, init),
+          bubble: showBubble,
+          talkFor,
+          speak: (text) => {
+            try {
+              speakText(text);
+            } catch (e) {
+            }
+          },
+          isSpeaking: () => ttsPlaying,
+          isNarrating: () => storyNarratingRef.current,
+          isBusy: () => busyLock.isBusy()
+        }));
         const [scale, setScale] = R.useState(1);
         const [hidden, setHidden] = R.useState(false);
+        const hiddenRef = R.useRef(false);
+        hiddenRef.current = hidden;
+        const skipInputClearRef = R.useRef(false);
+        const chatRootRef = R.useRef(null);
         const [menu, setMenu] = R.useState(null);
         const [subOpen, setSubOpen] = R.useState("");
+        const [menuFocus, setMenuFocus] = R.useState(-1);
+        const menuFocusRef = R.useRef(-1);
+        menuFocusRef.current = menuFocus;
+        const menuEntriesRef = R.useRef([]);
         const [storyBooks, setStoryBooks] = R.useState([]);
         const [storyBooksTried, setStoryBooksTried] = R.useState(false);
         const [balanceText, setBalanceText] = R.useState("");
@@ -5389,50 +8021,41 @@
           }
         })());
         const [chatOpen, setChatOpen] = R.useState(false);
+        const chatOpenRef = R.useRef(false);
+        chatOpenRef.current = chatOpen;
         const [messages, setMessages] = R.useState([]);
         const [input, setInput] = R.useState("");
         const [busy, setBusy] = R.useState(false);
-        const busyLockRef = R.useRef(null);
-        if (!busyLockRef.current) busyLockRef.current = createBusyLock();
+        const busyLockRef = hookApi.useLazyRef(createBusyLock);
         const busyLock = busyLockRef.current;
         const bodyRef = R.useRef(null);
+        const inputRef = R.useRef(null);
+        const chatPanelRef = R.useRef(null);
         const bubbleRef = R.useRef(null);
         const bubbleTextRef = R.useRef(null);
-        const bridgeRef = R.useRef(null);
-        if (!bridgeRef.current) {
-          bridgeRef.current = createVoiceBridge({
-            narration,
-            narrating: () => storyNarratingRef.current,
-            stopSpeaking: () => stopTts(),
-            bubble: showBubble,
-            sendText: (text, opts) => sendText(text, opts),
-            onVoiceHeard: () => {
-              try {
-                voiceModeRef.current = true;
-              } catch (e) {
-              }
-            },
-            onSpeaking: (playing) => {
-              ttsPlaying = playing;
-              if (playing) {
-                try {
-                  lastSpeakingAt = Date.now();
-                } catch (e) {
-                }
-              }
-            },
-            // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
-            voiceChat: () => voiceChatOnRef.current,
-            // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
-            speaking: () => ttsPlaying,
-            diag: (patch) => {
-              try {
-                Object.assign(window.__chubbyWhale || (window.__chubbyWhale = {}), patch);
-              } catch (e) {
-              }
+        const bridgeRef = hookApi.useLazyRef(() => createVoiceBridge({
+          narration,
+          narrating: () => storyNarratingRef.current,
+          stopSpeaking: () => stopTts(),
+          bubble: showBubble,
+          // 喊名字的应答要"出声"，不能只弹字：桥里拿不到 say 时会退化成纯气泡
+          say: (text, ms2, opts) => sayLine(text, ms2, opts),
+          sendText: (text, opts) => sendText(text, opts),
+          onVoiceHeard: () => {
+            try {
+              voiceModeRef.current = true;
+            } catch (e) {
             }
-          });
-        }
+          },
+          onSpeaking: (playing) => {
+            ttsPlaying = playing;
+          },
+          // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
+          voiceChat: () => voiceChatOnRef.current,
+          // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
+          speaking: () => ttsPlaying,
+          diag: dg
+        }));
         const bridge = bridgeRef.current;
         R.useEffect(() => {
           try {
@@ -5454,7 +8077,7 @@
         function applyPos(x, y) {
           const el = stageRef.current;
           if (!el) return;
-          const s = scaleRef.current || 1;
+          const s = (scaleRef.current || 1) * 1.08;
           const p = clampPos(x, y, W * s, H * s, window.innerWidth, window.innerHeight);
           x = p.x;
           y = p.y;
@@ -5482,35 +8105,29 @@
           savePos();
         }
         R.useEffect(() => {
-          const onResize = () => {
+          let saveTimer = null;
+          return bindResize(window, () => {
             applyPos(posRef.current.x, posRef.current.y);
-            savePos();
-          };
-          window.addEventListener("resize", onResize);
-          return () => {
-            try {
-              window.removeEventListener("resize", onResize);
-            } catch {
-            }
-          };
+            if (saveTimer) return;
+            saveTimer = setTimeout(() => {
+              saveTimer = null;
+              savePos();
+            }, 200);
+          });
+        }, []);
+        R.useEffect(() => () => {
+          try {
+            if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current);
+          } catch (e) {
+          }
         }, []);
         R.useEffect(() => {
-          return () => {
-            try {
-              if (reminderPollerRef.current) reminderPollerRef.current.dispose();
-            } catch {
-            }
-            stopTts();
-            melody.stop();
-            try {
-              const el = bubbleRef.current;
-              if (el && el._t) {
-                clearTimeout(el._t);
-                el._t = null;
-              }
-            } catch {
-            }
-          };
+          return createUnmountCleanup({
+            reminderPoller: () => reminderPollerRef.current,
+            stopTts: () => stopTts(),
+            stopMelody: () => melody.stop(),
+            bubbleEl: () => bubbleRef.current
+          });
         }, []);
         const bubble = createBubble({
           el: () => bubbleRef.current,
@@ -5527,15 +8144,67 @@
         function showBubble(text, ms2 = 2400) {
           bubble.show(text, ms2);
         }
-        function setStatus() {
-          bubble.dismissStatus();
-        }
+        R.useEffect(() => {
+          getJson("/status").then((d) => {
+            if (d && d.ok && d.key === false) {
+              showBubble("还没配 Key：聊天和语音要用 Key（deepseekKey / siliconflowKey），念诗、说书、典故、提醒照样能用～ 配置方法见 README", 9e3);
+            }
+          }).catch(() => {
+          });
+        }, []);
         function restoreIdleStatus() {
         }
-        const reminderManager = createReminderManager({ bubble: (text, ms2) => showBubble(text, ms2) });
+        const reminderManagerRef = hookApi.useLazyRef(() => createReminderManager({ bubble: showBubble }));
+        const reminderManager = reminderManagerRef.current;
         const recover = createRecover({ recover: () => setHidden(false) });
+        function isTypingTarget(t) {
+          try {
+            if (!t) return false;
+            const tag = String(t.tagName || "").toUpperCase();
+            if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+            return !!t.isContentEditable;
+          } catch (e) {
+            return false;
+          }
+        }
         R.useEffect(() => {
-          const unbind = recover.bindHotkey(window);
+          const wrapped = /* @__PURE__ */ new Map();
+          const target = {
+            addEventListener(type, fn, capture) {
+              if (type !== "keydown" || typeof fn !== "function") {
+                try {
+                  window.addEventListener(type, fn, capture);
+                } catch (e) {
+                }
+                return;
+              }
+              const guard = (e) => {
+                if (isTypingTarget(e && e.target)) return;
+                fn(e);
+              };
+              wrapped.set(fn, guard);
+              try {
+                window.addEventListener(type, guard, capture);
+              } catch (e) {
+              }
+            },
+            removeEventListener(type, fn, capture) {
+              const guard = wrapped.get(fn);
+              if (guard) {
+                wrapped.delete(fn);
+                try {
+                  window.removeEventListener(type, guard, capture);
+                } catch (e) {
+                }
+                return;
+              }
+              try {
+                window.removeEventListener(type, fn, capture);
+              } catch (e) {
+              }
+            }
+          };
+          const unbind = recover.bindHotkey(target);
           return () => {
             try {
               unbind();
@@ -5544,50 +8213,79 @@
           };
         }, []);
         R.useEffect(() => {
-          const insideFish = (x, y) => {
-            try {
-              const el = stageRef.current;
-              if (!el) return false;
-              const r = el.getBoundingClientRect();
-              const pad = 12;
-              return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
-            } catch (e) {
-              return false;
+          return bindFileDropCapture({
+            win: window,
+            hitTest: (x, y) => {
+              try {
+                if (hiddenRef.current) return false;
+                const el = stageRef.current;
+                if (!el) return false;
+                const r = el.getBoundingClientRect();
+                const pad = 12;
+                return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+              } catch (e) {
+                return false;
+              }
+            },
+            onFile: (file) => {
+              try {
+                handleFileDrop(file, { showBubble, speakText }).catch(() => {
+                });
+              } catch (e2) {
+              }
             }
-          };
-          const onDragOverCapture = (e) => {
-            if (!insideFish(e.clientX, e.clientY)) return;
-            e.preventDefault();
-            e.stopPropagation();
-          };
-          const onDropCapture = (e) => {
-            if (!insideFish(e.clientX, e.clientY)) return;
-            e.preventDefault();
-            e.stopPropagation();
-            const dt = e.dataTransfer;
-            const file = dt && dt.files && dt.files[0];
+          });
+        }, []);
+        R.useEffect(() => {
+          const onPaste = (e) => {
             try {
+              if (!chatOpenRef.current) return;
+              const root = chatRootRef.current;
+              const t = e && e.target;
+              if (!root || !t || typeof root.contains !== "function" || !root.contains(t)) return;
+              const dt = e.clipboardData;
+              let file = null;
+              const items = dt && dt.items;
+              if (items && typeof items.length === "number") {
+                for (let i = 0; i < items.length; i++) {
+                  const it = items[i];
+                  if (!it || it.kind !== "file" || !/^image\//.test(String(it.type || ""))) continue;
+                  const f = typeof it.getAsFile === "function" ? it.getAsFile() : null;
+                  if (f) {
+                    file = f;
+                    break;
+                  }
+                }
+              }
+              if (!file && dt && dt.files && dt.files.length) {
+                const f = dt.files[0];
+                if (f && /^image\//.test(String(f.type || ""))) file = f;
+              }
+              if (!file) return;
+              evPrevent(e);
+              evStop(e);
               handleFileDrop(file, { showBubble, speakText }).catch(() => {
+                try {
+                  showBubble("图片没处理成，再贴一次试试", 4e3);
+                } catch (e2) {
+                }
               });
             } catch (e2) {
             }
           };
-          window.addEventListener("dragover", onDragOverCapture, true);
-          window.addEventListener("drop", onDropCapture, true);
+          try {
+            window.addEventListener("paste", onPaste, true);
+          } catch (e) {
+          }
           return () => {
             try {
-              window.removeEventListener("dragover", onDragOverCapture, true);
-            } catch (e) {
-            }
-            try {
-              window.removeEventListener("drop", onDropCapture, true);
+              window.removeEventListener("paste", onPaste, true);
             } catch (e) {
             }
           };
         }, []);
-        function onPointerDown(e) {
-          if (e.button !== 0) return;
-          beginDrag(dragRef.current, e.clientX, e.clientY, posRef.current.x, posRef.current.y);
+        function dragBeginAt(x, y) {
+          beginDrag(dragRef.current, x, y, posRef.current.x, posRef.current.y);
           try {
             const el = stageRef.current;
             if (el && el.style) {
@@ -5596,18 +8294,14 @@
             }
           } catch (e2) {
           }
-          try {
-            e.currentTarget.setPointerCapture(e.pointerId);
-          } catch {
-          }
         }
-        function onPointerMove(e) {
+        function dragMoveTo(x, y) {
           const d = dragRef.current;
           if (!d.dragging) return;
-          const m = moveDrag(d, e.clientX, e.clientY);
+          const m = moveDrag(d, x, y);
           applyPos(posRef.current.x + m.x, posRef.current.y + m.y);
         }
-        function onPointerUp() {
+        function dragFinish() {
           const d = dragRef.current;
           if (!d.dragging) return;
           const v = endDrag(d);
@@ -5623,9 +8317,12 @@
           savePos();
           let vx = v.x;
           let vy = v.y;
-          const step = () => {
+          let lastTs = 0;
+          const step = (ts) => {
             if (dragRef.current.dragging) return;
-            const dv = decayVelocity(vx, vy);
+            const dtScale = lastTs ? Math.min(4, Math.max(0.25, (ts - lastTs) / 16.67)) : 1;
+            lastTs = ts;
+            const dv = decayVelocity(vx, vy, dtScale);
             vx = dv.vx;
             vy = dv.vy;
             applyPos(posRef.current.x + vx, posRef.current.y + vy);
@@ -5633,80 +8330,124 @@
               savePos();
               return;
             }
-            requestAnimationFrame(step);
+            inertiaRafRef.current = requestAnimationFrame(step);
           };
-          requestAnimationFrame(step);
+          inertiaRafRef.current = requestAnimationFrame(step);
+        }
+        function onPointerDown(e) {
+          if (typeof e.button === "number" && e.button !== 0) return;
+          dragBeginAt(e.clientX, e.clientY);
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+          }
+        }
+        function onPointerMove(e) {
+          try {
+            e.__chubbyDragHandled = true;
+          } catch (e2) {
+          }
+          dragMoveTo(e.clientX, e.clientY);
+        }
+        function onPointerUp(e) {
+          try {
+            if (e) e.__chubbyDragHandled = true;
+          } catch (e2) {
+          }
+          dragFinish();
         }
         R.useEffect(() => {
-          const tGreet = setTimeout(() => {
+          const el = stageRef.current;
+          const win = typeof window !== "undefined" ? window : null;
+          if (!el || !win) return;
+          const binding = bindDragInput(el, win, {
+            onDown: (x, y) => dragBeginAt(x, y),
+            onMove: (x, y) => {
+              if (dragRef.current.dragging) dragMoveTo(x, y);
+            },
+            onEnd: () => {
+              if (dragRef.current.dragging) dragFinish();
+            }
+          });
+          dg({ dragInput: binding.mode });
+          return () => {
             try {
-              if (greetedOnce) return;
-              greetedOnce = true;
-              const g = persona.greeting();
-              if (g) sayLine(g, 5e3);
+              binding.dispose();
             } catch (e) {
             }
-          }, 3e3);
-          try {
-            const st = persona.state;
-            if (st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1e3) setTimeout(() => {
+          };
+        }, []);
+        R.useEffect(() => {
+          const stopGreet = startGreeting({
+            greet: () => {
+              try {
+                if (greetedOnce) return;
+                greetedOnce = true;
+                const g = persona.greeting();
+                if (g) sayLine(g, 5e3);
+                try {
+                  const off = (() => {
+                    try {
+                      return typeof localStorage !== "undefined" && localStorage.getItem("chubby-daily-greet") === "off";
+                    } catch (e) {
+                      return false;
+                    }
+                  })();
+                  if (!off) {
+                    getJson("/daily", { cache: "no-store" }).then((d) => {
+                      try {
+                        if (d && d.ok && d.text) sayLine("今天这句——" + String(d.text) + (d.source ? "（" + String(d.source) + "）" : ""), 9e3);
+                      } catch (e) {
+                      }
+                    }).catch(() => {
+                    });
+                  }
+                } catch (e) {
+                }
+              } catch (e) {
+              }
+            },
+            hungry: () => {
               try {
                 sayLine(persona.line("hungry"), 4e3);
               } catch (e) {
               }
-            }, 6e3);
-          } catch (e) {
-          }
-          try {
-            const w = window.__chubbyWhale || (window.__chubbyWhale = {});
-            w.persona = persona;
-            w.sayLine = sayLine;
-          } catch (e) {
-          }
-          const tStatus = setInterval(() => {
+            },
+            // 打了招呼再看是不是饿了：饿着就补一句（对应人设的 hungry 场景）
+            hungryNow: (() => {
+              try {
+                const st = persona.state;
+                return !!(st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1e3);
+              } catch (e) {
+                return false;
+              }
+            })()
+          });
+          dg({ persona, sayLine });
+          const stopWatch = startWatchdog(() => {
             try {
               try {
                 if (narration.expire()) {
                   clearNarrating();
-                  try {
-                    window.__chubbyWhale.narrReset = (window.__chubbyWhale.narrReset || 0) + 1;
-                  } catch (e3) {
-                  }
+                  bump2("narrReset");
                 }
               } catch (e3) {
               }
               if (busyLock.watchdog()) {
                 setBusy(false);
-                try {
-                  window.__chubbyWhale.busyReset = (window.__chubbyWhale.busyReset || 0) + 1;
-                } catch (e2) {
-                }
+                bump2("busyReset");
               }
             } catch (e) {
             }
-          }, 2e3);
-          const clearStatus = () => {
-            try {
-              clearInterval(tStatus);
-            } catch (e) {
-            }
-          };
-          const tF = setTimeout(() => {
-            try {
-              prefetchFiller();
-            } catch (e) {
-            }
-          }, 3e3);
+          });
+          const tF = 0;
           return () => {
-            try {
-              clearTimeout(tGreet);
-            } catch (e) {
-            }
+            stopGreet();
             try {
               clearTimeout(tF);
             } catch (e) {
             }
-            clearStatus();
+            stopWatch();
             try {
               const el = bubbleRef.current;
               if (el) el.classList.remove("show");
@@ -5718,13 +8459,13 @@
           e.preventDefault();
           setMenu({ x: e.clientX, y: e.clientY });
           setSubOpen("");
+          setMenuFocus(-1);
           refreshMenuStats();
           refreshStoryBooks();
         }
         function refreshStoryBooks() {
           getJson("/story/books", { cache: "no-store" }).then((d) => {
-            const list = d && d.ok && Array.isArray(d.books) ? d.books.map((b) => String(b || "").trim()).filter(Boolean) : [];
-            setStoryBooks(list);
+            setStoryBooks(parseBookList(d));
             setStoryBooksTried(true);
           }).catch(() => {
             setStoryBooks([]);
@@ -5750,25 +8491,24 @@
             setGrowth(DEFAULT_GROWTH);
             return;
           }
-          setGrowthLabel(info.stage + "\uFF08" + info.exp + (info.nextExp ? "/" + info.nextExp : "") + "\uFF09");
+          applyGrowthInfo(info);
+        }
+        function applyGrowthInfo(info) {
+          setGrowthLabel(info.stage + "（" + info.exp + (info.nextExp ? "/" + info.nextExp : "") + "）");
           setGrowth(info);
         }
         function syncGrowth() {
           fetchGrowth((p, init) => getJson(p, init)).then((info) => {
-            if (info) {
-              setGrowthLabel(info.stage + "\uFF08" + info.exp + (info.nextExp ? "/" + info.nextExp : "") + "\uFF09");
-              setGrowth(info);
-            } else {
-              setGrowth(DEFAULT_GROWTH);
-            }
+            if (info) applyGrowthInfo(info);
+            else setGrowth(DEFAULT_GROWTH);
           });
         }
         function refreshBalance() {
           getJson("/balance", { cache: "no-store" }).then((d) => {
             if (d && d.ok && d.balance != null) {
               const v = String(d.balance);
-              setBalanceText("\u4F59\u989D \xA5" + v);
-              setBalanceLabel("\xA5" + v);
+              setBalanceText("余额 ¥" + v);
+              setBalanceLabel("¥" + v);
             } else {
               setBalanceText("--");
               setBalanceLabel("--");
@@ -5780,22 +8520,58 @@
         }
         R.useEffect(() => {
           if (!menu) return;
-          const onDocDown = (e) => {
-            try {
-              const t = e && e.target;
-              if (t && t.closest && t.closest("[data-menu-root]")) return;
+          return bindOutsideClose({
+            doc: document,
+            onOutside: () => {
               setMenu(null);
               setSubOpen("");
-            } catch {
             }
+          });
+        }, [menu]);
+        R.useEffect(() => {
+          if (!menu) return;
+          const onKeyDown = (e) => {
+            if (!e || e.key !== "Escape" && e.key !== "Esc") return;
+            evStop(e);
+            evPrevent(e);
+            setMenu(null);
+            setSubOpen("");
           };
-          document.addEventListener("pointerdown", onDocDown, true);
+          try {
+            window.addEventListener("keydown", onKeyDown, true);
+          } catch (e) {
+          }
           return () => {
             try {
-              document.removeEventListener("pointerdown", onDocDown, true);
-            } catch {
+              window.removeEventListener("keydown", onKeyDown, true);
+            } catch (e) {
             }
           };
+        }, [menu]);
+        R.useEffect(() => {
+          if (!menu) return;
+          return bindMenuKeys({
+            win: window,
+            isTyping: (t) => isTypingTarget(t),
+            count: () => menuEntriesRef.current.length,
+            index: () => menuFocusRef.current,
+            setIndex: (i) => setMenuFocus(i),
+            activate: (i) => {
+              const entry = menuEntriesRef.current[i];
+              if (!entry) return false;
+              if (entry.kind === "sub") {
+                setSubOpen(entry.open ? entry.parentPath : entry.path);
+                return true;
+              }
+              void runAction(entry.action);
+              return true;
+            },
+            close: () => {
+              setMenu(null);
+              setSubOpen("");
+              setMenuFocus(-1);
+            }
+          });
         }, [menu]);
         const story = createStoryController({
           clientId: CLIENT_ID,
@@ -5810,7 +8586,7 @@
             } catch (e) {
             }
           },
-          narrationRate: NARRATION_RATE2,
+          narrationRate,
           isVoiceOff: () => {
             try {
               return localStorage.getItem("chubby-voice") === "off";
@@ -5820,44 +8596,18 @@
           },
           refs: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef }
         });
-        if (!reminderPollerRef.current) {
-          reminderPollerRef.current = createReminderPoller({
-            getJson: (path, init) => getJson(path, init),
-            bubble: (text, ms2) => showBubble(text, ms2),
-            talkFor: (ms2) => {
-              try {
-                animRef.current?.talkFor(ms2);
-              } catch (e) {
-              }
-            },
-            speak: (text) => {
-              try {
-                speakText(text);
-              } catch (e) {
-              }
-            },
-            isSpeaking: () => ttsPlaying,
-            isNarrating: () => storyNarratingRef.current,
-            isBusy: () => busyLock.isBusy()
-          });
-        }
         const reminderPoller = reminderPollerRef.current;
         const actionHost = {
-          bubble: (text, ms2) => showBubble(text, ms2),
-          say: (text, ms2, opts) => sayLine(text, ms2, opts),
-          speak: (text, opts) => speakText(text, opts),
+          bubble: showBubble,
+          say: sayLine,
+          speak: speakText,
           speakReply: (text) => speakReply(text),
           narrate: setNarrating,
           clearNarrate: clearNarrating,
           stopSpeak: () => stopTts(),
           stopMelody: () => melody.stop(),
           playMelody: (notes, bpm, onDone) => melody.play(notes, bpm, onDone),
-          talkFor: (ms2) => {
-            try {
-              animRef.current?.talkFor(ms2);
-            } catch (e) {
-            }
-          },
+          talkFor,
           heart: () => {
             try {
               animRef.current?.pushHeart();
@@ -5866,7 +8616,7 @@
           },
           persona,
           clientId: CLIENT_ID,
-          narrationRate: NARRATION_RATE2,
+          narrationRate,
           version: VERSION,
           story,
           storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
@@ -5967,19 +8717,19 @@
                 stopTts();
               } catch (e) {
               }
-              showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5173\uFF08\u672C\u9CB8\u4E0D\u542C\u5566\uFF09", 2500);
+              showBubble("语音待命：关（本鲸不听啦）", 2500);
               return;
             }
             try {
               bridge.start().then((v) => {
                 try {
-                  if (v.status() === "idle") showBubble("\u9EA6\u514B\u98CE\u6CA1\u6253\u5F00\uFF1A" + String(v.stats && v.stats.lastError || "\u770B\u770B\u6743\u9650\uFF1F"), 5e3);
-                  else showBubble("\u8BED\u97F3\u5F85\u547D\uFF1A\u5F00\uFF08\u5148\u558A\u300C\u5927\u80A5\u9C7C\u300D\uFF0C\u672C\u9CB8\u624D\u7B54\u8BDD\uFF09", 3500);
+                  if (v.status() === "idle") showBubble("麦克风没打开：" + String(v.stats && v.stats.lastError || "看看权限？"), 5e3);
+                  else showBubble("语音待命：开（先喊「大肥鱼」，本鲸才答话）", 3500);
                 } catch (e) {
                 }
-              }).catch((e) => showBubble("\u9EA6\u514B\u98CE\u6CA1\u6253\u5F00\uFF1A" + String(e && e.message || e), 5e3));
+              }).catch((e) => showBubble("麦克风没打开：" + String(e && e.message || e), 5e3));
             } catch (e) {
-              showBubble("\u8BED\u97F3\u5F85\u547D\u6CA1\u5F00\u6210\uFF1A" + String(e && e.message || e), 5e3);
+              showBubble("语音待命没开成：" + String(e && e.message || e), 5e3);
             }
           },
           chatCacheOn: () => chatCacheOnRef.current,
@@ -5987,12 +8737,7 @@
             chatCacheOnRef.current = v;
             setChatCacheOn(v);
           },
-          diag: (patch) => {
-            try {
-              Object.assign(window.__chubbyWhale || (window.__chubbyWhale = {}), patch);
-            } catch (e) {
-            }
-          }
+          diag: dg
         };
         async function runAction(action) {
           setMenu(null);
@@ -6002,7 +8747,7 @@
           } catch (e) {
             ok = false;
           }
-          if (!ok) showBubble("\u8FD9\u4E2A\u529F\u80FD\u8FD8\u6CA1\u63A5\u4E0A");
+          if (!ok) showBubble("这个功能还没接上");
         }
         function scrollBody() {
           setTimeout(() => {
@@ -6010,43 +8755,59 @@
             if (el) el.scrollTop = el.scrollHeight;
           }, 0);
         }
+        R.useEffect(() => {
+          if (!chatOpen) return;
+          scrollBody();
+        }, [chatOpen, messages]);
+        R.useEffect(() => {
+          return bindChatFocus({
+            win: window,
+            open: chatOpen,
+            input: () => inputRef.current,
+            panel: () => chatPanelRef.current
+          });
+        }, [chatOpen]);
         const localRouter = createLocalRouter({
           persona,
-          narrationRate: NARRATION_RATE2,
-          bubble: (text, ms2) => showBubble(text, ms2),
-          say: (text, ms2, opts) => sayLine(text, ms2, opts),
-          speak: (text, opts) => speakText(text, opts),
+          narrationRate,
+          bubble: showBubble,
+          say: sayLine,
+          speak: speakText,
           narrate: setNarrating,
           clearNarrate: clearNarrating,
-          talkFor: (ms2) => {
+          talkFor,
+          story,
+          storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
+          // 点播（念诗/讲故事/讲典故）命中时打断进行中的聊天请求：不再等旧回复，也不会回来抢话
+          abortChat: () => {
             try {
-              animRef.current?.talkFor(ms2);
+              chat.abortStream();
             } catch (e) {
             }
-          },
-          story,
-          storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef }
+          }
         });
-        const chat = createChatSender({
+        const chatRef = hookApi.useLazyRef(() => createChatSender({
           persona,
-          bubble: (text, ms2) => showBubble(text, ms2),
-          say: (text, ms2, voiceOpts) => sayLine(text, ms2, voiceOpts),
-          speak: (text, opts) => speakText(text, opts),
+          bubble: showBubble,
+          say: sayLine,
+          speak: speakText,
           speakReply: (text) => speakReply(text),
           stopSpeak: () => stopTts(),
-          talkFor: (ms2) => {
-            try {
-              animRef.current?.talkFor(ms2);
-            } catch (e) {
-            }
-          },
+          talkFor,
           heart: () => {
             try {
               animRef.current?.pushHeart();
             } catch (e) {
             }
           },
-          setInput: (v) => setInput(v),
+          // 语音回合不动输入框（主人可能正在打字）；打字/语音的来源由 sendText 填标记，用一次即复位
+          setInput: (v) => {
+            if (skipInputClearRef.current) {
+              skipInputClearRef.current = false;
+              return;
+            }
+            setInput(v);
+          },
           setMessages: (v) => setMessages(v),
           setBusy: (v) => setBusy(v),
           scrollBody: () => scrollBody(),
@@ -6056,7 +8817,7 @@
           storyBusy: storyBusyRef,
           voiceMode: voiceModeRef,
           ttsPlaying: () => ttsPlaying,
-          narrationRate: NARRATION_RATE2,
+          narrationRate,
           route: (text) => localRouter.route(text),
           replyDeduper,
           recordChatLatency: (ms2) => {
@@ -6066,17 +8827,47 @@
             } catch (e) {
             }
           }
-        });
+        }));
+        const chat = chatRef.current;
         function sendText(rawText, opts) {
           try {
-            if (reminderManager.intercept(String(rawText == null ? "" : rawText))) return Promise.resolve();
+            if (reminderManager.intercept(String(rawText == null ? "" : rawText))) {
+              try {
+                setInput("");
+              } catch (e2) {
+              }
+              return Promise.resolve(true);
+            }
           } catch (e) {
           }
-          return chat.send(rawText, opts);
+          try {
+            if (localRouter.route(String(rawText == null ? "" : rawText))) {
+              try {
+                setInput("");
+              } catch (e2) {
+              }
+              return Promise.resolve(true);
+            }
+          } catch (e) {
+          }
+          try {
+            skipInputClearRef.current = !!(opts && opts.voice);
+          } catch (e) {
+          }
+          return chat.send(rawText, opts).then((ok) => ok !== false);
         }
         R.useEffect(() => {
           try {
-            const w = window.__chubbyWhale || (window.__chubbyWhale = {});
+            getJson("/pet").then((d) => {
+              if (d && d.pet && d.pet.mood) applyServerMood(String(d.pet.mood));
+            }).catch(() => {
+            });
+          } catch (e) {
+          }
+        }, []);
+        R.useEffect(() => {
+          const w = window.__chubbyWhale || (window.__chubbyWhale = {});
+          try {
             w.say = (t) => {
               try {
                 sendText(String(t || ""), { voice: true });
@@ -6093,6 +8884,15 @@
             w.look = () => lookRef.current;
           } catch (e) {
           }
+          return () => {
+            try {
+              if (w.say) delete w.say;
+              if (w.sayStop) delete w.sayStop;
+              if (w.busyNow) delete w.busyNow;
+              if (w.look) delete w.look;
+            } catch (e) {
+            }
+          };
         }, []);
         R.useEffect(() => {
           return reminderPoller.start();
@@ -6107,11 +8907,11 @@
         function speakText(text, o) {
           try {
             if (localStorage.getItem("chubby-voice") === "off") {
+              dg({ ttsSkip: "voice-off" });
               try {
-                window.__chubbyWhale.ttsSkip = "voice-off";
+                if (o && typeof o.onDone === "function") o.onDone();
               } catch (e) {
               }
-              ;
               return;
             }
           } catch (e) {
@@ -6134,14 +8934,6 @@
           } catch (e) {
           }
         }
-        function muteMic() {
-          bridge.mute(true);
-        }
-        function unmuteMic() {
-          bridge.mute(false);
-        }
-        function prefetchFiller() {
-        }
         function sayLine(text, ms2 = 3500, voiceOpts) {
           if (!lineDeduper.allow(text)) return;
           if (!text) return;
@@ -6152,7 +8944,7 @@
           try {
             if (localStorage.getItem("chubby-voice") === "off") return;
             const v = bridge.get();
-            if (v && v.speak && !v.speaking()) v.speak(text, { rate: voiceOpts && voiceOpts.rate || "+0%", pitch: voiceOpts && voiceOpts.pitch || "" });
+            if (v && v.speak && !v.speaking()) v.speak(text, { rate: voiceOpts && voiceOpts.rate || chatRate(), pitch: voiceOpts && voiceOpts.pitch || "" });
           } catch (e) {
           }
         }
@@ -6160,7 +8952,7 @@
           const rp = String(text || "");
           if (!rp.trim()) return;
           if (!replyDeduper.allow(rp)) return;
-          speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE2 : "+0%" });
+          speakText(rp, { rate: rp.length >= 80 ? narrationRate() : chatRate() });
         }
         R.useEffect(() => {
           const next = lookForGrowth(growth);
@@ -6187,31 +8979,19 @@
           return () => animRef.current?.stop();
         }, []);
         const recoverProps = recover.dot(hidden);
+        const menuItems = menu ? buildMenu(VERSION, Object.assign({ voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())) : [];
+        const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : [];
+        menuEntriesRef.current = menuEntries;
         function renderItems(items) {
-          const out = [];
-          for (let i = 0; i < items.length; i++) {
-            const it = items[i];
-            if (it.type === "sep") {
-              out.push(h("div", { key: "sep" + i, style: { height: 1, background: "#1f4a85", margin: "4px 0" } }));
-              continue;
-            }
-            if (it.type === "sub") {
-              const open = subOpen === it.label;
-              out.push(h("div", {
-                key: "sub" + i,
-                style: { padding: "6px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", color: "#cfe9ff", fontSize: 13 },
-                onClick: () => setSubOpen(open ? "" : it.label)
-              }, h("span", null, tr(it.label, lang)), h("span", null, open ? "\u25BE" : "\u25B8")));
-              if (open) out.push(h("div", { key: "subitems" + i, style: { paddingLeft: 14, borderLeft: "1px solid #1f4a85", marginLeft: 8 } }, renderItems(it.items)));
-              continue;
-            }
-            out.push(h("div", {
-              key: "item" + i,
-              style: { padding: "6px 14px", cursor: "pointer", color: "#cfe9ff", fontSize: 13, whiteSpace: "nowrap" },
-              onClick: () => runAction(it.action)
-            }, tr(it.label, lang)));
-          }
-          return out;
+          return renderMenuItems(items, {
+            h,
+            tr,
+            lang,
+            subOpen,
+            focusIndex: menuFocus,
+            onToggleSub: (next) => setSubOpen(next),
+            onAction: (action) => runAction(action)
+          });
         }
         return h(
           R.Fragment,
@@ -6244,82 +9024,53 @@
             },
             h("canvas", { ref: canvasRef, width: CW, height: CH, style: canvasStyle })
           ),
-          h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef })),
-          recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "\u25CB") : null,
+          h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+          recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "○") : null,
           menu ? h(
             "div",
-            { style: menuStyle(menu), "data-menu-root": "1" },
-            h(
-              "div",
-              { style: { padding: "8px 14px", borderBottom: "1px solid #1f4a85", color: "#9FD8FF", fontSize: 12, display: "flex", justifyContent: "space-between" } },
-              // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
-              h("span", null, (lang === "en" ? "Fat Whale \xB7 v" : "\u80A5\u9CB8 \xB7 v") + VERSION),
-              h("span", {
-                style: { color: "#FFD166", cursor: "pointer" },
-                title: lang === "en" ? "Click to refresh balance" : "\u70B9\u4E00\u4E0B\u5237\u65B0\u4F59\u989D",
-                onClick: () => {
-                  try {
-                    refreshMenuStats(true);
-                  } catch (e) {
-                  }
-                }
-              }, balanceText || "--")
-            ),
-            renderItems(buildMenu(VERSION, { voiceOn, earOn, voiceChatOn, chatCacheOn, storyAuto: (() => {
+            menuRootProps({ menu, lang }),
+            // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
+            renderMenuHeader({ h, lang, balanceText, onRefresh: () => {
               try {
-                return localStorage.getItem("chubby-story-auto") !== "0";
+                refreshMenuStats(true);
               } catch (e) {
-                return true;
               }
-            })(), ttsVoice: (() => {
-              try {
-                return localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
-              } catch (e) {
-                return "zh-CN-XiaoyiNeural";
-              }
-            })(), chatLang: (() => {
-              try {
-                return localStorage.getItem("chubby-chatlang") || "auto";
-              } catch (e) {
-                return "auto";
-              }
-            })(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }))
+            } }),
+            renderItems(menuItems)
           ) : null,
+          // 聊天面板：结构与事件接线都在 client/render.ts，发送/输入法判断留在闭包里。
+          // 外面包一层 display:contents 的根节点：粘贴处理要靠它判断事件是否发生在面板内，
+          // contents 不生成布局盒子，不影响面板自身的 fixed 定位。
           h(
             "div",
-            { style: chatPanelStyle(chatOpen) },
-            h(
-              "div",
-              { style: headStyle },
-              h("span", null, lang === "en" ? "Fat Whale \xB7 Chat" : "\u80A5\u9CB8 \xB7 \u804A\u5929"),
-              h("span", { style: { cursor: "pointer", color: "#9FD8FF", padding: "0 4px" }, onClick: () => setChatOpen(false) }, "\u2715")
-            ),
-            h(
-              "div",
-              { ref: bodyRef, style: bodyStyle },
-              messages.length === 0 ? h("div", { style: msgStyle("fish") }, "\u4E3B\u4EBA\uFF0C\u70B9\u6211\u8BF4\u8BDD\uFF0C\u672C\u9CB8\u5728\u53F3\u4E0B\u89D2\u5F85\u7740\uFF5E") : messages.map((m, i) => h("div", { key: i, style: msgStyle(m.who) }, m.text))
-            ),
-            h(
-              "div",
-              { style: inputRowStyle },
-              h("input", {
-                style: inputStyle,
-                placeholder: lang === "en" ? "Say something\u2026" : "\u8DDF\u80A5\u9CB8\u8BF4\u4E24\u53E5\u2026",
-                value: input,
-                onChange: (e) => setInput(e.target.value),
-                onKeyDown: (e) => {
-                  if (e.nativeEvent && e.nativeEvent.isComposing) return;
-                  if (e.key === "Enter" && input.trim()) {
-                    sendText(input);
-                    setInput("");
-                  }
+            { ref: chatRootRef, style: { display: "contents" } },
+            renderChatPanel({
+              h,
+              lang,
+              open: chatOpen,
+              messages,
+              input,
+              busy,
+              bodyRef,
+              inputRef,
+              panelRef: chatPanelRef,
+              onClose: () => setChatOpen(false),
+              onInputChange: (v) => setInput(v),
+              onKeyDown: (e) => {
+                const ne = e && e.nativeEvent;
+                if (ne && (ne.isComposing || ne.keyCode === 229)) return;
+                if (e.key === "Enter" && input.trim()) {
+                  const v = input;
+                  void sendText(v);
                 }
-              }),
-              h("button", { style: sendStyle, onClick: () => {
-                if (input.trim()) sendText(input);
-                setInput("");
-              } }, busy ? "\u2026" : lang === "en" ? "Send" : "\u53D1\u9001")
-            )
+              },
+              // 清空输入框由 chat.send 在真的发出后负责（占线被拒时保留主人的话）
+              onSend: () => {
+                const v = input;
+                if (!v.trim()) return;
+                void sendText(v);
+              }
+            })
           )
         );
       }
@@ -6327,7 +9078,8 @@
         name: "dsh-chubby-whale-client",
         inject: ["slots"],
         apply(ctx) {
-          const diag2 = window.__chubbyWhale = {
+          const diag2 = window.__chubbyWhale || (window.__chubbyWhale = {});
+          Object.assign(diag2, {
             version: VERSION,
             applied: true,
             hasCtx: !!ctx,
@@ -6336,11 +9088,11 @@
             ch: { mic: channels.mic.stats, asr: channels.asr.stats, speak: channels.speak.stats },
             registered: false,
             error: null
-          };
+          });
           try {
             const slots = ctx && ctx.slots;
             if (!slots) {
-              diag2.error = "ctx.slots \u4E0D\u5B58\u5728\uFF08inject \u672A\u751F\u6548\uFF09";
+              diag2.error = "ctx.slots 不存在（inject 未生效）";
               console.warn("[chubby-whale]", diag2.error);
               return;
             }
@@ -6350,10 +9102,10 @@
               try {
                 slots.register(desc, render);
                 diag2.registered = true;
-                console.log("[chubby-whale] overlay \u5DF2\u6CE8\u518C");
+                console.log("[chubby-whale] overlay 已注册");
               } catch (e) {
-                diag2.error = "register \u5931\u8D25: " + String(e);
-                console.error("[chubby-whale] overlay \u6CE8\u518C\u5931\u8D25\uFF1A", e);
+                diag2.error = "register 失败: " + String(e);
+                console.error("[chubby-whale] overlay 注册失败：", e);
               }
             };
             try {
@@ -6362,13 +9114,13 @@
                 if (!diag2.registered) doRegister();
               }, 1200);
             } catch (e) {
-              diag2.error = "inject \u5931\u8D25: " + String(e);
-              console.error("[chubby-whale] overlay \u6CE8\u5165\u5931\u8D25\uFF1A", e);
+              diag2.error = "inject 失败: " + String(e);
+              console.error("[chubby-whale] overlay 注入失败：", e);
               doRegister();
             }
           } catch (e) {
-            diag2.error = "apply \u5F02\u5E38: " + String(e);
-            console.error("[chubby-whale] apply \u5F02\u5E38\uFF1A", e);
+            diag2.error = "apply 异常: " + String(e);
+            console.error("[chubby-whale] apply 异常：", e);
           }
         }
       };

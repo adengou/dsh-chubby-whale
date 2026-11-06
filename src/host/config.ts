@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import type { DataSourceKind } from './ports.js'
 
 function readConfigJson(pluginDir: string): any {
-  try { return JSON.parse(readFileSync(join(pluginDir, 'config.json'), 'utf8')) } catch { return null }
+  try { return JSON.parse(String(readFileSync(join(pluginDir, 'config.json'), 'utf8')).replace(/^\uFEFF/, '')) } catch { return null }
 }
 
 function fromEnv(own: string, legacy: string): string {
@@ -41,6 +41,19 @@ export function readSiliconFlowKey(pluginDir: string): string {
   const cfg = readConfigJson(pluginDir)
   if (cfg && typeof cfg.siliconflowKey === 'string' && cfg.siliconflowKey.trim()) return cfg.siliconflowKey.trim()
   return fromEnv('CHUBBY_WHALE_SILICONFLOW_KEY', 'SILICONFLOW_API_KEY')
+}
+
+/**
+ * 语音识别语言（硅基流动 Qwen3-ASR 的 language 参数）：默认 zh。
+ * 为什么默认 zh：不传该参数时模型自动检测，短句/带噪声的音频常被识别成英文（"No, no"），
+ * 主人的语音几乎都是中文，显式指定能显著减少误识别。
+ * config.json 可改：asrLanguage（zh / en / auto）
+ */
+export function readAsrLanguage(pluginDir: string): string {
+  const cfg = readConfigJson(pluginDir)
+  const v = cfg && typeof cfg.asrLanguage === 'string' ? cfg.asrLanguage.trim().toLowerCase() : ''
+  if (v === 'en' || v === 'auto') return v
+  return 'zh'
 }
 
 /** Key 就绪情况（给 /status 与启动日志用） */

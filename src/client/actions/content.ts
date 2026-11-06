@@ -9,6 +9,14 @@
 import type { ActionHost, ActionTable } from '../actions.js'
 import { getJson } from '../http.js'
 import { estimateSpeakMs } from '../text.js'
+import { beginOnce } from './culture.js'
+
+/** 书单响应 → 书名数组（菜单打开时的书单与 story-books 重试共用同一份解析） */
+export function parseBookList(d: any): string[] {
+  return (d && d.ok && Array.isArray(d.books))
+    ? d.books.map((b: any) => String(b || '').trim()).filter(Boolean)
+    : []
+}
 
 /** 今日一句：text 必填，source 可能为空 */
 export type DailyLine = { text: string; source: string }
@@ -65,7 +73,7 @@ function showAndSpeak(host: ActionHost, shown: string, speech: string, ms: numbe
   host.talkFor(5000)
   if (!host.voiceOn()) return
   host.narrate(estimateSpeakMs(speech))
-  host.speak(speech, { rate: host.narrationRate, onDone: () => host.clearNarrate() })
+  host.speak(speech, { rate: host.narrationRate(), onDone: () => host.clearNarrate() })
 }
 
 export function registerContentActions(table: ActionTable<ActionHost>): void {
@@ -73,9 +81,7 @@ export function registerContentActions(table: ActionTable<ActionHost>): void {
   table.define('story-books', (host) => {
     getJson('/story/books', { cache: 'no-store' })
       .then((d: any) => {
-        const books = (d && d.ok && Array.isArray(d.books))
-          ? d.books.map((b: any) => String(b || '').trim()).filter(Boolean)
-          : []
+        const books = parseBookList(d)
         if (!books.length) { host.bubble('书单没取到，稍后再试', 4000); return }
         host.bubble('书单有 ' + books.length + ' 本，右键点「选本书」挑一本～', 5000)
       })
@@ -93,6 +99,7 @@ export function registerContentActions(table: ActionTable<ActionHost>): void {
 
   // —— 今日一句：text + ——source，失败静默给一句提示 ——
   table.define('daily-line', (host) => {
+    if (!beginOnce('daily')) { host.bubble('刚念过啦，稍等～', 2000); return }
     getJson('/daily', { cache: 'no-store' })
       .then((d: any) => {
         const line = pickDaily(d)
@@ -105,6 +112,7 @@ export function registerContentActions(table: ActionTable<ActionHost>): void {
 
   // —— 今日简报：先日期天气、再待办，两段之间空一行 ——
   table.define('briefing-card', (host) => {
+    if (!beginOnce('briefing')) { host.bubble('刚播过啦，稍等～', 2000); return }
     getJson('/briefing', { cache: 'no-store' })
       .then((d: any) => {
         const card = parseBriefing(d)

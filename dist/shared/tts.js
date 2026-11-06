@@ -1,7 +1,14 @@
 /**
  * shared/tts.ts —— TTS 纯函数（浏览器端与 Node 端共用，方便单元验证）
- * 分段、语速校验、edge-tts 参数构造。
+ * 分段、语速校验、edge-tts 参数构造、跨平台探测用的错误码与探测脚本。
  */
+/** 错误码：本机没有可用的 python/edge_tts → 路由回 501，客户端降级浏览器 speechSynthesis */
+export const TTS_UNAVAILABLE = 'TTS_UNAVAILABLE';
+/**
+ * 解释器探测脚本：只导入 edge_tts 并打印 ok，不合成、不联网。
+ * 放在 shared 里是为了让「探测」与「引擎」共用同一份命令，避免两处字符串漂移。
+ */
+export const TTS_PROBE_CODE = "import edge_tts; print('ok')";
 /** 语速格式校验：+12% / -15% / +0% */
 export function isValidRate(s) {
     return typeof s === 'string' && /^[+-]\d{1,2}%$/.test(s.trim());

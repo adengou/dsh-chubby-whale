@@ -13,6 +13,7 @@
  * 本模块只管流程与文案；取数、气泡全部由 host 注入，方便离线验证。
  */
 
+import { str } from './util.js'
 import { getJson, postJson, delJson } from './http.js'
 
 /** 面板有效窗：最近打开后 60 秒内才接住数字输入 */
@@ -54,7 +55,7 @@ export type ManageInput =
  * 只用于判断「是不是管理指令」，不改动交给聊天的原文。
  */
 export function normalizeManageInput(text: unknown): string {
-  return String(text == null ? '' : text)
+  return str(text)
     .replace(/[\s。，、！？；：,.!?;:…~～·"'“”‘’（）()【】\[\]]/g, '')
     .toLowerCase()
 }
@@ -81,7 +82,7 @@ export function formatClock(at: any): string {
 function stampOf(item: ManageItem): string {
   const raw = item.nextAt || item.at
   const d = new Date(raw)
-  if (isNaN(d.getTime())) return String(raw == null ? '' : raw)
+  if (isNaN(d.getTime())) return str(raw)
   try { return d.toLocaleString('zh-CN') } catch (e) { return formatClock(d) }
 }
 
@@ -105,11 +106,11 @@ export function normalizeReminderList(payload: any): ManageItem[] {
   for (const x of arr) {
     if (!x || typeof x !== 'object') continue
     if (x.done === true) continue
-    const id = String(x.id == null ? '' : x.id)
+    const id = str(x.id)
     if (!id) continue
     out.push({
       id,
-      text: String(x.text == null ? '' : x.text),
+      text: str(x.text),
       at: x.at,
       nextAt: x.nextAt,
       repeat: x.repeat,
@@ -160,7 +161,10 @@ export function createReminderManager(host: ManageHost): ReminderManager {
   let seq = 0
 
   function isOpen(now: number = clock()): boolean {
-    return openedAt > 0 && board.length > 0 && now - openedAt <= MANAGE_WINDOW_MS
+    if (!(openedAt > 0) || !board.length) return false
+    const age = now - openedAt
+    // age < 0 = 系统时钟被往回调：按失效处理，否则窗永远关不上、数字会被一直吞
+    return age >= 0 && age <= MANAGE_WINDOW_MS
   }
 
   /** 失效时顺手清干净，之后数字输入直接放行 */
@@ -169,21 +173,44 @@ export function createReminderManager(host: ManageHost): ReminderManager {
     board = []
   }
 
-  /** 拉一次清单（只更新缓存，不冒泡） */
-  function refresh(): Promise<ManageItem[]> {
+  /**
+   * 把可能同步抛错的请求收成 Promise。
+   * fetchJson / sendJson / removeJson 在极端环境（fetch 被禁用、参数非法）会同步抛；
+   * 旧写法 `Promise.resolve(fetchJson(...))` 的参数求值发生在 Promise 之外，异常会直接冒出
+   * intercept，主循环只会静默吞掉。统一转成 rejected，落到同一套兜底文案。
+   */
+  function safeRequest<T>(fn: () => Promise<T>): Promise<T> {
+    try { return Promise.resolve(fn()) } catch (e) { return Promise.reject(e) }
+  }
+
+  /**
+   * 拉服务端清单重新编号并冒泡（删除/顺延后都用它，序号以服务端为准）。
+   * 刷新失败就让面板失窗：旧序号可能已经不对，不能再接数字。
+   */
+  function showBoard(prefix: string, failText: string): void {
     const my = ++seq
-    return Promise.resolve(fetchJson('/reminders')).then((d: any) => {
-      if (my !== seq) return board
-      board = normalizeReminderList(d)
-      return board
-    }).catch(() => board)
+    safeRequest(() => fetchJson('/reminders')).then((d: any) => {
+      if (my !== seq) return
+      const arr = normalizeReminderList(d)
+      board = arr
+      if (!arr.length) {
+        openedAt = 0
+        host.bubble(prefix, 5000)
+        return
+      }
+      host.bubble(boardText(arr, prefix), 12000)
+    }).catch(() => {
+      if (my !== seq) return
+      openedAt = 0
+      board = []
+      host.bubble(failText, 5000)
+    })
   }
 
   function open(): Promise<void> {
     const my = ++seq
-    const at = clock()
     openedAt = 0
-    return Promise.resolve(fetchJson('/reminders')).then((d: any) => {
+    return safeRequest(() => fetchJson('/reminders')).then((d: any) => {
       // 期间又打开了一次：这次结果作废
       if (my !== seq) return
       const arr = normalizeReminderList(d)
@@ -194,7 +221,8 @@ export function createReminderManager(host: ManageHost): ReminderManager {
         host.bubble('还没有提醒～', 3000)
         return
       }
-      openedAt = at
+      // 窗从「清单真正展示」开始算：接口慢 5 秒时不能把这 5 秒算进 60 秒里
+      openedAt = clock()
       host.bubble(boardText(arr, '提醒清单（' + arr.length + ' 条）：'), 12000)
     }).catch(() => {
       if (my !== seq) return
@@ -204,46 +232,40 @@ export function createReminderManager(host: ManageHost): ReminderManager {
     })
   }
 
-  /** 删除成功后刷新清单，并把「删掉了」和最新序号放在同一条气泡里 */
+  /** 删除/顺延成功后刷新清单，把提示和最新序号放在同一条气泡里 */
   function afterDelete(): void {
-    const my = ++seq
-    Promise.resolve(fetchJson('/reminders')).then((d: any) => {
-      if (my !== seq) return
-      const arr = normalizeReminderList(d)
-      board = arr
-      if (!arr.length) {
-        openedAt = 0
-        host.bubble('删掉了', 4000)
-        return
-      }
-      host.bubble(boardText(arr, '删掉了'), 12000)
-    }).catch(() => {
-      openedAt = 0
-      board = []
-      host.bubble('删掉了', 4000)
-    })
+    showBoard('删掉了', '删掉了，清单没刷新过来')
   }
 
-  /** 删除第 index 条（1 基序号） */
+  /**
+   * 删除第 index 条（1 基序号）。
+   * 请求还没回来时先按「已删掉」更新本地序号：主人回数字很快时，第二次删除必须按
+   * 新序号算；否则会拿旧序号去删下一条，删错人。
+   * 失败时不拿旧快照硬回滚（可能掩盖期间别的变化），直接拉服务端清单复位。
+   */
   function removeAt(index: number): void {
     const it = board[index - 1]
     if (!it) {
       host.bubble('没有第 ' + index + ' 条，回数字再选一次', 4000)
       return
     }
-    Promise.resolve(removeJson('/reminders?id=' + encodeURIComponent(it.id))).then((d: any) => {
+    const next = board.slice()
+    next.splice(index - 1, 1)
+    board = next
+    safeRequest(() => removeJson('/reminders?id=' + encodeURIComponent(it.id))).then((d: any) => {
       if (!(d && d.ok)) {
-        host.bubble('没删掉，等会儿再试', 4000)
+        showBoard('没删掉，最新清单：', '没删掉，清单也没刷出来')
         return
       }
       afterDelete()
-    }).catch(() => host.bubble('没删掉，等会儿再试', 4000))
+    }).catch(() => showBoard('没删掉，最新清单：', '没删掉，清单也没刷出来'))
   }
 
   /**
    * 顺延最近到期的提醒 10 分钟。
    * 顺序：先 POST 新提醒 → 成功后 DELETE 旧条目。
-   * 这样添加失败时原提醒还在；删除失败时提示「旧提醒没删掉」，不至于静默丢数据。
+   * 添加失败时原提醒还在，清单不动；删除失败时新提醒已经加上了，必须刷新清单，
+   * 让主人看见「新的 + 旧的」两条并能自己删掉——不刷新的话再按一次 d 会再加一条。
    */
   function postpone(): void {
     const pick = pickNextDue(board)
@@ -261,33 +283,18 @@ export function createReminderManager(host: ManageHost): ReminderManager {
       at: at.toISOString(),
       repeat: Number(pick.repeat) || 0,
     }
-    Promise.resolve(sendJson('/reminders', body)).then((d: any) => {
+    safeRequest(() => sendJson('/reminders', body)).then((d: any) => {
       if (!(d && d.ok)) {
         host.bubble('顺延没成，原提醒还在', 4000)
         return
       }
-      Promise.resolve(removeJson('/reminders?id=' + encodeURIComponent(pick.id))).then((d2: any) => {
+      safeRequest(() => removeJson('/reminders?id=' + encodeURIComponent(pick.id))).then((d2: any) => {
         if (!(d2 && d2.ok)) {
-          host.bubble('顺延到 ' + when + '，但旧提醒没删掉', 6000)
+          showBoard('顺延到 ' + when + '，但旧提醒没删掉：', '顺延到 ' + when + '，但旧提醒没删掉')
           return
         }
-        const my = ++seq
-        Promise.resolve(fetchJson('/reminders')).then((d3: any) => {
-          if (my !== seq) return
-          const arr = normalizeReminderList(d3)
-          board = arr
-          if (!arr.length) {
-            openedAt = 0
-            host.bubble('顺延到 ' + when, 5000)
-            return
-          }
-          host.bubble(boardText(arr, '顺延到 ' + when), 12000)
-        }).catch(() => {
-          openedAt = 0
-          board = []
-          host.bubble('顺延到 ' + when, 5000)
-        })
-      }).catch(() => host.bubble('顺延到 ' + when + '，但旧提醒没删掉', 6000))
+        showBoard('顺延到 ' + when, '顺延到 ' + when)
+      }).catch(() => showBoard('顺延到 ' + when + '，但旧提醒没删掉：', '顺延到 ' + when + '，但旧提醒没删掉'))
     }).catch(() => host.bubble('顺延没成，原提醒还在', 4000))
   }
 

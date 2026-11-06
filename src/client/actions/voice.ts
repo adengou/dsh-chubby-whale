@@ -5,8 +5,11 @@
  * 这里只负责菜单动作到 host 的映射。
  */
 
+import { str } from '../util.js'
+import { readEndpointMode, writeEndpointMode } from '../endpoint.js'
 import type { ActionHost, ActionTable } from '../actions.js'
 import { normalizeVoiceName } from '../voice.js'
+import { setCustomWakeWord } from '../wake.js'
 
 export function registerVoiceActions(table: ActionTable<ActionHost>): void {
   // —— 语音待命：开=建/启语音模块；关=停录音（实例留着复用）——
@@ -34,11 +37,9 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
     try {
       const v: any = host.voice()
       // 当前模式以语音实例为准（endpointInfo 现在报真实模式）；没实例才退回 localStorage
-      const cur = (v && v.endpointInfo)
-        ? v.endpointInfo().mode
-        : (() => { try { return localStorage.getItem('chubby-endpoint') === 'ape' ? 'ape' : 'classic' } catch (e) { return 'classic' } })()
+      const cur = (v && v.endpointInfo) ? v.endpointInfo().mode : readEndpointMode()
       const next = cur === 'ape' ? 'classic' : 'ape'
-      localStorage.setItem('chubby-endpoint', next)
+      writeEndpointMode(next)
       if (v && v.setEndpointMode) v.setEndpointMode(next)
       // 提示按切换后的真实模式来说，避免"点了没变"的错觉
       const real = (v && v.endpointInfo) ? v.endpointInfo().mode : next
@@ -54,7 +55,7 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
       if (!st) { host.bubble('语音模块还没起来（语音待命可能是关的）', 6000); return }
       const line = '语音自检（新模块）：' + String(v.status())
         + '\n录音段 ' + st.windows + '｜上传 ' + st.uploaded + '｜识别出字 ' + st.asrTexts + '｜交给对话 ' + st.heard
-        + '\n丢：太安静 ' + st.skippedSilent + '｜回声/重复 ' + st.echoDropped + '｜识别失败 ' + st.asrFail
+        + '\n丢：太安静 ' + st.skippedSilent + '｜回声/重复 ' + st.echoDropped + '｜识别失败 ' + st.asrFail + '｜识别重试 ' + (st.asrRetry || 0)
         + '\n去重：重复丢弃 ' + (st.dupDropped || 0) + ' 次（同一句话被切成两段时用）'
         + '\n端点检测：' + (v.endpointInfo ? (v.endpointInfo().mode === 'ape' ? '自适应' : '经典') : '?')
         + (function () { try { const t = v.lastTtsInfo ? v.lastTtsInfo() : null; if (!t) return ''; return '\n朗读：最后一段 ' + (t.failed ? '失败' : '已开播') + '｜文本开头「' + t.text + '」' } catch (e) { return '' } })()
@@ -73,7 +74,12 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
         })()
         + (st.lastError ? '\n最近错误：' + st.lastError : '')
       host.bubble(line, 15000)
-      try { navigator.clipboard.writeText(JSON.stringify(st)) } catch (e) { }
+      // navigator.clipboard 在 http 非安全上下文里是 undefined，写失败还会 reject；
+      // 这里只是"顺手复制"，失败绝不能影响自检气泡（旧写法 try/catch 抓不到 Promise rejection）
+      try {
+        const clip: any = (navigator as any).clipboard
+        if (clip && typeof clip.writeText === 'function') Promise.resolve(clip.writeText(JSON.stringify(st))).catch(() => { })
+      } catch (e) { }
     } catch (e: any) { host.bubble('自检失败：' + String(e && e.message), 5000) }
   })
 
@@ -88,4 +94,18 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
     // 试听走宿主 /tts（strict）：不再用浏览器 speechSynthesis，失败静默
     try { host.previewVoice('主人，这个声音好听吗？') } catch (e) { }
   })
-}
+
+  // —— 唤醒词：默认 / 候选 / 自定义（存 localStorage，即时生效；语音随时可说，唤醒词只用来剥句子开头）——
+  table.definePrefix('wake-word:', (host, val) => {
+    const word = str(val).trim()
+    if (word === 'custom') {
+      let input: any = null
+      try { input = typeof window !== 'undefined' && typeof (window as any).prompt === 'function' ? (window as any).prompt('唤醒词（1–12 字）', '大肥鱼') : null } catch (e) { }
+      if (input == null) { host.bubble('没改唤醒词'); return }
+      const on = setCustomWakeWord(String(input))
+      host.bubble(on ? '唤醒词：' + String(input).trim().slice(0, 12) : '唤醒词：默认（大肥鱼/肥鲸等）')
+      return
+    }
+    const on = setCustomWakeWord(word)
+    host.bubble(on ? '唤醒词：' + word : '唤醒词：默认（大肥鱼/肥鲸等）')
+  })}

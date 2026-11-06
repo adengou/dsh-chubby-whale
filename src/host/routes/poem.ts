@@ -11,11 +11,13 @@ import { join } from 'node:path'
 import { writeJsonAtomic } from '../atomic.js'
 import { sendJson, sendError } from '../respond.js'
 import type { DataPort } from '../ports.js'
-import { normalizePoemItems, poemKeyOf } from '../data/normalize.js'
+import { poemKeyOf } from '../../shared/poem.js'
 
 export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string; dataPort: DataPort }) {
   const SEEN_FILE = join(opts.runtimeDir || opts.dataDir || '.', 'poem-seen.json')
   let seen: Set<string> | null = null
+  /** 上一次真正念出来的诗（去重键）：一轮念完清空池子时用它挡住「刚念完又立刻同一首」 */
+  let lastKey = ''
 
   /**
    * 拉全部诗：先取第 0 片拿到 total，再顺序取其余片。
@@ -24,13 +26,14 @@ export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string;
   async function loadPoems(): Promise<any[]> {
     try {
       const first = await opts.dataPort.readPoemsChunk(0)
-      const out: any[] = Array.isArray(first && first.items) ? first.items.slice() : []
+      // 数据层（local/cloud）已经归一化过去重过，这里不再重复归一化（737 首诗每请求扫一遍纯属浪费）
+    const out: any[] = Array.isArray(first && first.items) ? first.items.slice() : []
       const total = Math.max(1, Number(first && first.total) || 1)
       for (let i = 1; i < total; i++) {
         const chunk = await opts.dataPort.readPoemsChunk(i)
         if (chunk && Array.isArray(chunk.items)) out.push(...chunk.items)
       }
-      return normalizePoemItems(out)
+      return out
     } catch (err: any) {
       console.error('POEM-LOAD-FAIL err=' + String(err?.message || err))
       return []
@@ -41,7 +44,7 @@ export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string;
     if (seen) return seen
     const s = new Set<string>()
     try {
-      const arr = JSON.parse(readFileSync(SEEN_FILE, 'utf8'))
+      const arr = JSON.parse(String(readFileSync(SEEN_FILE, 'utf8')).replace(/^\uFEFF/, ''))
       if (Array.isArray(arr)) {
         for (const k of arr) if (typeof k === 'string' && k.trim()) s.add(k.trim())
       } else {
@@ -85,6 +88,7 @@ export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string;
         if (hit) {
           const sn0 = loadSeen()
           sn0.add(poemKeyOf(hit))
+          lastKey = poemKeyOf(hit)
           saveSeen()
           sendJson(res, {
             ok: true,
@@ -98,13 +102,16 @@ export function createPoemHandler(opts: { runtimeDir?: string; dataDir?: string;
       const sn = loadSeen()
       let pool = list.filter((p: any) => !sn.has(poemKeyOf(p)))
       if (pool.length === 0) {
-        // 一轮念完：清空记忆重来
+        // 一轮念完：清空记忆重来。诗库不止一首时先排除刚念过的那首，
+        // 否则新一轮第一首有 1/n 概率与上一首完全相同（两首诗库时最明显）。
         sn.clear()
         saveSeen()
-        pool = list.slice()
+        pool = list.filter((p: any) => poemKeyOf(p) !== lastKey)
+        if (pool.length === 0) pool = list.slice()
       }
       const p = pool[Math.floor(Math.random() * pool.length)]
       sn.add(poemKeyOf(p))
+      lastKey = poemKeyOf(p)
       saveSeen()
       sendJson(res, {
         ok: true,

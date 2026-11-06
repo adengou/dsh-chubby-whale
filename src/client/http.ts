@@ -65,14 +65,23 @@ export function postJson(path: string, body?: any, init?: JsonInit): Promise<any
 
 /** DELETE 并解析 JSON */
 export function delJson(path: string, init?: JsonInit): Promise<any> {
-  return fetch(apiUrl(path), Object.assign({ method: 'DELETE' }, init || {}) as any).then((r: any) => r.json())
+  // init 里若带 method 不能覆盖掉 DELETE：函数名承诺的就是 DELETE（同理 postRaw 强制 POST）
+  const o: JsonInit = Object.assign({}, init || {})
+  o.method = 'DELETE'
+  return fetch(apiUrl(path), o as any).then((r: any) => r.json())
 }
 
-/** AbortSignal.timeout 的安全包装：浏览器不支持时返回 undefined（绝不因此报错） */
+/**
+ * AbortSignal.timeout 的安全包装：浏览器不支持时返回 undefined（绝不因此报错）。
+ * ms 必须为正的有限数：0/NaN 调 AbortSignal.timeout(0) 会**立即**中止请求，
+ * 调用方本意多半是「没有超时」，所以这里按不支持处理。
+ */
 export function timeoutSignal(ms: number): any {
   try {
+    const n = Number(ms)
+    if (!Number.isFinite(n) || n <= 0) return undefined
     const AS: any = typeof AbortSignal !== 'undefined' ? AbortSignal : null
-    if (AS && typeof AS.timeout === 'function') return AS.timeout(Number(ms) || 0)
+    if (AS && typeof AS.timeout === 'function') return AS.timeout(n)
   } catch (e) { }
   return undefined
 }

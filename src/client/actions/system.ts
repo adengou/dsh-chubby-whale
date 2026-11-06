@@ -10,25 +10,45 @@ import { getJson, postJson, delJson } from '../http.js'
 import { VISION_PROMPT } from '../dropzone.js'
 import { imageToB64 } from '../image.js'
 import { parseDue, cleanReminderText } from '../../shared/time.js'
-import { exportBackup, importBackup, formatStats } from './data.js'
+import { exportBackup, importBackup } from './data.js'
 
 export function registerSystemActions(table: ActionTable<ActionHost>): void {
+  /**
+   * 投喂上报：宿主记账后刷新成长外观。
+   * 投喂已在本地生效，上报失败只静默（不弹错、不回滚碗数）。
+   */
+  function syncFeed(host: ActionHost): void {
+    try {
+      getJson('/pet?action=feed')
+        .then(() => { try { host.syncGrowth() } catch (e) { } })
+        .catch(() => { })
+    } catch (e) { }
+  }
+
   // —— 投喂 ——
   table.define('feed', (host) => {
     const r = host.persona.feed()
     // 每 8 碗说一次「饭碗账本」；平时说投喂台词
     if (r.bowls % 8 === 0) {
       host.say(host.persona.line('riceAccount'), 5000)
-      try { getJson('/pet?action=feed').then(() => { try { host.syncGrowth() } catch (e) { } }).catch(() => { }) } catch (e) { }
+      syncFeed(host)
       return
     }
     host.say(r.text + (r.stageUp ? '（' + r.stage + '）' : ''), r.stageUp ? 6000 : 3500)
     host.heart()
-    try { getJson('/pet?action=feed').then(() => { try { host.syncGrowth() } catch (e) { } }).catch(() => { }) } catch (e) { }
+    syncFeed(host)
   })
 
   // —— 位置与大小 ——
   table.define('home', (host) => { host.homePos(); host.bubble('回到角落啦') })
+  // 流式回复开关：chubby-stream 以前只有人读、没人写（死键）
+  table.define('stream-toggle', (host) => {
+    try {
+      const off = localStorage.getItem('chubby-stream') === 'off'
+      localStorage.setItem('chubby-stream', off ? 'on' : 'off')
+      host.bubble(off ? '流式回复：开（边生成边说）' : '流式回复：关（等整段再开口）', 4000)
+    } catch (e) { host.bubble('改不了（浏览器禁止存储）', 3000) }
+  })
   table.define('bigger', (host) => { host.nudgeScale(0.1) })
   table.define('smaller', (host) => { host.nudgeScale(-0.1) })
   // —— 让它游走：隐藏后仍可恢复（恢复点 / Ctrl+Shift+W / 菜单项都走 host.recover）——
@@ -70,13 +90,18 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     }).catch(() => host.bubble('鱼粮查不到'))
   })
   table.define('growth', (host) => {
-    Promise.all([getJson('/growth'), getJson('/state')]).then(([g, s]: any[]) => {
+    // /state 只是补充亲密度：它挂了不能把已经拿到的成长数据一起拖成「查不到」
+    Promise.all([getJson('/growth'), getJson('/state').catch(() => null)]).then(([g, s]: any[]) => {
       if (g && g.ok) {
         const nx = g.nextExp > 0 ? ('（经验 ' + g.exp + '/' + g.nextExp + '）') : '（满级）'
-        const it = (s && s.intimacy) || 0
+        // /state 失败时不能报「亲密度 0/100」：那是没拿到数据，不是真 0
+        const raw = s && s.intimacy
+        const it = (raw != null && raw !== '' && Number.isFinite(Number(raw)))
+          ? (' · 亲密度 ' + Number(raw) + '/100')
+          : ' · 亲密度查不到'
         // 菜单里刚拉到的数据同时用于外观刷新（体型/光点/光晕实时变，不用刷新页面）
         try { host.applyGrowth(g) } catch (e) { }
-        host.bubble('成长：' + g.stage + nx + ' · 亲密度 ' + it + '/100', 5000)
+        host.bubble('成长：' + g.stage + nx + it, 5000)
       } else host.bubble('成长查不到')
     }).catch(() => host.bubble('成长查不到'))
   })
@@ -88,15 +113,22 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
       if (d && d.ok && d.balance != null) {
         host.setBalance('余额 ¥' + d.balance, '¥' + d.balance)
         host.bubble('余额还有 ' + d.balance + ' 元', 5000)
-      } else host.bubble('余额查不到')
-    }).catch(() => host.bubble('余额查不到'))
+        return
+      }
+      // NO_KEY 是最常见的失败：说清是「没配钥匙」而不是「接口坏了」
+      const err = d && typeof d.error === 'string' ? d.error : ''
+      if (err === 'NO_KEY') host.bubble('还没配 DeepSeek API Key，余额查不了', 6000)
+      else if (err === 'timeout') host.bubble('余额接口超时，等会儿再看', 5000)
+      else host.bubble('余额查不到', 5000)
+    }).catch(() => host.bubble('余额查不到', 5000))
   })
 
   // —— 聊天语言 / 界面语言 ——
   table.definePrefix('chat-lang:', (host, v) => {
     const cl = v === 'en' ? 'en' : (v === 'zh' ? 'zh' : 'auto')
     try { localStorage.setItem('chubby-chatlang', cl) } catch (e) { }
-    host.bubble(cl === 'en' ? '聊天语言：English' : '聊天语言：中文')
+    // auto 是合法值：以前落进 else 却显示「中文」，选「自动」看着像没生效
+    host.bubble(cl === 'en' ? '聊天语言：English' : (cl === 'zh' ? '聊天语言：中文' : '聊天语言：自动（跟着主人说）'))
   })
   table.definePrefix('lang:', (host, v) => {
     const l = v === 'en' ? 'en' : 'zh'
@@ -115,17 +147,42 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     const nowOn = !host.chatCacheOn()
     host.setChatCacheOn(nowOn)
     postJson('/cache-toggle', { enabled: nowOn }).then((d: any) => {
-      host.bubble(d && d.ok ? ('聊天缓存：' + (d.enabled ? '开（省 token）' : '关（每次重新回答）')) : '切换失败', 5000)
-    }).catch(() => host.bubble('切换失败', 4000))
+      if (!d || !d.ok) {
+        // 宿主没切成功就回滚勾选：否则菜单显示与后端实际状态相反，下次点按还会切错方向
+        host.setChatCacheOn(!nowOn)
+        host.bubble('切换失败', 4000)
+        return
+      }
+      // 以宿主回报的实际值为准（策略可能强制某一侧）
+      const real = typeof d.enabled === 'boolean' ? d.enabled : nowOn
+      host.setChatCacheOn(real)
+      host.bubble('聊天缓存：' + (real ? '开（省 token）' : '关（每次重新回答）'), 5000)
+    }).catch(() => {
+      host.setChatCacheOn(!nowOn)
+      host.bubble('切换失败', 4000)
+    })
   })
   table.define('clear-memory', (host) => {
-    try {
-      if (!(window as any).confirm('清除肥鲸对主人的聊天记忆？（成长/鱼粮/说书记录不受影响）')) return
-      postJson('/clear-memory').then((d: any) => {
-        if (d && d.ok) { host.setMessages([]); host.bubble('记忆清空啦，我们重新认识吧～', 4000) }
-        else host.bubble('清除失败')
-      }).catch(() => host.bubble('清除失败'))
-    } catch (e) { }
+    // 确认框本身可能被浏览器禁用/抛错：那种情况当作「没确认」，不执行
+    let go = false
+    try { go = !!(window as any).confirm('清除肥鲸对主人的聊天记忆？（成长/鱼粮/说书记录不受影响）') } catch (e) { go = false }
+    if (!go) return
+    let p: Promise<any>
+    try { p = Promise.resolve(postJson('/clear-memory')) } catch (e) {
+      host.bubble('清除失败', 4000)
+      return
+    }
+    p.then((d: any) => {
+      if (d && d.ok) {
+        // host 侧已同时清聊天缓存（否则「忘了主人却还说着同一句话」）；
+        // 本地消息也要清空，否则旧对话仍显示在面板里
+        host.setMessages([])
+        const n = Number(d.cacheCleared) || 0
+        host.bubble('记忆清空啦' + (n > 0 ? '，聊天缓存也一起清了（' + n + ' 条）' : '') + '，我们重新认识吧～', 5000)
+        return
+      }
+      host.bubble('清除失败', 4000)
+    }).catch(() => host.bubble('清除失败', 4000))
   })
 
   // —— 看张图：选文件 → 压缩 → 视觉对话 → 朗读 ——
@@ -178,16 +235,23 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     const text = String(parsed.cleaned || cleanReminderText(msg) || msg).slice(0, 200)
     const dueAt = parsed.at
     const repeat = parsed.repeat || 0
-    postJson('/reminders', { text, at: dueAt.toISOString(), repeat })
+    let p: Promise<any>
+    try {
+      p = Promise.resolve(postJson('/reminders', { text, at: dueAt.toISOString(), repeat }))
+    } catch (e) {
+      host.bubble('提醒没加上', 4000)
+      return
+    }
+    p
       .then((d: any) => {
         if (d && d.ok) {
           const hh = String(dueAt.getHours()).padStart(2, '0')
           const mm = String(dueAt.getMinutes()).padStart(2, '0')
           const whenText = repeat > 0 ? ('每天 ' + hh + ':' + mm) : ((dueAt.getMonth() + 1) + '月' + dueAt.getDate() + '日 ' + hh + ':' + mm)
           host.bubble('好，' + whenText + ' 提醒你：' + text, 6000)
-        } else host.bubble('提醒没加上')
+        } else host.bubble('提醒没加上', 4000)
       })
-      .catch(() => host.bubble('提醒没加上'))
+      .catch(() => host.bubble('提醒没加上', 4000))
   })
   // —— 提醒：管理面板（列序号 + 接住下一条输入；逻辑在 client/reminder-manage.ts）——
   // 旧菜单项「提醒清单…」也指向面板，保证不依赖菜单是否新增项都能用。
@@ -207,13 +271,39 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
   })
 
   // —— 统计卡：/stats 一次拿齐，失败只说「还没准备好」——
+  // —— 设置：只读查看当前生效的配置（不写盘、不含 Key 内容）——
+  table.define('config-view', (host) => {
+    getJson('/config', { cache: 'no-store' }).then((d: any) => {
+      if (!(d && d.ok)) { host.bubble('配置读不到', 4000); return }
+      const yn = (v: any) => (v ? '开' : '关')
+      const lines = [
+        '数据源：' + (d.dataSource || 'local') + ' · 模型：' + (d.model || '--'),
+        '人格学习：' + yn(d.personalityLearning) + ' · 近期心境自写：' + yn(d.personalityWriting),
+        '聊天缓存：' + yn(d.cacheEnabled),
+        'DeepSeek Key：' + (d.hasDeepseekKey ? '已配置' : '未配置') + ' · 硅基流动 Key：' + (d.hasSiliconflowKey ? '已配置' : '未配置'),
+      ]
+      host.bubble(lines.join('\n'), 12000)
+    }).catch(() => host.bubble('配置读不到', 4000))
+  })
+
   table.define('stats', (host) => {
     getJson('/stats', { cache: 'no-store' }).then((d: any) => {
-      if (!d || d.ok === false) {
-        host.bubble('统计还没准备好', 5000)
-        return
-      }
-      host.bubble(formatStats(d), 12000)
-    }).catch(() => host.bubble('统计还没准备好', 5000))
+      if (!(d && d.ok)) { host.bubble('统计还没准备好', 4000); return }
+      const c = d.cache || {}
+      const f = d.fishfood || {}
+      const g = d.growth || {}
+      const t = d.tts || {}
+      const b = d.backup || {}
+      const lines = [
+        '缓存：tts ' + (c.tts || 0) + ' / chat ' + (c.chat || 0) + ' / asr ' + (c.asr || 0),
+        '鱼粮：' + (f.total || 0) + ' token',
+        '成长：' + (g.stage || '--') + '（' + (g.exp || 0) + '/' + (g.nextExp || 0) + '）',
+        '亲密度：' + (d.intimacy || 0) + '/100',
+        '数据源：' + (d.dataSource || 'local') + ' · 模型：' + (d.model || '--'),
+        'TTS：' + (t.available ? '可用' : '不可用（浏览器朗读兜底）') + (t.interpreter ? '（' + t.interpreter + '）' : '') + (t.cooling ? ' · 冷却中' : ''),
+        '备份：' + (b.count ? b.count + ' 份' : '无') + (b.lastAt ? '（最近 ' + new Date(b.lastAt).toLocaleString() + '）' : ''),
+      ]
+      host.bubble(lines.join('\n'), 12000)
+    }).catch(() => host.bubble('统计还没准备好', 4000))
   })
 }

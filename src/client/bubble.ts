@@ -1,3 +1,6 @@
+import { str } from './util.js'
+import { deepFreeze } from '../shared/immutable.js'
+import { moodPrefix } from './persona.js'
 /**
  * client/bubble.ts —— 头顶气泡控制器（DOM 操作集中在这里，不碰 React）
  *
@@ -5,6 +8,9 @@
  * 气泡定位依赖 posRef，收起逻辑散在卸载 effect 里。
  * 这里收成一个对象：show / hide / dismissStatus，定时器仍挂在元素上（el._t），
  * 与旧实现共享同一个计时器槽位，多次调用不会互相漏掉 clearTimeout。
+ *
+ * 情绪可视化只在这一层加前缀（persona.ts 的 mood → 表情），不改台词正文；
+ * 前缀只进 DOM，朗读用的仍是调用方传入的原文本。
  */
 
 /** 气泡与三角的样式（一次性注入 <style id="chubby-whale-style">） */
@@ -15,6 +21,22 @@ export const BUBBLE_CSS =
 
 /** 这些是「纯状态字」：气泡里只剩它们时才允许静默收起 */
 export const STATUS_TEXTS = ['在听…', '在想…', '识别中…', '在说…']
+deepFreeze(STATUS_TEXTS)
+
+/**
+ * 显示用文本：按当前情绪加前缀表情（开关在 persona.moodPrefix 里读 localStorage）。
+ * 纯状态字不加（dismissStatus 按原文比较）；已经以表情开头的不再叠一个；空串不加。
+ */
+function decorateText(text: string): string {
+  const raw = str(text)
+  if (!raw) return raw
+  try {
+    if (STATUS_TEXTS.indexOf(raw.trim()) >= 0) return raw
+    if (/^\p{Extended_Pictographic}/u.test(raw)) return raw
+    const prefix = moodPrefix()
+    return prefix ? prefix + raw : raw
+  } catch (e) { return raw }
+}
 
 /** 注入气泡样式（已存在则跳过） */
 export function ensureBubbleStyle(doc?: any): void {
@@ -87,7 +109,7 @@ export function createBubble(opts: BubbleOptions): Bubble {
       el.style.right = 'auto'
       el.style.bottom = Math.max(70, v.h - p.y + 12) + 'px'
       const te = opts.textEl()
-      if (te) te.textContent = text
+      if (te) te.textContent = decorateText(text)
       el.classList.add('show')
       clearTimer(el)
       el._t = setTimeout(() => {

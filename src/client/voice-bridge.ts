@@ -15,7 +15,8 @@
 import { createVoice, normalizeVoiceName, readStoredVoiceName } from './voice.js'
 import type { Voice } from './voice.js'
 import type { NarrationLock } from './narration.js'
-import { createWakeGate, normalizeWakeText } from './wake.js'
+import { bumpProgress } from './narration-progress.js'
+import { createWakeGate, normalizeWakeText, loadCustomWakeWords } from './wake.js'
 
 export type VoiceBridgeHost = {
   /** 叙述锁：念诗/说书期间拾到的话不当作新发言（只放行明确的"停"） */
@@ -25,6 +26,8 @@ export type VoiceBridgeHost = {
   /** 停止朗读（会连带清叙述锁） */
   stopSpeaking: () => void
   bubble: (text: string, ms?: number) => void
+  /** 说一句（会朗读；喊名字的应答用；缺省时退回气泡） */
+  say?: (text: string, ms?: number, opts?: any) => void
   sendText: (text: string, opts?: { voice?: boolean }) => void
   /** 有人对着麦克风说话（用于切到语音模式） */
   onVoiceHeard: () => void
@@ -79,8 +82,10 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
   // 音色：菜单里的选择（localStorage）先记住；没建实例时也不丢
   let pendingVoice = readStoredVoiceName()
   // 唤醒门：命中唤醒词刷新 30 秒有效窗
-  const gate = createWakeGate()
+  const gate = createWakeGate({ words: loadCustomWakeWords() })
   const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 }
+  // 识别没配 Key 的提示只弹一次（每次重开语音待命可以再弹一次）
+  let asrNoKeyNotified = false
 
   function wakeInfo(): any {
     const now = Date.now()
@@ -145,40 +150,49 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
           }
         } catch (e) { }
 
-        // 唤醒门：只有最近 30 秒内被叫过，识别结果才交给聊天
+        // 唤醒词不再当门槛：主人 2026-11-06 定的是"随时可以说"。
+        // 唤醒词只剩两个用途：① 只喊名字时应一声；② 唤醒词出现在句首时从正文里剥掉。
         const r = gate.check(text)
         if (r.hit) { wakeStats.hits++; wakeStats.lastHitAt = Date.now() }
-        if (!r.pass) {
-          wakeStats.dropped++
-          // 提示限流：20 秒最多一次，别每段窗口都刷一句
-          const now = Date.now()
-          if (now - wakeStats.dropNotifiedAt > 20000) {
-            wakeStats.dropNotifiedAt = now
-            try { host.bubble('先喊一声「' + (gate.words[0] || '大肥鱼') + '」，本鲸才答话～', 3500) } catch (e) { }
-          }
-          bump('wakeDrop')
-          pushWake()
-          return
-        }
-        // 只喊了名字（剥掉唤醒词后没剩内容）：应一声，不劳烦模型
-        if (!r.text) {
-          try { host.bubble('本鲸在呢～', 2200) } catch (e) { }
-          pushWake()
-          return
-        }
+        const said = r.hit ? r.text : String(text || '').trim()
         wakeStats.passed++
-        try { host.bubble('（听到）' + r.text + '｜本鱼在想…', 3000) } catch (e) { }
-        try { host.sendText(r.text, { voice: true }) } catch (e) { }
+        // 只喊了名字（剥掉唤醒词后没剩内容）：应一声，不劳烦模型。
+        // 之前只弹气泡不出声，主人喊了名字会觉得"鱼没反应"；
+        // 改成 say（会朗读；同一句 25 秒去重，重复喊不会连珠炮）。
+        if (!said) {
+          try {
+            if (host.say) host.say('本鲸在呢～', 3200)
+            else host.bubble('本鲸在呢～', 3200)
+          } catch (e) {
+            try { host.bubble('本鲸在呢～', 3200) } catch (e2) { }
+          }
+          pushWake()
+          return
+        }
+        try { host.bubble('（听到）' + said + '｜本鱼在想…', 3000) } catch (e) { }
+        try { host.sendText(said, { voice: true }) } catch (e) { }
         pushWake()
       },
       onStatus: (st: any) => { try { host.onSpeaking(st === 'speaking') } catch (e) { } },
-      onDiag: (d: any) => { try { host.diag({ voiceDiag: d }) } catch (e) { } },
+      onDiag: (d: any) => {
+        try { host.diag({ voiceDiag: d }) } catch (e) { }
+        // 语音识别没配 Key：给一句人话，别让主人对着麦克风干等
+        try {
+          if (d && d.stage === 'asr-no-key' && !asrNoKeyNotified) {
+            asrNoKeyNotified = true
+            host.bubble(String(d.hint || '没配语音识别 Key，本鲸听不见；打字也能聊～'), 8000)
+          }
+        } catch (e) { }
+      },
       // 念诗/说书：气泡跟着当前句走，主人能看到"念到哪了"
       onSegment: (seg: string) => {
         try {
           if (!host.narrating()) return
           const t = String(seg || '').replace(/^念首诗——/, '').trim()
-          if (t) host.bubble(t, 8000)
+          if (!t) return
+          // 念诗时拼「第 x/N 句」；说书/普通叙述没有进度，bumpProgress 返回空串
+          const withProgress = bumpProgress(t)
+          host.bubble(withProgress || t, 8000)
         } catch (e) { }
       },
     })
@@ -199,6 +213,7 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
     get: () => voice,
     ensure,
     start(): Promise<Voice> {
+      asrNoKeyNotified = false
       const v = ensure()
       // start() 自己不抛错（内部兜底），失败靠状态/统计判断，不把异常甩到渲染层
       return Promise.resolve(v.start()).then(() => { pushWake(); return v })
@@ -213,7 +228,10 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
       try { gate.reset() } catch (e) { }
     },
     speak(text: string, opts?: BridgeSpeakOptions): void {
-      if (voice) { try { voice.speak(text, opts) } catch (e) { } }
+      // 原来 voice 为空（例如关过「语音待命」→刷新页面）时静默丢弃文本，
+      // 且 onDone 永不回调 —— 说书会永久卡在"正讲着呢"。这里改成 ensure()：
+      // 只创建朗读对象、不开麦克风，麦克风仍由 start() 负责。
+      try { ensure().speak(text, opts) } catch (e) { }
     },
     stopSpeak(): void {
       if (voice) { try { voice.stopSpeaking() } catch (e) { } }

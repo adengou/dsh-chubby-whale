@@ -1,3 +1,5 @@
+import { str } from './util.js'
+import { deepFreeze } from '../shared/immutable.js'
 /**
  * client/wake.ts —— 唤醒词门（纯逻辑，不碰 DOM / 网络，可在 Node 里单测）
  *
@@ -12,6 +14,35 @@
 
 /** 唤醒词（ASR 对这几个词识别率较高；「大肥鱼」是主唤醒词） */
 export const WAKE_WORDS: string[] = ['大肥鱼', '小蓝鱼', '肥鲸', '肥鱼', '小鱼', '蓝鱼', '鱼鱼', '肥肥']
+deepFreeze(WAKE_WORDS)
+
+/** 自定义唤醒词的存储键（空/不存 = 用默认词表） */
+export const WAKE_WORD_KEY = 'chubby-wake-word'
+
+/** 读取自定义唤醒词：返回 undefined 表示用默认词表；返回 [词] 表示只用这一个词 */
+export function loadCustomWakeWords(): string[] | undefined {
+  try {
+    if (typeof localStorage === 'undefined') return undefined
+    const v = String(localStorage.getItem(WAKE_WORD_KEY) || '').trim()
+    if (!v) return undefined
+    // 长度上限：太长的词 ASR 基本识别不到，也避免存进奇怪内容
+    return [v.slice(0, 12)]
+  } catch (e) {
+    return undefined
+  }
+}
+
+/** 设置自定义唤醒词；传空串恢复默认词表。返回最终是否为自定义 */
+export function setCustomWakeWord(word: string): boolean {
+  try {
+    const v = str(word).trim().slice(0, 12)
+    if (!v) { localStorage.removeItem(WAKE_WORD_KEY); return false }
+    localStorage.setItem(WAKE_WORD_KEY, v)
+    return true
+  } catch (e) {
+    return false
+  }
+}
 
 /** 被唤醒后多久之内说话算"接着聊"（毫秒） */
 export const WAKE_WINDOW_MS = 30000
@@ -47,7 +78,7 @@ const TRAD_TO_SIMPLE: Record<string, string> = { '魚': '鱼', '飛': '飞', '�
 
 /** 归一化：去掉空白与常见标点、统一小写（ASR 会给出"大肥鱼，"这种带标点的结果） */
 export function normalizeWakeText(text: unknown): string {
-  return String(text == null ? '' : text)
+  return str(text)
     .split('')
     .map((c) => TRAD_TO_SIMPLE[c] || c)
     .join('')
@@ -76,13 +107,21 @@ function escapeRe(s: string): string {
  * 剥离优先在原文上做（保留其余标点），剥不干净再用归一化文本兜底。
  */
 export function stripWakeWords(input: unknown, words: string[] = WAKE_WORDS): { hit: boolean; text: string; word: string } {
-  const raw = String(input == null ? '' : input)
+  const raw = str(input)
   const norm = normalizeWakeText(raw)
   if (!norm) return { hit: false, text: '', word: '' }
 
   // 长词优先：'小蓝鱼' 命中时不能被 '蓝鱼' 先剥成 '小'
   const sorted = (words || []).filter(Boolean).map((w) => String(w)).sort((a, b) => b.length - a.length)
-  const hits = sorted.filter((w) => norm.indexOf(normalizeWakeText(w)) >= 0)
+  const hits = sorted.filter((w) => {
+    const nw = normalizeWakeText(w)
+    if (!nw) return false
+    // 三字以上（大肥鱼）：句中出现即可
+    if (nw.length >= 3) return norm.indexOf(nw) >= 0
+    // 两个字（小鱼/鱼鱼/肥鱼/蓝鱼/肥肥）：只认句首，或整句极短，
+    // 否则"我想看小鱼"会被误唤醒，还会把"我想看"当成主人说的话送进模型
+    return norm.startsWith(nw) || (norm.length <= 4 && norm.indexOf(nw) >= 0)
+  })
   if (!hits.length) {
     // 字面没命中 → 试谐音容错（整句要短，避免长句里恰好含「大X鱼」被误唤醒）
     if (norm.length <= 12) {
@@ -145,7 +184,7 @@ export function createWakeGate(opts: { words?: string[]; windowMs?: number; now?
         return { hit: true, pass: true, text: r.text, word: r.word, remainingMs: windowMs }
       }
       const pass = awake(now)
-      return { hit: false, pass, text: String(text == null ? '' : text).trim(), word: '', remainingMs: remainingMs(now) }
+      return { hit: false, pass, text: str(text).trim(), word: '', remainingMs: remainingMs(now) }
     },
   }
 }

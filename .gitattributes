@@ -1,0 +1,27 @@
+# 统一换行符，避免"整文件被重写"的假 diff
+* text=auto
+
+*.ts      text eol=lf
+*.mts     text eol=lf
+*.js      text eol=lf
+*.mjs     text eol=lf
+*.cjs     text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.ps1     text eol=crlf
+*.cmd     text eol=crlf
+*.bat     text eol=crlf
+*.py      text eol=lf
+
+# 二进制，别做任何转换
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.mp3     binary
+*.wav     binary
+*.tgz     binary
+*.woff2   binary

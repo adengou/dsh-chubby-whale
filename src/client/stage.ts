@@ -6,13 +6,32 @@
  * DOM 写入仍由 client.ts 的 applyPos 负责，行为逐项对得上旧实现。
  */
 
+import { evStop } from './util.js'
+
 export type Pos = { x: number; y: number }
+
+/** 非有限数一律按 0：localStorage 里的位置被手改成坏值时，不能把 NaN 传进 left/top（鱼会整只消失） */
+function finiteOr0(v: number): number {
+  const n = Number(v)
+  return isFinite(n) ? n : 0
+}
 
 /** 把鱼钳制在可视区内（缩放后的实际占位是 w×h） */
 export function clampPos(x: number, y: number, w: number, h: number, viewW: number, viewH: number): Pos {
+  const ww = Math.max(0, finiteOr0(w))
+  const hh = Math.max(0, finiteOr0(h))
+  const vw = Math.max(0, finiteOr0(viewW))
+  const vh = Math.max(0, finiteOr0(viewH))
+  const maxX = Math.max(0, vw - ww)
+  const maxY = Math.max(0, vh - hh)
+  const nx = Number(x)
+  const ny = Number(y)
+  // NaN 没有方向，按 0 处理；±Infinity 按方向夹到对应边界
+  const cx = isFinite(nx) ? nx : (nx > 0 ? maxX : 0)
+  const cy = isFinite(ny) ? ny : (ny > 0 ? maxY : 0)
   return {
-    x: Math.max(0, Math.min(viewW - w, x)),
-    y: Math.max(0, Math.min(viewH - h, y)),
+    x: Math.max(0, Math.min(maxX, cx)),
+    y: Math.max(0, Math.min(maxY, cy)),
   }
 }
 
@@ -78,12 +97,221 @@ export const INERTIA_DECAY = 0.9
 export const INERTIA_STOP = 0.2
 
 export function clampVelocity(v: number): number {
-  return Math.max(-INERTIA_MAX, Math.min(INERTIA_MAX, v))
+  const n = Number(v)
+  // NaN 当 0；±Infinity 按方向取上限（不能让 NaN 漏进惯性循环，位置一帧就废）
+  if (!isFinite(n)) return n > 0 ? INERTIA_MAX : (n < 0 ? -INERTIA_MAX : 0)
+  return Math.max(-INERTIA_MAX, Math.min(INERTIA_MAX, n))
 }
 
 /** 一帧衰减：返回下一帧速度与是否该停 */
-export function decayVelocity(vx: number, vy: number): { vx: number; vy: number; done: boolean } {
-  const nx = vx * INERTIA_DECAY
-  const ny = vy * INERTIA_DECAY
+/**
+ * 惯性衰减。dtScale = 实际帧时长 / 16.67ms（60Hz 基准）：
+ * 按帧衰减会让 120Hz 屏的惯性物理时长只有 60Hz 的一半（位移一样、时间不对）；
+ * 传入 dtScale 后按时间衰减，各刷新率下物理时长一致。
+ */
+export function decayVelocity(vx: number, vy: number, dtScale = 1): { vx: number; vy: number; done: boolean } {
+  const k = Math.min(4, Math.max(0.25, Number.isFinite(dtScale) ? dtScale : 1))
+  const f = Math.pow(INERTIA_DECAY, k)
+  const nx = vx * f
+  const ny = vy * f
   return { vx: nx, vy: ny, done: Math.abs(nx) < INERTIA_STOP && Math.abs(ny) < INERTIA_STOP }
+}
+
+/**
+ * 拖拽该挂哪套事件。
+ * Safari 13 之前没有 PointerEvent：只绑 pointerdown/move/up 的话事件永远不触发，
+ * 整只鱼拖不动，而且是**静默失效**（没报错、没日志），最难受的坏法。这种环境改挂 touch + mouse。
+ */
+export function pickInputMode(hasPointerEvent: boolean): 'pointer' | 'touch' {
+  return hasPointerEvent ? 'pointer' : 'touch'
+}
+
+/** 从任意事件取指针坐标：touch 用 touches[0]/changedTouches[0]，mouse/pointer 用 clientX/Y */
+export function pointOf(e: any): { x: number; y: number } {
+  const t = (e && e.touches && e.touches[0]) || (e && e.changedTouches && e.changedTouches[0])
+  const s = t || e || {}
+  const x = Number(s.clientX)
+  const y = Number(s.clientY)
+  return { x: isFinite(x) ? x : 0, y: isFinite(y) ? y : 0 }
+}
+
+export type DragInputHandlers = {
+  onDown: (x: number, y: number) => void
+  onMove: (x: number, y: number) => void
+  onEnd: () => void
+}
+
+/**
+ * 绑定拖拽输入（DOM 侧唯一一处，可离线测）。
+ *
+ * 三家差异：
+ *   · Safari 13 之前没有 PointerEvent → 改挂 touch + mouse（元素上 touchstart/mousemove）；
+ *   · iOS Safari 的 setPointerCapture 可能失效、指针会滑出元素 → 在 window 上兜一层 move/up；
+ *   · 兜底与元素处理器会收到同一个事件：先处理的一方在事件上打 __chubbyDragHandled，
+ *     后来的一看标记就跳过，绝不会把一次移动算两遍（那会让鱼瞬移）；
+ *   · 多点触控：只认「先按下的那根手指」。其余手指的事件在捕获阶段拦下 —— 否则第二根手指
+ *     会重置拖拽基线（鱼瞬移）、甚至抬手时提前结束拖拽。主指针/主触点抬起后自动让位。
+ *
+ * pointer 模式的按下/移动/抬起由 client.ts 的 React 处理器负责，这里补 window 兜底与多指过滤；
+ * touch 模式（无 PointerEvent 的老 Safari）整套都在这里。
+ *
+ * 返回 mode 便于诊断：'pointer' 还是 'touch' 一眼能看出走的是哪套。
+ */
+export function bindDragInput(target: any, win: any, handlers: DragInputHandlers): { mode: 'pointer' | 'touch'; dispose: () => void } {
+  const mode = pickInputMode(!!(win && win.PointerEvent))
+  const add = (el: any, t: string, fn: any, opts?: any): void => { try { el.addEventListener(t, fn, opts) } catch (e) { } }
+  const del = (el: any, t: string, fn: any): void => { try { el.removeEventListener(t, fn) } catch (e) { } }
+  const mark = (e: any): void => { try { e.__chubbyDragHandled = true } catch (e2) { } }
+  const handled = (e: any): boolean => { try { return !!(e && e.__chubbyDragHandled) } catch (e2) { return false } }
+  /** 拦掉「不属于当前拖拽指针」的事件：capture 阶段 stopPropagation 同时挡住元素上的 React 处理器 */
+  const swallow = (e: any): void => {
+    evStop(e)
+    try { if (e && e.cancelable && typeof e.preventDefault === 'function') e.preventDefault() } catch (e2) { }
+  }
+  /** 事件目标是否在鱼身上（按在页面其它地方的手指不归我们管） */
+  const inside = (e: any): boolean => {
+    try { if (target && typeof target.contains === 'function') return !!target.contains(e && e.target) } catch (e2) { }
+    return true
+  }
+  /** 正在拖拽的指针 / 触点 id；null = 没有活动指针 */
+  let activeId: number | null = null
+  const release = (): void => { activeId = null }
+  const pointerIdOf = (e: any): number | null => (e && typeof e.pointerId === 'number') ? e.pointerId : null
+  const touchOf = (e: any, id: number): any => {
+    const list = (e && e.touches) || []
+    for (let i = 0; i < list.length; i++) if (list[i] && list[i].identifier === id) return list[i]
+    return null
+  }
+
+  // ===== pointer：capture 阶段记账 + 过滤 =====
+  const onPointerDownCapture = (e: any): void => {
+    if (activeId === null) {
+      const id = pointerIdOf(e)
+      if (id !== null && inside(e)) activeId = id
+      return
+    }
+    if (pointerIdOf(e) !== activeId && inside(e)) swallow(e)
+  }
+  const onPointerMoveCapture = (e: any): void => {
+    if (activeId !== null && pointerIdOf(e) !== activeId && inside(e)) swallow(e)
+  }
+  const onPointerEndCapture = (e: any): void => {
+    if (activeId === null) return
+    if (pointerIdOf(e) === activeId) { activeId = null; return }   // 主指针抬起：放行给上层收尾
+    if (inside(e)) swallow(e)                                      // 其它手指抬起：不得提前结束拖拽
+  }
+
+  // ===== touch：按触点 identifier 记账（第二指只动它自己的坐标，不碰鱼） =====
+  const onTouchStart = (e: any): void => {
+    if (activeId !== null) {
+      // 已有手指在拖：它还在 touches 里就忽略新手指；不在（漏了 touchend）才允许接管
+      if (touchOf(e, activeId)) return
+      activeId = null
+    }
+    const list = (e && e.changedTouches) || (e && e.touches) || []
+    const t = list[0]
+    if (!t) return
+    activeId = typeof t.identifier === 'number' ? t.identifier : null
+    handlers.onDown(Number(t.clientX) || 0, Number(t.clientY) || 0)
+  }
+  const onTouchMove = (e: any): void => {
+    if (activeId === null) return
+    const t = touchOf(e, activeId)
+    if (!t) return                        // 动的不是活动触点 → 忽略，鱼不会瞬移
+    // 老 Safari 没有 touch-action: none，只能在这里拦掉页面滚动
+    try { if (e.cancelable) e.preventDefault() } catch (e2) { }
+    // 先自己处理，再打标：标记是给 window 兜底看的（同一事件冒泡到 window 时不再算一次）
+    handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0)
+    mark(e)
+  }
+  const onTouchEnd = (e: any): void => {
+    if (activeId === null) return
+    if (touchOf(e, activeId)) return      // 活动触点还在（抬起的是另一根手指）→ 不结束
+    activeId = null
+    handlers.onEnd()
+  }
+
+  // ===== 元素/兜底通用处理器 =====
+  const onDown = (e: any): void => {
+    if (handled(e)) return
+    const p = pointOf(e)
+    handlers.onDown(p.x, p.y)
+  }
+  const onMouseDown = (e: any): void => {
+    // 鼠标接管时清掉触摸记账，window 的 mousemove/mouseup 兜底才能走
+    activeId = null
+    onDown(e)
+  }
+  const onMove = (e: any): void => {
+    if (handled(e)) return
+    if (mode === 'touch') {
+      if (activeId !== null) {
+        const t = touchOf(e, activeId)
+        if (!t) return
+        handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0)
+        return
+      }
+      // 没有活动触点时只剩鼠标兜底（触屏模式下的老桌面浏览器）
+      const p = pointOf(e)
+      handlers.onMove(p.x, p.y)
+      return
+    }
+    const p = pointOf(e)
+    handlers.onMove(p.x, p.y)
+  }
+  const onEnd = (e: any): void => {
+    if (handled(e)) return
+    handlers.onEnd()
+  }
+
+  if (target && win) {
+    if (mode === 'pointer') {
+      // capture 阶段早于 React 在 root 上的冒泡处理器：既能挡住非活动指针，也不干扰主指针
+      add(win, 'pointerdown', onPointerDownCapture, true)
+      add(win, 'pointermove', onPointerMoveCapture, true)
+      add(win, 'pointerup', onPointerEndCapture, true)
+      add(win, 'pointercancel', onPointerEndCapture, true)
+      // window 兜底：iOS Safari 的 setPointerCapture 可能失效、指针会滑出元素
+      add(win, 'pointermove', onMove)
+      add(win, 'pointerup', onEnd)
+      add(win, 'pointercancel', onEnd)
+      add(win, 'blur', release)
+    } else {
+      add(target, 'touchstart', onTouchStart, { passive: false })
+      add(target, 'touchmove', onTouchMove, { passive: false })
+      add(target, 'mousedown', onMouseDown)
+      add(win, 'touchmove', onMove)
+      add(win, 'touchend', onTouchEnd)
+      add(win, 'touchcancel', onTouchEnd)
+      add(win, 'mousemove', onMove)
+      add(win, 'mouseup', onEnd)
+      add(win, 'blur', release)
+    }
+  }
+  const dispose = (): void => {
+    if (target && win) {
+      if (mode === 'pointer') {
+        del(win, 'pointerdown', onPointerDownCapture)
+        del(win, 'pointermove', onPointerMoveCapture)
+        del(win, 'pointerup', onPointerEndCapture)
+        del(win, 'pointercancel', onPointerEndCapture)
+        del(win, 'pointermove', onMove)
+        del(win, 'pointerup', onEnd)
+        del(win, 'pointercancel', onEnd)
+        del(win, 'blur', release)
+      } else {
+        del(target, 'touchstart', onTouchStart)
+        del(target, 'touchmove', onTouchMove)
+        del(target, 'mousedown', onMouseDown)
+        del(win, 'touchmove', onMove)
+        del(win, 'touchend', onTouchEnd)
+        del(win, 'touchcancel', onTouchEnd)
+        del(win, 'mousemove', onMove)
+        del(win, 'mouseup', onEnd)
+        del(win, 'blur', release)
+      }
+    }
+    activeId = null
+  }
+  return { mode, dispose }
 }

@@ -1,3 +1,4 @@
+import { deepFreeze } from '../shared/immutable.js'
 /**
  * client/styles.ts —— 所有样式常量（可复用）
  */
@@ -7,7 +8,7 @@ export const CW = 480
 export const CH = 426
 export const SX = CW / 1696
 export const SY = CH / 1504
-export const VERSION = '0.1.0'
+export { VERSION } from './version.js'
 
 export const stageStyle = (scale: number, hidden: boolean) => ({
   position: 'fixed' as const,
@@ -21,11 +22,14 @@ export const stageStyle = (scale: number, hidden: boolean) => ({
   cursor: 'grab',
   touchAction: 'none' as const,
   transform: 'scale(' + scale + ')',
-  transformOrigin: '100% 100%',
+  // 缩放原点用左上角：与 stage.ts 的 clampPos（按左上坐标 + W*s 宽高钳制）同口径；
+  // 原先 100% 100%（右下）会让缩放后的鱼贴边溢出约 96px。
+  transformOrigin: '0 0',
   display: hidden ? 'none' : 'block',
 })
 
 export const canvasStyle = { width: '100%', height: '100%', display: 'block' }
+deepFreeze(canvasStyle)
 
 /**
  * 「让它游走」后的恢复点：右下角一个极小的「○」。
@@ -54,7 +58,8 @@ export const recoverDotStyle = {
 
 export const menuStyle = (menu: any) => ({
   position: 'fixed' as const,
-  left: (menu ? Math.min(menu.x, window.innerWidth - 220) : 0) + 'px',
+  // 窄视口（<220px）时 innerWidth-220 为负会把菜单甩出左边；夹到 8px 保底
+  left: (menu ? Math.max(8, Math.min(menu.x, window.innerWidth - 220)) : 0) + 'px',
   top: (menu ? Math.max(8, Math.min(menu.y, window.innerHeight - 520)) : 0) + 'px',
   width: 210,
   maxHeight: (typeof window !== "undefined" ? Math.max(200, Math.min(480, window.innerHeight - 32)) : 480),
@@ -68,6 +73,29 @@ export const menuStyle = (menu: any) => ({
   font: '13px/1.5 "Microsoft YaHei", sans-serif',
   display: menu ? 'block' : 'none',
   color: '#cfe9ff',
+})
+
+/**
+ * 菜单项样式（键盘高亮用）：
+ *   active=false 时与原内联样式完全一致（透明底、无描边），鼠标交互观感不变；
+ *   active=true 时给一层淡蓝底 + 内描边，保证方向键选中的项看得见。
+ */
+export const menuItemStyle = (active: boolean) => ({
+  padding: '6px 14px',
+  cursor: 'pointer',
+  color: active ? '#ffffff' : '#cfe9ff',
+  fontSize: 13,
+  whiteSpace: 'nowrap' as const,
+  background: active ? 'linear-gradient(90deg, rgba(46,107,184,0.95), rgba(34,78,140,0.55))' : 'transparent',
+  borderRadius: active ? 6 : 0,
+  boxShadow: active ? 'inset 0 0 0 1px rgba(159,216,255,0.8)' : 'none',
+})
+
+/** 子菜单父项：在菜单项样式上补「▸/▾」的左右分栏 */
+export const menuSubStyle = (active: boolean) => ({
+  ...menuItemStyle(active),
+  display: 'flex',
+  justifyContent: 'space-between',
 })
 
 export const chatPanelStyle = (open: boolean) => ({
@@ -99,6 +127,7 @@ export const headStyle = {
 
 export const bodyStyle = { height: 240, overflowY: 'auto' as const, padding: '12px 14px' }
 export const inputRowStyle = { display: 'flex', gap: 8, padding: '10px 12px', borderTop: '1px solid rgba(93,160,240,0.25)', background: 'rgba(6,16,32,0.6)' }
+deepFreeze(inputRowStyle)
 export const inputStyle = {
   flex: 1,
   border: '1px solid rgba(93,160,240,0.35)',

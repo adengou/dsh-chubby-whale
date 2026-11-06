@@ -12,6 +12,7 @@
  */
 
 import { getJson } from './http.js'
+import { clearI, clearT } from './util.js'
 
 /** 到点提醒轮询所需的宿主能力（由 client.ts 注入） */
 export interface ReminderHost {
@@ -99,7 +100,7 @@ export function createReminderPoller(host: ReminderHost, opts?: ReminderPollerOp
   /** 停轮询（幂等） */
   function stopPoll(): void {
     if (pollTimer !== null) {
-      try { clearInterval(pollTimer) } catch (e) { }
+      clearI(pollTimer)
       pollTimer = null
     }
   }
@@ -121,7 +122,7 @@ export function createReminderPoller(host: ReminderHost, opts?: ReminderPollerOp
   function dispose(): void {
     // 顺序敏感：先撤到点定时器，再清队列，最后停轮询（与原来 client.ts 的卸载顺序一致）
     if (dueTimer !== null) {
-      try { clearTimeout(dueTimer) } catch (e) { }
+      clearT(dueTimer)
       dueTimer = null
     }
     queue.length = 0

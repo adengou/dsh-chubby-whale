@@ -15,7 +15,7 @@
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs'
 
 const FIX = process.argv.includes('--fix')
-const files = ['data/poems.json', 'data/persona.json', 'data/melodies.json']
+const files = ['data/poems.json', 'data/persona.json', 'data/melodies.json', 'data/duilian.json', 'data/culture/chengyu.json', 'data/culture/idioms.json', 'data/culture/minsu.json']
 try { for (const f of readdirSync('data/story').filter((x) => x.endsWith('.json'))) files.push('data/story/' + f) } catch { }
 
 const problems = { 沈沈: [], asciiPunct: [], fffd: [], bom: [], zeroWidth: [], dupPunct: [] }

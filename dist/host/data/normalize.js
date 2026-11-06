@@ -1,3 +1,4 @@
+import { poemKeyOf } from '../../shared/poem.js';
 /** 说书段落：与 host/story/repo.ts 原 normalizeBook 完全一致；index 用原数组序号（进度 key） */
 export function normalizeStoryChunks(book, raw) {
     const out = [];
@@ -25,10 +26,8 @@ export function normalizeStoryChunks(book, raw) {
  * 诗的去重键：同题不同作很多（蝶恋花/浣溪沙 等），键里加上首句前 12 字。
  * poem 路由记录「已念过」也用它，保证与数据规范化口径一致。
  */
-export function poemKeyOf(p) {
-    const first = Array.isArray(p?.lines) ? String(p.lines[0] || '') : String(p?.text || '');
-    return String(p?.title || '') + '|' + String(p?.author || '') + '|' + first.slice(0, 12);
-}
+// 去重键定义在 shared/poem.ts（路由也要用，两边口径必须一致）
+export { poemKeyOf };
 /** 诗词条目：只留路由用到的字段，标题/首句为空的丢掉，按 poemKeyOf 去重 */
 export function normalizePoemItems(raw) {
     const arr = Array.isArray(raw) ? raw : [];
@@ -64,7 +63,10 @@ export function cultureKeyOf(kind, item) {
         return String(item?.name || '').trim();
     return (String(item?.book || '') + '|' + String(item?.title || '')).trim();
 }
-/** 文化条目：只保留对象、丢弃空键、按 cultureKeyOf 去重（保留第一条） */
+/**
+ * 文化条目：只保留对象、丢弃空键、按 cultureKeyOf 去重（保留第一条）。
+ * 条目浅拷贝后返回：本地/云端都把原始 parse 结果留在自己的缓存里，不交给路由（见文件头）。
+ */
 export function normalizeCultureItems(kind, raw) {
     const arr = Array.isArray(raw) ? raw : [];
     const out = [];
@@ -76,7 +78,7 @@ export function normalizeCultureItems(kind, raw) {
         if (!k || keys.has(k))
             continue;
         keys.add(k);
-        out.push(it);
+        out.push({ ...it });
     }
     return out;
 }

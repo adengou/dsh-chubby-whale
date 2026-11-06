@@ -3,6 +3,7 @@
  * 纯逻辑：不碰 DOM 之外的东西（showBubble / speakText 由调用方注入，便于单测）
  */
 
+import { str } from './util.js'
 import { imageToB64 } from './image.js'
 
 // 图片读成 base64（去掉 data: 前缀）的实现已统一到 image.ts；这里原样再导出，保持 dropzone 的旧接口不变
@@ -14,6 +15,12 @@ export const MAX_DROP_BYTES = 4 * 1024 * 1024
 export const MAX_TEXT_CHARS = 4000
 /** 图片问题：非空提示词（服务端 message: '' 会 400） */
 export const VISION_PROMPT = '看看这张图，说说你看到了什么'
+/**
+ * 单图 base64 上限，与宿主 src/host/routes/chat.ts 的 CHAT_MAX_IMAGE_B64 对齐（4MB 字符）。
+ * 客户端先拦一道：4MB 原图在压缩失败回退时会得到约 5.3MB base64，
+ * 直接上传只会换来一个 413，还白传一遍流量。
+ */
+const MAX_IMAGE_B64_CHARS = 4 * 1024 * 1024
 const TEXT_EXTS = ['.txt', '.md', '.json', '.log', '.csv']
 
 export interface DropDeps {
@@ -49,6 +56,30 @@ export function buildTextPrompt(text: string): string {
   return '总结一下这篇文档：\n' + String(text || '').slice(0, MAX_TEXT_CHARS)
 }
 
+/** 优先 Blob.text()；老 Safari 没有这个方法时退回 FileReader，别把"读不出"误报成空文件 */
+function readTextFile(file: any): Promise<string> {
+  try {
+    if (file && typeof file.text === 'function') {
+      return Promise.resolve(file.text()).then((t: any) => str(t)).catch(() => readTextViaReader(file))
+    }
+  } catch (e) { }
+  return readTextViaReader(file)
+}
+
+function readTextViaReader(file: any): Promise<string> {
+  return new Promise((resolve) => {
+    try {
+      if (typeof FileReader === 'undefined') { resolve(''); return }
+      const fr = new FileReader()
+      fr.onloadend = () => {
+        try { resolve(String((fr as any).result || '')) } catch (e) { resolve('') }
+      }
+      fr.onerror = () => resolve('')
+      fr.readAsText(file)
+    } catch (e) { resolve('') }
+  })
+}
+
 /**
  * 处理拖进来的一个文件：图片识别 / 文档总结 / 其他格式提示。
  * 返回解析结果，方便单测直接断言 message 文本。
@@ -77,7 +108,31 @@ export async function handleFileDrop(file: any, deps?: DropDeps): Promise<DropRe
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
-    return r.json()
+    let data: any = null
+    try { data = await r.json() } catch (e) { data = null }
+    const status = Number(r && r.status) || 0
+    // 旧实现不看状态码：宿主回 413 + {ok:false, reply:"这张图太大啦…"} 时会被
+    // 当成正常回复继续往下走（显示的内容其实来自错误分支，ok 也是 true）。
+    if (!data || (r && r.ok === false) || data.ok === false) {
+      const msg = String((data && (data.reply || data.error)) || '').trim()
+        || ('请求失败' + (status ? '（HTTP ' + status + '）' : ''))
+      const err: any = new Error(msg)
+      err.reply = msg
+      err.status = status
+      throw err
+    }
+    return data
+  }
+  const fail = (e: any, fallback: string): DropResult => {
+    const msg = String((e && (e.reply || e.message)) || e || '').trim() || fallback
+    bubble(msg, 5000)
+    const tooLarge = Number(e && e.status) === 413
+    return {
+      ok: false,
+      kind: tooLarge ? 'too-large' : 'error',
+      error: msg,
+      reply: e && e.reply ? String(e.reply) : undefined,
+    }
   }
 
   // 图片：视觉模型
@@ -91,6 +146,10 @@ export async function handleFileDrop(file: any, deps?: DropDeps): Promise<DropRe
       bubble('图片读不出来，再拖一次试试', 4000)
       return { ok: false, kind: 'error', error: 'empty image' }
     }
+    if (b64.length > MAX_IMAGE_B64_CHARS) {
+      bubble('这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～', 5000)
+      return { ok: false, kind: 'too-large', error: 'image too large' }
+    }
     try {
       const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime })
       const reply = String((reply0 && reply0.reply) || '').trim() || '这条鱼看不懂这张图……'
@@ -98,15 +157,13 @@ export async function handleFileDrop(file: any, deps?: DropDeps): Promise<DropRe
       if (speak) speak(reply)
       return { ok: true, kind: 'image', message: VISION_PROMPT, reply }
     } catch (e: any) {
-      bubble('图片处理失败', 4000)
-      return { ok: false, kind: 'error', error: String((e && e.message) || e) }
+      return fail(e, '图片处理失败')
     }
   }
 
-  // 文本类：读前 8000 字，让模型总结
+  // 文本类：读前 4000 字，让模型总结
   if (isTextFile(file)) {
-    let text = ''
-    try { text = String(await file.text()) } catch (e) { text = '' }
+    const text = String(await readTextFile(file) || '')
     if (!text.trim()) {
       bubble('这个文件里没读到字', 4000)
       return { ok: false, kind: 'error', error: 'empty text' }
@@ -120,8 +177,7 @@ export async function handleFileDrop(file: any, deps?: DropDeps): Promise<DropRe
       if (speak) speak(reply)
       return { ok: true, kind: 'text', message, reply }
     } catch (e: any) {
-      bubble('文档处理失败', 4000)
-      return { ok: false, kind: 'error', error: String((e && e.message) || e) }
+      return fail(e, '文档处理失败')
     }
   }
 

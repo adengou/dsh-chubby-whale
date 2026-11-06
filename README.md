@@ -1,32 +1,26 @@
 # dsh-chubby-whale（肥鲸）
 
-[![npm](https://img.shields.io/npm/v/dsh-chubby-whale.svg)](https://www.npmjs.com/package/dsh-chubby-whale)
-[![license](https://img.shields.io/npm/l/dsh-chubby-whale.svg)](LICENSE)
+[LICENSE](LICENSE)
 [![Gitee](https://gitee.com/adengou/dsh-chubby-whale/badge/star.svg?theme=dark)](https://gitee.com/adengou/dsh-chubby-whale)
 
 DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下角。可拖拽（带惯性、位置记忆）、会眨眼、能说话、能说书念诗弹琴，也能听懂你说话。
 
 | 渠道 | 地址 |
 | --- | --- |
-| 主仓库（GitHub） | <https://github.com/adengou/dsh-chubby-whale> |
-| 镜像（Gitee） | <https://gitee.com/adengou/dsh-chubby-whale> |
-| npm | <https://www.npmjs.com/package/dsh-chubby-whale> |
+| 主仓库（Gitee） | <https://gitee.com/adengou/dsh-chubby-whale> |
 | 更新日志 | [CHANGELOG.md](CHANGELOG.md) |
 
 > 语音待命的信号处理设计与调参：见 [docs/耳朵算法.md](docs/耳朵算法.md)
-> 发版与三仓库对齐流程：见 [docs/发布流程.md](docs/发布流程.md)
+> 发版规范（只发 Gitee）：见 [docs/发布规范.md](docs/发布规范.md)
 
-## 安装（三种来源任选）
+## 安装（两种来源任选）
 
-```powershell
-# ① 从 npm 装（推荐，最省事）
-dsh plugin --profile web add dsh-chubby-whale
-
-# ② 从 GitHub 装（跟最新代码）
-dsh plugin --profile web add "git+https://github.com/adengou/dsh-chubby-whale.git"
-
-# ③ 从 Gitee 装（国内最快）
+```bash
+# ① 从 Gitee 装（推荐）
 dsh plugin --profile web add "git+https://gitee.com/adengou/dsh-chubby-whale.git"
+
+# ② 本地 link（开发调试）
+dsh plugin --profile web add "link:C:\Users\<你>\.dsh\plugins\dsh-chubby-whale"
 
 # 装完重启 dsh web
 dsh web
@@ -61,13 +55,13 @@ dsh web
 - 关掉后**已存内容仍会注入**，只是不再学习、不再写新心境。
 ### 本地开发（link 方式）
 
-```powershell
+```bash
 dsh plugin --profile web add "link:C:\Users\<你>\.dsh\plugins\dsh-chubby-whale"
 ```
 
 ### 卸载
 
-```powershell
+```bash
 dsh plugin --profile web remove dsh-chubby-whale
 ```
 
@@ -77,12 +71,13 @@ dsh plugin --profile web remove dsh-chubby-whale
 
 | 分类 | 能力 |
 | --- | --- |
-| 陪伴 | 立绘常驻右下角、拖拽惯性、位置记忆、自动眨眼、说话时嘴动、喂食冒爱心 |
-| 聊天 | 气泡对话（DeepSeek），人设固定（名字/爸妈/生日/出生地），支持中英双语，长期记忆摘要 |
-| 语音 | 文字转语音（9 种音色、可关、可停）、语音待命（常驻听写）、语音聊天开关 |
-| 文化 | 说书（17 本古籍，念原文、进度记忆、不重复）、念诗（737 首）、典故（261）、成语（834）、民间故事（696）、对联 |
+| 陪伴 | 立绘常驻右下角、拖拽惯性、位置记忆、自动眨眼、说话时嘴动、喂食冒爱心、情绪表情（🐳待机 / 🍚饿 / 💤困 / ✨兴奋 / 💗害羞 / 💢生气 / 🍙护食） |
+| 聊天 | 气泡对话（DeepSeek），人设固定（名字/爸妈/生日/出生地），支持中英双语，长期记忆摘要；**流式与普通路径同口径记账**（亲密度/经验/摘要）；聊天框自动聚焦 |
+| 语音 | 文字转语音（9 种音色、可关、可停）、语音待命（常驻听写）、语音聊天开关；时长估算按语种分离（中文按字/英文按词） |
+| 文化 | 说书（17 本古籍，念原文、进度记忆、不重复、**进度按数据源隔离**）、念诗（737 首）、典故（261）、成语（834）、民间故事（696）、对联（51 副 11 类）；**选本书 ▸ 书单**、**今日一句**、**今日简报** |
 | 音乐 | 11 首曲子 Web Audio 合成播放（含升降号与低/高音） |
-| 工具 | 提醒（口语时间：9点 / 明天9点 / 半小时后 / 每天8点）、看图、拖文件（图片识别 / 文本总结）、成长与亲密度、鱼粮账本、余额、清除记忆 |
+| 工具 | 提醒（口语时间：9点 / 明天9点 / 半小时后 / 每天8点；**管理面板**：回数字删除、回 `d` 顺延 10 分钟）、看图、拖文件（图片识别 / 文本总结）、成长与亲密度、鱼粮账本、余额、清除记忆、**数据导出/导入**、**使用统计** |
+| 界面 | **界面语言**（中文默认 / 英文）、右键菜单键盘导航（↑↓/Enter/Esc）、「让它游走」可逆（右下角「○」或 Ctrl+Shift+W 恢复）、多标签页各自独立 |
 
 ## 目录结构
 
@@ -109,6 +104,13 @@ dsh-chubby-whale/
 | 硅基流动 Key（`config.json` 的 `siliconflowKey` 或环境变量 `SILICONFLOW_API_KEY`） | 语音识别（Qwen3-ASR） | 语音输入必需 |
 
 > 没有 Key 也能用：说书、念诗、典故、成语、民间故事、弹琴、提醒、成长全部离线可用，**不消耗 token**。
+
+**首次安装没有 Key 会怎样**（实测行为）：
+
+- 插件照常加载，不报错、不阻止使用离线功能
+- 没配 DeepSeek Key：页面加载后会提示一次「还没配 Key」；聊天时回复会明确说缺 Key（不发模型请求）
+- 没配 SiliconFlow Key：开语音后第一次识别会提示一次，并**停止继续上传识别**（不会反复重试、不刷屏）；打字和离线功能不受影响
+- 语音合成（edge-tts）不需要 Key；若本机 python 环境缺依赖，客户端会自动回退浏览器朗读
 
 ## 安装
 
@@ -175,10 +177,14 @@ Key 读取优先级：`config.json` → 专属环境变量（`CHUBBY_WHALE_DEEPS
 
 ```
 npm install
-npm run build      # tsc + esbuild → dist/
+npm run build      # 生成版本号 + tsc + 客户端 tsc + esbuild → dist/
+npm test           # 导入规则/模块边界/诊断键/文字体检/单测/两端冒烟/判停基准
+node tools/tts-bench.mjs           # TTS 耗时实测（对运行中的实例）
+node tools/voice-bench.mjs --chat  # 语音链路测点（--chat 会花少量额度）
 ```
 
 `src/client.ts` 由 esbuild 单独打包成 IIFE（tsconfig 里 exclude），其余模块走 tsc。
+宿主侧改动要重启 dsh web 才生效，客户端改完 `Ctrl+F5` 即可；待生效清单见 `docs/待重启生效.md`。
 ## 数据热更新（改内容不用重启）
 
 `data/story/*.json`、`data/culture/*.json`、`data/poems.json` 都按**文件修改时间**自动失效：

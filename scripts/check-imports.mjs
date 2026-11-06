@@ -32,25 +32,26 @@ function layerOf(p) {
 function check(file) {
   const rel = path.relative(ROOT, file).replace(/\\/g, '/')
   const text = fs.readFileSync(file, 'utf8')
-  const lines = text.split(/\r?\n/)
   const from = layerOf(file)
-  lines.forEach((line, i) => {
-    const m = line.match(/(?:import|export)[^'"]*from\s+['"]([^'"]+)['"]/)
-    if (!m) return
+  // 跨行匹配 import/export ... from '...'（坑 40：多行 import 曾可绕过单行正则）
+  const re = /(?:^|\n)[ \t]*(?:import|export)\s+(?:[\s\S]*?)\s+from\s+['"]([^'"]+)['"]/g
+  let m
+  while ((m = re.exec(text))) {
     const spec = m[1]
-    const at = rel + ':' + (i + 1)
+    const lineNo = text.slice(0, m.index).split('\n').length
+    const at = rel + ':' + lineNo
     // 1) dist / 绝对路径
     if (/^[A-Za-z]:[\\/]/.test(spec) || spec.includes('/dist/') || spec.startsWith('file:')) {
       problems.push(at + ' 禁止引用构建产物或绝对路径: ' + spec)
-      return
+      continue
     }
-    if (!spec.startsWith('.')) return // 包名，交给 dependency 检查
+    if (!spec.startsWith('.')) continue // 包名
     // 2) 解析目标层
     let target = null
     if (spec.includes('/client/') || spec.endsWith('/client.js')) target = 'client'
     else if (spec.includes('/host/') || spec.endsWith('/host.js')) target = 'host'
     else if (spec.includes('/shared/')) target = 'shared'
-    if (!target) return
+    if (!target) continue
     // 3) 反向依赖
     if (from === 'host' || from === 'host-root') {
       if (target === 'client') problems.push(at + ' 反向依赖：host 不得引用 client（' + spec + '）')
@@ -61,7 +62,17 @@ function check(file) {
     if (from === 'client' || from === 'client-root') {
       if (target === 'host') problems.push(at + ' 反向依赖：client 不得引用 host（' + spec + '）')
     }
-  })
+    // 规则 A：host 路由不得绕过 ports 直连仓储/store/cache/chat-core/prefs
+    if (rel.includes('/host/routes/')) {
+      if (/^\.\.\/(repos|store\.js|cache\.js|chat-core\.js|prefs\.js)/.test(spec)) {
+        problems.push(at + ' 路由越界：应经 ports 注入，不得直连内部模块（' + spec + '）')
+      }
+    }
+    // 规则 B：client 子模块不得反向 import 组件入口 client.ts
+    if (rel.startsWith('src/client/') && spec === '../client.js') {
+      problems.push(at + ' 循环风险：client 子模块不得 import 组件入口 client.ts（' + spec + '）')
+    }
+  }
 }
 
 walk(SRC)

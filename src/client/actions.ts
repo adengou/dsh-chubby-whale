@@ -40,7 +40,7 @@ export type ActionHost = {
   // —— 数据 ——
   persona: Persona
   clientId: string
-  narrationRate: string
+  narrationRate: () => string
   version: string
 
   // —— 说书 ——

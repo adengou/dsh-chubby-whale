@@ -1,47 +1,81 @@
 /**
- * dsh-chubby-whale —— 浏览器端入口（模块化组装）
- * 依赖模块：client/styles.ts（样式）、client/menu.ts（菜单）、client/anim.ts（动画）
+ * dsh-chubby-whale —— 浏览器端入口（组件骨架 + 组装 + JSX）
+ * 工具模块：client/hooks.ts（通用 hooks）、client/effects.ts（监听器/定时器/清理工厂）、
+ *           client/render.ts（菜单与聊天面板的纯渲染）
+ * 其余能力：client/styles.ts（样式）、client/menu.ts（菜单数据）、client/anim.ts（动画）等
  */
-import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, menuStyle, chatPanelStyle, headStyle, bodyStyle, inputRowStyle, inputStyle, sendStyle, msgStyle, recoverDotStyle } from './client/styles.js'
+import { W, H, CW, CH, SX, SY, VERSION, stageStyle, canvasStyle, recoverDotStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
+import { stopProgress } from './client/narration-progress.js'
+import { narrationRate, chatRate } from './client/rates.js'
 import { handleFileDrop } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
-import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth, type GrowthInfo } from './client/look.js'
+import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth } from './client/look.js'
 import { createVoiceBridge } from './client/voice-bridge.js'
 import { createActionTable, type ActionHost } from './client/actions.js'
 import { registerCultureActions } from './client/actions/culture.js'
-import { registerContentActions } from './client/actions/content.js'
+import { parseBookList, registerContentActions } from './client/actions/content.js'
 import { registerSystemActions } from './client/actions/system.js'
 import { registerVoiceActions } from './client/actions/voice.js'
-import { createPersona } from './client/persona.js'
+import { createPersona, applyServerMood } from './client/persona.js'
 import { createDeduper } from './client/text.js'
 import { getJson } from './client/http.js'
 import { createMelodyPlayer } from './client/melody.js'
 import { createBubble, ensureBubbleStyle } from './client/bubble.js'
 import { createNarrationLock } from './client/narration.js'
 import { createBusyLock, createEpoch } from './client/busy.js'
-import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag, endDrag, decayVelocity } from './client/stage.js'
+import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag, endDrag, decayVelocity, bindDragInput } from './client/stage.js'
 import { createStoryController } from './client/story.js'
 import { createLocalRouter } from './client/chat-route.js'
 import { createChatSender } from './client/chat.js'
 import { createReminderPoller } from './client/reminders.js'
 import { createReminderManager } from './client/reminder-manage.js'
 import { createRecover } from './client/recover.js'
+import { createHooks } from './client/hooks.js'
+import { bindFileDropCapture, bindOutsideClose, bindResize, bindChatFocus, bindMenuKeys, createUnmountCleanup, startGreeting, startWatchdog } from './client/effects.js'
+import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, listMenuEntries, menuRootProps } from './client/render.js'
+import { evPrevent, evStop } from './client/util.js'
 ;(window as any).__ModuleLoader__.load({
   id: 'dsh-chubby-whale',
   factory: (require: any) => {
     const R = require('react')
     // 早期错误记录器：抓住宿主插槽渲染我们组件时抛的异常（模块加载即安装）
+    // 三条硬要求：① 环形缓冲（只留最近 50 条，长时间运行不涨内存）
+    //            ② 补丁幂等（模块重复加载不叠加，不会把日志打两遍）
+    //            ③ 不覆盖已存在的数组（别的模块可能已经挂过）
     try {
-      (window as any).__chubbyErrors = []
-      const origErr = console.error
-      console.error = function (...a: any[]) {
-        try { (window as any).__chubbyErrors.push(a.map((x: any) => (x && x.stack) ? x.stack : String(x)).join(' ').slice(0, 800)) } catch (e) { }
-        return (origErr as any).apply(console, a as any)
-      } as any
-      window.addEventListener('error', (e: any) => { try { (window as any).__chubbyErrors.push('window.error: ' + (e.message || '') + ' | ' + ((e.error && e.error.stack) || '')) } catch (e2) { } })
+      const wErr: any = window as any
+      if (!Array.isArray(wErr.__chubbyErrors)) wErr.__chubbyErrors = []
+      const pushErr = (line: string): void => {
+        try {
+          const arr: string[] = wErr.__chubbyErrors
+          arr.push(String(line || '').slice(0, 800))
+          while (arr.length > 50) arr.shift()
+        } catch (e) { }
+      }
+      if (!wErr.__chubbyErrPatched) {
+        wErr.__chubbyErrPatched = true
+        const origErr = console.error
+        console.error = function (...a: any[]) {
+          pushErr(a.map((x: any) => (x && x.stack) ? x.stack : String(x)).join(' '))
+          return (origErr as any).apply(console, a as any)
+        } as any
+        window.addEventListener('error', (e: any) => {
+          pushErr('window.error: ' + (e.message || '') + ' | ' + ((e.error && e.error.stack) || ''))
+        })
+      }
     } catch (e) { }
     const h = R.createElement
+    /** 调试命名空间合并写入：window 不可用时静默；已有对象复用，绝不整替换（别处挂的字段不能丢） */
+    const dg = (patch: any): void => { try { Object.assign(((window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})), patch) } catch (e) { } }
+    /** 调试计数 +1（原来两处手写 `x = (x || 0) + 1`） */
+    const bump = (key: string): void => { try { const w: any = (window as any).__chubbyWhale; w[key] = (w[key] || 0) + 1 } catch (e) { } }
+    // 气泡文字断行：样式表在 client/bubble.ts（冻结的公开接口），长串（URL / base64 /
+    // 没有空格的长英文）在 white-space:pre-wrap 下不换行，会撑破 320px 气泡溢出屏幕，
+    // 这里用内联样式补断行。常量提到组件外，避免每次渲染都新建样式对象。
+    const BUBBLE_TEXT_STYLE = { overflowWrap: 'anywhere' as const, wordBreak: 'break-word' as const }
+    // 通用 hooks：惰性单例 ref / localStorage 布尔开关（client/hooks.ts）
+    const hookApi = createHooks(R)
 
     // 动作表：菜单动作 → 处理器（新增动作只改 client/actions/*.ts 与菜单数据，不动本文件）
     const actions = createActionTable<ActionHost>()
@@ -54,71 +88,102 @@ import { createRecover } from './client/recover.js'
 
     // 客户端标识：多标签页说书队列互不抢段（取不到就退化成单队列）
     const CLIENT_ID = (() => {
-      try {
-        let v = localStorage.getItem('chubby-client-id')
-        if (!v) { v = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('chubby-client-id', v) }
-        return v
-      } catch (e) { return '' }
-    })()
+  // 会话级 id：同一标签页刷新后保持稳定（进度对得上），不同标签页各自独立——
+  // 服务端按 clientId 分连播队列，用 localStorage 会让两个标签页共用一条队列互相踢掉。
+  try { const v = sessionStorage.getItem('chubby-client-id'); if (v) return v } catch (e) { }
+  const v = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  try { sessionStorage.setItem('chubby-client-id', v) } catch (e) { }
+  return v
+})()
 
     let ttsPlaying = false   // UI 用：是否正在说（由新语音模块状态回调更新）
     const channels: any = { mic: { stats: {} }, asr: { stats: {} }, speak: { stats: {} } }
     // 请求纪元：主人一问新问题，旧的异步回复自动作废（client/busy.ts）
     const epoch = createEpoch()
-    let asrBusy = false
-    let asrBusyAt = 0   // 识别位占用的起始时刻（用于僵尸复位与状态显示）
     // 叙述语速（与 voice.ts 同源，localStorage 可调，默认 -25%）
-    const NARRATION_RATE = (() => { try { const s = localStorage.getItem('chubby-narration-rate'); return (s && /^[+-]\d{1,2}%$/.test(s)) ? s : '-25%' } catch (e) { return '-25%' } })()
+    
     const storyNarratingRef = { current: false }
     const persona = createPersona()
-    let lastPoemSpeech = ''
+  // 诊断对象上尽早挂出人设：原来只在 useEffect 里挂，效果是"组件没跑完副作用就查不到"，
+  // 冒烟测试/排障都会误以为人设没初始化。这里创建完立刻挂，effect 里那份保留（幂等）。
+  try {
+    const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
+    w.persona = persona
+  } catch (e) { }
     // 叙述锁带时间上限：念诗/说书期间不理麦克风，但绝不能"忘了解锁"把耳朵永久关掉
     // （状态机与自愈在 client/narration.ts）
     const narration = createNarrationLock()
-    let lastSpeakingAt = 0   // 最近一次真正在朗读的时刻（用于锁的自愈）
     function setNarrating(ms: number): void {
       narration.lock(ms)
       try { storyNarratingRef.current = true } catch (e) { }
     }
     function clearNarrating(): void {
       narration.clear()
+      // 念诗被打断（说"停"/新提问）时进度状态也要清，
+      // 否则下一次说书的开场气泡会挂着上一首诗的「第 x/y 句」
+      try { stopProgress() } catch (e) { }
       try { storyNarratingRef.current = false } catch (e) { }
     }
     let greetedOnce = false   // 打招呼只打一次（防挂载重复）
     // 台词/回复去重：原来是两段手写的时间窗判断，统一用 client/text.ts 的 deduper
-    const lineDeduper = createDeduper({ windowMs: 25000, onDuplicate: () => { try { (window as any).__chubbyWhale.dupLine = ((window as any).__chubbyWhale.dupLine || 0) + 1 } catch (e) { } } })
-    const replyDeduper = createDeduper({ windowMs: 30000, onDuplicate: () => { try { (window as any).__chubbyWhale.dupReply = ((window as any).__chubbyWhale.dupReply || 0) + 1 } catch (e) { } } })
+    const lineDeduper = createDeduper({ windowMs: 25000, onDuplicate: () => bump('dupLine') })
+    const replyDeduper = createDeduper({ windowMs: 30000, onDuplicate: () => bump('dupReply') })
     const latDiag: any = { asrMs: 0, chatMs: 0, firstAudioMs: 0, totalMs: 0, updates: 0 }
     // 琴声播放器：音符表、振荡器排程、停止/关闭 AudioContext 都在 client/melody.ts
     const melody = createMelodyPlayer()
 
-    /** 安全外壳：把内层组件的渲染异常就地拦下并记录，绝不让整个 slot 变成错误占位 */
-    function WhaleOverlay(props: any) {
+    /** 最近一次渲染异常文本：只在变化时打日志，避免异常期间每次渲染都刷一条 */
+    let lastRenderErr = ''
+    /**
+     * 安全外壳：把内层组件的渲染异常就地拦下并记录，绝不让整个 slot 变成错误占位。
+     * 失败时不再返回 null（整只鱼消失、主人无从恢复）：右下角留一个可点的「⚠」，
+     * 点一下重试渲染。重试计数放在 try 之前，保证所有分支的 hooks 顺序一致。
+     */
+    function WhaleOverlay() {
+      const [retryTick, setRetryTick] = R.useState(0)
       try {
-        return WhaleBody(props || {})
+        const tree = WhaleBody()
+        lastRenderErr = ''
+        return tree
       } catch (e: any) {
-        try { (window as any).__chubbyWhale.renderError = String((e && e.stack) || e) } catch (e2) { }
-        try { console.error('[chubby-whale] 渲染异常已被就地拦下：', e) } catch (e2) { }
-        return null
+        const msg = String((e && e.stack) || e)
+        dg({ renderError: msg })
+        if (msg !== lastRenderErr) {
+          lastRenderErr = msg
+          try { console.error('[chubby-whale] 渲染异常已被就地拦下：', e) } catch (e2) { }
+        }
+        return h('div', {
+          key: 'chubby-render-error-' + retryTick,
+          style: recoverDotStyle,
+          title: '本鲸打了个喷嚏，点一下再试（还不行就刷新页面）',
+          onClick: (ev: any) => {
+            evStop(ev); evPrevent(ev)
+            try { setRetryTick((n: number) => n + 1) } catch (e2) { }
+          },
+        }, '⚠')
       }
     }
 
-    function WhaleBody(props: any) {
+    function WhaleBody() {
       const stageRef = R.useRef(null)
       const canvasRef = R.useRef(null)
       const posRef = R.useRef({ x: 0, y: 0 })
       const talkRef = R.useRef({ talkUntil: 0, hearts: [] as any[] })
       const voiceModeRef = R.useRef(false)
-      const wokeRef = R.useRef({ at: 0 })
-      const voiceOnRef = R.useRef((() => { try { return localStorage.getItem('chubby-voice') !== 'off' } catch (e) { return true } })())
-      const [voiceOn, setVoiceOn] = R.useState((() => { try { return localStorage.getItem('chubby-voice') !== 'off' } catch (e) { return true } })())
+      // 持久化开关：朗读 / 语音待命 / 语音聊天（默认都开；ref 给回调同步读，state 驱动菜单）
+      const voiceOnState = hookApi.usePersistentBool('chubby-voice')
+      const voiceOnRef = voiceOnState.ref
+      const voiceOn = voiceOnState.value
+      const setVoiceOn = voiceOnState.set
       // 语音待命 / 语音聊天：真开关（默认都开，持久化在 chubby-ear / chubby-voicechat）
-      const earOnRef = R.useRef((() => { try { return localStorage.getItem('chubby-ear') !== 'off' } catch (e) { return true } })())
-      const [earOn, setEarOn] = R.useState(earOnRef.current)
-      const voiceChatOnRef = R.useRef((() => { try { return localStorage.getItem('chubby-voicechat') !== 'off' } catch (e) { return true } })())
-      const [voiceChatOn, setVoiceChatOn] = R.useState(voiceChatOnRef.current)
-      // 录音循环的启停句柄（由 VAD 的 effect 注入：关掉语音待命时真停麦克风）
-      const earCtlRef = R.useRef({ stop: () => { }, boot: () => { } })
+      const earOnState = hookApi.usePersistentBool('chubby-ear')
+      const earOnRef = earOnState.ref
+      const earOn = earOnState.value
+      const setEarOn = earOnState.set
+      const voiceChatOnState = hookApi.usePersistentBool('chubby-voicechat')
+      const voiceChatOnRef = voiceChatOnState.ref
+      const voiceChatOn = voiceChatOnState.value
+      const setVoiceChatOn = voiceChatOnState.set
       const [balanceLabel, setBalanceLabel] = R.useState('--')
       // 聊天缓存开关（服务端持久化；这里只用于菜单显示与即时切换）
       const chatCacheOnRef = R.useRef(true)
@@ -130,7 +195,7 @@ import { createRecover } from './client/recover.js'
       }, [])
       const [growthLabel, setGrowthLabel] = R.useState('--')
       // 成长外观（L5）：exp 决定体型/光点/光晕/甩尾节奏；拉不到 /growth 时保持初识档
-      const [growth, setGrowth] = R.useState<GrowthInfo>(DEFAULT_GROWTH)
+      const [growth, setGrowth] = R.useState(DEFAULT_GROWTH)
       const lookRef = R.useRef(lookFor(0))
       // 菜单数值的最近一次拉取时刻（10 秒节流；ref 跨渲染保留，普通变量每次渲染都会被重置）
       const menuStatsAtRef = R.useRef(0)
@@ -138,7 +203,11 @@ import { createRecover } from './client/recover.js'
       // 原来这里定义了一份却从没被读过，属于"接线缺口"，已移除。
       const dragRef = R.useRef(createDragState())
       const scaleRef = R.useRef(1)
+      // 惯性动画帧句柄：卸载时取消，避免组件销毁后还在写位置
+      const inertiaRafRef = R.useRef(0)
       const animRef = R.useRef(null as any)
+      /** 动画口型：动画器还没建好时静默（宿主回调里多处共用这一份，别各写一遍 try/catch） */
+      const talkFor = (ms: number): void => { try { animRef.current?.talkFor(ms) } catch (e) { } }
       const storyBusyRef = R.useRef(false)
       // 最近一次说书的书名（「从头讲这本书」要按它重置进度）
       const storyBookRef = R.useRef('')
@@ -147,52 +216,76 @@ import { createRecover } from './client/recover.js'
     const storyAutoRef = R.useRef((() => {
       try { const s = localStorage.getItem('chubby-story-auto'); return s === null ? true : s !== '0' } catch (e) { return true }
     })())
-      // 到点提醒：轮询 + 播报队列在 client/reminders.ts；ref 缓存保证跨渲染只建一个实例
-      const reminderPollerRef = R.useRef(null as any)
+      // 到点提醒：轮询 + 播报队列在 client/reminders.ts；惰性 ref 保证跨渲染只建一个实例
+      const reminderPollerRef = hookApi.useLazyRef(() => createReminderPoller({
+        getJson: (path, init) => getJson(path, init),
+        bubble: showBubble,
+        talkFor,
+        speak: (text) => { try { speakText(text) } catch (e) { } },
+        isSpeaking: () => ttsPlaying,
+        isNarrating: () => storyNarratingRef.current,
+        isBusy: () => busyLock.isBusy(),
+      }))
 
       const [scale, setScale] = R.useState(1)
       const [hidden, setHidden] = R.useState(false)
+      // hidden 的同步镜像：拖放捕获的 effect 只挂一次，命中判定必须能读到最新值
+      const hiddenRef = R.useRef(false)
+      hiddenRef.current = hidden
+      // 语音回合不清输入框：语音识别结果进来时，主人可能正在聊天框里打字
+      const skipInputClearRef = R.useRef(false)
+      // 聊天面板根节点（判断粘贴事件是不是发生在面板内）
+      const chatRootRef = R.useRef(null)
       const [menu, setMenu] = R.useState(null as any)
       const [subOpen, setSubOpen] = R.useState('')
+      // 菜单键盘高亮（-1 = 没有高亮）；ref 给 window keydown 读最新值，state 驱动高亮样式
+      const [menuFocus, setMenuFocus] = R.useState(-1)
+      const menuFocusRef = R.useRef(-1)
+      menuFocusRef.current = menuFocus
+      // 当前可见菜单项（渲染时同步算好；keydown 只认这一份，口径与屏幕逐项对齐）
+      const menuEntriesRef = R.useRef([] as any[])
       // 说书书单（菜单「选本书 ▸」用）：tried 区分「还没拉」与「拉过但为空/失败」
       const [storyBooks, setStoryBooks] = R.useState([] as string[])
       const [storyBooksTried, setStoryBooksTried] = R.useState(false)
       const [balanceText, setBalanceText] = R.useState('')
       const [lang, setLang] = R.useState((() => { try { return localStorage.getItem('chubby-lang') || 'zh' } catch { return 'zh' } })())
       const [chatOpen, setChatOpen] = R.useState(false)
+      // 粘贴监听的 effect 只挂一次，需要同步读最新开关（聊天面板关着时不接粘贴）
+      const chatOpenRef = R.useRef(false)
+      chatOpenRef.current = chatOpen
       const [messages, setMessages] = R.useState([] as any[])
       const [input, setInput] = R.useState('')
       const [busy, setBusy] = R.useState(false)
       // 忙碌锁：权威状态在 client/busy.ts（React 的 busy 只负责按钮文案）
-      const busyLockRef = R.useRef(null as any)
-      if (!busyLockRef.current) busyLockRef.current = createBusyLock()
+      const busyLockRef = hookApi.useLazyRef(createBusyLock)
       const busyLock = busyLockRef.current
       const bodyRef = R.useRef(null)
+      // 聊天输入框与面板根节点：面板打开时自动聚焦输入框（有入场动画则等 animationend）
+      const inputRef = R.useRef(null)
+      const chatPanelRef = R.useRef(null)
       const bubbleRef = R.useRef(null)
       const bubbleTextRef = R.useRef(null)
 
       // 语音桥：回调只在 voice-bridge 里建一份（待命 effect 与菜单「唤醒」共用）。
       // 必须放在所有 effect 之前：卸载 effect 会调 stopTts() → bridge.stopSpeak()。
-      const bridgeRef = R.useRef(null as any)
-      if (!bridgeRef.current) {
-        bridgeRef.current = createVoiceBridge({
-          narration,
-          narrating: () => storyNarratingRef.current,
-          stopSpeaking: () => stopTts(),
-          bubble: showBubble,
-          sendText: (text: string, opts?: { voice?: boolean }) => sendText(text, opts),
-          onVoiceHeard: () => { try { voiceModeRef.current = true } catch (e) { } },
-          onSpeaking: (playing: boolean) => {
-            ttsPlaying = playing
-            if (playing) { try { lastSpeakingAt = Date.now() } catch (e) { } }
-          },
-          // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
-          voiceChat: () => voiceChatOnRef.current,
-          // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
-          speaking: () => ttsPlaying,
-          diag: (patch: any) => { try { Object.assign(((window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})), patch) } catch (e) { } },
-        })
-      }
+      const bridgeRef = hookApi.useLazyRef(() => createVoiceBridge({
+        narration,
+        narrating: () => storyNarratingRef.current,
+        stopSpeaking: () => stopTts(),
+        bubble: showBubble,
+        // 喊名字的应答要"出声"，不能只弹字：桥里拿不到 say 时会退化成纯气泡
+        say: (text: string, ms?: number, opts?: any) => sayLine(text, ms, opts),
+        sendText: (text: string, opts?: { voice?: boolean }) => sendText(text, opts),
+        onVoiceHeard: () => { try { voiceModeRef.current = true } catch (e) { } },
+        onSpeaking: (playing: boolean) => {
+          ttsPlaying = playing
+        },
+        // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
+        voiceChat: () => voiceChatOnRef.current,
+        // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
+        speaking: () => ttsPlaying,
+        diag: dg,
+      }))
       const bridge = bridgeRef.current
 
       // 样式注入（气泡三角；样式常量在 client/bubble.ts）
@@ -215,8 +308,9 @@ import { createRecover } from './client/recover.js'
       function applyPos(x: number, y: number): void {
         const el = stageRef.current
         if (!el) return
-        // 缩放后实际占位是 W*scale / H*scale：窗口缩小时也要把整只鱼留在可视区里
-        const s = scaleRef.current || 1
+        // 缩放后实际占位是 W*scale / H*scale：窗口缩小时也要把整只鱼留在可视区里。
+        // 再乘成长外观最大缩放 1.08（look.scale 上限），否则升级到「家人」档时鱼身会溢出边缘约 19px
+        const s = (scaleRef.current || 1) * 1.08
         const p = clampPos(x, y, W * s, H * s, window.innerWidth, window.innerHeight)
         x = p.x
         y = p.y
@@ -242,31 +336,29 @@ import { createRecover } from './client/recover.js'
         savePos()
       }
 
-      // 窗口尺寸变化：按当前缩放重新钳制位置，别让鱼停在可视区外
+      // 窗口尺寸变化：按当前缩放重新钳制位置，别让鱼停在可视区外；
+      // 拖窗口时 resize 会连续触发，savePos 走 200ms 节流（位置本身仍逐次钳制）
       R.useEffect(() => {
-        const onResize = (): void => {
+        let saveTimer: any = null
+        return bindResize(window, () => {
           applyPos(posRef.current.x, posRef.current.y)
-          savePos()
-        }
-        window.addEventListener('resize', onResize)
-        return () => {
-          try { window.removeEventListener('resize', onResize) } catch { }
-        }
+          if (saveTimer) return
+          saveTimer = setTimeout(() => { saveTimer = null; savePos() }, 200)
+        })
       }, [])
+
+      // 卸载：取消惯性动画帧（否则组件销毁后最多还会写位置 ~0.7 秒）
+      R.useEffect(() => () => { try { if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current) } catch (e) { } }, [])
 
       // 卸载收尾：提醒链 / 朗读音频 / 琴声 AudioContext / 气泡定时器都别留着
       // （SpeechRecognition 当前没用到；VAD 的 MediaRecorder 由下面语音待命的 effect 自己 stopEar）
       R.useEffect(() => {
-        return () => {
-          // 提醒链卸载顺序：撤到点定时器 → 清队列 → 停轮询（由 dispose 内部固定），再停朗读
-          try { if (reminderPollerRef.current) reminderPollerRef.current.dispose() } catch { }
-          stopTts()
-          melody.stop()
-          try {
-            const el = bubbleRef.current
-            if (el && el._t) { clearTimeout(el._t); el._t = null }
-          } catch { }
-        }
+        return createUnmountCleanup({
+          reminderPoller: () => reminderPollerRef.current,
+          stopTts: () => stopTts(),
+          stopMelody: () => melody.stop(),
+          bubbleEl: () => bubbleRef.current,
+        })
       }, [])
 
       // 气泡：定位、显示、自动收起、纯状态字判定都在 client/bubble.ts
@@ -278,20 +370,63 @@ import { createRecover } from './client/recover.js'
         onHide: () => { try { restoreIdleStatus() } catch (e) { } },
       })
       function showBubble(text: string, ms = 2400): void { bubble.show(text, ms) }
+      // 首次安装兜底：没配 Key 时给一句人话（离线功能照常可用），别让主人对着麦克风干等。
+      // 每次页面加载最多提示一次；只读 /status，不发模型请求。
+      R.useEffect(() => {
+        getJson('/status').then((d: any) => {
+          if (d && d.ok && d.key === false) {
+            showBubble('还没配 Key：聊天和语音要用 Key（deepseekKey / siliconflowKey），念诗、说书、典故、提醒照样能用～ 配置方法见 README', 9000)
+          }
+        }).catch(() => { })
+      }, [])
       // ===== 状态提示（已按主人要求去掉）=====
       // 原来闲时一直挂「在听…」，还出现过"讲着话却显示在听"的矛盾。
       // 现在不主动显示任何状态字：只听/只在真正有内容时冒气泡（听到、回复、念完…）。
-      function setStatus(): void { bubble.dismissStatus() }
       function restoreIdleStatus(): void { }
 
       // 提醒管理面板：清单 + 「下一条输入」（数字=删 / d=顺延）共用同一个实例；
       // 聊天框与语音最终都走 sendText，所以拦截只接一处（逻辑在 client/reminder-manage.ts）。
-      const reminderManager = createReminderManager({ bubble: (text, ms) => showBubble(text, ms) })
+      // 必须只建一次：实例内部记着「面板打开时刻 + 当前清单序号」，在渲染里重建的话，
+      // 任何一次 setState（打开面板本身就会 setMenu）都会把 60 秒有效窗和序号一起清零。
+      const reminderManagerRef = hookApi.useLazyRef(() => createReminderManager({ bubble: showBubble }))
+      const reminderManager = reminderManagerRef.current
       // 「让它游走」可逆：隐藏时右下角留「○」恢复点，Ctrl+Shift+W 也走同一条恢复路径（不刷新页面）
       const recover = createRecover({ recover: () => setHidden(false) })
-      // 全局快捷键：捕获阶段登记，避免被宿主页面的 keydown 先吃掉
+      /** 焦点在输入框/可编辑区域时，全局快捷键让路（不能把主人正在输入的按键抢走） */
+      function isTypingTarget(t: any): boolean {
+        try {
+          if (!t) return false
+          const tag = String(t.tagName || '').toUpperCase()
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+          return !!t.isContentEditable
+        } catch (e) { return false }
+      }
+      // 全局快捷键：捕获阶段登记，避免被宿主页面的 keydown 先吃掉。
+      // recover.bindHotkey 只认 addEventListener/removeEventListener 两个方法，
+      // 这里传一层代理：输入框聚焦时把 keydown 原样放行（否则聊天框里按 Ctrl+Shift+W 会被抢键）。
       R.useEffect(() => {
-        const unbind = recover.bindHotkey(window)
+        const wrapped = new Map<any, any>()
+        const target = {
+          addEventListener(type: string, fn: any, capture?: any): void {
+            if (type !== 'keydown' || typeof fn !== 'function') {
+              try { window.addEventListener(type, fn, capture) } catch (e) { }
+              return
+            }
+            const guard = (e: any): void => { if (isTypingTarget(e && e.target)) return; fn(e) }
+            wrapped.set(fn, guard)
+            try { window.addEventListener(type, guard, capture) } catch (e) { }
+          },
+          removeEventListener(type: string, fn: any, capture?: any): void {
+            const guard = wrapped.get(fn)
+            if (guard) {
+              wrapped.delete(fn)
+              try { window.removeEventListener(type, guard, capture) } catch (e) { }
+              return
+            }
+            try { window.removeEventListener(type, fn, capture) } catch (e) { }
+          },
+        }
+        const unbind = recover.bindHotkey(target)
         return () => { try { unbind() } catch (e) { } }
       }, [])
 
@@ -299,54 +434,79 @@ import { createRecover } from './client/recover.js'
       // React 的 onDrop 走冒泡阶段，宿主的 drop 处理器会先接走文件，鱼永远收不到。
       // 这里用 window 捕获监听 + 命中判定：落点在鱼身上才归鱼，其它位置仍交给宿主。
       R.useEffect(() => {
-        const insideFish = (x: number, y: number): boolean => {
+        return bindFileDropCapture({
+          win: window,
+          hitTest: (x: number, y: number): boolean => {
+            try {
+              // 游走隐藏时 display:none 的包围盒是全 0，若不拦，屏幕左上角十几像素内的
+              // 文件会被"看不见的鱼"吃掉。隐藏时一律不认。
+              if (hiddenRef.current) return false
+              const el = stageRef.current
+              if (!el) return false
+              const r = el.getBoundingClientRect()
+              const pad = 12   // 手抖一点也算命中
+              return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad
+            } catch (e) { return false }
+          },
+          onFile: (file: any): void => {
+            try { handleFileDrop(file, { showBubble, speakText }).catch(() => { }) } catch (e2) { }
+          },
+        })
+      }, [])
+
+      // ===== 粘贴图片：与拖入文件走同一条链路（压缩 / 4MB 上限 / 失败气泡都在 dropzone）=====
+      // 只在聊天面板内粘贴时接管（target 不在面板里就原样放行，不抢宿主页面自己的粘贴）；
+      // 只认剪贴板里的图片文件，粘贴文字仍由输入框自己处理。
+      // 拖入（drop）与粘贴（paste）是两类事件，不会对同一个文件重复处理。
+      R.useEffect(() => {
+        const onPaste = (e: any): void => {
           try {
-            const el = stageRef.current
-            if (!el) return false
-            const r = el.getBoundingClientRect()
-            const pad = 12   // 手抖一点也算命中
-            return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad
-          } catch (e) { return false }
+            if (!chatOpenRef.current) return
+            const root = chatRootRef.current
+            const t = e && e.target
+            if (!root || !t || typeof root.contains !== 'function' || !root.contains(t)) return
+            const dt = e.clipboardData
+            let file: any = null
+            const items = dt && dt.items
+            if (items && typeof items.length === 'number') {
+              for (let i = 0; i < items.length; i++) {
+                const it = items[i]
+                if (!it || it.kind !== 'file' || !/^image\//.test(String(it.type || ''))) continue
+                const f = typeof it.getAsFile === 'function' ? it.getAsFile() : null
+                if (f) { file = f; break }
+              }
+            }
+            if (!file && dt && dt.files && dt.files.length) {
+              const f = dt.files[0]
+              if (f && /^image\//.test(String(f.type || ''))) file = f
+            }
+            if (!file) return
+            evPrevent(e); evStop(e)
+            handleFileDrop(file, { showBubble, speakText }).catch(() => {
+              try { showBubble('图片没处理成，再贴一次试试', 4000) } catch (e2) { }
+            })
+          } catch (e2) { }
         }
-        const onDragOverCapture = (e: any): void => {
-          if (!insideFish(e.clientX, e.clientY)) return
-          e.preventDefault()
-          e.stopPropagation()
-        }
-        const onDropCapture = (e: any): void => {
-          if (!insideFish(e.clientX, e.clientY)) return
-          e.preventDefault()
-          e.stopPropagation()
-          const dt = e.dataTransfer
-          const file = dt && dt.files && dt.files[0]
-          try { handleFileDrop(file, { showBubble, speakText }).catch(() => { }) } catch (e2) { }
-        }
-        window.addEventListener('dragover', onDragOverCapture, true)
-        window.addEventListener('drop', onDropCapture, true)
-        return () => {
-          try { window.removeEventListener('dragover', onDragOverCapture, true) } catch (e) { }
-          try { window.removeEventListener('drop', onDropCapture, true) } catch (e) { }
-        }
+        try { window.addEventListener('paste', onPaste, true) } catch (e) { }
+        return () => { try { window.removeEventListener('paste', onPaste, true) } catch (e) { } }
       }, [])
 
       // 拖动
-      function onPointerDown(e: any): void {
-        if (e.button !== 0) return
-        beginDrag(dragRef.current, e.clientX, e.clientY, posRef.current.x, posRef.current.y)
+      function dragBeginAt(x: number, y: number): void {
+        beginDrag(dragRef.current, x, y, posRef.current.x, posRef.current.y)
         try {
           const el = stageRef.current
           // 拖动期间关掉投影滤镜：大滤镜每帧重算是拖拽卡死/闪退的主因之一
           if (el && el.style) { el.style.filter = 'none'; el.style.willChange = 'transform' }
         } catch (e2) { }
-        try { e.currentTarget.setPointerCapture(e.pointerId) } catch { }
       }
-      function onPointerMove(e: any): void {
+      function dragMoveTo(x: number, y: number): void {
         const d = dragRef.current
         if (!d.dragging) return
-        const m = moveDrag(d, e.clientX, e.clientY)
+        const m = moveDrag(d, x, y)
         applyPos(posRef.current.x + m.x, posRef.current.y + m.y)
       }
-      function onPointerUp(): void {
+      function dragFinish(): void {
         const d = dragRef.current
         if (!d.dragging) return
         const v = endDrag(d)
@@ -356,47 +516,102 @@ import { createRecover } from './client/recover.js'
         savePos()
         let vx = v.x
         let vy = v.y
-        const step = () => {
+        // 惯性按真实帧时长归一化（60Hz 基准）：高刷屏上物理时长与 60Hz 一致，不再短一半
+        let lastTs = 0
+        const step = (ts: number) => {
           if (dragRef.current.dragging) return
-          const dv = decayVelocity(vx, vy)
+          const dtScale = lastTs ? Math.min(4, Math.max(0.25, (ts - lastTs) / 16.67)) : 1
+          lastTs = ts
+          const dv = decayVelocity(vx, vy, dtScale)
           vx = dv.vx; vy = dv.vy
           applyPos(posRef.current.x + vx, posRef.current.y + vy)
           if (dv.done) { savePos(); return }
-          requestAnimationFrame(step)
+          inertiaRafRef.current = requestAnimationFrame(step)
         }
-        requestAnimationFrame(step)
+        inertiaRafRef.current = requestAnimationFrame(step)
       }
+      function onPointerDown(e: any): void {
+        // 触摸事件的 button 是 0；右键是 2。没有 button 字段的合成事件按左键处理
+        if (typeof e.button === 'number' && e.button !== 0) return
+        dragBeginAt(e.clientX, e.clientY)
+        try { e.currentTarget.setPointerCapture(e.pointerId) } catch { }
+      }
+      function onPointerMove(e: any): void {
+        try { e.__chubbyDragHandled = true } catch (e2) { }
+        dragMoveTo(e.clientX, e.clientY)
+      }
+      function onPointerUp(e?: any): void {
+        try { if (e) e.__chubbyDragHandled = true } catch (e2) { }
+        dragFinish()
+      }
+
+      // ===== 拖拽输入兼容（差异与兜底全在 client/stage.ts 的 bindDragInput 里）=====
+      // ① 没有 PointerEvent（Safari 13 之前）→ 改挂 touch + mouse，否则鱼拖不动；
+      // ② iOS Safari 的 capture 可能失效、指针会滑出元素 → window 上补 move/up 兜底；
+      // ③ touchmove 用 passive:false 才能 preventDefault，免得拖动时页面跟着滚。
+      R.useEffect(() => {
+        const el: any = stageRef.current
+        const win: any = typeof window !== 'undefined' ? window : null
+        if (!el || !win) return
+        const binding = bindDragInput(el, win, {
+          onDown: (x, y) => dragBeginAt(x, y),
+          onMove: (x, y) => { if (dragRef.current.dragging) dragMoveTo(x, y) },
+          onEnd: () => { if (dragRef.current.dragging) dragFinish() },
+        })
+        dg({ dragInput: binding.mode })
+        return () => { try { binding.dispose() } catch (e) { } }
+      }, [])
 
       // 余额/成长只在「菜单打开」时拉（见 refreshMenuStats），开机不预请求
       R.useEffect(() => {
         // 饭团：进门先打个招呼（按当前时段挑台词），3 秒后出现，不抢首屏
-        const tGreet = setTimeout(() => { try { if (greetedOnce) return; greetedOnce = true; const g = persona.greeting(); if (g) sayLine(g, 5000) } catch (e) { } }, 3000)
-            // 打了招呼再看是不是饿了：饿着就补一句（对应人设的 hungry 场景）
-            try { const st: any = (persona as any).state; if (st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1000) setTimeout(() => { try { sayLine(persona.line('hungry'), 4000) } catch (e) { } }, 6000) } catch (e) { }
-        try { const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {}); w.persona = persona; w.sayLine = sayLine } catch (e) { }
+        const stopGreet = startGreeting({
+          greet: () => {
+    try {
+      if (greetedOnce) return
+      greetedOnce = true
+      const g = persona.greeting()
+      if (g) sayLine(g, 5000)
+      // 今日一句：开场问候之后补一句当天的诗（/daily 失败静默；chubby-daily-greet=off 可关）
+      try {
+        const off = (() => { try { return typeof localStorage !== 'undefined' && localStorage.getItem('chubby-daily-greet') === 'off' } catch (e) { return false } })()
+        if (!off) {
+          getJson('/daily', { cache: 'no-store' }).then((d: any) => {
+            try {
+              if (d && d.ok && d.text) sayLine('今天这句——' + String(d.text) + (d.source ? '（' + String(d.source) + '）' : ''), 9000)
+            } catch (e) { }
+          }).catch(() => { })
+        }
+      } catch (e) { }
+    } catch (e) { }
+  },
+          hungry: () => { try { sayLine(persona.line('hungry'), 4000) } catch (e) { } },
+          // 打了招呼再看是不是饿了：饿着就补一句（对应人设的 hungry 场景）
+          hungryNow: (() => { try { const st: any = (persona as any).state; return !!(st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1000) } catch (e) { return false } })(),
+        })
+        dg({ persona, sayLine })
         // 状态行 2 秒周期刷新：常驻气泡只会在被调用时更新，靠事件驱动容易漏（就曾卡在「识别中…」）
-        const tStatus = setInterval(() => {
+        const stopWatch = startWatchdog(() => {
           // 占线自愈：一次请求异常不能让后续提问永远被「还在想上一句」挡住
           try {
             // 叙述锁自愈：过了时限还锁着就强制解除（防止"鱼听不到"）
             try {
               if (narration.expire()) {
                 clearNarrating()
-                try { (window as any).__chubbyWhale.narrReset = ((window as any).__chubbyWhale.narrReset || 0) + 1 } catch (e3) { }
+                bump('narrReset')
               }
             } catch (e3) { }
             if (busyLock.watchdog()) {
               setBusy(false)
-              try { (window as any).__chubbyWhale.busyReset = ((window as any).__chubbyWhale.busyReset || 0) + 1 } catch (e2) { }
+              bump('busyReset')
             }
           } catch (e) { }
-        }, 2000)
-        const clearStatus = () => { try { clearInterval(tStatus) } catch (e) { } }
-        const tF = setTimeout(() => { try { prefetchFiller() } catch (e) { } }, 3000)
+        })
+        const tF: any = 0 // 原 filler 预热已无实现，保留变量供 cleanup 兼容
         return () => {
-          try { clearTimeout(tGreet) } catch (e) { }
+          stopGreet()
           try { clearTimeout(tF) } catch (e) { }
-          clearStatus()
+          stopWatch()
           try { const el = bubbleRef.current; if (el) el.classList.remove('show') } catch (e) { }
         }
       }, [])
@@ -406,6 +621,8 @@ import { createRecover } from './client/recover.js'
         // 先出菜单（余额/成长用旧值或占位），数值异步回来再更新，绝不阻塞菜单显示
         setMenu({ x: e.clientX, y: e.clientY })
         setSubOpen('')
+        // 每次打开菜单都从「没有高亮」开始：第一次按方向键再落到首/末项
+        setMenuFocus(-1)
         // 只在「菜单打开」这个时机拉一次；10 秒节流，连点右键不会狂打接口
         refreshMenuStats()
         // 书单不进节流：本地接口、数据量小，每次打开菜单都拉一遍，书单换了立刻能看到
@@ -418,13 +635,7 @@ import { createRecover } from './client/recover.js'
        */
       function refreshStoryBooks(): void {
         getJson('/story/books', { cache: 'no-store' })
-          .then((d: any) => {
-            const list = (d && d.ok && Array.isArray(d.books))
-              ? d.books.map((b: any) => String(b || '').trim()).filter(Boolean)
-              : []
-            setStoryBooks(list)
-            setStoryBooksTried(true)
-          })
+          .then((d: any) => { setStoryBooks(parseBookList(d)); setStoryBooksTried(true) })
           .catch(() => { setStoryBooks([]); setStoryBooksTried(true) })
       }
 
@@ -457,6 +668,11 @@ import { createRecover } from './client/recover.js'
           setGrowth(DEFAULT_GROWTH)
           return
         }
+        applyGrowthInfo(info)
+      }
+
+      /** 成长标签 + 外观一起更新（菜单标题与外观刷新共用一份格式，避免两处各拼一遍） */
+      function applyGrowthInfo(info: any): void {
         setGrowthLabel(info.stage + '（' + info.exp + (info.nextExp ? '/' + info.nextExp : '') + '）')
         setGrowth(info)
       }
@@ -464,12 +680,8 @@ import { createRecover } from './client/recover.js'
       /** 重新拉一次 /growth 并刷新外观（喂食后调用）；失败静默回落初识 */
       function syncGrowth(): void {
         fetchGrowth((p, init) => getJson(p, init)).then((info) => {
-          if (info) {
-            setGrowthLabel(info.stage + '（' + info.exp + (info.nextExp ? '/' + info.nextExp : '') + '）')
-            setGrowth(info)
-          } else {
-            setGrowth(DEFAULT_GROWTH)
-          }
+          if (info) applyGrowthInfo(info)
+          else setGrowth(DEFAULT_GROWTH)
         })
       }
 
@@ -492,22 +704,56 @@ import { createRecover } from './client/recover.js'
           })
       }
 
-      // 点菜单外面就关掉（菜单根节点带 data-menu-root 标记，closest 判断）
+      // 点菜单外面就关掉（菜单根节点带 data-menu-root 标记，closest 判断；三路事件在 client/effects.ts）
       R.useEffect(() => {
         if (!menu) return
-        const onDocDown = (e: any): void => {
-          try {
-            const t = e && e.target
-            if (t && t.closest && t.closest('[data-menu-root]')) return
-            setMenu(null)
-            setSubOpen('')
-          } catch { }
-        }
-        (document as any).addEventListener('pointerdown', onDocDown, true)
-        return () => {
-          try { (document as any).removeEventListener('pointerdown', onDocDown, true) } catch { }
-        }
+        return bindOutsideClose({
+          doc: document,
+          onOutside: () => { setMenu(null); setSubOpen('') },
+        })
       }, [menu])
+
+      // 菜单打开时按 Esc 关闭：原来只有「点外面 / 点菜单项」两条路，键盘没法收菜单。
+      // 只在菜单存在期间挂监听，卸载/关闭由 cleanup 撤掉；捕获阶段先于宿主处理。
+      R.useEffect(() => {
+        if (!menu) return
+        const onKeyDown = (e: any): void => {
+          if (!e || (e.key !== 'Escape' && e.key !== 'Esc')) return
+          evStop(e); evPrevent(e)
+          setMenu(null)
+          setSubOpen('')
+        }
+        try { window.addEventListener('keydown', onKeyDown, true) } catch (e) { }
+        return () => { try { window.removeEventListener('keydown', onKeyDown, true) } catch (e) { } }
+      }, [menu])
+
+      // 菜单键盘导航（不抢焦点）：窗口捕获阶段处理方向键 / Enter / Esc，菜单容器本身不 focus。
+      // 高亮顺序只认渲染时算好的 listMenuEntries（menuEntriesRef），子菜单展开/收起自动对齐。
+      // Esc 与上面已有的 Esc effect 收敛到同一个关闭动作（setMenu(null)+setSubOpen('')）：
+      // 两个监听重复触发也只是同一次幂等关闭，不会互相冲突。
+      R.useEffect(() => {
+        if (!menu) return
+        return bindMenuKeys({
+          win: window,
+          isTyping: (t: any) => isTypingTarget(t),
+          count: () => menuEntriesRef.current.length,
+          index: () => menuFocusRef.current,
+          setIndex: (i: number) => setMenuFocus(i),
+          activate: (i: number) => {
+            const entry = menuEntriesRef.current[i]
+            if (!entry) return false
+            if (entry.kind === 'sub') {
+              // 子菜单父项：只在当前层展开/收起（收起回到 parentPath，不越级）
+              setSubOpen(entry.open ? entry.parentPath : entry.path)
+              return true
+            }
+            void runAction(entry.action)
+            return true
+          },
+          close: () => { setMenu(null); setSubOpen(''); setMenuFocus(-1) },
+        })
+      }, [menu])
+
 
       // ===== 说书（连载）：拉段、气泡、朗读、自动连播全在 client/story.ts =====
       const story = createStoryController({
@@ -518,41 +764,30 @@ import { createRecover } from './client/recover.js'
         bubble: showBubble,
         speak: speakText,
         talkFor: (ms: number) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
-        narrationRate: NARRATION_RATE,
+        narrationRate: narrationRate,
         isVoiceOff: () => { try { return localStorage.getItem('chubby-voice') === 'off' } catch (e) { return false } },
         refs: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
       })
 
-      // ===== 到点提醒：轮询 + 队列播报在 client/reminders.ts，这里只注入宿主能力 =====
-      if (!reminderPollerRef.current) {
-        reminderPollerRef.current = createReminderPoller({
-          getJson: (path, init) => getJson(path, init),
-          bubble: (text, ms) => showBubble(text, ms),
-          talkFor: (ms) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
-          speak: (text) => { try { speakText(text) } catch (e) { } },
-          isSpeaking: () => ttsPlaying,
-          isNarrating: () => storyNarratingRef.current,
-          isBusy: () => busyLock.isBusy(),
-        })
-      }
+      // ===== 到点提醒：轮询 + 队列播报在 client/reminders.ts，实例在组件顶部已注入宿主能力 =====
       const reminderPoller = reminderPollerRef.current
 
       // 菜单动作：动作表 + 处理器注册（client/actions/*.ts），客户端只留组装与分发
       const actionHost: ActionHost = {
-        bubble: (text, ms) => showBubble(text, ms),
-        say: (text, ms, opts) => sayLine(text, ms, opts),
-        speak: (text, opts) => speakText(text, opts),
+        bubble: showBubble,
+        say: sayLine,
+        speak: speakText,
         speakReply: (text) => speakReply(text),
         narrate: setNarrating,
         clearNarrate: clearNarrating,
         stopSpeak: () => stopTts(),
         stopMelody: () => melody.stop(),
         playMelody: (notes, bpm, onDone) => melody.play(notes, bpm, onDone),
-        talkFor: (ms) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
+        talkFor,
         heart: () => { try { animRef.current?.pushHeart() } catch (e) { } },
         persona,
         clientId: CLIENT_ID,
-        narrationRate: NARRATION_RATE,
+        narrationRate: narrationRate,
         version: VERSION,
         story,
         storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
@@ -620,7 +855,7 @@ import { createRecover } from './client/recover.js'
         },
         chatCacheOn: () => chatCacheOnRef.current,
         setChatCacheOn: (v) => { chatCacheOnRef.current = v; setChatCacheOn(v) },
-        diag: (patch) => { try { Object.assign(((window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})), patch) } catch (e) { } },
+        diag: dg,
       }
 
       // 动作分发：先关菜单，再交给动作表；未注册的动作（或处理器抛错）给一句兜底提示
@@ -638,18 +873,35 @@ import { createRecover } from './client/recover.js'
           if (el) el.scrollTop = el.scrollHeight
         }, 0)
       }
+      // 聊天列表跟随到底部：面板关着时（display:none）scrollTop 写入会被浏览器忽略，
+      // 之后打开面板也不会自动滚，最新回复永远在可视区外。打开面板 / 消息变化都补滚一次。
+      R.useEffect(() => {
+        if (!chatOpen) return
+        scrollBody()
+      }, [chatOpen, messages])
+      // 聊天面板打开时自动聚焦输入框，关闭时失焦；有入场动画就等 animationend（时机判断在 client/effects.ts）
+      R.useEffect(() => {
+        return bindChatFocus({
+          win: window,
+          open: chatOpen,
+          input: () => inputRef.current,
+          panel: () => chatPanelRef.current,
+        })
+      }, [chatOpen])
       // ===== 点播本地路由：关键词识别与念诗/讲典故的本地处理在 client/chat-route.ts =====
       const localRouter = createLocalRouter({
         persona,
-        narrationRate: NARRATION_RATE,
-        bubble: (text, ms) => showBubble(text, ms),
-        say: (text, ms, opts) => sayLine(text, ms, opts),
-        speak: (text, opts) => speakText(text, opts),
+        narrationRate: narrationRate,
+        bubble: showBubble,
+        say: sayLine,
+        speak: speakText,
         narrate: setNarrating,
         clearNarrate: clearNarrating,
-        talkFor: (ms) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
+        talkFor,
         story,
         storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
+        // 点播（念诗/讲故事/讲典故）命中时打断进行中的聊天请求：不再等旧回复，也不会回来抢话
+        abortChat: () => { try { chat.abortStream() } catch (e) { } },
       })
 
 
@@ -658,16 +910,23 @@ import { createRecover } from './client/recover.js'
       // 首字延迟从「整段生成 + 首段合成」降到「首句生成 + 首段合成」。
       // 任何异常都在 4 秒内回退到普通 /chat，不影响可用性。
       // ===== 聊天/流式：发送器在 client/chat.ts，这里只做组装与转发 =====
-      const chat = createChatSender({
+      // 发送器必须只建一次：实例内部登记着正在跑的请求（activeStream / activeChat），
+      // 在渲染函数里重建会让「停止说话」找不到请求、卸载时无法 abort，
+      // 语音（经 bridge 的闭包）与菜单还会各停各的实例。
+      const chatRef = hookApi.useLazyRef(() => createChatSender({
         persona,
-        bubble: (text, ms) => showBubble(text, ms),
-        say: (text, ms, voiceOpts) => sayLine(text, ms, voiceOpts),
-        speak: (text, opts) => speakText(text, opts),
+        bubble: showBubble,
+        say: sayLine,
+        speak: speakText,
         speakReply: (text) => speakReply(text),
         stopSpeak: () => stopTts(),
-        talkFor: (ms) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
+        talkFor,
         heart: () => { try { animRef.current?.pushHeart() } catch (e) { } },
-        setInput: (v) => setInput(v),
+        // 语音回合不动输入框（主人可能正在打字）；打字/语音的来源由 sendText 填标记，用一次即复位
+        setInput: (v) => {
+          if (skipInputClearRef.current) { skipInputClearRef.current = false; return }
+          setInput(v)
+        },
         setMessages: (v) => setMessages(v),
         setBusy: (v) => setBusy(v),
         scrollBody: () => scrollBody(),
@@ -677,31 +936,63 @@ import { createRecover } from './client/recover.js'
         storyBusy: storyBusyRef,
         voiceMode: voiceModeRef,
         ttsPlaying: () => ttsPlaying,
-        narrationRate: NARRATION_RATE,
+        narrationRate: narrationRate,
         route: (text) => localRouter.route(text),
         replyDeduper,
         recordChatLatency: (ms) => { try { latDiag.chatMs = ms; latDiag.updates++ } catch (e) { } },
-      })
+      }))
+      const chat = chatRef.current
       // 旧调用点名称保留（拖放 / 语音 / 调试口都调 sendText）
-      function sendText(rawText: string, opts?: { voice?: boolean }): Promise<void> {
+      function sendText(rawText: string, opts?: { voice?: boolean }): Promise<boolean> {
         // 提醒管理面板最近打开 60 秒内：数字=删、d=顺延先接住；
         // 其余输入（正常对话）原样放行，绝不误吞（判断都在 client/reminder-manage.ts）
         try {
-          if (reminderManager.intercept(String(rawText == null ? '' : rawText))) return Promise.resolve()
+          if (reminderManager.intercept(String(rawText == null ? '' : rawText))) {
+            // 被提醒面板消费的是操作指令，清掉输入框里的那条，免得下一条误发
+            try { setInput('') } catch (e2) { }
+            return Promise.resolve(true)
+          }
         } catch (e) { }
-        return chat.send(rawText, opts)
+        // 输入框清空交给 chat.send 在「真的发出去了」之后自己做：
+        // 发送被占线挡下时不能清空（原来调用方无条件清空，主人的话会直接丢）。
+        // 点播指令（背诗/念诗/讲故事/讲典故/报书名）先走本地路由，不进聊天频道。
+        // 2026-11-06 修：B9 重构把 localRouter 的调用点弄丢了，导致「背首诗」被当成聊天发给模型。
+        try {
+          if (localRouter.route(String(rawText == null ? '' : rawText))) {
+            try { setInput('') } catch (e2) { }
+            return Promise.resolve(true)
+          }
+        } catch (e) { }
+        try { skipInputClearRef.current = !!(opts && opts.voice) } catch (e) { }
+        return chat.send(rawText, opts).then((ok: any) => ok !== false)
       }
 
-      // 调试口：控制台输入 __chubbyWhale.say("你好呀") 可直接测「对话 + 朗读」链路（不经过麦克风）
+      // 启动时把服务端 pet.mood 同步给客户端（服务端只发 normal/happy/hungry；失败静默，不阻塞渲染）
+  // SYNC-PET-MOOD
+  R.useEffect(() => {
+    try { getJson('/pet').then((d: any) => { if (d && d.pet && d.pet.mood) applyServerMood(String(d.pet.mood)) }).catch(() => { }) } catch (e) { }
+  }, [])
+
+  // 调试口：控制台输入 __chubbyWhale.say("你好呀") 可直接测「对话 + 朗读」链路（不经过麦克风）
       R.useEffect(() => {
+        const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
         try {
-          const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
           w.say = (t: string) => { try { sendText(String(t || ""), { voice: true }) } catch (e) { } }
           w.sayStop = () => { try { stopTts() } catch (e) { } }
           w.busyNow = () => ({ busy: busyLock.isBusy(), age: busyLock.age(), tts: ttsPlaying })
           // 外观诊断：控制台 __chubbyWhale.look() 可看当前档位/体型/光点数/光晕
           w.look = () => lookRef.current
         } catch (e) { }
+        return () => {
+          // 卸载后这些调试口仍指向已销毁组件的闭包（say 会操作已 dispose 的音频、
+          // 往旧树 setState）。只撤自己挂的四个键，不动别的模块挂在同一命名空间的字段。
+          try {
+            if (w.say) delete w.say
+            if (w.sayStop) delete w.sayStop
+            if (w.busyNow) delete w.busyNow
+            if (w.look) delete w.look
+          } catch (e) { }
+        }
       }, [])
       // 提醒轮询（每 20 秒检查一次，与 C# 一致）——到点的全部排队，逐条播报
       // 轮询与队列细节在 client/reminders.ts；卸载收尾由上面的 effect 调 dispose
@@ -718,7 +1009,15 @@ import { createRecover } from './client/recover.js'
 
       // ---- 旧调用点兼容层：全部转到新模块 ----
       function speakText(text: string, o?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
-        try { if (localStorage.getItem('chubby-voice') === 'off') { try { (window as any).__chubbyWhale.ttsSkip = 'voice-off' } catch (e) { } ; return } } catch (e) { }
+        try {
+          if (localStorage.getItem('chubby-voice') === 'off') {
+            dg({ ttsSkip: 'voice-off' })
+            // 语音关着：不合成，但仍要通知调用方「说完了」——文化类朗读的收尾（「讲完啦」、清叙述锁）靠 onDone，
+            // 原来直接 return 会让语音关闭时永远没有收尾
+            try { if (o && typeof o.onDone === 'function') o.onDone() } catch (e) { }
+            return
+          }
+        } catch (e) { }
         bridge.speak(text, o)
       }
       function stopTts(): void {
@@ -731,9 +1030,6 @@ import { createRecover } from './client/recover.js'
         try { storyBusyRef.current = false } catch (e) { }
         try { storyNarratingRef.current = false } catch (e) { }
       }
-      function muteMic(): void { bridge.mute(true) }
-      function unmuteMic(): void { bridge.mute(false) }
-      function prefetchFiller(): void { }
 
       /** 人设台词：气泡 + 语音一起出（语音朗读关着时只出气泡；正在说别的话时不打断） */
       function sayLine(text: string, ms = 3500, voiceOpts?: { rate?: string; pitch?: string }): void {
@@ -744,7 +1040,7 @@ import { createRecover } from './client/recover.js'
         try {
           if (localStorage.getItem('chubby-voice') === 'off') return
           const v: any = bridge.get()
-          if (v && v.speak && !v.speaking()) v.speak(text, { rate: (voiceOpts && voiceOpts.rate) || '+0%', pitch: (voiceOpts && voiceOpts.pitch) || '' })
+          if (v && v.speak && !v.speaking()) v.speak(text, { rate: (voiceOpts && voiceOpts.rate) || chatRate(), pitch: (voiceOpts && voiceOpts.pitch) || '' })
         } catch (e) { }
       }
       /** 统一的回复朗读入口：长回复走叙述语速，同一句回复 30 秒内不重复念 */
@@ -753,7 +1049,7 @@ import { createRecover } from './client/recover.js'
         if (!rp.trim()) return
         // 同一句回复 30 秒内不重复念（client/text.ts 的 deduper，重复时计数 dupReply）
         if (!replyDeduper.allow(rp)) return
-        speakText(rp, { rate: rp.length >= 80 ? NARRATION_RATE : '+0%' })
+        speakText(rp, { rate: rp.length >= 80 ? narrationRate() : chatRate() })
       }
 
       // ===== 成长 → 外观（L5）：档位变化时热更新 canvas 外观，不重建动画器 =====
@@ -783,31 +1079,19 @@ import { createRecover } from './client/recover.js'
       // ===== 渲染 =====
       // 隐藏时右下角留一个极小的「○」恢复点（点一下回来，不刷新页面）
       const recoverProps = recover.dot(hidden)
+      // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去。
+      // 可见项清单在渲染时同步算一次（键盘高亮与屏幕顺序共用这一份，不各算一套）。
+      const menuItems = menu
+        ? buildMenu(VERSION, Object.assign({ voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
+        : []
+      const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : []
+      menuEntriesRef.current = menuEntries
       function renderItems(items: any[]): any[] {
-        const out: any[] = []
-        for (let i = 0; i < items.length; i++) {
-          const it = items[i]
-          if (it.type === 'sep') {
-            out.push(h('div', { key: 'sep' + i, style: { height: 1, background: '#1f4a85', margin: '4px 0' } }))
-            continue
-          }
-          if (it.type === 'sub') {
-            const open = subOpen === it.label
-            out.push(h('div', {
-              key: 'sub' + i,
-              style: { padding: '6px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', color: '#cfe9ff', fontSize: 13 },
-              onClick: () => setSubOpen(open ? '' : it.label),
-            }, h('span', null, tr(it.label, lang)), h('span', null, open ? '▾' : '▸')))
-            if (open) out.push(h('div', { key: 'subitems' + i, style: { paddingLeft: 14, borderLeft: '1px solid #1f4a85', marginLeft: 8 } }, renderItems(it.items)))
-            continue
-          }
-          out.push(h('div', {
-            key: 'item' + i,
-            style: { padding: '6px 14px', cursor: 'pointer', color: '#cfe9ff', fontSize: 13, whiteSpace: 'nowrap' },
-            onClick: () => runAction(it.action),
-          }, tr(it.label, lang)))
-        }
-        return out
+        return renderMenuItems(items, {
+          h, tr, lang, subOpen, focusIndex: menuFocus,
+          onToggleSub: (next: string) => setSubOpen(next),
+          onAction: (action: string) => runAction(action),
+        })
       }
 
       return h(R.Fragment, null,
@@ -827,42 +1111,32 @@ import { createRecover } from './client/recover.js'
         },
           h('canvas', { ref: canvasRef, width: CW, height: CH, style: canvasStyle }),
         ),
-        h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef })),
+        h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         recoverProps ? h('div', Object.assign({}, recoverProps, { style: recoverDotStyle }), '○') : null,
-        menu ? h('div', { style: menuStyle(menu), 'data-menu-root': '1' },
-          h('div', { style: { padding: '8px 14px', borderBottom: '1px solid #1f4a85', color: '#9FD8FF', fontSize: 12, display: 'flex', justifyContent: 'space-between' } },
-            // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
-            h('span', null, (lang === 'en' ? 'Fat Whale · v' : '肥鲸 · v') + VERSION),
-            h('span', {
-              style: { color: '#FFD166', cursor: 'pointer' },
-              title: lang === 'en' ? 'Click to refresh balance' : '点一下刷新余额',
-              onClick: () => { try { refreshMenuStats(true) } catch (e) { } },
-            }, balanceText || '--'),
-          ),
-          renderItems(buildMenu(VERSION, { voiceOn: voiceOn, earOn: earOn, voiceChatOn: voiceChatOn, chatCacheOn: chatCacheOn, storyAuto: (() => { try { return localStorage.getItem('chubby-story-auto') !== '0' } catch (e) { return true } })(), ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(), chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(), balance: balanceLabel, growth: growthLabel, storyBooks: storyBooks, storyBooksTried: storyBooksTried })),
+        menu ? h('div', menuRootProps({ menu, lang }),
+          // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号
+          renderMenuHeader({ h, lang, balanceText, onRefresh: () => { try { refreshMenuStats(true) } catch (e) { } } }),
+          renderItems(menuItems),
         ) : null,
-        h('div', { style: chatPanelStyle(chatOpen) },
-          h('div', { style: headStyle },
-            h('span', null, lang === 'en' ? 'Fat Whale · Chat' : '肥鲸 · 聊天'),
-            h('span', { style: { cursor: 'pointer', color: '#9FD8FF', padding: '0 4px' }, onClick: () => setChatOpen(false) }, '✕'),
-          ),
-          h('div', { ref: bodyRef, style: bodyStyle },
-            messages.length === 0
-              ? h('div', { style: msgStyle('fish') }, '主人，点我说话，本鲸在右下角待着～')
-              : messages.map((m: any, i: number) => h('div', { key: i, style: msgStyle(m.who) }, m.text)),
-          ),
-          h('div', { style: inputRowStyle },
-            h('input', {
-              style: inputStyle, placeholder: lang === 'en' ? 'Say something…' : '跟肥鲸说两句…', value: input,
-              onChange: (e: any) => setInput(e.target.value),
-              onKeyDown: (e: any) => {
-                // 中文输入法选词时按回车不算发送（isComposing 期间放行给输入法）
-                if (e.nativeEvent && e.nativeEvent.isComposing) return
-                if (e.key === 'Enter' && input.trim()) { sendText(input); setInput('') }
-              },
-            }),
-            h('button', { style: sendStyle, onClick: () => { if (input.trim()) sendText(input); setInput('') } }, busy ? '…' : (lang === 'en' ? 'Send' : '发送')),
-          ),
+        // 聊天面板：结构与事件接线都在 client/render.ts，发送/输入法判断留在闭包里。
+        // 外面包一层 display:contents 的根节点：粘贴处理要靠它判断事件是否发生在面板内，
+        // contents 不生成布局盒子，不影响面板自身的 fixed 定位。
+        h('div', { ref: chatRootRef, style: { display: 'contents' } },
+          renderChatPanel({
+            h, lang, open: chatOpen, messages, input, busy, bodyRef,
+            inputRef, panelRef: chatPanelRef,
+            onClose: () => setChatOpen(false),
+            onInputChange: (v: string) => setInput(v),
+            onKeyDown: (e: any) => {
+              // 中文输入法选词时按回车不算发送：isComposing 之外还要认 keyCode 229
+              // （Safari / 部分安卓输入法在 composition 中只给 229，isComposing 可能为 false）
+              const ne: any = e && e.nativeEvent
+              if (ne && (ne.isComposing || ne.keyCode === 229)) return
+              if (e.key === 'Enter' && input.trim()) { const v = input; void sendText(v) }
+            },
+            // 清空输入框由 chat.send 在真的发出后负责（占线被拒时保留主人的话）
+            onSend: () => { const v = input; if (!v.trim()) return; void sendText(v) },
+          }),
         ),
       )
     }
@@ -871,12 +1145,15 @@ import { createRecover } from './client/recover.js'
       name: 'dsh-chubby-whale-client',
       inject: ['slots'],
       apply(ctx: any) {
-        // 诊断对象：出问题时在浏览器控制台输入 __chubbyWhale 就能看到卡在哪一步
-        const diag: any = (window as any).__chubbyWhale = {
+        // 诊断对象：出问题时在浏览器控制台输入 __chubbyWhale 就能看到卡在哪一步。
+        // 注意：不能整对象覆盖 —— 其它模块（chat/voice/actions）已经把字段挂在同一命名空间上，
+        // 整替换会让它们的字段全丢（apply 跑两次时尤明显）。改成取已存在的对象再合并。
+        const diag: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
+        Object.assign(diag, {
           version: VERSION, applied: true, hasCtx: !!ctx, hasSlots: !!(ctx && ctx.slots), lat: latDiag,
           ch: { mic: channels.mic.stats, asr: channels.asr.stats, speak: channels.speak.stats },
           registered: false, error: null,
-        }
+        })
         try {
           const slots = ctx && ctx.slots
           if (!slots) {

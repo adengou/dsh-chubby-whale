@@ -13,6 +13,7 @@
  * 不在可写字段里，模型输出再多也改不了核心提示词。
  */
 import { fetchJson } from './http.js';
+import { deepFreeze } from '../shared/immutable.js';
 import { CHAT_URL, SUMMARY_MAX_TOKENS } from './chat-core.js';
 import { DEFAULT_CHAT_MODEL } from './config.js';
 /** 每多少次成功回复触发一次提取 */
@@ -30,6 +31,35 @@ const LEARN_TIMEOUT = 20 * 1000;
 /** 单条历史喂给提取模型时截断到多少字（16 条 × 300 字以内，token 可控） */
 const LEARN_LINE_MAX = 300;
 /**
+ * 按 Unicode 码点截断：`String.prototype.slice` 按 UTF-16 码元切，正好切在 emoji 代理对中间
+ * 会留下孤立代理（实测「'字'×299 + '🙂'」会切出半个表情 U+D83D）。喂模型的每行都走这里。
+ * 与 host/personality/merge.ts 的 clampText 同一口径（按「字」而不是按码元）。
+ */
+function clipCodePoints(s, max) {
+    const chars = Array.from(s);
+    return chars.length > max ? chars.slice(0, max).join('') : s;
+}
+/**
+ * 取正整数选项：显式 0 表示「最快（1）」，缺省 / 非数值才回落默认值。
+ *
+ * 审计修复 F9（2026-11-07）：原实现是 `Math.floor(Number(opts.every) || LEARN_EVERY)`，
+ * 显式传 0 被 `||` 当成「没传」回落 20，而传 -3 却被 `Math.max(1, ·)` 收成 1——
+ * 同属「最小」语义，0 与负数结果相反，是 0 边界反转（与 merge.ts 的 keepNewest 同源问题）。
+ */
+function positiveOption(value, fallback) {
+    if (value === undefined || value === null)
+        return fallback;
+    const n = Math.floor(Number(value));
+    return Number.isFinite(n) ? Math.max(1, n) : fallback;
+}
+/** 取非负毫秒选项：显式 0 表示「不设最小间隔」，缺省 / 非数值才回落默认值（同 F9 的 0 边界） */
+function nonNegativeOption(value, fallback) {
+    if (value === undefined || value === null)
+        return fallback;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.max(0, n) : fallback;
+}
+/**
  * 提取提示词：只要求 JSON，且明确禁止把鲸鱼的核心设定写进来。
  * 「没有新信息就返回空」让模型自己收手，配合 applyCandidate 的“无变化不写盘”，
  * 没新东西时不会产生版本、历史或请求以外的副作用。
@@ -44,6 +74,7 @@ export const EXTRACTION_SYSTEM_PROMPT = [
     '4) 鲸鱼自己的核心设定（名字、家人、生日、出生地、语言规则、安全边界）是锁定的，绝对不能写进 JSON；也不要收住址、电话、证件、账号密码等隐私。',
     '5) 没有值得记的新信息，就返回 {"catchphrases":[],"preferences":[],"notes":""}。',
 ].join('\n');
+deepFreeze(EXTRACTION_SYSTEM_PROMPT);
 /** 把最近若干条对话压成「主人：… / 肥鲸：…」文本；没有可用内容时返回空串 */
 export function buildExtractionUser(messages) {
     const arr = Array.isArray(messages) ? messages : [];
@@ -51,7 +82,7 @@ export function buildExtractionUser(messages) {
     for (const m of arr.slice(-LEARN_MESSAGE_COUNT)) {
         if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string')
             continue;
-        const text = m.content.replace(/[\s\u3000]+/g, ' ').trim().slice(0, LEARN_LINE_MAX);
+        const text = clipCodePoints(m.content.replace(/[\s\u3000]+/g, ' ').trim(), LEARN_LINE_MAX);
         if (!text)
             continue;
         lines.push((m.role === 'user' ? '主人' : '肥鲸') + '：' + text);
@@ -93,8 +124,8 @@ export function parseExtraction(text) {
  * 纯函数（now 由调用方传入），便于离线断言。
  */
 export function shouldLearn(state, now, opts = {}) {
-    const every = Math.max(1, Math.floor(Number(opts.every) || LEARN_EVERY));
-    const minIntervalMs = Math.max(0, Number(opts.minIntervalMs) || LEARN_MIN_INTERVAL_MS);
+    const every = positiveOption(opts.every, LEARN_EVERY);
+    const minIntervalMs = nonNegativeOption(opts.minIntervalMs, LEARN_MIN_INTERVAL_MS);
     const successes = Math.floor(Number(state && state.successes) || 0);
     const last = Number(state && state.lastAttemptAt) || 0;
     // lastAttemptAt=0 表示从未尝试过（不是“1970 年刚试过”），直接放行

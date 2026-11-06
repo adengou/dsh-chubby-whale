@@ -5,6 +5,7 @@
  * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB；外呼超时 60 秒
  */
 import { hashBytes } from '../cache.js'
+import { isInterruptWord, isNoiseText } from '../../shared/noise.js'
 import { fetchJson, isTimeoutError, sendTooLarge } from '../http.js'
 import { readJsonBody } from '../body.js'
 import { sendJson, sendError } from '../respond.js'
@@ -58,7 +59,7 @@ export function createAsrHandler(opts: AsrRouteDeps) {
       }
       const key = opts.getKey()
       if (!key) {
-        sendJson(res, { ok: false, error: 'NO_KEY', text: '' })
+        sendJson(res, { ok: false, error: 'NO_KEY', text: '', hint: '没配语音识别 Key（siliconflowKey），语音听不见；打字也能聊' })
         return
       }
       // 用完整音频字节做 key（只取前 4000 字符容易撞 key）
@@ -71,12 +72,16 @@ export function createAsrHandler(opts: AsrRouteDeps) {
           return
         }
       }
+      // 识别语言：默认 zh（不传会自动检测，短句常被识别成英文）
+      const asrLang = 'zh' // 固定中文：不传该参数时模型自动检测，短句常被识别成英文（"No, no"）
       // 构造 multipart
       const boundary = '----chubbywhale' + Math.random().toString(36).slice(2, 10)
       const mime = format === 'wav' ? 'audio/wav' : format === 'mp3' ? 'audio/mpeg' : 'audio/webm'
       const head = Buffer.from(
         '--' + boundary + '\r\n' +
         'Content-Disposition: form-data; name="model"\r\n\r\n' + ASR_MODEL + '\r\n' +
+        '--' + boundary + '\r\n' +
+        'Content-Disposition: form-data; name="language"\r\n\r\n' + asrLang + '\r\n' +
         '--' + boundary + '\r\n' +
         'Content-Disposition: form-data; name="file"; filename="audio.' + format + '"\r\n' +
         'Content-Type: ' + mime + '\r\n\r\n'
@@ -106,8 +111,14 @@ export function createAsrHandler(opts: AsrRouteDeps) {
         return
       }
       const recognized = String(r.data?.text || '').trim()
-      if (opts.cache && recognized) { try { await opts.cache.setJson(ck, { text: recognized }) } catch { } }
-      sendJson(res, { ok: true, text: recognized })
+      // 静音/气口/片头片尾会被识别成"嗯""谢谢观看"这类编词：
+      // ① 不写缓存（缓存里曾堆满 17 字节的噪声条目）② 当空文本返回，别让上层当真话
+      // 打断词（停/别/不/闭嘴/打住）例外：它们和单字气口同形，但必须原样上行——
+      // 否则客户端的「朗读时喊停」直通路径永远收不到指令（2026-11-06 分身取证）。
+      const noise = isNoiseText(recognized)
+      const interrupt = isInterruptWord(recognized)
+      if (opts.cache && recognized && !noise && !interrupt) { try { await opts.cache.setJson(ck, { text: recognized }) } catch { } }
+      sendJson(res, { ok: true, text: noise ? '' : recognized, noise: noise || undefined })
     } catch (err: any) {
       try { sendError(res, err, { text: '' }) } catch { }
     }
