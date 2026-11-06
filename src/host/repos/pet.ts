@@ -17,6 +17,12 @@ import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } fr
 const HUNGER_PER_HOUR = 3
 /** 饥饿到 70 算「饿了」，由 /pet 下发 hungry（客户端只认 happy/hungry/normal 三态） */
 const HUNGRY_AT = 70
+/**
+ * 宠物情绪白名单：只接受这些值，其余按 idle。
+ * 为什么：`setMood` 原来把任意字符串写进 pet_state.json，客户端表情渲染落空、备份也会带走脏值。
+ */
+const PET_MOODS = ['idle', 'happy', 'hungry', 'sleepy', 'sulk', 'shy', 'excited'] as const
+
 /** 喂食后心情保持 happy 的时长，与客户端 6 小时「该喂了」的阈值同口径 */
 const HAPPY_WINDOW_MS = 6 * 3600 * 1000
 
@@ -105,9 +111,12 @@ export function createPetRepo(dataDir: string): PetRepo {
   }
   function setMood(mood: string): void {
     const p = loadPet()
-    p.mood = mood
+    // 只接受已知情绪：任意字符串写进 pet.json 会让客户端表情渲染落空（还会被备份带走）
+    const m = String(mood || '').trim()
+    p.mood = (PET_MOODS as readonly string[]).indexOf(m) >= 0 ? m : 'idle'
     savePet(p)
   }
 
   return { loadPet, savePet, tickPet, feedPet, setMood }
 }
+

@@ -5938,7 +5938,8 @@
       const s = JSON.parse(raw);
       return {
         ...base,
-        bowls: Number(s.bowls) || 0,
+        // 负数/NaN/小数一律归成非负整数：原来负数会原样保留，成长档位会按负经验算
+        bowls: Math.max(0, Math.floor(Number(s.bowls) || 0)),
         stageIndex: Number(s.stageIndex) || 0,
         lastFeedAt: Number(s.lastFeedAt) || 0,
         lastInteractAt: Number(s.lastInteractAt) || 0,
@@ -6003,9 +6004,12 @@
       return state.mood;
     }
     let moodTimer = null;
+    const MOOD_HOLD_MAX_MS = 60 * 1e3;
     function setMood(m, holdMs = 5e3) {
       state.mood = m;
       clearT(moodTimer);
+      const n = Number(holdMs);
+      const ms2 = Number.isFinite(n) && n > 0 ? Math.min(n, MOOD_HOLD_MAX_MS) : 5e3;
       moodTimer = setTimeout(() => {
         moodTimer = null;
         try {
@@ -6013,7 +6017,11 @@
           refreshMood();
         } catch (e) {
         }
-      }, holdMs);
+      }, ms2);
+    }
+    function dispose() {
+      clearT(moodTimer);
+      moodTimer = null;
     }
     activeState = state;
     activeMoodSource = () => refreshMood();
@@ -6084,6 +6092,7 @@
       state,
       refreshMood,
       setMood,
+      dispose,
       line,
       greeting,
       feed,

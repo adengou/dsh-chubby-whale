@@ -99,7 +99,8 @@ function loadState(): PersonaState {
     const s = JSON.parse(raw)
     return {
       ...base,
-      bowls: Number(s.bowls) || 0,
+      // 负数/NaN/小数一律归成非负整数：原来负数会原样保留，成长档位会按负经验算
+      bowls: Math.max(0, Math.floor(Number(s.bowls) || 0)),
       stageIndex: Number(s.stageIndex) || 0,
       lastFeedAt: Number(s.lastFeedAt) || 0,
       lastInteractAt: Number(s.lastInteractAt) || 0,
@@ -175,14 +176,26 @@ export function createPersona(opts?: PersonaOptions) {
   // 临时情绪只有一个回落定时器：连续两次 setMood 时旧定时器必须取消，
   // 否则旧定时器先到点会把后一次设置的（更长的）情绪提前清成 idle。
   let moodTimer: any = null
-  /** 临时情绪（默认 5 秒后自动回落到 refreshMood 的结果） */
+  /** 情绪回落时长的上限：再长也不该把一个临时表情挂一整天 */
+  const MOOD_HOLD_MAX_MS = 60 * 1000
+  /**
+   * 临时情绪（默认 5 秒后自动回落到 refreshMood 的结果）。
+   * holdMs 做夹紧：NaN/负数会被 setTimeout 当成 0（立刻回落），过大的值则长期挂着旧表情。
+   */
   function setMood(m: Mood, holdMs = 5000): void {
     state.mood = m
     clearT(moodTimer)
+    const n = Number(holdMs)
+    const ms = Number.isFinite(n) && n > 0 ? Math.min(n, MOOD_HOLD_MAX_MS) : 5000
     moodTimer = setTimeout(() => {
       moodTimer = null
       try { state.mood = 'idle'; refreshMood() } catch (e) { }
-    }, holdMs)
+    }, ms)
+  }
+  /** 卸载时清掉回落定时器（否则组件销毁后还会改一次模块级 state） */
+  function dispose(): void {
+    clearT(moodTimer)
+    moodTimer = null
   }
 
   // 登记给气泡模块：显示前刷新一次情绪（幂等；临时情绪不会被刷新覆盖）
@@ -251,6 +264,7 @@ export function createPersona(opts?: PersonaOptions) {
     state,
     refreshMood,
     setMood,
+    dispose,
     line,
     greeting,
     feed,
