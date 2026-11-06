@@ -10,9 +10,14 @@ import { getJson, postJson, delJson } from '../http.js'
 import { VISION_PROMPT } from '../dropzone.js'
 import { imageToB64 } from '../image.js'
 import { parseDue, cleanReminderText } from '../../shared/time.js'
+import { clearT } from '../util.js'
 import { exportBackup, importBackup } from './data.js'
 
 export function registerSystemActions(table: ActionTable<ActionHost>): void {
+  // 聊天缓存开关的在途状态：注册只发生一次（client.ts 建动作表时），闭包即单例
+  let cacheToggleBusy = false
+  let cacheToggleSeq = 0
+
   /**
    * 投喂上报：宿主记账后刷新成长外观。
    * 投喂已在本地生效，上报失败只静默（不弹错、不回滚碗数）。
@@ -144,23 +149,38 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
       .catch(() => host.bubble('缓存清空失败', 4000))
   })
   table.define('cache-toggle', (host) => {
+    // 乐观翻转：先改勾选，再等宿主回执；失败回滚。
+    // 旧实现没有在途保护，也没有管同步抛错：
+    //   · 连点两下会排两次 POST，回执乱序时后一次的成功会被前一次的回滚盖掉；
+    //   · fetch 同步抛错（不可用时）时异常直接冒到分发层，乐观翻转永久留在错值上。
+    if (cacheToggleBusy) { host.bubble('正在切换聊天缓存，稍等～', 2500); return }
     const nowOn = !host.chatCacheOn()
     host.setChatCacheOn(nowOn)
-    postJson('/cache-toggle', { enabled: nowOn }).then((d: any) => {
-      if (!d || !d.ok) {
-        // 宿主没切成功就回滚勾选：否则菜单显示与后端实际状态相反，下次点按还会切错方向
-        host.setChatCacheOn(!nowOn)
-        host.bubble('切换失败', 4000)
-        return
-      }
-      // 以宿主回报的实际值为准（策略可能强制某一侧）
-      const real = typeof d.enabled === 'boolean' ? d.enabled : nowOn
+    cacheToggleBusy = true
+    const my = ++cacheToggleSeq
+    let guard: any = null
+    let settled = false
+    const finish = (real: boolean, text: string): void => {
+      // 兜底超时先释放、之后又点了新的切换：旧回执一律作废，不能改界面
+      if (settled || my !== cacheToggleSeq) return
+      settled = true
+      if (guard) { clearT(guard); guard = null }
+      cacheToggleBusy = false
       host.setChatCacheOn(real)
-      host.bubble('聊天缓存：' + (real ? '开（省 token）' : '关（每次重新回答）'), 5000)
-    }).catch(() => {
-      host.setChatCacheOn(!nowOn)
-      host.bubble('切换失败', 4000)
-    })
+      host.bubble(text, 5000)
+    }
+    try {
+      // 8 秒无回执按失败回滚并放锁：锁不释放会让开关永远停在「稍等～」（占线）
+      guard = setTimeout(() => finish(!nowOn, '切换失败'), 8000)
+      Promise.resolve(postJson('/cache-toggle', { enabled: nowOn })).then((d: any) => {
+        if (!d || !d.ok) { finish(!nowOn, '切换失败'); return }
+        // 以宿主回报的实际值为准（策略可能强制某一侧）
+        const real = typeof d.enabled === 'boolean' ? d.enabled : nowOn
+        finish(real, '聊天缓存：' + (real ? '开（省 token）' : '关（每次重新回答）'))
+      }).catch(() => finish(!nowOn, '切换失败'))
+    } catch (e) {
+      finish(!nowOn, '切换失败')
+    }
   })
   table.define('clear-memory', (host) => {
     // 确认框本身可能被浏览器禁用/抛错：那种情况当作「没确认」，不执行
