@@ -42,6 +42,7 @@ import { createAsrHandler } from './host/routes/asr.js';
 import { createDailyHandler } from './host/routes/daily.js';
 import { createBackupHandlers } from './host/routes/backup.js';
 import { createStatsHandler } from './host/routes/stats.js';
+import { createConfigViewHandler } from './host/routes/config.js';
 import { createRouteTable } from './host/routes.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = join(__dirname, '..');
@@ -322,6 +323,32 @@ export function apply(ctx, rawConfig) {
             catch { } });
     }
     catch { }
+    // 只读配置视图：主人能在菜单里看到当前生效的设置（绝不回 Key 内容，也不写盘）
+    const configView = createConfigViewHandler({
+        enabled: () => config.enabled !== false,
+        dataSource: () => dataSource,
+        model: () => chatModel,
+        personalityLearning: () => personalityLearningEnabled,
+        personalityWriting: () => personalityWritingEnabled,
+        cacheEnabled: () => { try {
+            return prefs.chatCacheEnabled();
+        }
+        catch {
+            return true;
+        } },
+        hasDeepseekKey: () => { try {
+            return Boolean(readApiKey(PLUGIN_DIR));
+        }
+        catch {
+            return false;
+        } },
+        hasSiliconflowKey: () => { try {
+            return Boolean(readSiliconFlowKey(PLUGIN_DIR));
+        }
+        catch {
+            return false;
+        } },
+    });
     const stats = createStatsHandler({
         cacheStats,
         loadState: store.loadState,
@@ -333,7 +360,7 @@ export function apply(ctx, rawConfig) {
     // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
     const routeTable = createRouteTable({
         misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles, briefing, tts, asr, personality: personalityRoutes,
-        daily, backup, stats,
+        daily, backup, stats, configView,
     });
     // 所有路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，
     // 第二次 apply 才不会撞 dsh-host-webserver 的 duplicate 检查，旧 store/cache 闭包也不会留在路由表里。

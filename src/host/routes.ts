@@ -34,6 +34,8 @@ export interface HandlerSet {
   backup: any
   /** 可视化汇总：{ handleStats } */
   stats: any
+  /** 只读配置视图：{ handleConfig }（不含 Key 内容） */
+  configView: any
 }
 
 export function createRouteTable(h: HandlerSet): HttpRoute[] {
@@ -74,5 +76,6 @@ export function createRouteTable(h: HandlerSet): HttpRoute[] {
     { path: '/api/chubby-whale/data/import', handler: h.backup.handleImport },
     // 可视化汇总（只读现有 store/cache）
     { path: '/api/chubby-whale/stats', handler: h.stats.handleStats },
+    { path: '/api/chubby-whale/config', handler: h.configView.handleConfig },
   ]
 }

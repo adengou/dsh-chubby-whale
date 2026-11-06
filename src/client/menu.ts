@@ -54,6 +54,8 @@ export const EN_MAP: Record<string, string> = {
   '数据导出…': 'Export data…',
   '数据导入…': 'Import data…',
   '使用统计': 'Usage stats',
+  '设置 ▸': 'Settings ▸',
+  '查看当前配置': 'View current config',
   '提醒管理…': 'Manage reminders…',
   '唤醒恢复': 'Wake recovery',
   '唤醒词 ▸': 'Wake word ▸',
@@ -346,6 +348,9 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     item('数据导出…', 'data-export'),
     item('数据导入…', 'data-import'),
     item('使用统计', 'stats'),
+    sub('设置 ▸', [
+      item('查看当前配置', 'config-view'),
+    ]),
     item('提醒管理…', 'remind-manage'),
     item('唤醒恢复', 'wake-recover'),
     sep(),

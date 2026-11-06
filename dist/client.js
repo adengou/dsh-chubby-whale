@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.17";
+  var VERSION = "1.1.18";
 
   // src/client/styles.ts
   var W = 240;
@@ -197,6 +197,8 @@
     "数据导出…": "Export data…",
     "数据导入…": "Import data…",
     "使用统计": "Usage stats",
+    "设置 ▸": "Settings ▸",
+    "查看当前配置": "View current config",
     "提醒管理…": "Manage reminders…",
     "唤醒恢复": "Wake recovery",
     "唤醒词 ▸": "Wake word ▸",
@@ -440,6 +442,9 @@
       item("数据导出…", "data-export"),
       item("数据导入…", "data-import"),
       item("使用统计", "stats"),
+      sub("设置 ▸", [
+        item("查看当前配置", "config-view")
+      ]),
       item("提醒管理…", "remind-manage"),
       item("唤醒恢复", "wake-recover"),
       sep(),
@@ -4912,6 +4917,22 @@
     });
     table.define("data-import", (host) => {
       importBackup({ bubble: (text, ms2) => host.bubble(text, ms2) });
+    });
+    table.define("config-view", (host) => {
+      getJson("/config", { cache: "no-store" }).then((d) => {
+        if (!(d && d.ok)) {
+          host.bubble("配置读不到", 4e3);
+          return;
+        }
+        const yn = (v) => v ? "开" : "关";
+        const lines = [
+          "数据源：" + (d.dataSource || "local") + " · 模型：" + (d.model || "--"),
+          "人格学习：" + yn(d.personalityLearning) + " · 近期心境自写：" + yn(d.personalityWriting),
+          "聊天缓存：" + yn(d.cacheEnabled),
+          "DeepSeek Key：" + (d.hasDeepseekKey ? "已配置" : "未配置") + " · 硅基流动 Key：" + (d.hasSiliconflowKey ? "已配置" : "未配置")
+        ];
+        host.bubble(lines.join("\n"), 12e3);
+      }).catch(() => host.bubble("配置读不到", 4e3));
     });
     table.define("stats", (host) => {
       getJson("/stats", { cache: "no-store" }).then((d) => {

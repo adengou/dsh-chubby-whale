@@ -469,6 +469,7 @@ try {
     daily: { handleDaily: fn },
     backup: { handleExport: fn, handleImport: fn },
     stats: { handleStats: fn },
+    configView: { handleConfig: fn },
   }
   const table = createRouteTable(stub)
   const paths = table.map((r) => r.path)

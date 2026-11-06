@@ -272,6 +272,21 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
   })
 
   // —— 统计卡：/stats 一次拿齐，失败只说「还没准备好」——
+  // —— 设置：只读查看当前生效的配置（不写盘、不含 Key 内容）——
+  table.define('config-view', (host) => {
+    getJson('/config', { cache: 'no-store' }).then((d: any) => {
+      if (!(d && d.ok)) { host.bubble('配置读不到', 4000); return }
+      const yn = (v: any) => (v ? '开' : '关')
+      const lines = [
+        '数据源：' + (d.dataSource || 'local') + ' · 模型：' + (d.model || '--'),
+        '人格学习：' + yn(d.personalityLearning) + ' · 近期心境自写：' + yn(d.personalityWriting),
+        '聊天缓存：' + yn(d.cacheEnabled),
+        'DeepSeek Key：' + (d.hasDeepseekKey ? '已配置' : '未配置') + ' · 硅基流动 Key：' + (d.hasSiliconflowKey ? '已配置' : '未配置'),
+      ]
+      host.bubble(lines.join('\n'), 12000)
+    }).catch(() => host.bubble('配置读不到', 4000))
+  })
+
   table.define('stats', (host) => {
     getJson('/stats', { cache: 'no-store' }).then((d: any) => {
       if (!(d && d.ok)) { host.bubble('统计还没准备好', 4000); return }
