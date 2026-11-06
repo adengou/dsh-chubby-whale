@@ -6963,15 +6963,16 @@
       registerVoiceActions(actions);
       const CLIENT_ID = (() => {
         try {
-          let v = localStorage.getItem("chubby-client-id");
-          if (!v) {
-            v = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-            localStorage.setItem("chubby-client-id", v);
-          }
-          return v;
+          const v2 = sessionStorage.getItem("chubby-client-id");
+          if (v2) return v2;
         } catch (e) {
-          return "";
         }
+        const v = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        try {
+          sessionStorage.setItem("chubby-client-id", v);
+        } catch (e) {
+        }
+        return v;
       })();
       let ttsPlaying = false;
       const channels = { mic: { stats: {} }, asr: { stats: {} }, speak: { stats: {} } };
@@ -7766,10 +7767,10 @@
         });
         function sendText(rawText, opts) {
           try {
-            if (reminderManager.intercept(String(rawText == null ? "" : rawText))) return Promise.resolve();
+            if (reminderManager.intercept(String(rawText == null ? "" : rawText))) return Promise.resolve(true);
           } catch (e) {
           }
-          return chat.send(rawText, opts);
+          return chat.send(rawText, opts).then((ok) => ok !== false);
         }
         R.useEffect(() => {
           try {
@@ -7953,13 +7954,18 @@
             onKeyDown: (e) => {
               if (e.nativeEvent && e.nativeEvent.isComposing) return;
               if (e.key === "Enter" && input.trim()) {
-                sendText(input);
-                setInput("");
+                const v = input;
+                void sendText(v).then((ok) => {
+                  if (ok) setInput("");
+                });
               }
             },
             onSend: () => {
-              if (input.trim()) sendText(input);
-              setInput("");
+              const v = input;
+              if (!v.trim()) return;
+              void sendText(v).then((ok) => {
+                if (ok) setInput("");
+              });
             }
           })
         );

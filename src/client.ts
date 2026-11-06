@@ -79,12 +79,13 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
 
     // 客户端标识：多标签页说书队列互不抢段（取不到就退化成单队列）
     const CLIENT_ID = (() => {
-      try {
-        let v = localStorage.getItem('chubby-client-id')
-        if (!v) { v = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('chubby-client-id', v) }
-        return v
-      } catch (e) { return '' }
-    })()
+  // 会话级 id：同一标签页刷新后保持稳定（进度对得上），不同标签页各自独立——
+  // 服务端按 clientId 分连播队列，用 localStorage 会让两个标签页共用一条队列互相踢掉。
+  try { const v = sessionStorage.getItem('chubby-client-id'); if (v) return v } catch (e) { }
+  const v = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  try { sessionStorage.setItem('chubby-client-id', v) } catch (e) { }
+  return v
+})()
 
     let ttsPlaying = false   // UI 用：是否正在说（由新语音模块状态回调更新）
     const channels: any = { mic: { stats: {} }, asr: { stats: {} }, speak: { stats: {} } }
@@ -732,13 +733,14 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
         recordChatLatency: (ms) => { try { latDiag.chatMs = ms; latDiag.updates++ } catch (e) { } },
       })
       // 旧调用点名称保留（拖放 / 语音 / 调试口都调 sendText）
-      function sendText(rawText: string, opts?: { voice?: boolean }): Promise<void> {
+      function sendText(rawText: string, opts?: { voice?: boolean }): Promise<boolean> {
         // 提醒管理面板最近打开 60 秒内：数字=删、d=顺延先接住；
         // 其余输入（正常对话）原样放行，绝不误吞（判断都在 client/reminder-manage.ts）
         try {
-          if (reminderManager.intercept(String(rawText == null ? '' : rawText))) return Promise.resolve()
+          if (reminderManager.intercept(String(rawText == null ? '' : rawText))) return Promise.resolve(true) // 被提醒面板消费：算已处理
         } catch (e) { }
-        return chat.send(rawText, opts)
+        // chat.send 内部返回 boolean（是否已发出），这里透传出去让调用方决定要不要清空输入
+  return chat.send(rawText, opts).then((ok: any) => ok !== false)
       }
 
       // 调试口：控制台输入 __chubbyWhale.say("你好呀") 可直接测「对话 + 朗读」链路（不经过麦克风）
@@ -873,9 +875,9 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
           onKeyDown: (e: any) => {
             // 中文输入法选词时按回车不算发送（isComposing 期间放行给输入法）
             if (e.nativeEvent && e.nativeEvent.isComposing) return
-            if (e.key === 'Enter' && input.trim()) { sendText(input); setInput('') }
+            if (e.key === 'Enter' && input.trim()) { const v = input; void sendText(v).then((ok) => { if (ok) setInput('') }) }
           },
-          onSend: () => { if (input.trim()) sendText(input); setInput('') },
+          onSend: () => { const v = input; if (!v.trim()) return; void sendText(v).then((ok) => { if (ok) setInput('') }) },
         }),
       )
     }
