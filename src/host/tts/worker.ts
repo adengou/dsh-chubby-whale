@@ -23,7 +23,24 @@
  *     不再干等到 20s 预算耗尽；
  *   · **刻意不杀 worker**：它是跨请求共享的，杀一次会连带失败掉并发的其它段，还要重付启动开销
  *     （取舍详见 host/tts-engine.ts 的文件头）。做法是把本请求从 pending 里摘掉 ——
- *     python 稍后照常回 {"id":…,"ok":…}，因为找不到对应项而被丢弃；产物由引擎侧作废清理。
+ *     python 稍后回包因为找不到对应项而被丢弃；产物由引擎侧作废清理。
+ *
+ * 跨进程取消指令（2026-11-07 B95 —— 替换 B94 那句「协议没有取消指令」的边界）：
+ *   主进程 abort 时，除了摘 pending，还向 worker 的 stdin 写一行 `{"cancel": <id>}`。
+ *   id 是这条请求的编号，一定已经随请求写过，所以不存在「取消一个 worker 没见过的 id」。
+ *   worker 收到后**不等当前合成跑完**就回一条回执（python 侧由独立读线程发出）：
+ *       {"id": <id>, "cancelled": true, "active": <bool>}
+ *     · active=true  —— 取消命中了正在跑的那一段：已置停止标记，合成在**下一个分块边界**
+ *       停写、不再往产物文件写、也不再回 ok/false；
+ *     · active=false —— 该 id 还没轮到（已标记作废，轮到它时直接跳过、不产生产物），
+ *       或者早已结束（没有可取消的东西，只回执）。
+ *   回执在主进程侧是「识别后丢弃」：pending 在 abort 那一刻就摘掉了，收尾不等回执；
+ *   显式认出 {"cancelled":true} 只是不让它走进「合成结果」那条分支，也不把它悬在半空。
+ *
+ *   python 侧的真实能力边界（如实记，别让人以为能掐断网络）：
+ *     edge_tts 的 stream() 是同步等 websocket 收包的，取消标记只能在**收到下一块之后**
+ *     被看到。所以「回执立即」成立（读线程发）≠「合成立即停」：真正停写最坏要等下一块
+ *     数据到达、或底层连接超时。取消不是 SIGKILL —— 我们仍然不杀共享 worker。
  */
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -46,9 +63,21 @@ import {
 } from './common.js'
 import type { Pending, PythonInterp } from './common.js'
 
-/** 常驻 worker 的 python 源码：导入一次 edge_tts，之后逐行收 JSON、合成、回写文件 */
+/**
+ * 常驻 worker 的 python 源码：导入一次 edge_tts，之后逐行收 JSON、合成、回写文件。
+ *
+ * 为什么不是「主线程边读 stdin 边合成」（B94 及以前）：那种写法在合成期间根本不读 stdin，
+ * 取消指令要等这一段跑完才被看见，回执就永远不是「立刻」。B95 改成：
+ *   · 一个 daemon 读线程专门读 stdin：取消行进 take_cancel 立刻回执并置停止标记，
+ *     合成请求进队列，由主线程串行执行（保序、与旧实现一样的串行语义）；
+ *   · 合成用 edge_tts 的 stream() 分块写盘（本地 7.3.1 实测 save() 就是 stream() 的薄包装），
+ *     每块之前看一眼停止标记 —— 命中就不再写产物。
+ * 边界：stream() 等 websocket 收包是阻塞在 await 上的，停止标记最坏要等下一块到达才被看到；
+ * 回执即时、停写不是瞬时。回执/结果都整行写出（out_lock），不会交错。
+ */
 const WORKER_SOURCE = `
-import sys, json, asyncio
+import sys, json, asyncio, threading, queue
+
 
 def main():
     try:
@@ -57,29 +86,111 @@ def main():
         print(json.dumps({"ready": False, "error": repr(e)}), flush=True)
         return
     print(json.dumps({"ready": True}), flush=True)
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
+
+    # Protocol (B95):
+    #   request  {"id": N, "text": .., "voice": .., "rate": .., "pitch": .., "out": ..}
+    #   cancel   {"cancel": N}                      written by the host on abort
+    #   ack      {"id": N, "cancelled": true, "active": bool}
+    #   result   {"id": N, "ok": true|false, "error": ..}
+    # Boundary: edge_tts stream() blocks while awaiting the next websocket chunk, so the
+    # stop flag is only observed *after* that chunk arrives. The ack is immediate (sent by
+    # the reader thread) but the actual stop may lag by one chunk / the connection timeout.
+    lock = threading.Lock()       # guards cancelled + state
+    out_lock = threading.Lock()   # two threads write stdout; keep each line whole
+    reqs = queue.Queue()
+    cancelled = {}
+    state = {"id": None, "ev": None}
+
+    def emit(obj):
+        with out_lock:
+            print(json.dumps(obj), flush=True)
+
+    def take_cancel(cid):
+        with lock:
+            cancelled[cid] = True
+            while len(cancelled) > 512:
+                cancelled.pop(next(iter(cancelled)))
+            ev = state["ev"] if state["id"] == cid else None
+        if ev is not None:
+            ev.set()
+        emit({"id": cid, "cancelled": True, "active": ev is not None})
+
+    def reader():
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(msg, dict):
+                continue
+            if "cancel" in msg:
+                cid = msg.get("cancel")
+                if isinstance(cid, int) and not isinstance(cid, bool):
+                    take_cancel(cid)
+                continue
+            reqs.put(msg)
+        reqs.put(None)
+
+    threading.Thread(target=reader, daemon=True).start()
+
+    async def synth(req, out, ev):
+        c = edge_tts.Communicate(
+            req.get("text") or "",
+            req.get("voice") or "zh-CN-XiaoyiNeural",
+            rate=req.get("rate") or "+0%",
+            pitch=req.get("pitch") or "+0Hz",
+        )
+        stream = c.stream()
         try:
-            req = json.loads(line)
-        except Exception:
-            continue
+            with open(out, "wb") as f:
+                async for chunk in stream:
+                    if ev.is_set():
+                        break
+                    if chunk.get("type") == "audio":
+                        f.write(chunk.get("data") or b"")
+        finally:
+            # close the websocket now instead of waiting for GC
+            try:
+                await stream.aclose()
+            except Exception:
+                pass
+
+    while True:
+        req = reqs.get()
+        if req is None:
+            return
         rid = req.get("id")
-        out = req.get("out") or ""
+        if not isinstance(rid, int) or isinstance(rid, bool):
+            continue
+        ev = threading.Event()
+        with lock:
+            state["id"] = rid
+            state["ev"] = ev
+            stale = cancelled.pop(rid, False)
+        if stale:
+            # cancelled before it started: write nothing, answer nothing (ack already sent)
+            with lock:
+                if state["id"] == rid:
+                    state["id"] = None
+                    state["ev"] = None
+            continue
         try:
-            async def run():
-                c = edge_tts.Communicate(
-                    req.get("text") or "",
-                    req.get("voice") or "zh-CN-XiaoyiNeural",
-                    rate=req.get("rate") or "+0%",
-                    pitch=req.get("pitch") or "+0Hz",
-                )
-                await c.save(out)
-            asyncio.run(run())
-            print(json.dumps({"id": rid, "ok": True}), flush=True)
+            asyncio.run(synth(req, str(req.get("out") or ""), ev))
         except Exception as e:
-            print(json.dumps({"id": rid, "ok": False, "error": repr(e)}), flush=True)
+            if not ev.is_set():
+                emit({"id": rid, "ok": False, "error": repr(e)})
+        else:
+            if not ev.is_set():
+                emit({"id": rid, "ok": True})
+        finally:
+            with lock:
+                if state["id"] == rid:
+                    state["id"] = None
+                    state["ev"] = None
+
 
 main()
 `
@@ -118,7 +229,8 @@ export interface WorkerRunner {
   /**
    * 让 worker 合成到 outFile。**永不抛异常**：失败返回 false，由上层回退单次 spawn。
    * budgetMs 是这次调用的总预算（含等待 ready / 等待别的请求启动的 worker），不是"每阶段各一份"。
-   * req.signal 存在时：abort 立刻返回 false（上层看到 signal.aborted 就知道是中止、不回退重跑）。
+   * req.signal 存在时：abort 立刻返回 false（上层看到 signal.aborted 就知道是中止、不回退重跑），
+   * 并在收尾之前向 worker 写一行 {"cancel": id}（B95，见文件头）。
    */
   synth(interp: PythonInterp, req: TtsSynthRequest, outFile: string, budgetMs: number): Promise<boolean>
   /** 停掉当前 worker（冷却逻辑仍在 runner 内） */
@@ -147,13 +259,38 @@ async function ensureWorkerFile(): Promise<string> {
   throw lastError || new Error('tts worker script not writable')
 }
 
-/** 每个 engine 实例一个 runner：worker / starting / 冷却 / seq 都是实例内状态（与拆分前一致） */
-export function createWorkerRunner(): WorkerRunner {
+/**
+ * 每个 engine 实例一个 runner：worker / starting / 冷却 / seq 都是实例内状态（与拆分前一致）。
+ *
+ * opts.onCancelSent：一行 {"cancel": id} **真的写进** worker stdin 时回调一次（B95）。
+ * 只在这里回传「成功发出取消指令」这一件事——写不进去（管道已坏 / 流已销毁）就不回调，
+ * 统计口径因此不会把「想取消但没发出去」算成取消。回调本身不抛异常（调用方只是自增计数）。
+ */
+export function createWorkerRunner(opts: { onCancelSent?: () => void } = {}): WorkerRunner {
+  const { onCancelSent } = opts
   let seq = 0
   let worker: WorkerState | null = null
   let starting: Promise<WorkerState | null> | null = null
   /** worker 启动失败后的冷却截止时间（0 = 不冷却） */
   let workerRetryAt = 0
+
+  /**
+   * 向 worker 写一行取消指令 `{"cancel": <id>}`。**不等回执**：回执到达时这条请求的
+   * pending 早已摘除（onAbort 里先发指令、再收尾），收尾不依赖 worker 的响应速度。
+   * 返回是否真的写进去了 —— false 的两种情况（stdin 已销毁 / write 抛错）都不计数。
+   */
+  function sendCancel(w: WorkerState, id: number): boolean {
+    const stdin = w.child.stdin
+    if (!stdin || (stdin as any).destroyed) return false
+    try {
+      stdin.write(JSON.stringify({ cancel: id }) + '\n')
+      return true
+    } catch (e) {
+      // 管道已坏：worker 多半也要死了，这里只记一笔，不改变「本次按中止收尾」的结论
+      logWarn('取消指令写入失败（忽略）', e)
+      return false
+    }
+  }
 
   function killWorker(): void {
     const w = worker
@@ -242,6 +379,12 @@ export function createWorkerRunner(): WorkerRunner {
               finish(false)
               continue
             }
+            // 取消回执（B95）：{"id":N,"cancelled":true,"active":bool}。
+            // pending 在 abort 那一刻就摘掉了（见 synth 的 onAbort），所以这里通常找不到对应项；
+            // 收尾**不等**这条回执。显式认出它的目的有两个：① 不让它走进下面「合成结果」的
+            // 分支（cancelled 不是 ok/false）；② 证明回执没有被静默丢弃——它是被理解后忽略的。
+            // 不在这里打日志：断连是常态，每条刷一行只会淹没真正的失败。
+            if (msg.cancelled === true) continue
             if (typeof msg.id === 'number') {
               const p = w.pending.get(msg.id)
               if (p) {
@@ -342,15 +485,21 @@ export function createWorkerRunner(): WorkerRunner {
         if (settled) return
         settled = true
         if (timer) clearTimeout(timer)
-        // pending 在这里统一摘除：中止后 python 迟到的回包找不到对应项，自然被丢弃
+        // pending 在这里统一摘除：中止后 python 迟到的 ok/false 与取消回执都找不到对应项，
+        // 自然被丢弃（回执另有显式分支，见上面的 stdout 解析）
         w.pending.delete(id)
         if (sig) { try { sig.removeEventListener('abort', onAbort) } catch { } }
         resolve(v)
       }
       function onAbort(): void {
+        if (settled) return
         // 客户端走了：立刻放弃等待这一段，但**不杀 worker**（它是跨请求共享的，取舍见文件头）。
-        // 代价是这一段的 python 仍会把 mp3 写完、再回一行 JSON（被丢弃）——引擎侧随后删临时文件，
-        // 删不掉（Windows 句柄未放开）时再排一次延迟清理。
+        // 先发取消指令（B95）再收尾：python 侧据此标记作废 / 在下一个分块边界停写，并回一条
+        // 回执（回执到达时 pending 已摘，被识别后丢弃）。写不进去就不计数 —— 统计口径是
+        // 「成功发出取消指令」，不是「想取消」。
+        if (sendCancel(w, id)) {
+          try { if (onCancelSent) onCancelSent() } catch { }
+        }
         finish(false)
       }
       timer = setTimeout(() => {
@@ -358,11 +507,19 @@ export function createWorkerRunner(): WorkerRunner {
         w.pending.delete(id)
         w.dead = true
         bumpStat('timeouts')
-        // 超时：整个 worker 已经不可信（可能卡在网络/ffmpeg 上），杀掉由上层回退单次 spawn
+        // 超时：整个 worker 已经不可信（可能卡在网络/ffmpeg 上），杀掉由上层回退单次 spawn。
+        // 这里**不发**取消指令：进程马上就没，发出去也没人读。
         killWorker()
         // 走统一的收尾（清定时器 / 摘 abort 监听），避免这次请求的 signal 上留一个死监听
         finish(false)
       }, Math.max(1, deadline - Date.now()))
+      // 从 await settleWithin 回到这里之间 signal 仍可能被中止：已中止的 signal 不会再触发
+      // abort 事件，不在这兜住就会一路挂到 20s 预算（B95 顺手补上的边界）。
+      // 请求还没写出去，所以不需要（也不该）发取消指令。
+      if (sig && sig.aborted) {
+        finish(false)
+        return
+      }
       w.pending.set(id, { resolve: finish, timer })
       if (sig) { try { sig.addEventListener('abort', onAbort, { once: true }) } catch { } }
       try {
@@ -380,7 +537,8 @@ export function createWorkerRunner(): WorkerRunner {
       //   ① 上面已经杀掉了（超时 / 写失败）——再杀是空操作；
       //   ② worker 回了 {"ok":false}（例如某段文本 NoAudioReceived）——进程本身健康，
       //      杀掉会连带失败掉其它并发请求，还要重新付出 worker 启动开销。
-      // （中止也走这里：同上，进程健康，不能为一次断连连累并发请求。）
+      // （中止也走这里：同上，进程健康，不能为一次断连连累并发请求。取消指令已经发出去了，
+      //  python 会在下一个分块边界停写并回执；这里只是不再等它。）
       // 中止不是合成失败：别把这段的 stderr 当成"回退单次 spawn"的告警打出去（上层会记
       // TTS-CLIENT-ABORT，两种口径混在一起排障时看花眼）。
       if (w.err && !(sig && sig.aborted)) {
