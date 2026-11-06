@@ -6,36 +6,74 @@
  *   ① 新建 host/routes/xxx.ts（导出 createXxxHandler）
  *   ② 本表加一行 { path, handler }
  *   ③ index.ts 里构造 handler 并放进 routes 对象（一行接线）
+ *
+ * 两条只有这张表才知道的约束：
+ *   · **全部是 exact 路径**（index.ts 注册时 kind: 'exact'）。dsh-host-webserver 只按
+ *     (kind, path) 精确查表，不做前缀/正则匹配，所以表内顺序不参与匹配，也不存在
+ *     `/story` 遮蔽 `/story/books` 这类问题；代价是每条路径必须一字不差地写对。
+ *   · **路径必须唯一**：重复注册会被 webserver 的 duplicate 检查直接抛错，
+ *     入口会把已注册的摘掉再抛出（不留半套路由）。唯一性由 scripts/test-assembly.mjs 兜。
+ *
+ * 类型：HandlerSet 的字段一律用工厂函数的 ReturnType，而不是 any —— 表和实现之间因此有
+ * **编译期**契约，表里把 handleState 写成 handleStats 会直接 tsc 报错；此前全是 any，
+ * 只有真点到那条路由、拿到 404 才会发现。
+ *
+ * 这里只 import type（编译后整段消失）：既不让路由表在运行期把全部能力模块拽进来，
+ * 也不改变「谁调用谁」的装配方向。
  */
+import type { createMiscHandlers } from './routes/misc.js'
+import type { createChatHandler } from './routes/chat.js'
+import type { createChatStreamHandler } from './routes/chat-stream.js'
+import type { createStoryHandlers } from './routes/story.js'
+import type { createReminderHandlers } from './routes/reminders.js'
+import type { createCultureHandlers } from './routes/culture.js'
+import type { createPoemHandler } from './routes/poem.js'
+import type { createPoemTitlesHandler } from './routes/poem-titles.js'
+import type { createBriefingHandlers } from './routes/briefing.js'
+import type { createTtsHandler } from './routes/tts.js'
+import type { createAsrHandler } from './routes/asr.js'
+import type { createPersonalityHandlers } from './routes/personality.js'
+import type { createDailyHandler } from './routes/daily.js'
+import type { createBackupHandlers } from './routes/backup.js'
+import type { createStatsHandler } from './routes/stats.js'
+import type { createConfigViewHandler } from './routes/config.js'
+
+/**
+ * HTTP handler 的统一形状（req/res 由 dsh webserver 传入，与各路由工厂的产出兼容）。
+ * 故意**不 export**：它不是新接口，只是本表内部用的形状标注（模块接口清单不该为它多一行）。
+ */
+type RouteHandler = (req: any, res: any) => any
+
 export interface HttpRoute {
   path: string
-  handler: any
+  handler: RouteHandler
 }
 
 export interface HandlerSet {
-  misc: any
-  chat: any
-  chatStream: any
-  cacheToggle: any
-  story: any
-  reminders: any
-  culture: any
-  poem: any
+  misc: ReturnType<typeof createMiscHandlers>
+  chat: ReturnType<typeof createChatHandler>
+  chatStream: ReturnType<typeof createChatStreamHandler>
+  /** /cache-toggle：host/prefs.ts 直接产出的处理函数（没有 handler 对象，故用统一形状） */
+  cacheToggle: RouteHandler
+  story: ReturnType<typeof createStoryHandlers>
+  reminders: ReturnType<typeof createReminderHandlers>
+  culture: ReturnType<typeof createCultureHandlers>
+  poem: ReturnType<typeof createPoemHandler>
   /** 诗名索引：{ handlePoemTitles }（客户端点诗识别按需拉取） */
-  poemTitles: any
-  briefing: any
-  tts: any
-  asr: any
+  poemTitles: ReturnType<typeof createPoemTitlesHandler>
+  briefing: ReturnType<typeof createBriefingHandlers>
+  tts: ReturnType<typeof createTtsHandler>
+  asr: ReturnType<typeof createAsrHandler>
   /** L2 可变人格：{ handlePersonality, handleRevert } */
-  personality: any
+  personality: ReturnType<typeof createPersonalityHandlers>
   /** 每日一句：{ handleDaily } */
-  daily: any
+  daily: ReturnType<typeof createDailyHandler>
   /** 一键备份 / 导入：{ handleExport, handleImport } */
-  backup: any
+  backup: ReturnType<typeof createBackupHandlers>
   /** 可视化汇总：{ handleStats } */
-  stats: any
+  stats: ReturnType<typeof createStatsHandler>
   /** 只读配置视图：{ handleConfig }（不含 Key 内容） */
-  configView: any
+  configView: ReturnType<typeof createConfigViewHandler>
 }
 
 export function createRouteTable(h: HandlerSet): HttpRoute[] {
