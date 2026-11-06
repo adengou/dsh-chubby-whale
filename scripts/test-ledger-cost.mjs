@@ -413,6 +413,40 @@ function mkRes() {
   return res
 }
 
+console.log('\n[8] 备份 round-trip：账本明细/金额/分桶不能在导入时丢')
+{
+  const fields = await import(pathToFileURL(join(ROOT, 'src/host/backup/fields.ts')).href)
+  const src = {
+    chatTokens: 100, storyTokens: 20, totalTokens: 120, dayTokens: 30, monthTokens: 120,
+    promptTokens: 80, completionTokens: 20, cacheHitTokens: 5,
+    costCny: 0.0123, dayCostCny: 0.0045, monthCostCny: 0.0123,
+    byKind: {
+      chat: { tokens: 90, costCny: 0.01, dayTokens: 20, dayCostCny: 0.003, monthTokens: 90, monthCostCny: 0.01 },
+      story: { tokens: 20, costCny: 0.0023 },
+      summary: { tokens: 10, costCny: 0.0001 },
+      personality: { tokens: 0, costCny: 0 },
+      evil: { tokens: 999 },
+    },
+    day: '2026-11-07', month: '2026-11',
+  }
+  const out = fields.cleanFishfood(src)
+  ok('导入清洗后 token 总量照旧', out && out.chatTokens === 100 && out.storyTokens === 20 && out.totalTokens === 120, JSON.stringify(out && { c: out.chatTokens, s: out.storyTokens, t: out.totalTokens }))
+  ok('导入清洗保留输入/输出/缓存命中拆分', out && out.promptTokens === 80 && out.completionTokens === 20 && out.cacheHitTokens === 5, JSON.stringify(out && [out.promptTokens, out.completionTokens, out.cacheHitTokens]))
+  ok('导入清洗保留人民币（总额/当日/当月，6 位精度）', out && out.costCny === 0.0123 && out.dayCostCny === 0.0045 && out.monthCostCny === 0.0123, JSON.stringify(out && [out.costCny, out.dayCostCny, out.monthCostCny]))
+  ok('导入清洗保留四个分桶', out && out.byKind && ['chat', 'story', 'summary', 'personality'].every((k) => out.byKind[k] && typeof out.byKind[k].tokens === 'number'), JSON.stringify(out && out.byKind && Object.keys(out.byKind)))
+  ok('分桶明细字段完整（tokens 与金额）', out && out.byKind.chat.tokens === 90 && out.byKind.chat.costCny === 0.01 && out.byKind.chat.dayCostCny === 0.003, JSON.stringify(out && out.byKind && out.byKind.chat))
+  ok('未知桶被丢弃（备份包不能夹带任意键）', out && !out.byKind.evil, JSON.stringify(out && out.byKind && Object.keys(out.byKind)))
+  ok('day/month 保留', out && out.day === '2026-11-07' && out.month === '2026-11', JSON.stringify(out && [out.day, out.month]))
+  // 脏值：负金额/非数字不写进备份（也不把 NaN 带进 JSON）
+  const dirty = fields.cleanFishfood({
+    chatTokens: 10, costCny: -5, dayCostCny: Number.NaN, promptTokens: '80',
+    byKind: { chat: { tokens: -3, costCny: 'x' } },
+  })
+  ok('脏金额被清洗（负数/NaN/字符串不当数字）', dirty && dirty.costCny === undefined && dirty.dayCostCny === undefined && dirty.promptTokens === undefined, JSON.stringify(dirty))
+  ok('脏分桶被清洗（负数/非数字丢弃）', dirty && (!dirty.byKind || !dirty.byKind.chat || dirty.byKind.chat.tokens === undefined), JSON.stringify(dirty && dirty.byKind))
+  eq('非对象输入 → null', fields.cleanFishfood('x'), null)
+}
+
 console.log('\n' + '='.repeat(48))
 console.log(`通过 ${pass} 项 / 失败 ${fail} 项`)
 if (fail > 0) process.exit(1)
