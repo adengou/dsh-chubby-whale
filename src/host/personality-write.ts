@@ -163,6 +163,33 @@ export interface WriterDeps {
   /** 便于离线测试注入假 fetch；默认走 host/http.ts 的 fetchJson */
   fetchJson?: typeof fetchJson
   model?: string
+  /**
+   * 可选：鱼账本端口（B97）。装配层注入三样东西——
+   *   · addTokens       —— store.addTokens（记一笔；第 3 参可带输入/输出拆分与人民币估算）；
+   *   · readUsageSplit  —— shared/pricing.ts 的同名纯函数（把上游 usage 归一成拆分）；
+   *   · estimateCostCny —— shared/pricing.ts 的同名纯函数（拆分 × 模型 × 峰谷 → 元）。
+   *
+   * 为什么计价函数也走注入，而不是本文件直接 `import '../shared/pricing.js'`：
+   * scripts/test-persona-cloud.mjs 第 [7] 节用**封闭白名单**钉死了本文件的静态依赖面
+   * （只许 ./http.js、../shared/immutable.js、./chat-core.js、./config.js、./personality.js），
+   * 直接 import 会让那条断言失败；而本批次（B97）的改动范围不含那个测试文件。
+   * 口径本身仍是唯一真源 shared/pricing.ts，这里只是把「从哪儿拿」换成注入。
+   *
+   * 三样缺任何一个 → 直接跳过记账（不猜、不抛），自写行为（24h 窗口、限域验收、失败静默、返回值）不变。
+   * kind 传 'personality'：repos/fishfood.ts 只把 'story' 单独计，其余 kind 一律并进 chatTokens，
+   * 所以总量/当日/当月口径与传 'chat' 完全相同（不会算错总量）；detail 里的 source 只是留痕。
+   */
+  ledger?: {
+    addTokens: (kind: string, n: number, detail?: {
+      promptTokens?: number
+      completionTokens?: number
+      cacheHitTokens?: number
+      costCny?: number
+      source?: string
+    }) => any
+    readUsageSplit: (usage: any) => { promptTokens?: number; completionTokens?: number; cacheHitTokens?: number } | null
+    estimateCostCny: (split: { promptTokens?: number; completionTokens?: number; cacheHitTokens?: number }, model?: string) => { cny: number } | null
+  }
 }
 
 export function createSelfNarrativeWriter(deps: WriterDeps): SelfNarrativeWriter {
@@ -202,6 +229,20 @@ export function createSelfNarrativeWriter(deps: WriterDeps): SelfNarrativeWriter
         console.error('[personality] SELF-HTTP ' + r.status + ' ' + String(r.text || '').slice(0, 200))
         return { ok: false, reason: 'HTTP ' + r.status }
       }
+      // 鱼账本（B97）：这次自写确实花掉了 token，拿到 usage 就记账；拿不到不猜（与聊天同一口径）。
+      // 放在限域验收/写盘之前：后面 SELF-SKIP / SELF-SAME / 写盘失败都不该把已花的 token 吞掉。
+      try {
+        const led = deps.ledger
+        const u = r.data && r.data.usage
+        if (led && typeof led.addTokens === 'function' && typeof led.readUsageSplit === 'function'
+          && typeof led.estimateCostCny === 'function' && u && typeof u.total_tokens === 'number') {
+          const split = led.readUsageSplit(u)
+          const cost = split ? led.estimateCostCny(split, model) : null
+          led.addTokens('personality', u.total_tokens, split
+            ? { promptTokens: split.promptTokens, completionTokens: split.completionTokens, cacheHitTokens: split.cacheHitTokens, costCny: cost ? cost.cny : undefined, source: 'personality' }
+            : undefined)
+        }
+      } catch { }
       const content = r.data && r.data.choices && r.data.choices[0] && r.data.choices[0].message
         ? r.data.choices[0].message.content : ''
       // 身份词/长度在这里收口：不合格整句丢弃，不写盘（只记一行 SELF-SKIP）

@@ -9,6 +9,7 @@
  * 不涉及 HTTP、不涉及 fetch、不持有任何状态，便于离线断言（scripts/selftest.mjs 仍用 chat.ts 的再导出）。
  */
 import { shortHash, hashKey } from '../shared/hash.js'
+import { estimateCostCny, readUsageSplit } from '../shared/pricing.js'
 import { fetchJson } from './http.js'
 
 /** DeepSeek 对话接口地址（聊天与摘要共用） */
@@ -216,13 +217,64 @@ export function buildChatMessages(opts: {
   return messages
 }
 
-/** 后台压缩长期记忆（不 await，失败只记日志）；模型与主聊天同一个装配值 */
-export async function summarizeMemory(key: string, convo: string, oldSummary: string, save: (s: string) => void, model: string): Promise<void> {
+// ───────────── 内部模型调用的鱼账本记账（B97） ─────────────
+//
+// 口径**照抄** routes/chat.ts（唯一区别是把 kind 标成来源），三条内部链路各写一份：
+//   · 只记「真拿到 2xx 回复」的那次外呼——超时/网络错/HTTP 非 2xx 的 usage 不可信，宁可漏记不虚记；
+//   · usage 缺失、或没有数字型 total_tokens → 不记、不猜（与聊天一致）；
+//   · 有输入/输出拆分才估金额：estimateCostCny 拿不到拆分返回 null，此时不传 detail（不猜 0 元）；
+//   · 未注入记账端口（老宿主装配、离线测试不注入）→ 直接跳过；
+//   · 整段 try 住：账本写失败绝不能影响摘要/人格主链路，也不改变任何返回值。
+//
+// 为什么三处各写一份、不抽公共件：抽成 chat-core 的导出会改变模块接口，而
+// `scripts/gen-module-index.mjs --check` 要求 docs/模块接口清单.md 同步更新；
+// 本批次（B97）只允许改 chat-core / personality-learn / personality-write / ports，不允许动 docs，
+// 所以刻意不新增任何导出，让接口契约与文档保持原样。
+//
+// kind 用 'summary' / 'personality' 这两个**新值**是安全的：repos/fishfood.ts 只把 'story'
+// 单独计进 storyTokens，其余 kind 一律并进 chatTokens，而 day/month/total 三个总量与 kind 无关，
+// 所以总量口径与传 'chat' 逐字节相同（已读该文件确认，见 scripts/test-internal-usage.mjs 第 [5] 节）。
+// detail 额外带一个 `source` 标明来源：仓储只认 promptTokens/completionTokens/cacheHitTokens/costCny，
+// 未知字段直接忽略、不写坏文件，纯留痕；将来要把来源写进账本时不用再改这三个调用点。
+
+/**
+ * 后台压缩长期记忆（不 await，失败只记日志）；模型与主聊天同一个装配值。
+ *
+ * 第 6 个参数是可选的鱼账本记账端口（B97）：不传时行为与改动前**完全一致**（不记账、不抛错）。
+ * 仓库里两个调用点（routes/chat.ts、routes/chat-stream.ts）目前还没传它——接线属于另一个批次，
+ * 在接上之前这条例行调用仍然漏账，属已知缺口。
+ */
+export async function summarizeMemory(
+  key: string,
+  convo: string,
+  oldSummary: string,
+  save: (s: string) => void,
+  model: string,
+  addTokens?: (kind: string, n: number, detail?: {
+    promptTokens?: number
+    completionTokens?: number
+    cacheHitTokens?: number
+    costCny?: number
+    source?: string
+  }) => any,
+): Promise<void> {
   const sys = '你在帮一条桌面宠物鱼整理长期记忆。把对话压缩成不超过80字的中文要点，只保留关于主人的事实（称呼、喜好、约定）和主人交代要记住的事。不要评论，不要加引号，只输出要点本身。'
   const body = JSON.stringify({ model, messages: [{ role: 'system', content: sys }, { role: 'user', content: '旧记忆：' + oldSummary + '\n最近对话：\n' + convo }], max_tokens: SUMMARY_MAX_TOKENS, temperature: 0.3, thinking: { type: 'disabled' } })
   try {
     const r = await fetchJson(CHAT_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key }, body }, 20000)
     if (!r.ok) { console.error('[chat] SUMMARY-HTTP ' + r.status + ' ' + String(r.text || '').slice(0, 200)); return }
+    // 鱼账本（B97）：这次摘要外呼确实花掉了 token，拿到 usage 就记账；拿不到不猜（与聊天同一口径）。
+    // 放在解析/写回之前：save 回调抛错不该把这次已经花掉的 token 一起吞掉。
+    try {
+      const u = r.data && r.data.usage
+      if (u && typeof u.total_tokens === 'number' && typeof addTokens === 'function') {
+        const split = readUsageSplit(u)
+        const cost = split ? estimateCostCny(split, model) : null
+        addTokens('summary', u.total_tokens, split
+          ? { promptTokens: split.promptTokens, completionTokens: split.completionTokens, cacheHitTokens: split.cacheHitTokens, costCny: cost ? cost.cny : undefined, source: 'summary' }
+          : undefined)
+      }
+    } catch { }
     const s = String(r.data?.choices?.[0]?.message?.content || '').trim()
     if (s) save(s)
   } catch (err: any) { console.error('[chat] SUMMARY-ERR ' + String(err?.message || err)) }
