@@ -124,6 +124,88 @@ import { evPrevent, evStop } from './client/util.js'
       try { stopProgress() } catch (e) { }
       try { storyNarratingRef.current = false } catch (e) { }
     }
+
+    // ===== 叙述锁「持有者令牌」=====
+    // 念诗与说书共用一把锁（client/narration.ts 只有一份 until）。旧接法是「谁收尾都直接
+    // clearNarrate()」：念诗中途点「讲段书」，说书已经接过锁，诗尾的 onDone 回来会把说书那一段
+    // 的锁和叙述标记一起清掉 —— 说书从此没有叙述锁，而 voice-bridge 的 onSegment 靠 narrating
+    // 才冒泡（气泡不更新），麦克风也会提前拾音（docs/并发纪律.md 规则 5）。
+    // 现在每个使用方（说书 / 菜单动作 / 点播路由）各拿一个句柄：narrate 时记下持有者，
+    // clearNarrate 只认「自己仍是持有者」，别人上的锁一律不碰。
+    let narrateOwner = 0
+    let narrateSeq = 0
+    /** 长段朗读探针（ownerId → timer）：收尾或换持有者时撤掉 */
+    const narrateProbes = new Map<number, any>()
+
+    function dropNarrateProbe(owner: number): void {
+      const t = narrateProbes.get(owner)
+      if (t === undefined) return
+      narrateProbes.delete(owner)
+      try { clearTimeout(t) } catch (e) { }
+    }
+
+    /**
+     * 说书长段的「只报警不放锁」探针：client/story.ts 只给估算 ≤2 分钟的段挂朗读兜底，
+     * 长段（1000 字≈4 分钟）一旦丢了 onDone 就永久卡在「正讲着呢」——这时锁本身会被
+     * narration.ts 的 5 分钟上限自愈，卡住的是故事 busy 与气泡。这里到点只写一次诊断
+     * （__chubbyWhale.narrateOverdue / narrateOverdueInfo），绝不动锁、不弹气泡：
+     * 锁语义仍由 narration.ts 的时限与各自的兜底决定，探针只负责把"疑似丢回调"记下来。
+     */
+    function armNarrateProbe(owner: number, label: string, ms: number, stillStuck: () => boolean): void {
+      dropNarrateProbe(owner)
+      const estMs = Math.max(0, Number(ms) || 0)
+      // 下限 30 秒：一两句的短段光合成就要好几秒，别把正常排队误报成"卡住"
+      const afterMs = Math.max(30000, Math.round(estMs * 1.5))
+      const t: any = setTimeout(() => {
+        narrateProbes.delete(owner)
+        if (narrateOwner !== owner) return
+        let stuck = false
+        try { stuck = !!stillStuck() } catch (e) { stuck = false }
+        if (!stuck) return
+        try { bump('narrateOverdue') } catch (e) { }
+        dg({
+          narrateOverdueInfo: {
+            label: label, estMs: estMs, afterMs: afterMs,
+            lockLeftMs: narration.remaining(), at: Date.now(),
+          },
+        })
+      }, afterMs)
+      // Node（测试/自检）里别让探针把进程吊住
+      try { if (t && typeof t.unref === 'function') t.unref() } catch (e) { }
+      narrateProbes.set(owner, t)
+    }
+
+    /** 权威清锁：停止说话 / 叙述锁过期自愈。不认持有者（这类操作就是要立刻静音），清完连探针一起作废 */
+    function resetNarration(): void {
+      narrateOwner = 0
+      const owners = Array.from(narrateProbes.keys())
+      for (const id of owners) dropNarrateProbe(id)
+      clearNarrating()
+    }
+
+    /**
+     * 给一个使用方发叙述锁句柄（持有者令牌）：
+     *   · narrate(ms)：成为持有者 + 上锁 + 挂长段探针；
+     *   · clearNarrate()：只有「自己还是持有者」才真解；过期回调（诗尾在说书接锁之后才回来）
+     *     只撤自己的探针，不动锁、不清 storyNarratingRef，气泡继续跟说书更新。
+     * stillStuck 只给探针用：判断"该收尾了却还占着"。
+     */
+    function makeNarrateHandle(label: string, stillStuck: () => boolean): { narrate: (ms: number) => void; clearNarrate: () => void } {
+      const owner = ++narrateSeq
+      return {
+        narrate(ms: number): void {
+          narrateOwner = owner
+          setNarrating(ms)
+          armNarrateProbe(owner, label, ms, stillStuck)
+        },
+        clearNarrate(): void {
+          dropNarrateProbe(owner)
+          if (narrateOwner !== owner) return
+          narrateOwner = 0
+          clearNarrating()
+        },
+      }
+    }
     let greetedOnce = false   // 打招呼只打一次（防挂载重复）
     // 台词/回复去重：原来是两段手写的时间窗判断，统一用 client/text.ts 的 deduper
     const lineDeduper = createDeduper({ windowMs: 25000, onDuplicate: () => bump('dupLine') })
@@ -200,6 +282,8 @@ import { evPrevent, evStop } from './client/util.js'
       // 菜单数值的最近一次拉取时刻（10 秒节流；ref 跨渲染保留，普通变量每次渲染都会被重置）
       const menuStatsAtRef = R.useRef(0)
       // 唤醒词表在 client/wake.ts（WAKE_WORDS），由 voice-bridge 的唤醒门真正使用；
+      // 2026-11-06 起唤醒词不再是拦话门槛（主人定的是"随时可以说"），门只负责
+      // 「只喊名字时应一声」和「把句首/句中的词剥掉再送模型」。
       // 原来这里定义了一份却从没被读过，属于"接线缺口"，已移除。
       const dragRef = R.useRef(createDragState())
       const scaleRef = R.useRef(1)
@@ -211,6 +295,12 @@ import { evPrevent, evStop } from './client/util.js'
       const storyBusyRef = R.useRef(false)
       // 最近一次说书的书名（「从头讲这本书」要按它重置进度）
       const storyBookRef = R.useRef('')
+      // 叙述锁持有者句柄（定义在组件外，见 makeNarrateHandle）：说书 / 菜单动作 / 点播路由各一个。
+      // 用惰性 ref 保持跨渲染稳定——同一使用方的 narrate 与 onDone 里的 clearNarrate 必须同 id，
+      // 否则重渲染后自己的收尾会被判成"别人的锁"而不解。
+      const storyNarration = hookApi.useLazyRef(() => makeNarrateHandle('story', () => !!storyBusyRef.current))
+      const actionNarration = hookApi.useLazyRef(() => makeNarrateHandle('actions', () => narration.active()))
+      const routeNarration = hookApi.useLazyRef(() => makeNarrateHandle('route', () => narration.active()))
     // 点播讲故事：自动连播到"这一回讲完"。默认开（主人要求），菜单里可关；
     // 关掉的状态记在 localStorage，刷新后保持。
     const storyAutoRef = R.useRef((() => {
@@ -280,9 +370,9 @@ import { evPrevent, evStop } from './client/util.js'
         onSpeaking: (playing: boolean) => {
           ttsPlaying = playing
         },
-        // 语音聊天关着时"只听不接话"（由唤醒门之前先拦一道）
+        // 语音聊天关着时"只听不接话"（在唤醒词剥除之前就拦下，不必先考虑喊没喊名字）
         voiceChat: () => voiceChatOnRef.current,
-        // 正在朗读时，语音"停"要能直接打断（不受唤醒门限制）
+        // 正在朗读时，语音"停"要能直接打断（打断词不受唤醒词与语音聊天开关影响）
         speaking: () => ttsPlaying,
         diag: dg,
       }))
@@ -600,7 +690,8 @@ import { evPrevent, evStop } from './client/util.js'
             // 叙述锁自愈：过了时限还锁着就强制解除（防止"鱼听不到"）
             try {
               if (narration.expire()) {
-                clearNarrating()
+                // 过期强制解锁同样走权威路径：清持有者与探针，别让旧 timer 之后再"报警"
+                resetNarration()
                 bump('narrReset')
               }
             } catch (e3) { }
@@ -762,8 +853,10 @@ import { evPrevent, evStop } from './client/util.js'
       const story = createStoryController({
         clientId: CLIENT_ID,
         persona,
-        narrate: setNarrating,
-        clearNarrate: clearNarrating,
+        // 叙述锁走持有者句柄：说书自己的 clearNarrate 只解自己上的锁，
+        // 念诗那段的 onDone 晚到也不会把这一段的锁/叙述标记清掉。
+        narrate: storyNarration.current.narrate,
+        clearNarrate: storyNarration.current.clearNarrate,
         bubble: showBubble,
         speak: speakText,
         talkFor: (ms: number) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
@@ -781,8 +874,9 @@ import { evPrevent, evStop } from './client/util.js'
         say: sayLine,
         speak: speakText,
         speakReply: (text) => speakReply(text),
-        narrate: setNarrating,
-        clearNarrate: clearNarrating,
+        // 叙述锁持有者句柄（菜单动作：念诗 / 今日一句 / 简报等共用这一个使用方）
+        narrate: actionNarration.current.narrate,
+        clearNarrate: actionNarration.current.clearNarrate,
         stopSpeak: () => stopTts(),
         stopMelody: () => melody.stop(),
         playMelody: (notes, bpm, onDone) => melody.play(notes, bpm, onDone),
@@ -848,8 +942,9 @@ import { evPrevent, evStop } from './client/util.js'
             bridge.start().then((v: any) => {
               try {
                 if (v.status() === 'idle') showBubble('麦克风没打开：' + String((v.stats && v.stats.lastError) || '看看权限？'), 5000)
-                // 唤醒了才接话：先把规则说清楚，免得主人以为坏了
-                else showBubble('语音待命：开（先喊「大肥鱼」，本鲸才答话）', 3500)
+                // 语音待命开着就能直接说话：唤醒词只用来剥句子开头/叫名字应一声，
+                // 不是拦话门槛（2026-11-06 主人定的"随时可以说"），别再说成"先喊才答话"。
+                else showBubble('语音待命：开（随时可以说，喊不喊名字都行）', 3500)
               } catch (e) { }
             }).catch((e: any) => showBubble('麦克风没打开：' + String((e && e.message) || e), 5000))
           } catch (e: any) {
@@ -898,8 +993,9 @@ import { evPrevent, evStop } from './client/util.js'
         bubble: showBubble,
         say: sayLine,
         speak: speakText,
-        narrate: setNarrating,
-        clearNarrate: clearNarrating,
+        // 点播路由用独立句柄：主人这句"念首诗"与菜单动作互不代解对方的锁
+        narrate: routeNarration.current.narrate,
+        clearNarrate: routeNarration.current.clearNarrate,
         talkFor,
         story,
         storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
@@ -1026,7 +1122,8 @@ import { evPrevent, evStop } from './client/util.js'
       function stopTts(): void {
         // 停止说话时如果流式还在跑：abort 旧流，别让它继续吐 delta/念后面的句子
         try { chat.abortStream() } catch (e) { }
-        clearNarrating()   // 停止朗读 = 解除叙述锁
+        // 停止朗读 = 权威清锁：不认持有者，连长段探针一起撤（卸载也会走这里，不许留悬挂 timer）
+        resetNarration()
         bridge.stopSpeak()
         // 说书锁也一起放：stopSpeaking 作废了当前段，它原本的 onDone 不会再来，
         // storyBusy 卡在 true 的话「接着说 / 说书」会永远回"正讲着呢"。
