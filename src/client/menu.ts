@@ -1,5 +1,5 @@
 import { deepFreeze } from '../shared/immutable.js'
-import { DEFAULT_VOICE } from './voice.js'
+import { normalizeVoiceName } from './voice.js'
 /**
  * client/menu.ts —— 菜单数据（1:1 复刻 C# 版 的 menu.ps1，含中英双语）
  */
@@ -242,8 +242,15 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
   const voiceOn = state.voiceOn ? true : false
   const earOn = state.earOn ? true : false
   const voiceChatOn = state.voiceChatOn ? true : false
-  const chatLang = state.chatLang ? String(state.chatLang) : 'auto'
-  const ttsVoice = state.ttsVoice ? String(state.ttsVoice) : DEFAULT_VOICE
+  // 脏值归一：菜单勾选必须和「运行时实际用的值」同口径，否则手改/旧版本留下的
+  // 非法值会让三个选项都不打勾，而实际行为已经回落到默认。
+  //   · 聊天语言：client/chat.ts 的 resolveChatLang 对非法值一律当 auto；
+  //   · 音色：client/voice/voices.ts 的 normalizeVoiceName 白名单外一律回落晓伊。
+  const chatLang = (() => {
+    const v = state.chatLang ? String(state.chatLang) : ''
+    return v === 'zh' || v === 'en' ? v : 'auto'
+  })()
+  const ttsVoice = normalizeVoiceName(state.ttsVoice)
   const chatCacheOn = !(state.chatCacheOn === false)
   const voiceTick = (voice: string): string => (ttsVoice === voice ? '✓ ' : '')
   const growthText = (state && state.growth) ? state.growth : '--'
