@@ -4,6 +4,28 @@
 
 ## [未发布]
 
+## [1.1.44] - 2026-11-06
+
+### 修复（模块分身批次 B53：一模块一分身，各自取证 + 自测）
+- **TTS 引擎（`host/tts/*`、`host/tts-engine.ts`）**
+  - 合成预算改为**整次调用一个 deadline**：原来 ready 与合成各吃一整份，20s 预算实际可拖到 30s（实测：ready 80ms、预算 200ms 时基线 293ms）
+  - 某一段返回 `ok:false` **不再 kill 健康 worker**：此前同 worker 里在途的其它段会被 `tts worker stopped` 连带拒掉，下次还要重付启动开销
+  - 临时文件：`unlink` 改 3 次重试（Windows 上 python 未放开句柄会 EBUSY → 永久残留），启动时清扫 >1h 的 `chubby-tts-*.mp3`
+  - 预算被 worker 耗尽（剩余 <1s）时直接按 timeout 失败，不再白起一个注定超时的 python
+  - `peekProbeOutcome()` 改逐层拷贝：此前把探测缓存本体递出去，外部改 `label/failed` 就等于篡改「解释器是否可用」
+  - worker 三条管道补 no-op `'error'` 监听（EPIPE 不再变成未捕获异常带走宿主）
+- **数据层（`host/data/*`）**
+  - 本地读口所有返回路径都交拷贝：此前命中缓存走 `.slice()`、首次读却 `return out` 交出缓存本体，调用方一改就污染全局数据
+  - 读失败区分确定性/瞬时：缺文件、坏 JSON 才记空缓存；EISDIR/EACCES/EBUSY 记空缓存会造成**永久空数据**
+  - 云端「数据缺失」不再当链路故障：不进 60s 全局冷却、不刷 `CLOUD-DATA-FAIL`，一本缺书不再传染诗词/文化/每日
+  - `normalizeCultureItems` 条目改浅拷贝，不再把云端 parse 缓存对象交给路由
+  - 四个文件里的 `StoryChunk` 改为从端口层取，解除对 `story/repo` 实现的深引用
+
+### 测试
+- 新增 `scripts/test-tts-engine.mjs`（32 条断言：假子进程驱动 ready/回包/退出/EBUSY，跑真实 TS 源码，全程离线）
+- 新增 `scripts/test-data-layer.mjs`（79 条断言 / 9 组：拷贝隔离、失败缓存纪律、冷却不传染、深引用静态检查）
+- 两条均接入 `npm test`；新增断言在基线上分别红 7 条 / 18 条（反绿验证过，不是假绿）
+
 ## [1.1.43] - 2026-11-06
 
 ### 构建（按第一原则收口：只 Gitee）
