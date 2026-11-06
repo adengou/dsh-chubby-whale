@@ -45,6 +45,10 @@ export function isRecoverHotkey(e: any): boolean {
   if (!ctrl || !shift) return false
   const key = str(e.key).toLowerCase()
   if (key === 'w') return true
+  // keyCode 只在「拿不到 key」的旧环境里兜底（注释说的就是这种环境）。
+  // 真实浏览器给了 key 就已经明确是别的键（如 Ctrl+Shift+Z，key='z'），
+  // 若还按 keyCode=87 认成恢复，等于把别人的快捷键抢走。
+  if (key && key !== 'unidentified') return false
   const code = Number(e.keyCode != null ? e.keyCode : e.which)
   return code === 87
 }

@@ -7016,7 +7016,9 @@
       const payload = line.slice(5).trim();
       if (!payload || payload === "[DONE]") continue;
       try {
-        events.push(JSON.parse(payload));
+        const v = JSON.parse(payload);
+        if (v && typeof v === "object") events.push(v);
+        else invalid++;
       } catch (e) {
         invalid++;
       }
@@ -7722,6 +7724,7 @@
     if (!ctrl || !shift) return false;
     const key = str(e.key).toLowerCase();
     if (key === "w") return true;
+    if (key && key !== "unidentified") return false;
     const code = Number(e.keyCode != null ? e.keyCode : e.which);
     return code === 87;
   }
