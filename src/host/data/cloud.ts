@@ -10,6 +10,8 @@
  *   · 按需拉：用到哪本小说/哪类文化/哪片诗才拉哪个文件；
  *   · 内存缓存：拉过的文件留在进程内；清单每 30 秒最多检查一次，
  *     version+generatedAt 变了才清空数据缓存、按新清单重拉（没变就继续用缓存）；
+ *   · 并发单飞：同一文件（同一本书/同一片诗/同一类文化）同时来多个请求只下载并
+ *     JSON.parse 一次，其余请求共享同一次结果；失败不缓存，下次重新拉；
  *   · 网络失败静默回退本地：同一个故障周期只 console.error 一次，60 秒冷却期内
  *     直接走本地，不反复卡网络；恢复后打一条 recovered 日志。错误绝不抛给路由。
  *
@@ -54,6 +56,22 @@ export function createCloudDataPort(opts: {
 
   /** 文件路径 → 已解析的 JSON（清单签名变化时整体清空） */
   const fileCache = new Map<string, any>()
+  /**
+   * 进程内单飞表：key → 进行中的 Promise（文件下载 / 清单刷新）。
+   *
+   * 与本地 story/repo.ts 的 inflight 差异及理由：
+   *   · repo 的键是「书名 + mtime」，缓存的已经是规范化后的 chunks，去重放在 loadBook 入口；
+   *   · 云端没有 mtime，等价的新鲜度信号是清单 version+generatedAt（manifestSig）；
+   *     且说书/诗/文化/对联/每日等读口最终都落到按文件下载，所以去重放在
+   *     「文件下载 + JSON.parse」这一层：一本书就是 story/<书名>.json，诗是 poems-XX.json。
+   *     这样任何读口（含以后新加的）同 key 并发都只打一次网络、只 parse 一次，
+   *     而各读口原有的校验、规范化、失败回退语义完全不动。
+   *   · 规范化仍由各读口各做一遍（纯函数、只遍历已有数组，开销远小于网络+parse），
+   *     避免把可变数组/对象共享给多个调用方（repo 也要 .slice() 就是为了这个）。
+   *   · 失败时 Promise 从表里摘掉且不写 fileCache；下次请求重新下载，
+   *     是否立刻重试仍由上层 withFallback 的 60 秒冷却决定（该语义未改）。
+   */
+  const inflight = new Map<string, Promise<any>>()
   /** 单本古籍可能几 MB，内存里最多留 2 本（与本地 repo 的 BOOK_CACHE_MAX 一致） */
   const BOOK_CACHE_MAX = 2
   let manifest: any = null
@@ -102,25 +120,47 @@ export function createCloudDataPort(opts: {
   }
 
   /**
+   * 单飞去重：同 key 只执行一次 task，后到者复用同一个 Promise。
+   * 清理必须放 finally：成功、失败都摘，失败后不会永久挂在表里（避免下一次请求
+   * 永远共享一个已失败的 Promise）；只摘自己那条，避免误删后来者。
+   */
+  function singleFlight<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const running = inflight.get(key) as Promise<T> | undefined
+    if (running) return running
+    const p = (async (): Promise<T> => {
+      try {
+        return await task()
+      } finally {
+        if (inflight.get(key) === p) inflight.delete(key)
+      }
+    })()
+    inflight.set(key, p)
+    return p
+  }
+
+  /**
    * 拿当前清单：TTL 内直接复用；过期就重新拉 manifest 比对 version+generatedAt。
    * 版本变了才清空已缓存的数据文件；版本没变，清单本身刷新后继续用旧缓存。
+   * 清单刷新也走单飞：冷启动时多个读口并发进来，只能打一次 manifest.json。
    */
   async function ensureManifest(): Promise<any> {
     if (manifest && Date.now() - manifestAt < MANIFEST_TTL_MS) return manifest
-    const m = await fetchJson('manifest.json')
-    if (!m || typeof m !== 'object' || !Array.isArray(m.files)) throw new Error('bad manifest')
-    const sig = String(m.version || '') + '|' + String(m.generatedAt || '')
-    if (!manifest || sig !== manifestSig) {
-      manifest = m
-      manifestSig = sig
-      fileCache.clear()
-      console.log('[chubby-whale] cloud data manifest ' + (m.version || 'v?') + ' @ ' + (m.generatedAt || '?'))
-    } else {
-      // 版本没变：清单对象刷新到最新，但已缓存的数据文件继续用
-      manifest = m
-    }
-    manifestAt = Date.now()
-    return manifest
+    return singleFlight('@manifest', async () => {
+      const m = await fetchJson('manifest.json')
+      if (!m || typeof m !== 'object' || !Array.isArray(m.files)) throw new Error('bad manifest')
+      const sig = String(m.version || '') + '|' + String(m.generatedAt || '')
+      if (!manifest || sig !== manifestSig) {
+        manifest = m
+        manifestSig = sig
+        fileCache.clear()
+        console.log('[chubby-whale] cloud data manifest ' + (m.version || 'v?') + ' @ ' + (m.generatedAt || '?'))
+      } else {
+        // 版本没变：清单对象刷新到最新，但已缓存的数据文件继续用
+        manifest = m
+      }
+      manifestAt = Date.now()
+      return manifest
+    })
   }
 
   /** 古籍正文缓存做 LRU：命中时移到末尾，写入后超上限丢最早的一本 */
@@ -136,7 +176,18 @@ export function createCloudDataPort(opts: {
     }
   }
 
-  /** 按清单读一个文件（只读清单里声明过的路径，避免拼出任意 URL） */
+  /**
+   * 按清单读一个文件（只读清单里声明过的路径，避免拼出任意 URL）。
+   *
+   * 并发去重放在这一层：同一路径的并发请求只下载一次、只 JSON.parse 一次，
+   * 后到者共享同一个 Promise；成功才写 fileCache（沿用原缓存策略），
+   * 失败既不写缓存也会在 finally 里摘掉 inflight，下一轮请求重新试。
+   *
+   * key 里带清单签名（manifestSig），与本地 repo「书 + mtime」同理：清单换代后
+   * 旧快照的下载不能被新请求复用；同一份快照内的并发请求才共享。
+   * 下载期间清单换代了，则这份旧快照数据只回给当前等待者、不写回缓存，
+   * 否则新清单下会读到上一版内容（下次请求会按新清单重拉）。
+   */
   async function readFile(path: string): Promise<any> {
     const m = await ensureManifest()
     if (!hasFile(m, path)) throw new Error('not in manifest: ' + path)
@@ -144,10 +195,15 @@ export function createCloudDataPort(opts: {
       cacheBookTouch(path)
       return fileCache.get(path)
     }
-    const data = await fetchJson(path)
-    fileCache.set(path, data)
-    cacheBookTouch(path)
-    return data
+    const sig = manifestSig
+    return singleFlight(sig + '|' + path, async () => {
+      const data = await fetchJson(path)
+      if (manifestSig === sig) {
+        fileCache.set(path, data)
+        cacheBookTouch(path)
+      }
+      return data
+    })
   }
 
   /**
@@ -195,6 +251,8 @@ export function createCloudDataPort(opts: {
   }
 
   async function readStoryBook(book: string): Promise<StoryChunk[]> {
+    // 同一本书的并发下载由 readFile('story/<书名>.json') 单飞去重（见 readFile 注释），
+    // 对应本地 repo.loadBook 的 inflight；这里只做校验、规范化与失败回退。
     return withFallback('readStoryBook:' + book, async () => {
       const name = String(book || '').trim()
       if (!name) throw new Error('empty book name')
