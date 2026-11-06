@@ -29,6 +29,11 @@ export interface StatsHandlerDeps {
   loadPersonality?: () => any
   /** 插件装配时间（ms）；uptimeMs = now - startedAt */
   startedAt?: number
+  /** 自检字段（2026-11-06 补）：数据源 / 模型名 / TTS 引擎状态 / 备份信息 */
+  dataSource?: string
+  model?: string
+  tts?: { available: boolean; interpreter: string; cooling: boolean }
+  backup?: { lastAt: number; count: number }
   now?: () => number
 }
 
@@ -81,6 +86,11 @@ export function createStatsHandler(opts: StatsHandlerDeps) {
         selfNarrative: typeof p.selfNarrative === 'string' ? p.selfNarrative : '',
       },
       uptimeMs,
+      // 自检：数据源 / 模型 / TTS 引擎 / 备份（缺省不报错）
+      dataSource: String(opts.dataSource || 'local'),
+      model: String(opts.model || ''),
+      tts: opts.tts || { available: false, interpreter: '', cooling: false },
+      backup: opts.backup || { lastAt: 0, count: 0 },
     }
   }
 

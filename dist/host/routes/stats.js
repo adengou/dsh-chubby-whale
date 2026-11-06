@@ -60,6 +60,11 @@ export function createStatsHandler(opts) {
                 selfNarrative: typeof p.selfNarrative === 'string' ? p.selfNarrative : '',
             },
             uptimeMs,
+            // 自检：数据源 / 模型 / TTS 引擎 / 备份（缺省不报错）
+            dataSource: String(opts.dataSource || 'local'),
+            model: String(opts.model || ''),
+            tts: opts.tts || { available: false, interpreter: '', cooling: false },
+            backup: opts.backup || { lastAt: 0, count: 0 },
         };
     }
     async function handleStats(req, res) {

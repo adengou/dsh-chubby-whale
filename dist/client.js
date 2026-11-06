@@ -14,7 +14,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.14";
+  var VERSION = "1.1.15";
 
   // src/client/styles.ts
   var W = 240;
@@ -4361,58 +4361,6 @@
     const skipped = countOf(src.skipped != null ? src.skipped : src.skippedCount != null ? src.skippedCount : src.ignored);
     return "导入了 " + imported + " 个字段，跳过 " + skipped + " 个字段";
   }
-  function numOf(...vals) {
-    for (const v of vals) {
-      if (v == null || v === "") continue;
-      const n = Number(v);
-      if (Number.isFinite(n)) return n;
-    }
-    return 0;
-  }
-  function shortText(v, max = 16) {
-    const t = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
-    if (!t) return "";
-    return t.length > max ? t.slice(0, max) + "…" : t;
-  }
-  function asList(v) {
-    if (v == null) return [];
-    if (Array.isArray(v)) return v;
-    if (typeof v === "object") {
-      try {
-        return Object.keys(v).map((k) => v[k]);
-      } catch (e) {
-        return [];
-      }
-    }
-    return [v];
-  }
-  function formatStats(payload) {
-    const d = payload && typeof payload === "object" ? payload : {};
-    const s = d.stats && typeof d.stats === "object" ? d.stats : d;
-    const cacheObj = s.cache && typeof s.cache === "object" ? s.cache : s.byType && typeof s.byType === "object" ? s.byType : {};
-    const tts = numOf(cacheObj.tts, s.tts, s.cacheTts);
-    const chat = numOf(cacheObj.chat, s.chat, s.cacheChat);
-    const asr = numOf(cacheObj.asr, s.asr, s.cacheAsr);
-    const ff = s.fishfood && typeof s.fishfood === "object" ? s.fishfood : s.fishFood && typeof s.fishFood === "object" ? s.fishFood : {};
-    const tokens = numOf(ff.total, ff.totalTokens, s.totalTokens, s.tokens && typeof s.tokens === "object" ? s.tokens.total : s.tokens, s.fishfoodTotal);
-    const g = s.growth && typeof s.growth === "object" ? s.growth : {};
-    const stage = shortText(g.stage || s.stage || "--", 12) || "--";
-    const intimacy = numOf(s.intimacy, s.state && s.state.intimacy);
-    const p = s.personality && typeof s.personality === "object" ? s.personality : {};
-    const pts = [];
-    const addPoint = (v) => {
-      const t = shortText(v, 16);
-      if (t && pts.indexOf(t) < 0 && pts.length < 3) pts.push(t);
-    };
-    for (const v of asList(p.points)) addPoint(v);
-    for (const v of asList(p.catchphrases)) addPoint(v);
-    for (const v of asList(p.preferences)) addPoint(v);
-    for (const v of asList(p.notes)) addPoint(v);
-    addPoint(p.selfNarrative);
-    addPoint(s.selfNarrative);
-    const points = pts.length ? pts.join("；") : "暂无";
-    return "统计卡\n缓存：tts " + tts + " 条｜chat " + chat + " 条｜asr " + asr + " 条\n鱼粮：" + tokens + " tokens\n成长：" + stage + "｜亲密度 " + intimacy + "/100\n人格要点：" + points;
-  }
   function downloadJson(data, filename, env) {
     try {
       const e = env || {};
@@ -4930,12 +4878,26 @@
     });
     table.define("stats", (host) => {
       getJson("/stats", { cache: "no-store" }).then((d) => {
-        if (!d || typeof d !== "object" || d.ok === false) {
-          host.bubble("统计还没准备好", 5e3);
+        if (!(d && d.ok)) {
+          host.bubble("统计还没准备好", 4e3);
           return;
         }
-        host.bubble(formatStats(d), 12e3);
-      }).catch(() => host.bubble("统计还没准备好", 5e3));
+        const c = d.cache || {};
+        const f = d.fishfood || {};
+        const g = d.growth || {};
+        const t = d.tts || {};
+        const b = d.backup || {};
+        const lines = [
+          "缓存：tts " + (c.tts || 0) + " / chat " + (c.chat || 0) + " / asr " + (c.asr || 0),
+          "鱼粮：" + (f.total || 0) + " token",
+          "成长：" + (g.stage || "--") + "（" + (g.exp || 0) + "/" + (g.nextExp || 0) + "）",
+          "亲密度：" + (d.intimacy || 0) + "/100",
+          "数据源：" + (d.dataSource || "local") + " · 模型：" + (d.model || "--"),
+          "TTS：" + (t.available ? "可用" : "不可用（浏览器朗读兜底）") + (t.interpreter ? "（" + t.interpreter + "）" : "") + (t.cooling ? " · 冷却中" : ""),
+          "备份：" + (b.count ? b.count + " 份" : "无") + (b.lastAt ? "（最近 " + new Date(b.lastAt).toLocaleString() + "）" : "")
+        ];
+        host.bubble(lines.join("\n"), 12e3);
+      }).catch(() => host.bubble("统计还没准备好", 4e3));
     });
   }
 

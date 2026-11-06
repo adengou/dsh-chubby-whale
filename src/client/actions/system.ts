@@ -274,12 +274,22 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
   // —— 统计卡：/stats 一次拿齐，失败只说「还没准备好」——
   table.define('stats', (host) => {
     getJson('/stats', { cache: 'no-store' }).then((d: any) => {
-      // 非对象说明拿到的不是统计 JSON（错误页等），不能渲染成一张全 0 的卡
-      if (!d || typeof d !== 'object' || d.ok === false) {
-        host.bubble('统计还没准备好', 5000)
-        return
-      }
-      host.bubble(formatStats(d), 12000)
-    }).catch(() => host.bubble('统计还没准备好', 5000))
+      if (!(d && d.ok)) { host.bubble('统计还没准备好', 4000); return }
+      const c = d.cache || {}
+      const f = d.fishfood || {}
+      const g = d.growth || {}
+      const t = d.tts || {}
+      const b = d.backup || {}
+      const lines = [
+        '缓存：tts ' + (c.tts || 0) + ' / chat ' + (c.chat || 0) + ' / asr ' + (c.asr || 0),
+        '鱼粮：' + (f.total || 0) + ' token',
+        '成长：' + (g.stage || '--') + '（' + (g.exp || 0) + '/' + (g.nextExp || 0) + '）',
+        '亲密度：' + (d.intimacy || 0) + '/100',
+        '数据源：' + (d.dataSource || 'local') + ' · 模型：' + (d.model || '--'),
+        'TTS：' + (t.available ? '可用' : '不可用（浏览器朗读兜底）') + (t.interpreter ? '（' + t.interpreter + '）' : '') + (t.cooling ? ' · 冷却中' : ''),
+        '备份：' + (b.count ? b.count + ' 份' : '无') + (b.lastAt ? '（最近 ' + new Date(b.lastAt).toLocaleString() + '）' : ''),
+      ]
+      host.bubble(lines.join('\n'), 12000)
+    }).catch(() => host.bubble('统计还没准备好', 4000))
   })
 }
