@@ -100,7 +100,8 @@ export type Voice = {
 // 录音端点参数（WINDOW_MS / EARLY_STOP_QUIET / MIN_SPEECH_MS / SILENT_PEAK_DB）与
 // TTS 计时参数（TTS_TIMEOUT_MS / TTS_ZOMBIE_MS / ECHO_MUTE_MS）已分别搬到
 // voice/recorder.ts 与 voice/tts-queue.ts，避免常量与实现分居两处。
-const ASR_TIMEOUT_MS = 15000        // 识别上传硬超时（TTS 的 20s 在 tts-queue.ts）
+const ASR_TIMEOUT_MS = 30000        // 识别上传硬超时（2026-11-06：15s 常被慢接口打满 → 超时 AbortError；TTS 的 20s 在 tts-queue.ts）
+const ASR_RETRY_ONCE = true         // 超时/网络错误自动重试一次（识别失败不再直接算丢）
 
 // 噪声判定与宿主共用一份（shared/noise.ts），避免两边各写一套、缓存又把噪声写进去
 
@@ -376,19 +377,34 @@ export function createVoice(opts: VoiceOptions): Voice {
       // 编码协商 + Safari 的 mp4→WAV：上传前的容器转换都在这里（client/audio-codec.ts 提供纯函数）
       const wire = await prepareAudioForAsr(blob, { actx, recMime, onDiag: opts.onDiag })
       if (!wire || !wire.base64) { stats.asrFail++; stats.lastError = 'b64-empty'; return }
-      const asrCtl = typeof AbortController !== 'undefined' ? new AbortController() : null
-      if (asrCtl) asrAborts.add(asrCtl)
+      // 单次上传（带独立 AbortController，超时/停止都会中止）
+      const uploadOnce = async (): Promise<Response> => {
+        const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
+        if (ctl) asrAborts.add(ctl)
+        try {
+          return await fetchWithTimeout(apiBase + '/asr', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            // format 必须带实际值：宿主按它决定 multipart 的 filename/Content-Type。
+            // 白名单是 webm/wav/mp3（src/host/routes/asr.ts），mp4 不在其中 → hostAsrFormat 已回落成 webm。
+            body: JSON.stringify({ audio: wire.base64, format: wire.format }),
+          }, ASR_TIMEOUT_MS, ctl ? ctl.signal : undefined)
+        } finally {
+          if (ctl) asrAborts.delete(ctl)
+        }
+      }
       let res: Response
       try {
-        res = await fetchWithTimeout(apiBase + '/asr', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          // format 必须带实际值：宿主按它决定 multipart 的 filename/Content-Type。
-          // 白名单是 webm/wav/mp3（src/host/routes/asr.ts），mp4 不在其中 → hostAsrFormat 已回落成 webm。
-          body: JSON.stringify({ audio: wire.base64, format: wire.format }),
-        }, ASR_TIMEOUT_MS, asrCtl ? asrCtl.signal : undefined)
-      } finally {
-        if (asrCtl) asrAborts.delete(asrCtl)
+        res = await uploadOnce()
+      } catch (e1: any) {
+        // 超时/网络抖动：自动重试一次（识别失败 3/4 的根因是 15s 硬超时）
+        if (ASR_RETRY_ONCE && e1 && e1.name === 'AbortError' && running) {
+          stats.asrRetry = (stats.asrRetry || 0) + 1
+          try { opts.onDiag && opts.onDiag({ stage: 'asr-retry', hint: '识别超时，重试一次' }) } catch (e) { }
+          res = await uploadOnce()
+        } else {
+          throw e1
+        }
       }
       const data = await res.json()
       // 请求期间可能已经关掉语音待命/卸载：这时候不能再把结果当主人说话
@@ -433,7 +449,7 @@ export function createVoice(opts: VoiceOptions): Voice {
       }
     } catch (e: any) {
       stats.asrFail++
-      stats.lastError = 'asr-ex: ' + String((e && e.name) || e)
+      stats.lastError = (e && e.name === 'AbortError' ? 'asr-ex: AbortError（超时/已停止）' : 'asr-ex: ' + String((e && e.name) || e))
     } finally {
       if (statusHolder.get() === 'recognizing') setStatus('listening')
       // 只有录音器空闲时才排下一段：否则会打断正在录的段（会丢开头几个字）

@@ -54,7 +54,7 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
       if (!st) { host.bubble('语音模块还没起来（语音待命可能是关的）', 6000); return }
       const line = '语音自检（新模块）：' + String(v.status())
         + '\n录音段 ' + st.windows + '｜上传 ' + st.uploaded + '｜识别出字 ' + st.asrTexts + '｜交给对话 ' + st.heard
-        + '\n丢：太安静 ' + st.skippedSilent + '｜回声/重复 ' + st.echoDropped + '｜识别失败 ' + st.asrFail
+        + '\n丢：太安静 ' + st.skippedSilent + '｜回声/重复 ' + st.echoDropped + '｜识别失败 ' + st.asrFail + '｜识别重试 ' + (st.asrRetry || 0)
         + '\n去重：重复丢弃 ' + (st.dupDropped || 0) + ' 次（同一句话被切成两段时用）'
         + '\n端点检测：' + (v.endpointInfo ? (v.endpointInfo().mode === 'ape' ? '自适应' : '经典') : '?')
         + (function () { try { const t = v.lastTtsInfo ? v.lastTtsInfo() : null; if (!t) return ''; return '\n朗读：最后一段 ' + (t.failed ? '失败' : '已开播') + '｜文本开头「' + t.text + '」' } catch (e) { return '' } })()
