@@ -25,7 +25,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.65";
+  var VERSION = "1.1.66";
 
   // src/client/styles.ts
   var W = 240;
@@ -1133,6 +1133,32 @@
     if (/^([\u4e00-\u9fa5])\1{2,}$/.test(k)) return true;
     return false;
   }
+  var INTERRUPT_PHRASES = Object.freeze([
+    "停下",
+    "停下来",
+    "停下来吧",
+    "停一下",
+    "停一停",
+    "停吧",
+    "别说了",
+    "别讲了",
+    "别念了",
+    "别吵",
+    "别说下去了",
+    "不要说了",
+    "不用说了",
+    "安静",
+    "打住",
+    "够了",
+    "暂停",
+    "算了"
+  ]);
+  function isInterruptCommand(text) {
+    const k = normalizeNoiseKey(text);
+    if (!k) return false;
+    if (isInterruptWord(k)) return true;
+    return INTERRUPT_PHRASES.indexOf(k) >= 0;
+  }
   function isInterruptWord(text) {
     const k = normalizeNoiseKey(text);
     return k.length > 0 && INTERRUPT_WORDS.indexOf(k) >= 0;
@@ -1183,31 +1209,6 @@
   }
 
   // src/client/voice/echo-filter.ts
-  var SINGLE_INTERRUPT = /^[停别不]$/;
-  var INTERRUPT_PHRASES = [
-    "停下",
-    "停下来",
-    "停下来吧",
-    "停一下",
-    "停一停",
-    "停吧",
-    "别说了",
-    "别讲了",
-    "别念了",
-    "别吵",
-    "别说下去了",
-    "不要说了",
-    "不用说了",
-    "闭嘴",
-    "安静",
-    "打住",
-    "够了",
-    "暂停",
-    "算了"
-  ];
-  function isInterruptCommand(plain) {
-    return SINGLE_INTERRUPT.test(plain) || INTERRUPT_PHRASES.indexOf(plain) >= 0;
-  }
   function createEchoFilter() {
     const spokenRecent = [];
     const recentHeard = [];
@@ -1229,7 +1230,7 @@
       }
       const plain = normalizePlain(text).toLowerCase();
       const plainKey = echoKey(text).toLowerCase();
-      const interrupt = SINGLE_INTERRUPT.test(plain);
+      const interrupt = isInterruptWord(plain);
       const stopCmd = isInterruptCommand(plain);
       if (plain.length < 2 && !interrupt) return { ok: false, reason: "trivial" };
       if (!interrupt && isNoiseText(plain)) return { ok: false, reason: "noise" };
@@ -3887,13 +3888,11 @@
   }
 
   // src/client/voice-bridge.ts
-  var STOP_PHRASES = ["停下", "停一下", "别说了", "别讲了", "别念了", "别吵", "安静", "够了"];
   var NARR_STOP_RE = /停|别念|不念|够了|算了|打住/;
   var HAS_CONTENT_RE = /[\u4e00-\u9fa5a-z0-9]/i;
   function isStopCommand(norm) {
     if (!norm) return false;
-    if (isInterruptWord(norm)) return true;
-    return STOP_PHRASES.indexOf(norm) >= 0;
+    return isInterruptCommand(norm);
   }
   function bump(key) {
     try {

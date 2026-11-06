@@ -20,7 +20,7 @@
  * 现在统一由调用方按返回的 reason 记一次。
  */
 import { echoKey, isShortEchoFragment, normalizePlain } from '../text.js'
-import { isNoiseText } from '../../shared/noise.js'
+import { isInterruptCommand, isInterruptWord, isNoiseText } from '../../shared/noise.js'
 import { isRepeat } from '../sim.js'
 
 export type EchoVerdict = {
@@ -40,20 +40,9 @@ export type EchoVerdict = {
  * 是拿"所有短句都不去重"换"打断有效"，把回声防线一起削弱了。这里只列出真正的指令整句，
  * 普通短句（如「别人家的孩子」）照旧走去重。
  */
-const SINGLE_INTERRUPT = /^[停别不]$/
-const INTERRUPT_PHRASES: string[] = [
-  '停下', '停下来', '停下来吧', '停一下', '停一停', '停吧',
-  '别说了', '别讲了', '别念了', '别吵', '别说下去了',
-  '不要说了', '不用说了', '闭嘴', '安静', '打住', '够了', '暂停', '算了',
-]
-
-/**
- * 是不是「让本鱼停下」的整句指令（输入已是 normalizePlain + 小写后的文本）。
- * 刻意不导出：模块对外的接口只有 createEchoFilter，判定细节不外泄（docs/模块接口清单.md 不变）。
- */
-function isInterruptCommand(plain: string): boolean {
-  return SINGLE_INTERRUPT.test(plain) || INTERRUPT_PHRASES.indexOf(plain) >= 0
-}
+// 打断指令的词表与判定统一放在 shared/noise.ts（与 voice-bridge 同一份真源）
+// 原来这里与 voice-bridge 各抄一份，导致「停下来吧」在闸门放行、在桥接认不出。
+// 判定细节不导出，模块对外仍只有 createEchoFilter（接口清单不变）。
 
 export type EchoFilter = {
   /** 过滤一句 ASR 结果（now 可注入，便于单测；默认 Date.now()） */
@@ -104,7 +93,7 @@ export function createEchoFilter(): EchoFilter {
     // 单字放行白名单：主人喊「停！」也要能打断说书/朗读。
     // 必须在噪声判定之前放行 —— isNoiseText() 会把所有单字判成噪声（"嗯/啊"那类气口），
     // 直接丢掉的话「停/别/不」这条打断路径就永远走不到。
-    const interrupt = SINGLE_INTERRUPT.test(plain)
+    const interrupt = isInterruptWord(plain)
     // 整句打断指令（含 4 字以上那些）：与单字同样放行，并且稍后跳过去重闸门。
     const stopCmd = isInterruptCommand(plain)
     if (plain.length < 2 && !interrupt) return { ok: false, reason: 'trivial' }
