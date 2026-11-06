@@ -9,13 +9,18 @@
  * 失败一律静默降级成一句轻提示（「导出没成功」「备份文件读不了」），不弹错误框。
  */
 
-import { getJson, postJson } from '../http.js'
+import { getJson, postJson, delJson } from '../http.js'
+
+/** 备份体积上限，与 host/backup/fields.ts 的 BACKUP_MAX_BYTES 同口径（2MB） */
+const MAX_BACKUP_BYTES = 2 * 1024 * 1024
 
 /** 数据类动作的宿主能力（client.ts / system.ts 注入） */
 export type DataHost = {
   bubble: (text: string, ms?: number) => void
   getJson?: (path: string, init?: any) => Promise<any>
   postJson?: (path: string, body?: any, init?: any) => Promise<any>
+  /** 清宿主的聊天缓存（导入后调用；失败静默） */
+  delJson?: (path: string, init?: any) => Promise<any>
   /** 测试注入：文件选择器（默认用 <input type="file" accept=".json">） */
   pickFile?: (cb: (file: any) => void) => void
   /** 测试注入：下载依赖（默认取全局 document / URL / Blob） */
@@ -133,7 +138,8 @@ export function formatStats(payload: any): string {
 
 /**
  * 用 Blob 触发本地下载（不发起任何网络请求）。
- * 返回 false 表示当前环境不具备下载条件（由调用方降级成轻提示）。
+ * 返回 false 表示这次没有把下载真正交出去（环境不具备 / createObjectURL 或 click 抛错），
+ * 由调用方降级成轻提示——不能返回 true，否则界面会谎报「已下载」。
  */
 export function downloadJson(data: any, filename: string, env?: any): boolean {
   try {
@@ -153,7 +159,17 @@ export function downloadJson(data: any, filename: string, env?: any): boolean {
     try { a.setAttribute('data-chubby-download', '1') } catch (err) { }
     const parent = doc.body || doc.documentElement
     if (parent && typeof parent.appendChild === 'function') parent.appendChild(a)
-    try { a.click() } catch (err) { }
+    try {
+      a.click()
+    } catch (err) {
+      // 点击被浏览器拦截/抛错：这次没有真的触发下载，不能返回 true（否则界面会谎报「已下载」）
+      try { URLX.revokeObjectURL(url) } catch (e2) { }
+      try {
+        if (parent && typeof parent.removeChild === 'function') parent.removeChild(a)
+        else if (typeof a.remove === 'function') a.remove()
+      } catch (e2) { }
+      return false
+    }
     // 下载已触发：稍后清理临时节点与 objectURL（清理失败不影响下载）
     try {
       setTimeout(() => {
@@ -170,22 +186,30 @@ export function downloadJson(data: any, filename: string, env?: any): boolean {
   }
 }
 
+/** 导出接口失败文案：413 是体积超限，和网络失败分开说（否则主人不知道换个小点的包） */
+function exportFailText(d: any): string {
+  const err = d && typeof d === 'object' ? String((d as any).error || '') : ''
+  return err === 'TOO_LARGE' ? '备份太大（超过 2MB），导出没成功' : '导出没成功'
+}
+
 /** 导出：GET /data/export → 本地下载 JSON；失败只轻提示 */
 export function exportBackup(host: DataHost): void {
   const fetchJson = host.getJson || getJson
   let p: Promise<any>
-  try { p = Promise.resolve(fetchJson('/data/export')) } catch (e) {
+  // 绕开浏览器缓存：否则可能拿到上一次（旧数据）的备份
+  try { p = Promise.resolve(fetchJson('/data/export', { cache: 'no-store' })) } catch (e) {
     host.bubble('导出没成功', 5000)
     return
   }
   p.then((d: any) => {
-    if (d == null || d.ok === false) {
-      host.bubble('导出没成功', 5000)
+    // 非对象说明拿到的不是备份包（错误页 HTML 等），不能当数据下载
+    if (!d || typeof d !== 'object' || d.ok === false) {
+      host.bubble(exportFailText(d), 6000)
       return
     }
     const name = backupFileName(host.now ? host.now() : new Date())
     const ok = downloadJson(d, name, host.env)
-    host.bubble(ok ? ('备份已下载：' + name) : '这个浏览器不让下载备份', 6000)
+    host.bubble(ok ? ('备份已下载：' + name) : '浏览器没让下载，导出没成功', 6000)
   }).catch(() => host.bubble('导出没成功', 5000))
 }
 
@@ -246,12 +270,37 @@ export function pickJsonFile(cb: (file: any) => void): void {
         cleanup()
       }
     }
+    // 取消选择（现代浏览器会发 cancel）：不清理的话 input 会一直留在 body 里
+    try {
+      if (typeof input.addEventListener === 'function') {
+        input.addEventListener('cancel', () => { try { cb(null) } finally { cleanup() } })
+      }
+    } catch (e) { }
     const parent = doc.body || doc.documentElement
     if (parent && typeof parent.appendChild === 'function') parent.appendChild(input)
     try { input.click() } catch (e) { cb(null); cleanup() }
   } catch (e) {
     cb(null)
   }
+}
+
+/**
+ * 导入接口失败文案：413 超限 / 400 坏请求 / 网络失败分开说，
+ * 否则「备份太大」和「文件坏了」都显示同一句，主人不知道该怎么处理。
+ */
+function importFailText(d: any): string {
+  const err = d && typeof d === 'object' ? String((d as any).error || '') : ''
+  if (err === 'TOO_LARGE') return '备份太大（超过 2MB），没导入'
+  if (err === 'BAD_BODY') return '备份文件格式不对，没导入'
+  return '备份文件读不了'
+}
+
+/** 导入后清宿主聊天缓存：旧回复不能继续套在新数据上（失败静默） */
+function clearChatCache(host: DataHost): void {
+  try {
+    const del = typeof host.delJson === 'function' ? host.delJson : delJson
+    try { Promise.resolve(del('/cache')).catch(() => { }) } catch (e) { }
+  } catch (e) { }
 }
 
 /** 导入：选 .json → 读文本 → POST /data/import → 报告 imported / skipped */
@@ -263,6 +312,12 @@ export function importBackup(host: DataHost): void {
       if (!file) {
         // 取消选择不算错误，给一句轻提示即可
         host.bubble('没选备份文件', 3000)
+        return
+      }
+      // 先看体积：超过 2MB 宿主会 413，提前说清，别把整个文件读进内存再失败
+      const size = Number(file.size)
+      if (Number.isFinite(size) && size > MAX_BACKUP_BYTES) {
+        host.bubble('备份太大（超过 2MB），没导入', 6000)
         return
       }
       readFileText(file).then((text: string) => {
@@ -277,11 +332,21 @@ export function importBackup(host: DataHost): void {
           return
         }
         p.then((d: any) => {
-          if (d && d.ok === false) {
-            host.bubble('备份文件读不了', 6000)
+          // 非对象说明拿到的不是接口回执（错误页 HTML 等），不能当「导入成功」
+          if (!d || typeof d !== 'object' || d.ok === false) {
+            host.bubble(importFailText(d), 6000)
             return
           }
-          host.bubble(formatImportResult(d || {}), 7000)
+          const resultText = formatImportResult(d)
+          host.bubble(resultText, 7000)
+          // 导入写的是宿主侧数据，前端已展开的聊天/人格仍是旧的：清掉聊天缓存并提示刷新，
+          // 否则旧回复继续命中，看着像「导入没生效」
+          clearChatCache(host)
+          try {
+            setTimeout(() => {
+              try { host.bubble(resultText + '；刷新页面后新数据才全部生效', 8000) } catch (e) { }
+            }, 1200)
+          } catch (e) { }
         }).catch(() => host.bubble('备份文件读不了', 6000))
       }).catch(() => host.bubble('备份文件读不了', 6000))
     })

@@ -37,21 +37,35 @@ export function readLocalFlag(key: string, fallback = true): boolean {
 }
 
 export function createHooks(R: any) {
-  /** 惰性单例 ref：首次渲染调用 factory，之后始终返回同一个对象 */
+  /**
+   * 惰性单例 ref：首次渲染调用 factory，之后始终返回同一个对象。
+   * 注意：React StrictMode 的开发期双渲染会重建 hook 槽，factory 可能被调用两次
+   * （第一次实例被丢弃）。三处调用点都是纯构造、不申请监听器/定时器，可安全丢弃；
+   * 若将来工厂里申请了资源，需把创建挪进 effect 或自带幂等保护。
+   */
   function useLazyRef<T>(factory: () => T): LazyRef<T> {
     const ref = R.useRef(null as any)
     if (!ref.current) ref.current = factory()
     return ref as LazyRef<T>
   }
 
-  /** ref + state 双写的持久化布尔开关；初值在首次渲染时读一次 localStorage */
+  /**
+   * ref + state 双写的持久化布尔开关：
+   *   初值只在挂载时读一次 localStorage（useState 惰性初始化器），后续渲染沿用 state；
+   *   set 同时改 ref（回调同步读）、state（渲染）并落盘；
+   *   写失败（隐私模式 / 配额满）不回滚，降级为本次会话内生效（读侧同样有兜底）。
+   */
   function usePersistentBool(key: string, fallback = true): PersistentBool {
-    const initial = readLocalFlag(key, fallback)
-    const ref = R.useRef(initial)
-    const [value, setValue] = R.useState(initial)
+    const ref = R.useRef(null as any)
+    const [value, setValue] = R.useState(() => readLocalFlag(key, fallback))
+    // 首帧把初值灌进 ref；之后每次渲染保留最新值（set 已同步双写）
+    if (ref.current === null) ref.current = value
     const set = (v: boolean): void => {
-      ref.current = v
-      setValue(v)
+      const next = !!v
+      ref.current = next
+      setValue(next)
+      // 回滚只会让菜单显示"点了没反应"，反而更难排障：持久化失败时仅本次会话生效
+      try { localStorage.setItem(key, next ? 'on' : 'off') } catch (e) { }
     }
     return { value, set, ref }
   }

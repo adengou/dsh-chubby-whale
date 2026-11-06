@@ -20,33 +20,48 @@ export type MenuItemRenderCtx = {
   h: HFunction
   tr: (label: string, lang: string) => string
   lang: string
-  /** 当前展开的子菜单标签（空串表示都收起） */
+  /** 当前展开的子菜单路径（空串表示都收起；父级标签用 NUL 拼成路径） */
   subOpen: string
-  /** 切换子菜单：参数是"切换后的新值"（展开传标签，收起传空串） */
+  /** 切换子菜单：展开传完整路径，收起传父路径（空串表示全部收起） */
   onToggleSub: (next: string) => void
   /** 点菜单项：交给组件入口的动作分发 */
   onAction: (action: string) => void
 }
 
-/** 递归渲染菜单项；空数组/未知类型原样跳过（与旧 renderItems 一致） */
-export function renderMenuItems(items: any[], ctx: MenuItemRenderCtx): any[] {
+/**
+ * 子菜单路径分隔符。subOpen 原来只存单个 label，导致「文化气 ▸」里的二级菜单
+ * （说书语速 / 出个对联等）一点就把父级收起，二级内容永远打不开。改成路径后，
+ * 父级与二级可同时展开；顶层路径就是 label，行为与原来完全一致。
+ */
+const SUB_PATH_SEP = '\u0000'
+
+/**
+ * 递归渲染菜单项；items 非数组返回空数组，空项 / 未知类型 / 缺 label 的项跳过。
+ * parentPath 是当前层所属父菜单的路径（顶层为空串），只用于拼接子菜单路径。
+ */
+export function renderMenuItems(items: any[], ctx: MenuItemRenderCtx, parentPath = ''): any[] {
   const out: any[] = []
+  if (!Array.isArray(items)) return out
   for (let i = 0; i < items.length; i++) {
     const it = items[i]
+    if (!it || typeof it !== 'object') continue
     if (it.type === 'sep') {
       out.push(ctx.h('div', { key: 'sep' + i, style: { height: 1, background: '#1f4a85', margin: '4px 0' } }))
       continue
     }
     if (it.type === 'sub') {
-      const open = ctx.subOpen === it.label
+      if (typeof it.label !== 'string') continue
+      const path = parentPath ? parentPath + SUB_PATH_SEP + it.label : it.label
+      const open = ctx.subOpen === path || ctx.subOpen.indexOf(path + SUB_PATH_SEP) === 0
       out.push(ctx.h('div', {
         key: 'sub' + i,
         style: { padding: '6px 14px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', color: '#cfe9ff', fontSize: 13 },
-        onClick: () => ctx.onToggleSub(open ? '' : it.label),
+        onClick: () => ctx.onToggleSub(open ? parentPath : path),
       }, ctx.h('span', null, ctx.tr(it.label, ctx.lang)), ctx.h('span', null, open ? '▾' : '▸')))
-      if (open) out.push(ctx.h('div', { key: 'subitems' + i, style: { paddingLeft: 14, borderLeft: '1px solid #1f4a85', marginLeft: 8 } }, renderMenuItems(it.items, ctx)))
+      if (open) out.push(ctx.h('div', { key: 'subitems' + i, style: { paddingLeft: 14, borderLeft: '1px solid #1f4a85', marginLeft: 8 } }, renderMenuItems(it.items, ctx, path)))
       continue
     }
+    if (it.type !== 'item' || typeof it.label !== 'string') continue
     out.push(ctx.h('div', {
       key: 'item' + i,
       style: { padding: '6px 14px', cursor: 'pointer', color: '#cfe9ff', fontSize: 13, whiteSpace: 'nowrap' },
@@ -67,13 +82,25 @@ export type MenuRuntime = {
 }
 
 export function readMenuRuntime(): MenuRuntime {
+  // 先摆默认值，再一次性读；Storage 被禁 / 读取抛错时保持默认（口径与旧逐键 try 一致）。
+  // storyRate / poemRate 仍走 rates.ts 的校验读取（非法值回落默认）。
+  let storyAuto = true
+  let streamOn = true
+  let ttsVoice = 'zh-CN-XiaoyiNeural'
+  let chatLang = 'auto'
+  try {
+    storyAuto = localStorage.getItem('chubby-story-auto') !== '0'
+    streamOn = localStorage.getItem('chubby-stream') !== 'off'
+    ttsVoice = localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural'
+    chatLang = localStorage.getItem('chubby-chatlang') || 'auto'
+  } catch (e) { }
   return {
-    storyAuto: (() => { try { return localStorage.getItem('chubby-story-auto') !== '0' } catch (e) { return true } })(),
-    streamOn: (() => { try { return localStorage.getItem('chubby-stream') !== 'off' } catch (e) { return true } })(),
+    storyAuto,
+    streamOn,
     storyRate: storyRate(),
     poemRate: poemRate(),
-    ttsVoice: (() => { try { return localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural' } catch (e) { return 'zh-CN-XiaoyiNeural' } })(),
-    chatLang: (() => { try { return localStorage.getItem('chubby-chatlang') || 'auto' } catch (e) { return 'auto' } })(),
+    ttsVoice,
+    chatLang,
   }
 }
 
@@ -121,7 +148,9 @@ export function renderChatPanel(ctx: ChatPanelCtx): any {
     ),
     h('div', { ref: ctx.bodyRef, style: bodyStyle },
       ctx.messages.length === 0
-        ? h('div', { style: msgStyle('fish') }, '主人，点我说话，本鲸在右下角待着～')
+        ? h('div', { style: msgStyle('fish') }, lang === 'en'
+          ? 'Click me to talk — I am right in the bottom-right corner.'
+          : '主人，点我说话，本鲸在右下角待着～')
         : ctx.messages.map((m: any, i: number) => h('div', { key: i, style: msgStyle(m.who) }, m.text)),
     ),
     h('div', { style: inputRowStyle },

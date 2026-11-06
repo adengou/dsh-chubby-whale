@@ -87,7 +87,7 @@ export function bindResize(win: any, onResize: () => void): Dispose {
 /**
  * 进门问候 + 饥饿补一句：
  *   问候固定 3 秒后触发（不抢首屏）；饿了才排 6 秒后的第二句。
- * 注意：饥饿定时器与旧实现一样不保存句柄、卸载时不清（保持原有卸载行为，不额外改变语义）。
+ * 两个定时器都要在 cleanup 里撤：卸载后不能再冒台词，StrictMode 双跑也不会叠加。
  */
 export function startGreeting(opts: {
   greet: () => void
@@ -97,9 +97,10 @@ export function startGreeting(opts: {
   hungryMs?: number
 }): Dispose {
   const tGreet = setTimeout(opts.greet, opts.greetMs ?? 3000)
-  if (opts.hungryNow) setTimeout(opts.hungry, opts.hungryMs ?? 6000)
+  const tHungry = opts.hungryNow ? setTimeout(opts.hungry, opts.hungryMs ?? 6000) : null
   return () => {
     try { clearTimeout(tGreet) } catch (e) { }
+    if (tHungry !== null) { try { clearTimeout(tHungry) } catch (e) { } }
   }
 }
 
@@ -126,10 +127,11 @@ export function createUnmountCleanup(opts: {
   bubbleEl: () => any
 }): Dispose {
   return (): void => {
-    // 顺序与旧实现逐行一致：dispose 自身有 try/catch，stopTts / stopMelody 原样直调
+    // 顺序固定：提醒链 → 朗读 → 琴声 → 气泡计时器（与 client.ts 的装配顺序一致）。
+    // 每步单独兜底：前一步抛错不能把后面的清理跳过（漏掉 AudioContext 会把页面拖住）。
     try { const p = opts.reminderPoller(); if (p) p.dispose() } catch (e) { }
-    opts.stopTts()
-    opts.stopMelody()
+    try { opts.stopTts() } catch (e) { }
+    try { opts.stopMelody() } catch (e) { }
     try {
       const el = opts.bubbleEl()
       if (el && el._t) { clearTimeout(el._t); el._t = null }

@@ -4136,6 +4136,7 @@
   }
 
   // src/client/actions/data.ts
+  var MAX_BACKUP_BYTES = 2 * 1024 * 1024;
   function backupFileName(now = /* @__PURE__ */ new Date()) {
     const d = now instanceof Date && !isNaN(now.getTime()) ? now : /* @__PURE__ */ new Date();
     const y = d.getFullYear();
@@ -4240,6 +4241,16 @@
       try {
         a.click();
       } catch (err) {
+        try {
+          URLX.revokeObjectURL(url);
+        } catch (e2) {
+        }
+        try {
+          if (parent && typeof parent.removeChild === "function") parent.removeChild(a);
+          else if (typeof a.remove === "function") a.remove();
+        } catch (e2) {
+        }
+        return false;
       }
       try {
         setTimeout(() => {
@@ -4260,23 +4271,27 @@
       return false;
     }
   }
+  function exportFailText(d) {
+    const err = d && typeof d === "object" ? String(d.error || "") : "";
+    return err === "TOO_LARGE" ? "备份太大（超过 2MB），导出没成功" : "导出没成功";
+  }
   function exportBackup(host) {
     const fetchJson = host.getJson || getJson;
     let p;
     try {
-      p = Promise.resolve(fetchJson("/data/export"));
+      p = Promise.resolve(fetchJson("/data/export", { cache: "no-store" }));
     } catch (e) {
       host.bubble("导出没成功", 5e3);
       return;
     }
     p.then((d) => {
-      if (d == null || d.ok === false) {
-        host.bubble("导出没成功", 5e3);
+      if (!d || typeof d !== "object" || d.ok === false) {
+        host.bubble(exportFailText(d), 6e3);
         return;
       }
       const name = backupFileName(host.now ? host.now() : /* @__PURE__ */ new Date());
       const ok = downloadJson(d, name, host.env);
-      host.bubble(ok ? "备份已下载：" + name : "这个浏览器不让下载备份", 6e3);
+      host.bubble(ok ? "备份已下载：" + name : "浏览器没让下载，导出没成功", 6e3);
     }).catch(() => host.bubble("导出没成功", 5e3));
   }
   function readFileText(file) {
@@ -4348,6 +4363,18 @@
           cleanup();
         }
       };
+      try {
+        if (typeof input.addEventListener === "function") {
+          input.addEventListener("cancel", () => {
+            try {
+              cb(null);
+            } finally {
+              cleanup();
+            }
+          });
+        }
+      } catch (e) {
+      }
       const parent = doc.body || doc.documentElement;
       if (parent && typeof parent.appendChild === "function") parent.appendChild(input);
       try {
@@ -4360,6 +4387,23 @@
       cb(null);
     }
   }
+  function importFailText(d) {
+    const err = d && typeof d === "object" ? String(d.error || "") : "";
+    if (err === "TOO_LARGE") return "备份太大（超过 2MB），没导入";
+    if (err === "BAD_BODY") return "备份文件格式不对，没导入";
+    return "备份文件读不了";
+  }
+  function clearChatCache(host) {
+    try {
+      const del = typeof host.delJson === "function" ? host.delJson : delJson;
+      try {
+        Promise.resolve(del("/cache")).catch(() => {
+        });
+      } catch (e) {
+      }
+    } catch (e) {
+    }
+  }
   function importBackup(host) {
     const pick = typeof host.pickFile === "function" ? host.pickFile : pickJsonFile;
     const sendJson = host.postJson || postJson;
@@ -4367,6 +4411,11 @@
       pick((file) => {
         if (!file) {
           host.bubble("没选备份文件", 3e3);
+          return;
+        }
+        const size = Number(file.size);
+        if (Number.isFinite(size) && size > MAX_BACKUP_BYTES) {
+          host.bubble("备份太大（超过 2MB），没导入", 6e3);
           return;
         }
         readFileText(file).then((text) => {
@@ -4383,11 +4432,22 @@
             return;
           }
           p.then((d) => {
-            if (d && d.ok === false) {
-              host.bubble("备份文件读不了", 6e3);
+            if (!d || typeof d !== "object" || d.ok === false) {
+              host.bubble(importFailText(d), 6e3);
               return;
             }
-            host.bubble(formatImportResult(d || {}), 7e3);
+            const resultText = formatImportResult(d);
+            host.bubble(resultText, 7e3);
+            clearChatCache(host);
+            try {
+              setTimeout(() => {
+                try {
+                  host.bubble(resultText + "；刷新页面后新数据才全部生效", 8e3);
+                } catch (e) {
+                }
+              }, 1200);
+            } catch (e) {
+            }
           }).catch(() => host.bubble("备份文件读不了", 6e3));
         }).catch(() => host.bubble("备份文件读不了", 6e3));
       });
@@ -4489,12 +4549,13 @@
       Promise.all([getJson("/growth"), getJson("/state").catch(() => null)]).then(([g, s]) => {
         if (g && g.ok) {
           const nx = g.nextExp > 0 ? "（经验 " + g.exp + "/" + g.nextExp + "）" : "（满级）";
-          const it = s && s.intimacy || 0;
+          const raw = s && s.intimacy;
+          const it = raw != null && raw !== "" && Number.isFinite(Number(raw)) ? " · 亲密度 " + Number(raw) + "/100" : " · 亲密度查不到";
           try {
             host.applyGrowth(g);
           } catch (e) {
           }
-          host.bubble("成长：" + g.stage + nx + " · 亲密度 " + it + "/100", 5e3);
+          host.bubble("成长：" + g.stage + nx + it, 5e3);
         } else host.bubble("成长查不到");
       }).catch(() => host.bubble("成长查不到"));
     });
@@ -4508,8 +4569,13 @@
         if (d && d.ok && d.balance != null) {
           host.setBalance("余额 ¥" + d.balance, "¥" + d.balance);
           host.bubble("余额还有 " + d.balance + " 元", 5e3);
-        } else host.bubble("余额查不到");
-      }).catch(() => host.bubble("余额查不到"));
+          return;
+        }
+        const err = d && typeof d.error === "string" ? d.error : "";
+        if (err === "NO_KEY") host.bubble("还没配 DeepSeek API Key，余额查不了", 6e3);
+        else if (err === "timeout") host.bubble("余额接口超时，等会儿再看", 5e3);
+        else host.bubble("余额查不到", 5e3);
+      }).catch(() => host.bubble("余额查不到", 5e3));
     });
     table.definePrefix("chat-lang:", (host, v) => {
       const cl = v === "en" ? "en" : v === "zh" ? "zh" : "auto";
@@ -4549,16 +4615,29 @@
       });
     });
     table.define("clear-memory", (host) => {
+      let go = false;
       try {
-        if (!window.confirm("清除肥鲸对主人的聊天记忆？（成长/鱼粮/说书记录不受影响）")) return;
-        postJson("/clear-memory").then((d) => {
-          if (d && d.ok) {
-            host.setMessages([]);
-            host.bubble("记忆清空啦，我们重新认识吧～", 4e3);
-          } else host.bubble("清除失败");
-        }).catch(() => host.bubble("清除失败"));
+        go = !!window.confirm("清除肥鲸对主人的聊天记忆？（成长/鱼粮/说书记录不受影响）");
       } catch (e) {
+        go = false;
       }
+      if (!go) return;
+      let p;
+      try {
+        p = Promise.resolve(postJson("/clear-memory"));
+      } catch (e) {
+        host.bubble("清除失败", 4e3);
+        return;
+      }
+      p.then((d) => {
+        if (d && d.ok) {
+          host.setMessages([]);
+          const n = Number(d.cacheCleared) || 0;
+          host.bubble("记忆清空啦" + (n > 0 ? "，聊天缓存也一起清了（" + n + " 条）" : "") + "，我们重新认识吧～", 5e3);
+          return;
+        }
+        host.bubble("清除失败", 4e3);
+      }).catch(() => host.bubble("清除失败", 4e3));
     });
     table.define("vision", (host) => {
       try {
@@ -4615,14 +4694,21 @@
       const text = String(parsed.cleaned || cleanReminderText(msg) || msg).slice(0, 200);
       const dueAt = parsed.at;
       const repeat = parsed.repeat || 0;
-      postJson("/reminders", { text, at: dueAt.toISOString(), repeat }).then((d) => {
+      let p;
+      try {
+        p = Promise.resolve(postJson("/reminders", { text, at: dueAt.toISOString(), repeat }));
+      } catch (e) {
+        host.bubble("提醒没加上", 4e3);
+        return;
+      }
+      p.then((d) => {
         if (d && d.ok) {
           const hh = String(dueAt.getHours()).padStart(2, "0");
           const mm = String(dueAt.getMinutes()).padStart(2, "0");
           const whenText = repeat > 0 ? "每天 " + hh + ":" + mm : dueAt.getMonth() + 1 + "月" + dueAt.getDate() + "日 " + hh + ":" + mm;
           host.bubble("好，" + whenText + " 提醒你：" + text, 6e3);
-        } else host.bubble("提醒没加上");
-      }).catch(() => host.bubble("提醒没加上"));
+        } else host.bubble("提醒没加上", 4e3);
+      }).catch(() => host.bubble("提醒没加上", 4e3));
     });
     table.define("remind-manage", (host) => {
       try {
@@ -4646,7 +4732,7 @@
     });
     table.define("stats", (host) => {
       getJson("/stats", { cache: "no-store" }).then((d) => {
-        if (!d || d.ok === false) {
+        if (!d || typeof d !== "object" || d.ok === false) {
           host.bubble("统计还没准备好", 5e3);
           return;
         }
@@ -6467,25 +6553,44 @@
     let board = [];
     let seq = 0;
     function isOpen(now = clock()) {
-      return openedAt > 0 && board.length > 0 && now - openedAt <= MANAGE_WINDOW_MS;
+      if (!(openedAt > 0) || !board.length) return false;
+      const age = now - openedAt;
+      return age >= 0 && age <= MANAGE_WINDOW_MS;
     }
     function expire() {
       openedAt = 0;
       board = [];
     }
-    function refresh() {
+    function safeRequest(fn) {
+      try {
+        return Promise.resolve(fn());
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    }
+    function showBoard(prefix, failText) {
       const my = ++seq;
-      return Promise.resolve(fetchJson("/reminders")).then((d) => {
-        if (my !== seq) return board;
-        board = normalizeReminderList(d);
-        return board;
-      }).catch(() => board);
+      safeRequest(() => fetchJson("/reminders")).then((d) => {
+        if (my !== seq) return;
+        const arr = normalizeReminderList(d);
+        board = arr;
+        if (!arr.length) {
+          openedAt = 0;
+          host.bubble(prefix, 5e3);
+          return;
+        }
+        host.bubble(boardText(arr, prefix), 12e3);
+      }).catch(() => {
+        if (my !== seq) return;
+        openedAt = 0;
+        board = [];
+        host.bubble(failText, 5e3);
+      });
     }
     function open() {
       const my = ++seq;
-      const at = clock();
       openedAt = 0;
-      return Promise.resolve(fetchJson("/reminders")).then((d) => {
+      return safeRequest(() => fetchJson("/reminders")).then((d) => {
         if (my !== seq) return;
         const arr = normalizeReminderList(d);
         board = arr;
@@ -6494,7 +6599,7 @@
           host.bubble("还没有提醒～", 3e3);
           return;
         }
-        openedAt = at;
+        openedAt = clock();
         host.bubble(boardText(arr, "提醒清单（" + arr.length + " 条）："), 12e3);
       }).catch(() => {
         if (my !== seq) return;
@@ -6504,22 +6609,7 @@
       });
     }
     function afterDelete() {
-      const my = ++seq;
-      Promise.resolve(fetchJson("/reminders")).then((d) => {
-        if (my !== seq) return;
-        const arr = normalizeReminderList(d);
-        board = arr;
-        if (!arr.length) {
-          openedAt = 0;
-          host.bubble("删掉了", 4e3);
-          return;
-        }
-        host.bubble(boardText(arr, "删掉了"), 12e3);
-      }).catch(() => {
-        openedAt = 0;
-        board = [];
-        host.bubble("删掉了", 4e3);
-      });
+      showBoard("删掉了", "删掉了，清单没刷新过来");
     }
     function removeAt(index) {
       const it = board[index - 1];
@@ -6527,13 +6617,16 @@
         host.bubble("没有第 " + index + " 条，回数字再选一次", 4e3);
         return;
       }
-      Promise.resolve(removeJson("/reminders?id=" + encodeURIComponent(it.id))).then((d) => {
+      const next = board.slice();
+      next.splice(index - 1, 1);
+      board = next;
+      safeRequest(() => removeJson("/reminders?id=" + encodeURIComponent(it.id))).then((d) => {
         if (!(d && d.ok)) {
-          host.bubble("没删掉，等会儿再试", 4e3);
+          showBoard("没删掉，最新清单：", "没删掉，清单也没刷出来");
           return;
         }
         afterDelete();
-      }).catch(() => host.bubble("没删掉，等会儿再试", 4e3));
+      }).catch(() => showBoard("没删掉，最新清单：", "没删掉，清单也没刷出来"));
     }
     function postpone() {
       const pick = pickNextDue(board);
@@ -6550,33 +6643,18 @@
         at: at.toISOString(),
         repeat: Number(pick.repeat) || 0
       };
-      Promise.resolve(sendJson("/reminders", body)).then((d) => {
+      safeRequest(() => sendJson("/reminders", body)).then((d) => {
         if (!(d && d.ok)) {
           host.bubble("顺延没成，原提醒还在", 4e3);
           return;
         }
-        Promise.resolve(removeJson("/reminders?id=" + encodeURIComponent(pick.id))).then((d2) => {
+        safeRequest(() => removeJson("/reminders?id=" + encodeURIComponent(pick.id))).then((d2) => {
           if (!(d2 && d2.ok)) {
-            host.bubble("顺延到 " + when + "，但旧提醒没删掉", 6e3);
+            showBoard("顺延到 " + when + "，但旧提醒没删掉：", "顺延到 " + when + "，但旧提醒没删掉");
             return;
           }
-          const my = ++seq;
-          Promise.resolve(fetchJson("/reminders")).then((d3) => {
-            if (my !== seq) return;
-            const arr = normalizeReminderList(d3);
-            board = arr;
-            if (!arr.length) {
-              openedAt = 0;
-              host.bubble("顺延到 " + when, 5e3);
-              return;
-            }
-            host.bubble(boardText(arr, "顺延到 " + when), 12e3);
-          }).catch(() => {
-            openedAt = 0;
-            board = [];
-            host.bubble("顺延到 " + when, 5e3);
-          });
-        }).catch(() => host.bubble("顺延到 " + when + "，但旧提醒没删掉", 6e3));
+          showBoard("顺延到 " + when, "顺延到 " + when);
+        }).catch(() => showBoard("顺延到 " + when + "，但旧提醒没删掉：", "顺延到 " + when + "，但旧提醒没删掉"));
       }).catch(() => host.bubble("顺延没成，原提醒还在", 4e3));
     }
     function intercept(text) {
@@ -6694,12 +6772,17 @@
       return ref;
     }
     function usePersistentBool(key, fallback = true) {
-      const initial = readLocalFlag(key, fallback);
-      const ref = R.useRef(initial);
-      const [value, setValue] = R.useState(initial);
+      const ref = R.useRef(null);
+      const [value, setValue] = R.useState(() => readLocalFlag(key, fallback));
+      if (ref.current === null) ref.current = value;
       const set = (v) => {
-        ref.current = v;
-        setValue(v);
+        const next = !!v;
+        ref.current = next;
+        setValue(next);
+        try {
+          localStorage.setItem(key, next ? "on" : "off");
+        } catch (e) {
+        }
       };
       return { value, set, ref };
     }
@@ -6783,11 +6866,17 @@
   }
   function startGreeting(opts) {
     const tGreet = setTimeout(opts.greet, opts.greetMs ?? 3e3);
-    if (opts.hungryNow) setTimeout(opts.hungry, opts.hungryMs ?? 6e3);
+    const tHungry = opts.hungryNow ? setTimeout(opts.hungry, opts.hungryMs ?? 6e3) : null;
     return () => {
       try {
         clearTimeout(tGreet);
       } catch (e) {
+      }
+      if (tHungry !== null) {
+        try {
+          clearTimeout(tHungry);
+        } catch (e) {
+        }
       }
     };
   }
@@ -6807,8 +6896,14 @@
         if (p) p.dispose();
       } catch (e) {
       }
-      opts.stopTts();
-      opts.stopMelody();
+      try {
+        opts.stopTts();
+      } catch (e) {
+      }
+      try {
+        opts.stopMelody();
+      } catch (e) {
+      }
       try {
         const el = opts.bubbleEl();
         if (el && el._t) {
@@ -6821,24 +6916,30 @@
   }
 
   // src/client/render.ts
-  function renderMenuItems(items, ctx) {
+  var SUB_PATH_SEP = "\0";
+  function renderMenuItems(items, ctx, parentPath = "") {
     const out = [];
+    if (!Array.isArray(items)) return out;
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
+      if (!it || typeof it !== "object") continue;
       if (it.type === "sep") {
         out.push(ctx.h("div", { key: "sep" + i, style: { height: 1, background: "#1f4a85", margin: "4px 0" } }));
         continue;
       }
       if (it.type === "sub") {
-        const open = ctx.subOpen === it.label;
+        if (typeof it.label !== "string") continue;
+        const path = parentPath ? parentPath + SUB_PATH_SEP + it.label : it.label;
+        const open = ctx.subOpen === path || ctx.subOpen.indexOf(path + SUB_PATH_SEP) === 0;
         out.push(ctx.h("div", {
           key: "sub" + i,
           style: { padding: "6px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", color: "#cfe9ff", fontSize: 13 },
-          onClick: () => ctx.onToggleSub(open ? "" : it.label)
+          onClick: () => ctx.onToggleSub(open ? parentPath : path)
         }, ctx.h("span", null, ctx.tr(it.label, ctx.lang)), ctx.h("span", null, open ? "▾" : "▸")));
-        if (open) out.push(ctx.h("div", { key: "subitems" + i, style: { paddingLeft: 14, borderLeft: "1px solid #1f4a85", marginLeft: 8 } }, renderMenuItems(it.items, ctx)));
+        if (open) out.push(ctx.h("div", { key: "subitems" + i, style: { paddingLeft: 14, borderLeft: "1px solid #1f4a85", marginLeft: 8 } }, renderMenuItems(it.items, ctx, path)));
         continue;
       }
+      if (it.type !== "item" || typeof it.label !== "string") continue;
       out.push(ctx.h("div", {
         key: "item" + i,
         style: { padding: "6px 14px", cursor: "pointer", color: "#cfe9ff", fontSize: 13, whiteSpace: "nowrap" },
@@ -6848,37 +6949,24 @@
     return out;
   }
   function readMenuRuntime() {
+    let storyAuto = true;
+    let streamOn = true;
+    let ttsVoice = "zh-CN-XiaoyiNeural";
+    let chatLang = "auto";
+    try {
+      storyAuto = localStorage.getItem("chubby-story-auto") !== "0";
+      streamOn = localStorage.getItem("chubby-stream") !== "off";
+      ttsVoice = localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
+      chatLang = localStorage.getItem("chubby-chatlang") || "auto";
+    } catch (e) {
+    }
     return {
-      storyAuto: (() => {
-        try {
-          return localStorage.getItem("chubby-story-auto") !== "0";
-        } catch (e) {
-          return true;
-        }
-      })(),
-      streamOn: (() => {
-        try {
-          return localStorage.getItem("chubby-stream") !== "off";
-        } catch (e) {
-          return true;
-        }
-      })(),
+      storyAuto,
+      streamOn,
       storyRate: storyRate(),
       poemRate: poemRate(),
-      ttsVoice: (() => {
-        try {
-          return localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
-        } catch (e) {
-          return "zh-CN-XiaoyiNeural";
-        }
-      })(),
-      chatLang: (() => {
-        try {
-          return localStorage.getItem("chubby-chatlang") || "auto";
-        } catch (e) {
-          return "auto";
-        }
-      })()
+      ttsVoice,
+      chatLang
     };
   }
   function renderMenuHeader(ctx) {
@@ -6908,7 +6996,7 @@
       h(
         "div",
         { ref: ctx.bodyRef, style: bodyStyle },
-        ctx.messages.length === 0 ? h("div", { style: msgStyle("fish") }, "主人，点我说话，本鲸在右下角待着～") : ctx.messages.map((m, i) => h("div", { key: i, style: msgStyle(m.who) }, m.text))
+        ctx.messages.length === 0 ? h("div", { style: msgStyle("fish") }, lang === "en" ? "Click me to talk — I am right in the bottom-right corner." : "主人，点我说话，本鲸在右下角待着～") : ctx.messages.map((m, i) => h("div", { key: i, style: msgStyle(m.who) }, m.text))
       ),
       h(
         "div",

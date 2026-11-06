@@ -95,10 +95,14 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     Promise.all([getJson('/growth'), getJson('/state').catch(() => null)]).then(([g, s]: any[]) => {
       if (g && g.ok) {
         const nx = g.nextExp > 0 ? ('（经验 ' + g.exp + '/' + g.nextExp + '）') : '（满级）'
-        const it = (s && s.intimacy) || 0
+        // /state 失败时不能报「亲密度 0/100」：那是没拿到数据，不是真 0
+        const raw = s && s.intimacy
+        const it = (raw != null && raw !== '' && Number.isFinite(Number(raw)))
+          ? (' · 亲密度 ' + Number(raw) + '/100')
+          : ' · 亲密度查不到'
         // 菜单里刚拉到的数据同时用于外观刷新（体型/光点/光晕实时变，不用刷新页面）
         try { host.applyGrowth(g) } catch (e) { }
-        host.bubble('成长：' + g.stage + nx + ' · 亲密度 ' + it + '/100', 5000)
+        host.bubble('成长：' + g.stage + nx + it, 5000)
       } else host.bubble('成长查不到')
     }).catch(() => host.bubble('成长查不到'))
   })
@@ -110,8 +114,14 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
       if (d && d.ok && d.balance != null) {
         host.setBalance('余额 ¥' + d.balance, '¥' + d.balance)
         host.bubble('余额还有 ' + d.balance + ' 元', 5000)
-      } else host.bubble('余额查不到')
-    }).catch(() => host.bubble('余额查不到'))
+        return
+      }
+      // NO_KEY 是最常见的失败：说清是「没配钥匙」而不是「接口坏了」
+      const err = d && typeof d.error === 'string' ? d.error : ''
+      if (err === 'NO_KEY') host.bubble('还没配 DeepSeek API Key，余额查不了', 6000)
+      else if (err === 'timeout') host.bubble('余额接口超时，等会儿再看', 5000)
+      else host.bubble('余额查不到', 5000)
+    }).catch(() => host.bubble('余额查不到', 5000))
   })
 
   // —— 聊天语言 / 界面语言 ——
@@ -154,13 +164,26 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     })
   })
   table.define('clear-memory', (host) => {
-    try {
-      if (!(window as any).confirm('清除肥鲸对主人的聊天记忆？（成长/鱼粮/说书记录不受影响）')) return
-      postJson('/clear-memory').then((d: any) => {
-        if (d && d.ok) { host.setMessages([]); host.bubble('记忆清空啦，我们重新认识吧～', 4000) }
-        else host.bubble('清除失败')
-      }).catch(() => host.bubble('清除失败'))
-    } catch (e) { }
+    // 确认框本身可能被浏览器禁用/抛错：那种情况当作「没确认」，不执行
+    let go = false
+    try { go = !!(window as any).confirm('清除肥鲸对主人的聊天记忆？（成长/鱼粮/说书记录不受影响）') } catch (e) { go = false }
+    if (!go) return
+    let p: Promise<any>
+    try { p = Promise.resolve(postJson('/clear-memory')) } catch (e) {
+      host.bubble('清除失败', 4000)
+      return
+    }
+    p.then((d: any) => {
+      if (d && d.ok) {
+        // host 侧已同时清聊天缓存（否则「忘了主人却还说着同一句话」）；
+        // 本地消息也要清空，否则旧对话仍显示在面板里
+        host.setMessages([])
+        const n = Number(d.cacheCleared) || 0
+        host.bubble('记忆清空啦' + (n > 0 ? '，聊天缓存也一起清了（' + n + ' 条）' : '') + '，我们重新认识吧～', 5000)
+        return
+      }
+      host.bubble('清除失败', 4000)
+    }).catch(() => host.bubble('清除失败', 4000))
   })
 
   // —— 看张图：选文件 → 压缩 → 视觉对话 → 朗读 ——
@@ -213,16 +236,23 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     const text = String(parsed.cleaned || cleanReminderText(msg) || msg).slice(0, 200)
     const dueAt = parsed.at
     const repeat = parsed.repeat || 0
-    postJson('/reminders', { text, at: dueAt.toISOString(), repeat })
+    let p: Promise<any>
+    try {
+      p = Promise.resolve(postJson('/reminders', { text, at: dueAt.toISOString(), repeat }))
+    } catch (e) {
+      host.bubble('提醒没加上', 4000)
+      return
+    }
+    p
       .then((d: any) => {
         if (d && d.ok) {
           const hh = String(dueAt.getHours()).padStart(2, '0')
           const mm = String(dueAt.getMinutes()).padStart(2, '0')
           const whenText = repeat > 0 ? ('每天 ' + hh + ':' + mm) : ((dueAt.getMonth() + 1) + '月' + dueAt.getDate() + '日 ' + hh + ':' + mm)
           host.bubble('好，' + whenText + ' 提醒你：' + text, 6000)
-        } else host.bubble('提醒没加上')
+        } else host.bubble('提醒没加上', 4000)
       })
-      .catch(() => host.bubble('提醒没加上'))
+      .catch(() => host.bubble('提醒没加上', 4000))
   })
   // —— 提醒：管理面板（列序号 + 接住下一条输入；逻辑在 client/reminder-manage.ts）——
   // 旧菜单项「提醒清单…」也指向面板，保证不依赖菜单是否新增项都能用。
@@ -244,7 +274,8 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
   // —— 统计卡：/stats 一次拿齐，失败只说「还没准备好」——
   table.define('stats', (host) => {
     getJson('/stats', { cache: 'no-store' }).then((d: any) => {
-      if (!d || d.ok === false) {
+      // 非对象说明拿到的不是统计 JSON（错误页等），不能渲染成一张全 0 的卡
+      if (!d || typeof d !== 'object' || d.ok === false) {
         host.bubble('统计还没准备好', 5000)
         return
       }
