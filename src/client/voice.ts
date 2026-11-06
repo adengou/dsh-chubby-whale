@@ -1,50 +1,61 @@
 /**
- * client/voice.ts —— 语音模块（从零重写，替代原来的 VAD + WebSpeech + 通道 + 朗读队列）
+ * client/voice.ts —— 语音编排层（麦克风采集 → VAD 端点 → 录音编码 → ASR → 回声过滤 → TTS 队列）
+ *
+ * 2026-11-06 拆分（行为等价，纯外提）：本文件只留「编排 + 状态机」。
+ * 子模块（公开接口都在各自文件头部说明，外部只准从这里或子模块入口引用）：
+ *   · voice/status.ts      统计对象、状态去重、诊断快照
+ *   · voice/tts-queue.ts   朗读队列参数/预取选择/任务构造/重试退避（队列本身仍在这里）
+ *   · voice/recorder.ts    录音段状态、电平读取、端点门槛（设备生命周期仍在这里）
+ *   · voice/asr-audio.ts   上传前的容器准备（mp4→wav、base64、FileReader 兜底）
+ *   · voice/echo-filter.ts 回声/短碎片/重复发言过滤（纯状态 + 纯逻辑）
+ *   · voice/fetch.ts       带硬超时的 fetch
+ *   · voice/voices.ts      音色白名单与读写
+ * 状态机仍只有这一处：idle → listening → recognizing → thinking → speaking → idle。
  *
  * 设计原则（每一条都是被之前的 bug 教育的）：
- *   ① 只有一个状态机：idle → listening → recognizing → thinking → speaking → idle
- *      状态转移只有一处在改，杜绝"标志卡住没人清"
+ *   ① 只有一个状态机：状态转移只有一处在改，杜绝"标志卡住没人清"
  *   ② 录音不靠"判句"：固定 6 秒窗口，窗口结束就上传；
- *      只在"已检测到说话且安静 400ms"时提前收尾（把它当加速，不当必要条件）
- *   ③ 每段必带电平信息：整段峰值 < -50dBFS 直接丢，不浪费识别额度
+ *      只在"已检测到说话且安静 700ms"时提前收尾（把它当加速，不当必要条件）
+ *   ③ 每段必带电平信息：整段峰值 < -35dBFS 直接丢，不浪费识别额度
  *   ④ 所有网络请求都有硬超时（ASR 15s / TTS 20s / 对话由调用方负责）
  *   ⑤ 朗读队列有看门狗：不依赖 onended 回调，按音频元素真实状态复位
  *   ⑥ 回声防护三层：TTS 期间物理闭麦 + 说完 700ms 静音窗 + 文本回声比对
  *   ⑦ 每个可能"静默失败"的地方都有计数（stats），出问题看数字就知道卡在哪
+ *
+ * 2026-11-06 算法审计补丁见各补丁点的注释（令牌守卫 / 超时降级 / FileReader onerror /
+ * 分块不劈词 / 丢弃计数只记一次）。
  */
 
 import { Ape } from './ape.js'
-import { deepFreeze } from '../shared/immutable.js'
 import { narrationRate } from './rates.js'
-import { isRepeat } from './sim.js'
-import { echoKey, isShortEchoFragment, stripStageDirections } from './text.js'
-import { isNoiseText } from '../shared/noise.js'
+import { stripStageDirections } from './text.js'
 import { isPlaybackZombie } from './playback.js'
 import { readEndpointMode, writeEndpointMode, normalizeEndpointMode } from './endpoint.js'
-import {
-  pickRecorderMime, formatFromMime, hostAsrFormat, downmixToMono, encodeWavPcm16, wavBytes,
-  type RecFormat,
-} from './audio-codec.js'
+import { pickRecorderMime, type RecFormat } from './audio-codec.js'
 import { browserVoiceUsable, speakViaBrowser } from './browser-tts.js'
+import { prepareAudioForAsr } from './voice/asr-audio.js'
+import { createEchoFilter } from './voice/echo-filter.js'
+import { fetchWithTimeout } from './voice/fetch.js'
+import { normalizeVoiceName, readStoredVoiceName } from './voice/voices.js'
+import { createVoiceStats, createStatusHolder, createDiagSnapshots } from './voice/status.js'
+import {
+  ECHO_MUTE_MS, TTS_TIMEOUT_MS, TTS_WATCH_MS, TTS_ZOMBIE_MS, TTS_RETRY_MAX,
+  ttsRetryDelayMs, narrationPauseFor, prefetchTargets, buildTtsJobs, isStaleToken,
+  type TtsJob,
+} from './voice/tts-queue.js'
+import {
+  TICK_MS, TICK_ERROR_MS, LEVEL_PROBE_MS,
+  readLevel, createSegmentState, resetSegmentState, addChunk, clearChunks, notePeak,
+  accrueClassic, shouldStopClassic, shouldStopApeNoLevel, takeBlob, isTooSmallSegment,
+  isSilentPeak, hadApeSpeech,
+  type LevelBox,
+} from './voice/recorder.js'
+import type { VoiceStatus, VoiceStats } from './voice/status.js'
 
-export type VoiceStatus = 'idle' | 'listening' | 'recognizing' | 'thinking' | 'speaking'
+// 对外公开接口保持原路径可导入（voice-bridge 等只依赖 ./voice.js）
+export type { VoiceStatus, VoiceStats } from './voice/status.js'
+export { TTS_VOICES, DEFAULT_VOICE, normalizeVoiceName, readStoredVoiceName } from './voice/voices.js'
 
-export type VoiceStats = {
-  windows: number          // 录过多少段
-  skippedSilent: number    // 因太安静被丢
-  uploaded: number         // 上传次数
-  asrFail: number          // 识别失败
-  asrTexts: number         // 识别出文字的段数
-  heard: number            // 通过过滤、真正交给上层的
-  echoDropped: number      // 被回声/重复过滤掉
-  shortDropped: number     // 刚朗读过、只听到 1~2 字碎片（回声残留）
-  ttsRequests: number      // 朗读请求数
-  ttsPlayed: number        // 真正开始播放
-  ttsFail: number          // 合成/播放失败
-  ttsZombie: number
-  dupDropped?: number      // 因重复被丢掉的识别结果（防重复回答）
-  lastError: string
-}
 
 export type VoiceOptions = {
   /** 识别到一句有效的话（已过滤回声/重复/黑名单） */
@@ -86,56 +97,13 @@ export type Voice = {
   status: () => VoiceStatus
 }
 
-// ---- 参数对齐 C# 版 tools/asr-listener.ps1（MaxMs=6000, SilenceMs=700, SilenceGate=600）----
-// 参考仓库：https://gitee.com/adengou/linyu  →  tools/asr-listener.ps1
-//   原始语义：连续采集 → 静音 700ms 判说完 → 最长 6000ms
-//   丢弃条件：时长 < 400ms 或 峰值 < SilenceGate(600/32768 ≈ -34.7 dBFS)
-const WINDOW_MS = 6000           // MaxMs
-const EARLY_STOP_QUIET = 700     // SilenceMs
-const MIN_SPEECH_MS = 400        // 原始：ms < 400 直接丢
-const SILENT_PEAK_DB = -35       // SilenceGate 换算：20*log10(600/32768) ≈ -34.7
-const ECHO_MUTE_MS = 700         // 朗读结束后继续静音的时间
-const ASR_TIMEOUT_MS = 15000
-const TTS_TIMEOUT_MS = 20000
-const TTS_SEG_MAX = 90
-// 叙述（说书/故事/诗歌）语速：可配置，默认 -25%（参考版默认 -15%，实测说书偏快）
-           // 一段朗读最多多少字
-const TTS_WATCH_MS = 1000        // 朗读看门狗间隔
-const TTS_ZOMBIE_MS = 2500       // 这么久没在播就复位
+// 录音端点参数（WINDOW_MS / EARLY_STOP_QUIET / MIN_SPEECH_MS / SILENT_PEAK_DB）与
+// TTS 计时参数（TTS_TIMEOUT_MS / TTS_ZOMBIE_MS / ECHO_MUTE_MS）已分别搬到
+// voice/recorder.ts 与 voice/tts-queue.ts，避免常量与实现分居两处。
+const ASR_TIMEOUT_MS = 15000        // 识别上传硬超时（TTS 的 20s 在 tts-queue.ts）
 
 // 噪声判定与宿主共用一份（shared/noise.ts），避免两边各写一套、缓存又把噪声写进去
 
-/**
- * 可用的音色 —— 与菜单「换个声音 ▸」的列表一一对应，也是 /tts 请求前的白名单。
- * 'auto' 不在 edge-tts 的语音表里，但宿主 routes/tts.ts 认它：按文本语言自动选晓伊/Ana。
- * 列表外的一律回退默认晓伊：绝不把坏值（旧配置、手改 localStorage）送给 edge-tts。
- */
-export const TTS_VOICES: string[] = [
-  'zh-CN-XiaoyiNeural',
-  'zh-CN-XiaoxiaoNeural',
-  'zh-CN-XiaochenNeural',
-  'zh-CN-YunxiNeural',
-  'zh-CN-YunyangNeural',
-  'en-US-AnaNeural',
-  'en-US-JennyNeural',
-  'en-GB-SoniaNeural',
-  'auto',
-]
-deepFreeze(TTS_VOICES)
-
-/** 默认音色：晓伊（与菜单默认与 C# 版一致） */
-export const DEFAULT_VOICE = 'zh-CN-XiaoyiNeural'
-
-/** 音色名规范化：白名单外（含空值/坏值）一律回退 */
-export function normalizeVoiceName(name: unknown, fallback: string = DEFAULT_VOICE): string {
-  const n = String(name == null ? '' : name).trim()
-  return TTS_VOICES.indexOf(n) >= 0 ? n : fallback
-}
-
-/** 读菜单里选过的音色（localStorage）；读不到或非法 → 默认晓伊 */
-export function readStoredVoiceName(): string {
-  try { return normalizeVoiceName(localStorage.getItem('chubby-tts-voice')) } catch (e) { return DEFAULT_VOICE }
-}
 
 export function createVoice(opts: VoiceOptions): Voice {
   const apiBase = opts.apiBase || '/api/chubby-whale'
@@ -146,22 +114,15 @@ export function createVoice(opts: VoiceOptions): Voice {
   // 想试自适应可在菜单里切换，随时能切回来。
   let epMode: 'ape' | 'classic' = readEndpointMode()
   const ape = new Ape()
-  let lastApe: any = null
-  let lastSeg: any = null
-  let lastTts: any = null
+  // 诊断快照（上一段录音 / 上一句朗读 / 当前 APE 帧）与统计对象由 voice/status.ts 持有
+  const diag = createDiagSnapshots()
+  const stats: VoiceStats = createVoiceStats()
 
-  const stats: VoiceStats = {
-    windows: 0, skippedSilent: 0, uploaded: 0, asrFail: 0, asrTexts: 0, heard: 0,
-    echoDropped: 0, shortDropped: 0, ttsRequests: 0, ttsPlayed: 0, ttsFail: 0, ttsZombie: 0, lastError: '',
-  }
-
-  // ---- 状态机 ----
-  let status: VoiceStatus = 'idle'
-  function setStatus(s: VoiceStatus): void {
-    if (status === s) return
-    status = s
+  // ---- 状态机（去重与回调隔离在 status.ts，转移判定仍只在这里） ----
+  const statusHolder = createStatusHolder((s: VoiceStatus) => {
     try { opts.onStatus && opts.onStatus(s) } catch (e) { }
-  }
+  })
+  const setStatus = statusHolder.set
 
   // ---- 采集 ----
   let stream: MediaStream | null = null
@@ -169,7 +130,7 @@ export function createVoice(opts: VoiceOptions): Voice {
   let analyser: AnalyserNode | null = null
   let rec: MediaRecorder | null = null
   let timeBuf: Float32Array | null = null
-  let byteBuf: Uint8Array | null = null   // getFloatTimeDomainData 缺失时（老 Safari）用它兜底
+  const levelBuf: LevelBox = { byte: null }   // getFloatTimeDomainData 缺失时（老 Safari）用它兜底
   let running = false
   // 录音编码：recMime 为空 = 不传 options（浏览器自选）；recFormat 是实际容器
   let recMime = ''
@@ -185,63 +146,32 @@ export function createVoice(opts: VoiceOptions): Voice {
   let asrNoKey = false
   let muted = false
 
-  // ---- 一段录音的状态 ----
-  let parts: Blob[] = []
-  let winPeak = -160
-  let speechMs = 0
-  let quietMs = 0
-  let winStart = 0
+  // ---- 一段录音的状态（parts / 峰值 / 说话时长 / 静音时长 / 段起点）----
+  const seg = createSegmentState()
   let tickTimer: any = null
   let restartTimer: any = null
 
-  // ---- 过滤状态 ----
-  let lastText = ''
-  let lastTextAt = 0
-  const spokenRecent: Array<{ text: string; at: number }> = []
-  const recentHeard: Array<{ text: string; at: number }> = []
+  // ---- 过滤状态（回声/短碎片/重复都收在 voice/echo-filter.ts，这里只留一个实例） ----
+  const echoFilter = createEchoFilter()
 
   // ---- 朗读 ----
-type Job = { seq: number; text: string; rate: string; pitch?: string; narration: boolean; attempts: number; strict: boolean; onDone?: () => void }
-  const ttsQ: Job[] = []
+  const ttsQ: TtsJob[] = []
   let ttsBusy = false
   let ttsAudio: HTMLAudioElement | null = null
   let ttsBusySince = 0
   let ttsSynthAt = 0   // 本段开始合成的时刻（0 = 未在合成）；看门狗据此区分"合成中"与"僵死"
   let ttsProgressAt = 0  // 本段最近一次"有进展"的时刻（开播/播放进度/收到新 chunk）；看门狗按它判停滞
-  let ttsCurJob: Job | null = null  // 当前正在处理的段：看门狗复位时要给它结账（回调 onDone）
+  let ttsCurJob: TtsJob | null = null  // 当前正在处理的段：看门狗复位时要给它结账（回调 onDone）
   let ttsWatch: any = null
   let mutedUntil = 0
   let speakToken = 0
 
-  /**
-   * 当前电平（dBFS）。
-   * · 优先 getFloatTimeDomainData（Chrome/Edge/Firefox、Safari 14.1+）；
-   * · 老 Safari 只有 getByteTimeDomainData：8bit 中心值 128 → 近似 [-1,1]；
-   * · 接口缺失或抛错一律返回 -160（静音），由 levelDead 决定要不要采信。
-   */
-  const level = () => {
-    const an: any = analyser
-    if (!an || !timeBuf) return -160
-    let ok = false
-    try {
-      if (typeof an.getFloatTimeDomainData === 'function') {
-        an.getFloatTimeDomainData(timeBuf as any)
-        ok = true
-      } else if (typeof an.getByteTimeDomainData === 'function') {
-        if (!byteBuf || byteBuf.length !== timeBuf.length) byteBuf = new Uint8Array(timeBuf.length)
-        an.getByteTimeDomainData(byteBuf as any)
-        for (let i = 0; i < timeBuf.length; i++) timeBuf[i] = (byteBuf[i] - 128) / 128
-        ok = true
-      }
-    } catch (e) { ok = false }
-    if (!ok) return -160
-    let sum = 0
-    for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i]
-    const rms = Math.sqrt(sum / timeBuf.length)
-    const db = 20 * Math.log10(rms + 1e-8)
+  /** 当前电平（dBFS）。降级路径（老 Safari 8bit）与"读不到返回 -160"都在 recorder.ts */
+  const level = (): number => {
+    const r = readLevel(analyser, timeBuf, levelBuf)
     // 有真实读数就说明 analyser 在工作（哪怕此刻很安静，底噪也不会正好等于 -160）
-    if (db > -159) levelOk = true
-    return db
+    if (r.db > -159) levelOk = true
+    return r.db
   }
 
   function micOn(on: boolean): void {
@@ -253,7 +183,7 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     try { if (rec && rec.state !== 'inactive') rec.stop() } catch (e) { }
     try { if (actx) actx.close() } catch (e) { }
     try { if (stream) stream.getTracks().forEach((t) => { t.stop() }) } catch (e) { }
-    rec = null; actx = null; analyser = null; stream = null; timeBuf = null; byteBuf = null
+    rec = null; actx = null; analyser = null; stream = null; timeBuf = null; levelBuf.byte = null
   }
 
   function unhookGestureResume(): void {
@@ -298,13 +228,10 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     if (!running || !rec) return
     try {
       if (rec.state !== 'inactive') { try { rec.stop() } catch (e) { } scheduleNext(200); return }
-      parts = []
-      winPeak = -160
-      speechMs = 0
-      quietMs = 0
-      winStart = performance.now()
+      // 每段复位：计数器不清会出现"完全听不到"（修过的真 bug）
+      resetSegmentState(seg, performance.now())
       ape.resetSegment()
-      lastApe = null
+      diag.setApe(null)
       rec.start()
       scheduleNext(0)  // 占位：下面立刻换成 tick 循环
       if (restartTimer) { clearTimeout(restartTimer); restartTimer = null }
@@ -321,15 +248,15 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       const db = level()
       // 探活：启动后 1.2 秒还读不到任何电平 → analyser 没在工作（典型是 AudioContext 被自动播放策略挂起）。
       // 此时绝不能继续按电平判静音，否则每段都被当"太安静"丢掉，表现就是"Safari 上开了麦却永远听不见"。
-      if (!levelOk && !levelDead && levelProbeAt && performance.now() - levelProbeAt > 1200) {
+      if (!levelOk && !levelDead && levelProbeAt && performance.now() - levelProbeAt > LEVEL_PROBE_MS) {
         levelDead = true
         try { opts.onDiag && opts.onDiag({ stage: 'analyser-dead', hint: '电平不可用，静音判定已降级（改按段长/体积）' }) } catch (e) { }
       }
       if (epMode === 'ape') {
         // APE 路径：判定全部交给 client/ape.ts（已用 10 个合成场景单测）
         const st = ape.step(db)
-        lastApe = st
-        if (db > winPeak) winPeak = db
+        diag.setApe(st)
+        notePeak(seg, db)
         if (st.commit && rec && rec.state === 'recording') {
           try { rec.stop() } catch (e) { }
           try { opts.onDiag && opts.onDiag({ stage: 'window-end', why: st.commitReason, floor: Math.round(st.floorDb) }) } catch (e) { }
@@ -337,29 +264,27 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
         }
         // 电平不可用：APE 会一直判"静音"、永不提交（它会静默重置窗口继续录）。
         // 这里按窗口上限强制收尾，交给 onWindowDone 的体积/时长兜底。
-        if (levelDead && performance.now() - winStart >= WINDOW_MS) {
+        if (shouldStopApeNoLevel(seg, levelDead, performance.now())) {
           try { rec.stop() } catch (e) { }
           try { opts.onDiag && opts.onDiag({ stage: 'window-end', why: 'no-level' }) } catch (e) { }
           return
         }
-        tickTimer = setTimeout(tick, 60)
+        tickTimer = setTimeout(tick, TICK_MS)
         return
       }
-      if (db > winPeak) winPeak = db
       const now = performance.now()
-      const elapsed = now - winStart
-      if (db > (muted ? 0 : -45)) { speechMs += 60; quietMs = 0 } else { quietMs += 60 }
-      const earlyStop = speechMs >= MIN_SPEECH_MS && quietMs >= EARLY_STOP_QUIET
-      const tooLong = elapsed >= WINDOW_MS
-      if (earlyStop || tooLong) {
+      notePeak(seg, db)
+      accrueClassic(seg, db, muted)
+      const why = shouldStopClassic(seg, now)
+      if (why) {
         try { rec.stop() } catch (e) { }
-        try { opts.onDiag && opts.onDiag({ stage: 'window-end', why: earlyStop ? 'quiet' : 'timeout', peak: Math.round(winPeak), speechMs }) } catch (e) { }
+        try { opts.onDiag && opts.onDiag({ stage: 'window-end', why, peak: Math.round(seg.peakDb), speechMs: seg.speechMs }) } catch (e) { }
         return   // onstop 里继续
       }
-      tickTimer = setTimeout(tick, 60)
+      tickTimer = setTimeout(tick, TICK_MS)
     } catch (e: any) {
       stats.lastError = 'tick: ' + String(e && e.name)
-      tickTimer = setTimeout(tick, 120)
+      tickTimer = setTimeout(tick, TICK_ERROR_MS)
     }
   }
 
@@ -374,18 +299,17 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
     // levelDead（analyser 不可用）时没有可信电平，跳过静音判定，只按体积/回声窗兜底。
     if (!levelDead) {
       if (epMode === 'ape') {
-        const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150)
-        if (!okSpeech) { stats.skippedSilent++; scheduleNext(150); return }
-      } else if (winPeak < SILENT_PEAK_DB) { stats.skippedSilent++; scheduleNext(150); return }
+        if (!hadApeSpeech(diag.getApe())) { stats.skippedSilent++; scheduleNext(150); return }
+      } else if (isSilentPeak(seg.peakDb)) { stats.skippedSilent++; scheduleNext(150); return }
     }
     if (Date.now() < mutedUntil) { stats.skippedSilent++; scheduleNext(150); return }
-    if (blob.size < 1200) { stats.skippedSilent++; scheduleNext(150); return }
+    if (isTooSmallSegment(blob.size)) { stats.skippedSilent++; scheduleNext(150); return }
 
     stats.uploaded++
     setStatus('recognizing')
     try {
       // 编码协商 + Safari 的 mp4→WAV：上传前的容器转换都在这里（client/audio-codec.ts 提供纯函数）
-      const wire = await prepareAudioForAsr(blob)
+      const wire = await prepareAudioForAsr(blob, { actx, recMime, onDiag: opts.onDiag })
       if (!wire || !wire.base64) { stats.asrFail++; stats.lastError = 'b64-empty'; return }
       const asrCtl = typeof AbortController !== 'undefined' ? new AbortController() : null
       if (asrCtl) asrAborts.add(asrCtl)
@@ -413,14 +337,32 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
         return
       }
       if (!data || !data.ok) { stats.asrFail++; stats.lastError = 'asr: ' + String((data && data.error) || 'failed'); return }
-      try { lastSeg = { mode: epMode, fmt: wire.format, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) } } catch (e) { }
+      try {
+        const cur = diag.getApe()
+        diag.setSegment({
+          mode: epMode,
+          fmt: wire.format,
+          winMs: Math.round(performance.now() - seg.startedAt),
+          peMs: cur ? cur.speechMs : seg.speechMs,
+          quMs: cur ? cur.quietMs : seg.quietMs,
+          floor: cur ? Math.round(cur.floorDb) : null,
+          target: cur ? cur.quietTargetMs : null,
+          text: String(data.text || '').slice(0, 24),
+        })
+      } catch (e) { }
       const text = String(data.text || '').trim()
       if (!text) return
       stats.asrTexts++
-      if (acceptText(text)) {
+      // 丢弃原因只在这里记一次（过滤器内部不再动 stats：原来同一个事件会被记两遍）
+      const verdict = echoFilter.accept(text)
+      if (verdict.ok) {
         stats.heard++
         setStatus('thinking')
         try { opts.onHeard(text) } catch (e) { }
+      } else if (verdict.reason === 'short') {
+        stats.shortDropped = (stats.shortDropped || 0) + 1
+      } else if (verdict.reason === 'dup') {
+        stats.dupDropped = (stats.dupDropped || 0) + 1
       } else {
         stats.echoDropped++
       }
@@ -428,64 +370,10 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       stats.asrFail++
       stats.lastError = 'asr-ex: ' + String((e && e.name) || e)
     } finally {
-      if (status === 'recognizing') setStatus('listening')
+      if (statusHolder.get() === 'recognizing') setStatus('listening')
       // 只有录音器空闲时才排下一段：否则会打断正在录的段（会丢开头几个字）
       if (!rec || rec.state === "inactive") scheduleNext(150)
     }
-  }
-
-  /** 过滤：静音噪声 / 自身回声 / 短时间重复 */
-  function acceptText(text: string): boolean {
-    const plain = text.replace(/[\s。，！？,.!?、…~～]/g, '')
-    const plainKey = echoKey(text)
-    // 单字放行白名单：主人喊「停！」也要能打断说书/朗读
-    if (plain.length < 2 && !/^[停别不]$/.test(plain)) return false
-    if (isNoiseText(plain)) return false
-    if (/^本鱼在听/.test(plain)) return false
-    // 自己刚说过的话（回声）
-    const now = Date.now()
-    let hadRecentSpeech = false
-    for (const s of spokenRecent) {
-      if (now - s.at > 15000) continue
-      if (now - s.at <= 8000) hadRecentSpeech = true
-      const target = s.text.replace(/[\s。，！？,.!?、…~～]/g, '')
-      if (!target) continue
-      // 去掉动作描写后的比对（专治"星号"回声）
-      const targetKey = echoKey(s.text)
-      if (plainKey && targetKey && (plainKey === targetKey || (targetKey.length >= 6 && plainKey.indexOf(targetKey.slice(0, 6)) >= 0))) {
-        try { stats.echoDropped++ } catch (e) { }
-        return false
-      }
-      if (plain === target) return false
-      if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return false
-      if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return false
-      // 短词回声：主人说 "master"，本鲸回复里也含 master，麦克风会把它听回去 → 就变成"说两遍"
-      if (plain.length >= 3 && now - s.at < 6000 && target.indexOf(plain) >= 0) { try { stats.echoDropped++ } catch (e) { } ; return false }
-    }
-    // 刚朗读过又只听到 1~2 字 → 大概率是自己的回声碎片（实测「的歪」这类会被当成主人发言）
-    if (isShortEchoFragment(plain, hadRecentSpeech)) {
-      try { stats.shortDropped = (stats.shortDropped || 0) + 1 } catch (e) { }
-      return false
-    }
-    // 去重统一走 client/sim.ts 的相似度算法（bigram Jaccard）：
-    // 窗口 8 秒、阈值 0.90 —— 只挡"刚说过的同一句被切成两段"，主人隔一会儿再说不会被吞。
-    if (isRepeat(plain, { recent: recentHeard, windowMs: 8000, threshold: 0.9, minLen: 4, now })) {
-      try { stats.dupDropped = (stats.dupDropped || 0) + 1 } catch (e) { }
-      return false
-    }
-    recentHeard.push({ text, at: now })
-    while (recentHeard.length > 3) recentHeard.shift()
-    if (text === lastText && now - lastTextAt < 8000) return false
-    lastText = text
-    lastTextAt = now
-    return true
-  }
-
-  function noteSpoken(text: string): void {
-    const t = String(text || '').trim()
-    if (!t) return
-    spokenRecent.push({ text: t, at: Date.now() })
-    while (spokenRecent.length > 12) spokenRecent.shift()
   }
 
   // ---- 朗读 ----
@@ -517,6 +405,8 @@ type Job = { seq: number; text: string; rate: string; pitch?: string; narration:
       ttsCurJob = null
       // 令牌作废：在途的合成回调/play 回调回来时被 token 校验拦住，不会把这一段又开播一遍
       speakToken++
+      // 看门狗自己是"结账方"：把这段的令牌同步到新纪元，finishJob 才能在结账后继续 pump
+      if (dead) dead.token = speakToken
       try { if (ttsAudio) { ttsAudio.pause(); ttsAudio.onended = null; ttsAudio.onerror = null } } catch (e) { }
       ttsAudio = null
       ttsSynthAt = 0
@@ -547,7 +437,7 @@ const asrAborts = new Set<AbortController>()
   let ttsSeq = 0
 
   // 合成一段（带超时）。失败返回 null —— 对应 C# 的 wav == null
-  function synth(job: Job): Promise<ArrayBuffer | null> {
+  function synth(job: TtsJob): Promise<ArrayBuffer | null> {
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
     if (ctl) ttsAborts.add(ctl)
     return fetchWithTimeout(apiBase + '/tts', {
@@ -570,22 +460,9 @@ const asrAborts = new Set<AbortController>()
   //   browserVoiceUsable() —— 是否值得一试
   //   speakViaBrowser()    —— 念一段，Promise 永远 resolve（内部看门狗）
 
-  /**
-   * 自适应停顿：照真人换气节奏给不同标点不同停顿
-   *   。！？ → 260ms（一句结束，标准值照参考实现）
-   *   ，、； → 140ms（句内小停顿，别拖）
-   *   其他   → 200ms（没标点时取中）
-   */
-  function narrationPauseFor(text: string): number {
-    const t = String(text || '').trim()
-    if (!t) return 200
-    const last = t.slice(-1)
-    if (/[。！？!?…]/.test(last)) return 260
-    if (/[，、；,;]/.test(last)) return 140
-    return 200
-  }
+  // 叙述换气停顿（narrationPauseFor）在 voice/tts-queue.ts：纯函数，单测可覆盖
 
-  function finishJob(j: Job): void {
+  function finishJob(j: TtsJob): void {
     ttsBusy = false
     if (ttsCurJob === j) ttsCurJob = null
     ttsProgressAt = 0
@@ -593,8 +470,17 @@ const asrAborts = new Set<AbortController>()
     setTimeout(() => { if (!ttsBusy && !muted) micOn(true) }, ECHO_MUTE_MS)
     try { j.onDone && j.onDone() } catch (e) { }
     // 叙述模式：段间 260ms 换气停顿（C# NarrationPauseMs）
-    if (j.narration && ttsQ.length > 0) setTimeout(() => pumpTts(), narrationPauseFor(j.text))
-    else pumpTts()
+    if (j.narration && ttsQ.length > 0) {
+      const token = j.token
+      setTimeout(() => {
+        // 审计补丁：原来这里没有令牌守卫，停止说话后迟到的续播定时器还会再 pump 一次
+        // （队列已清空 → 只把状态回写成 listening）。
+        if (isStaleToken(token, speakToken)) return
+        try { pumpTts() } catch (e) { }
+      }, narrationPauseFor(j.text))
+    } else {
+      pumpTts()
+    }
   }
 
   function pumpTts(): void {
@@ -606,6 +492,7 @@ const asrAborts = new Set<AbortController>()
     ttsProgressAt = Date.now()
     ttsCurJob = job
     const myToken = ++speakToken
+    job.token = myToken
     setStatus('speaking')
     // 不在合成开始时就闭麦：合成要 3~4 秒，提前闭麦会让主人这几秒说的话全丢；
     // 真正闭麦放到「开播前」（见下面 a.play() 之前），重试等待期间也保持开麦
@@ -615,13 +502,13 @@ const asrAborts = new Set<AbortController>()
     const cur = ttsPrefetch.get(job.seq) || synth(job)
     ttsSynthAt = Date.now()
     ttsPrefetch.delete(job.seq)
-    // 当前段开播前就把下一段合成压上去（C# 的 prefetch）
-    const next = ttsQ[0]
-    if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next))
-    // 叙述（念诗/说书）句子短、段间停顿明显：再多预取一段，减少"等合成"的空档。
-    // 普通聊天首段短、后面长，只预取一段就够，避免把 worker 队列塞满。
-    const next2 = ttsQ[1]
-    if (job.narration && next2 && !ttsPrefetch.has(next2.seq)) ttsPrefetch.set(next2.seq, synth(next2))
+    // 当前段开播前就把下一段合成压上去（C# 的 prefetch）；叙述（念诗/说书）句子短、段间停顿明显，
+    // 再多预取一段，减少"等合成"的空档。普通聊天只预取一段，避免把 worker 队列塞满。
+    const wants = prefetchTargets(ttsQ, job.narration)
+    for (let i = 0; i < wants.length; i++) {
+      const target = wants[i]
+      if (!ttsPrefetch.has(target.seq)) ttsPrefetch.set(target.seq, synth(target))
+    }
 
     cur.then((buf) => {
       // 令牌校验必须放最前：这一段如果已被 stopSpeaking / 看门狗作废，
@@ -630,18 +517,19 @@ const asrAborts = new Set<AbortController>()
       if (myToken !== speakToken) return
       ttsSynthAt = 0
       if (!buf) {
-        // 失败：最多重试 3 次（每次间隔递增）。绝不静默跳过——跳过就是'少内容'。
-        if (job.attempts < 3) {
+        // 失败：最多重试 TTS_RETRY_MAX 次（每次间隔递增）。绝不静默跳过——跳过就是'少内容'。
+        if (job.attempts < TTS_RETRY_MAX) {
           job.attempts++
           ttsQ.unshift(job)
           ttsBusy = false
-          const backoff = 300 * job.attempts
+          const backoff = ttsRetryDelayMs(job.attempts)
           try { (window as any).__chubbyWhale.ttsRetry = ((window as any).__chubbyWhale.ttsRetry || 0) + 1 } catch (e) { }
-          setTimeout(() => { try { pumpTts() } catch (e) { } }, backoff)
+          // 令牌守卫：停止说话后这次重试不能再把状态机拉起来
+          setTimeout(() => { if (myToken !== speakToken) return; try { pumpTts() } catch (e) { } }, backoff)
           return
         }
         stats.ttsFail++
-        try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
+        try { diag.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
         try {
           const w: any = (window as any).__chubbyWhale
           w.ttsLost = w.ttsLost || []
@@ -651,7 +539,12 @@ const asrAborts = new Set<AbortController>()
         // 系统语音兜底：只有真的有可用语音时才用（没语音就当场静音，等于丢内容）
         // 试听（strict）不兜底：否则换了音色听起来还是系统音，等于没接线
         const canBrowser = !job.strict && browserVoiceUsable()
-        if (canBrowser) speakViaBrowser(job.text).then(() => finishJob(job))
+        if (canBrowser) speakViaBrowser(job.text).then(() => {
+          // 审计补丁：浏览器兜底可能念很久，念完时这一段可能已被停止/看门狗作废；
+          // 没有这道令牌守卫就会在停止后仍回调 onDone（说书锁被解开）并把状态回写成 listening。
+          if (myToken !== speakToken) return
+          finishJob(job)
+        })
         else finishJob(job)
         return
       }
@@ -664,17 +557,23 @@ const asrAborts = new Set<AbortController>()
       // 而不是按段开始时刻一刀切。
       const bump = () => { ttsProgressAt = Date.now() }
       try { a.onplaying = bump; a.ontimeupdate = bump; a.onprogress = bump; a.onloadeddata = bump } catch (e) { }
-      const finish = () => {
+      // played 区分 onended（真播完）与 onerror（解码/播放出错）：原来两者都记"已开播"，统计虚高
+      const finish = (played: boolean) => {
         if (myToken !== speakToken) { try { URL.revokeObjectURL(url) } catch (e) { } return }
         try { a.onended = null; a.onerror = null } catch (e) { }
         try { URL.revokeObjectURL(url) } catch (e) { }
         ttsAudio = null
-        stats.ttsPlayed++
-        try { lastTts = { failed: false, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
+        if (played) {
+          stats.ttsPlayed++
+          try { diag.setTts({ failed: false, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+        } else {
+          stats.ttsFail++
+          try { diag.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
+        }
         finishJob(job)
       }
-      a.onended = finish
-      a.onerror = finish
+      a.onended = () => finish(true)
+      a.onerror = () => finish(false)
       // 开播前才闭麦：合成期间麦克风保持开（主人插话能听到），播放结束 finishJob 里 700ms 后恢复
       micOn(false)
       a.play().catch(() => {
@@ -684,7 +583,7 @@ const asrAborts = new Set<AbortController>()
         // 播放没起来：先恢复麦克风再重试，别让麦一直关着（重试等待期间要能听见主人）
         if (!muted) micOn(true)
         stats.ttsFail++
-        try { lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() } } catch (e) { }
+        try { diag.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() }) } catch (e) { }
         try { a.onended = null; a.onerror = null; URL.revokeObjectURL(url) } catch (e) { }
         ttsAudio = null
         // 播放被拒绝：先重试一次（换新音频元素），仍不行才用系统语音；没语音说明当场静音，记为丢失
@@ -692,32 +591,53 @@ const asrAborts = new Set<AbortController>()
           job.attempts++
           ttsQ.unshift(job)
           ttsBusy = false
-          setTimeout(() => { try { pumpTts() } catch (e) { } }, 250)
+          setTimeout(() => { if (myToken !== speakToken) return; try { pumpTts() } catch (e) { } }, 250)
           return
         }
         const canBrowser2 = !job.strict && browserVoiceUsable()
-        if (canBrowser2) speakViaBrowser(job.text).then(() => finishJob(job))
+        if (canBrowser2) speakViaBrowser(job.text).then(() => {
+          if (myToken !== speakToken) return
+          finishJob(job)
+        })
         else finishJob(job)
       })
     })
   }
 
-  /** 1:1 移植 C# TextTools.SplitForTts：首段 ≤14 字；边界字符需距上一切点 ≥ cap/3 */
+  /** 硬切点若落在英文单词/数字串内部，回退到词首（整段都是一个超长词时只能原样硬切） */
   function splitForTts(text: string, maxLen = 56): string[] {
     const out: string[] = []
     const src = String(text || '')
     if (!src.trim()) return out
     if (maxLen < 8) maxLen = 8
     const firstMax = Math.min(maxLen, 14)
+    // 审计补丁：硬切（攒到 cap）原先直接按长度切，会把英文单词/数字串从中间劈开
+    // （"unbelievable" → "unbeliev|able"、"2026" → "20|26"），TTS 会把半截词按字母念。
+    // 现在硬切点落在连续的 [A-Za-z0-9] 串内部时向前回退到词首；回退不丢字（整词落到下一段），
+    // 首段只会更短，不破坏“首段 ≤14 字”的契约。标点边界（boundary）不回退。
+    const isWordChar = function (ch) { return /[A-Za-z0-9]/.test(ch) }
     let sbuf = ''
     for (const c of src) {
       sbuf += c
       const boundary = /[。，！？!?；;、,\n]/.test(c)
       const cap = out.length === 0 ? firstMax : maxLen
-      if (sbuf.length >= cap || (boundary && sbuf.length >= Math.max(8, Math.floor(cap / 3)))) {
-        const seg = sbuf.trim()
+      const atBoundary = boundary && sbuf.length >= Math.max(8, Math.floor(cap / 3))
+      if (sbuf.length >= cap || atBoundary) {
+        let cut = sbuf.length
+        if (!atBoundary) {
+          const limit = Math.min(sbuf.length, cap)
+          // 末尾若是连续的 [A-Za-z0-9] 串，说明这里可能正是一个单词/数字串的中段
+          // （下一个字符还没收进来，无法判断它是否已结束）→ 保守回退到串首，
+          // 整词落到下一段。代价只是偶尔把恰好结束在 cap 的整词挪后，不丢字也不劈开。
+          if (limit > 1 && isWordChar(sbuf[limit - 1])) {
+            let back = limit
+            while (back > 0 && isWordChar(sbuf[back - 1])) back--
+            if (back > 0) cut = back
+          }
+        }
+        const seg = sbuf.slice(0, cut).trim()
         if (seg) out.push(seg)
-        sbuf = ''
+        sbuf = sbuf.slice(cut)
       }
     }
     const rest = sbuf.trim()
@@ -725,103 +645,8 @@ const asrAborts = new Set<AbortController>()
     return out
   }
 
-  // ---- 上传前的容器准备（Safari 兼容的关键一段）----
-  /** Blob → ArrayBuffer；用 FileReader（Blob.arrayBuffer() 在老 Safari 上没有） */
-  function readBlobBuffer(blob: Blob): Promise<ArrayBuffer | null> {
-    return new Promise((resolve) => {
-      try {
-        const fr = new FileReader()
-        fr.onload = () => resolve((fr.result as ArrayBuffer) || null)
-        fr.onerror = () => resolve(null)
-        fr.readAsArrayBuffer(blob)
-      } catch (e) { resolve(null) }
-    })
-  }
-
-  /**
-   * mp4 → 16bit 单声道 WAV。
-   * 只用于"Safari 只能录 mp4"这一种情况：宿主白名单不含 mp4（webm/wav/mp3），转 wav 才稳。
-   * decodeAudioData 在旧 Safari 只有回调式（Promise 式 14.1 才有），两种都接；
-   * 3 秒没回调就当失败 → 回退原字节，绝不让转码把识别卡死。
-   */
-  function transcodeToWav(blob: Blob): Promise<Blob | null> {
-    return new Promise((resolve) => {
-      const ctx: any = actx
-      if (!ctx || typeof ctx.decodeAudioData !== 'function') { resolve(null); return }
-      let settled = false
-      const done = (wav: Blob | null) => { if (settled) return; settled = true; resolve(wav) }
-      const finish = (buf: any) => {
-        try {
-          if (!buf || !buf.numberOfChannels) { done(null); return }
-          const chans: Float32Array[] = []
-          const n = Math.min(2, Number(buf.numberOfChannels) || 1)
-          for (let i = 0; i < n; i++) chans.push(buf.getChannelData(i))
-          const mono = downmixToMono(chans)
-          // 宿主解码后上限 8MB：转出来超 6MB 就别传了，按原字节回退
-          if (wavBytes(mono.length / (Number(buf.sampleRate) || 48000), buf.sampleRate) > 6 * 1024 * 1024) { done(null); return }
-          done(new Blob([encodeWavPcm16(mono, buf.sampleRate)], { type: 'audio/wav' }))
-        } catch (e) { done(null) }
-      }
-      readBlobBuffer(blob).then((ab) => {
-        if (!ab) { done(null); return }
-        try {
-          const ret: any = ctx.decodeAudioData(ab, finish, () => done(null))
-          if (ret && typeof ret.then === 'function') ret.then(finish).catch(() => done(null))
-        } catch (e) { done(null) }
-      })
-      setTimeout(() => done(null), 3000)
-    })
-  }
-
-  /**
-   * 上传前准备：确定实际容器；mp4 先转 WAV，转不动就按原字节走。
-   * 返回的 format 一定是宿主认识的值（webm/wav/mp3）。
-   */
-  async function prepareAudioForAsr(blob: Blob): Promise<{ base64: string; format: 'webm' | 'wav' | 'mp3' } | null> {
-    let src: Blob = blob
-    let fmt: RecFormat = formatFromMime(blob.type || recMime)
-    if (fmt === 'mp4') {
-      const wav = await transcodeToWav(blob)
-      if (wav) { src = wav; fmt = 'wav' } else {
-        try { opts.onDiag && opts.onDiag({ stage: 'mp4-no-transcode', hint: 'mp4 没能转成 wav，按原字节上传' }) } catch (e) { }
-      }
-    }
-    const b64 = await blobToBase64(src)
-    if (!b64) return null
-    return { base64: b64, format: hostAsrFormat(fmt) }
-  }
-
-  async function blobToBase64(blob: Blob): Promise<string> {
-    return new Promise((resolve) => {
-      try {
-        const fr = new FileReader()
-        fr.onloadend = () => {
-          const s = String(fr.result || '')
-          resolve(s.indexOf(',') >= 0 ? s.slice(s.indexOf(',') + 1) : s)
-        }
-        fr.readAsDataURL(blob)
-      } catch (e) { resolve('') }
-    })
-  }
-
-  async function fetchWithTimeout(url: string, init: RequestInit, ms: number, outer?: AbortSignal): Promise<Response> {
-    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
-    const timer = ctl ? setTimeout(() => { try { ctl.abort() } catch (e) { } }, ms) : null
-    // 外部 signal（停止说话）与超时任何一个触发都要中断请求
-    let sig: AbortSignal | undefined = ctl ? ctl.signal : undefined
-    if (outer) {
-      try {
-        sig = (ctl && typeof (AbortSignal as any).any === 'function')
-          ? (AbortSignal as any).any([ctl.signal, outer])
-          : (outer || ctl.signal)
-      } catch (e) { sig = outer || sig }
-    }
-    try {
-      return await fetch(url, sig ? { ...init, signal: sig } : init)
-    } finally {
-      if (timer) clearTimeout(timer)
-    }
-  }
+  // 上传前的容器准备（mp4→wav / base64 / FileReader 兜底）在 voice/asr-audio.ts；
+  // 带硬超时的 fetch 在 voice/fetch.ts。这里只调用。
 
   // ---- 对外接口 ----
   async function start(): Promise<void> {
@@ -873,15 +698,14 @@ const asrAborts = new Set<AbortController>()
         recFormat = 'webm'
       }
       try { opts.onDiag && opts.onDiag({ stage: 'recorder', mime: recMime || '(default)', fmt: recFormat }) } catch (e) { }
-      rec.ondataavailable = (e: BlobEvent) => { if (e.data && e.data.size > 0) parts.push(e.data) }
+      rec.ondataavailable = (e: BlobEvent) => { if (e.data && e.data.size > 0) addChunk(seg, e.data) }
       rec.onstop = () => {
         // 已经 stop() 了：这段残响不能再走识别（哪怕录音器自己又 stop 了一次）
-        if (!running) { parts = []; return }
+        if (!running) { clearChunks(seg); return }
         // blob 的 type 用录音器实际报的 mime（Safari 这里是 audio/mp4），绝不写死 webm：
         // 写死会让后面的 format 归类拿到错误容器，Safari 的 mp4 就永远走不到转 wav 那条路。
         const blobType = String((rec && (rec as any).mimeType) || recMime || 'audio/webm')
-        const blob = new Blob(parts, { type: blobType })
-        parts = []
+        const blob = takeBlob(seg, blobType)
         void onWindowDone(blob)
       }
       rec.onerror = (e: any) => { stats.lastError = 'recorder: ' + String(e && e.error && e.error.name) ; scheduleNext(800) }
@@ -932,18 +756,17 @@ const asrAborts = new Set<AbortController>()
     const strict = !!(o && o.strict)
     const segs = splitForTts(raw, 56)
     if (!segs.length) return
-    noteSpoken(raw)
-    for (let i = 0; i < segs.length; i++) {
-      ttsQ.push({
-        seq: ++ttsSeq,
-        text: segs[i],
-        rate,
-        narration,
-        attempts: 0,
-        strict,
-        onDone: i === segs.length - 1 ? (o && o.onDone) : undefined,
-      })
-    }
+    echoFilter.noteSpoken(raw)
+    // 队列任务由 voice/tts-queue.ts 构造（只有最后一段挂 onDone，seq 连续递增）
+    const jobs = buildTtsJobs(segs, {
+      rate,
+      narration,
+      strict,
+      nextSeq: ttsSeq + 1,
+      onDone: o && o.onDone,
+    })
+    ttsSeq += segs.length
+    for (let i = 0; i < jobs.length; i++) ttsQ.push(jobs[i])
     pumpTts()
   }
 
@@ -966,7 +789,8 @@ const asrAborts = new Set<AbortController>()
     try { const s: any = (window as any).speechSynthesis; if (s && typeof s.cancel === 'function') s.cancel() } catch (e) { }
     if (!muted) micOn(true)
     mutedUntil = Date.now() + ECHO_MUTE_MS
-    setStatus('listening')
+    // 没开麦时不能报「在听」：原来无条件 listening，菜单试听/停止后状态会假装麦克风开着
+    setStatus(running ? 'listening' : 'idle')
   }
 
   return {
@@ -975,17 +799,17 @@ const asrAborts = new Set<AbortController>()
     speak,
     stopSpeaking,
     speaking: () => ttsBusy,
-    recognizing: () => status === 'recognizing',
+    recognizing: () => statusHolder.get() === 'recognizing',
     setEndpointMode: (m: 'ape' | 'classic') => { epMode = normalizeEndpointMode(m); writeEndpointMode(epMode) },
     // 端点检测：报告当前实际生效的模式（ape / classic），不再写死 classic
     endpointInfo: () => ({ mode: epMode }),
-    lastSegment: () => lastSeg,
-    lastTtsInfo: () => lastTts,
+    lastSegment: () => diag.getSegment(),
+    lastTtsInfo: () => diag.getTts(),
     // 立即换音色：下一个 /tts 请求就带新 voice（不重建实例）；白名单外的值不改
     setVoiceName: (n: string) => { voiceName = normalizeVoiceName(n, voiceName) },
     voiceName: () => voiceName,
     mute: (on: boolean) => { muted = on; micOn(!on) },
     stats,
-    status: () => status,
+    status: () => statusHolder.get(),
   }
 }

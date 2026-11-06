@@ -1184,50 +1184,6 @@
     }
   };
 
-  // src/client/sim.ts
-  function normalizeText(s) {
-    return String(s || "").toLowerCase().replace(/[\s\u3000]+/g, "").replace(/[\s。，！？、；：,.!?;:"'”’“”（）()【】\[\]<>《》~～`@#$%^&*_+=|\\/-]/g, "");
-  }
-  function bigrams(s) {
-    const out = /* @__PURE__ */ new Set();
-    const t = String(s || "");
-    if (!t) return out;
-    if (t.length === 1) {
-      out.add(t);
-      return out;
-    }
-    for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
-    return out;
-  }
-  function similarity(a, b) {
-    const A = bigrams(normalizeText(a));
-    const B = bigrams(normalizeText(b));
-    if (A.size === 0 || B.size === 0) return 0;
-    let inter = 0;
-    for (const g of A) if (B.has(g)) inter++;
-    const union = A.size + B.size - inter;
-    return union === 0 ? 0 : inter / union;
-  }
-  function isRepeat(text, opts) {
-    const threshold = opts.threshold === void 0 ? 0.85 : opts.threshold;
-    const minLen = opts.minLen === void 0 ? 4 : opts.minLen;
-    const windowMs = opts.windowMs === void 0 ? 2e4 : opts.windowMs;
-    const now = opts.now === void 0 ? Date.now() : opts.now;
-    const cur = normalizeText(text);
-    if (!cur) return false;
-    for (const item of opts.recent || []) {
-      if (now - Number(item && item.at || 0) > windowMs) continue;
-      const prev = normalizeText(item && item.text ? item.text : "");
-      if (!prev) continue;
-      if (cur === prev) return true;
-      const shortOne = cur.length <= prev.length ? cur : prev;
-      const longOne = cur.length <= prev.length ? prev : cur;
-      if (shortOne.length >= minLen && longOne.indexOf(shortOne) >= 0) return true;
-      if (cur.length >= minLen && prev.length >= minLen && similarity(cur, prev) >= threshold) return true;
-    }
-    return false;
-  }
-
   // src/client/text.ts
   function collapseText(raw) {
     return String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
@@ -1369,42 +1325,6 @@
         return take(true);
       }
     };
-  }
-
-  // src/shared/noise.ts
-  var NOISE_TEXTS = [
-    "\u55EF",
-    "\u5443",
-    "\u554A",
-    "\u54E6",
-    "\u6069",
-    "\u55EF\u55EF",
-    "\u554A\u554A",
-    "\u8C22\u8C22\u89C2\u770B",
-    "\u8C22\u8C22\u5927\u5BB6",
-    "\u5B57\u5E55",
-    "\u8BF7\u4E0D\u541D\u70B9\u8D5E",
-    "\u70B9\u8D5E",
-    "\u8BA2\u9605",
-    "\u8F6C\u53D1",
-    "\u6253\u8D4F",
-    "\u518D\u89C1",
-    "\u672C\u9C7C\u5728\u542C",
-    "\u55EF\u672C\u9C7C\u5728\u542C",
-    "\u5B57\u5E55\u7531",
-    "\u660E\u955C\u4E0E\u70B9\u70B9"
-  ];
-  deepFreeze(NOISE_TEXTS);
-  function normalizeNoiseKey(text) {
-    return String(text == null ? "" : text).replace(/\s+/g, "").replace(/[。，、！？；：,.!?;:…~～·""''（）()【】\[\]]/g, "").toLowerCase();
-  }
-  function isNoiseText(text) {
-    const k = normalizeNoiseKey(text);
-    if (!k) return true;
-    if (k.length <= 1) return true;
-    if (NOISE_TEXTS.indexOf(k) >= 0) return true;
-    if (k.length <= 6 && /^([\u4e00-\u9fa5])\1{2,}$/.test(k)) return true;
-    return false;
   }
 
   // src/client/playback.ts
@@ -1623,16 +1543,301 @@
     });
   }
 
-  // src/client/voice.ts
-  var WINDOW_MS = 6e3;
-  var EARLY_STOP_QUIET = 700;
-  var MIN_SPEECH_MS = 400;
-  var SILENT_PEAK_DB = -35;
-  var ECHO_MUTE_MS = 700;
-  var ASR_TIMEOUT_MS = 15e3;
-  var TTS_TIMEOUT_MS = 2e4;
-  var TTS_WATCH_MS = 1e3;
-  var TTS_ZOMBIE_MS = 2500;
+  // src/client/voice/asr-audio.ts
+  function readBlobBuffer(blob) {
+    return new Promise((resolve) => {
+      try {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result || null);
+        fr.onerror = () => resolve(null);
+        fr.readAsArrayBuffer(blob);
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }
+  function transcodeToWav(blob, actx, maxWavBytes = 6 * 1024 * 1024) {
+    return new Promise((resolve) => {
+      const ctx = actx;
+      if (!ctx || typeof ctx.decodeAudioData !== "function") {
+        resolve(null);
+        return;
+      }
+      let settled = false;
+      let timeout = null;
+      const done = (wav) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) {
+          try {
+            clearTimeout(timeout);
+          } catch (e) {
+          }
+        }
+        resolve(wav);
+      };
+      const finish = (buf) => {
+        try {
+          if (!buf || !buf.numberOfChannels) {
+            done(null);
+            return;
+          }
+          const chans = [];
+          const n = Math.min(2, Number(buf.numberOfChannels) || 1);
+          for (let i = 0; i < n; i++) chans.push(buf.getChannelData(i));
+          const mono = downmixToMono(chans);
+          if (wavBytes(mono.length / (Number(buf.sampleRate) || 48e3), buf.sampleRate) > maxWavBytes) {
+            done(null);
+            return;
+          }
+          done(new Blob([encodeWavPcm16(mono, buf.sampleRate)], { type: "audio/wav" }));
+        } catch (e) {
+          done(null);
+        }
+      };
+      readBlobBuffer(blob).then((ab) => {
+        if (!ab) {
+          done(null);
+          return;
+        }
+        try {
+          const ret = ctx.decodeAudioData(ab, finish, () => done(null));
+          if (ret && typeof ret.then === "function") ret.then(finish).catch(() => done(null));
+        } catch (e) {
+          done(null);
+        }
+      });
+      timeout = setTimeout(() => done(null), 3e3);
+    });
+  }
+  function blobToBase64(blob) {
+    return new Promise((resolve) => {
+      try {
+        const fr = new FileReader();
+        fr.onloadend = () => {
+          const s = String(fr.result || "");
+          resolve(s.indexOf(",") >= 0 ? s.slice(s.indexOf(",") + 1) : s);
+        };
+        fr.onerror = () => resolve("");
+        fr.readAsDataURL(blob);
+      } catch (e) {
+        resolve("");
+      }
+    });
+  }
+  async function prepareAudioForAsr(blob, deps) {
+    const recMime = String(deps && deps.recMime || "");
+    const onDiag = deps && deps.onDiag;
+    const maxWavBytes = deps && typeof deps.maxWavBytes === "number" ? deps.maxWavBytes : 6 * 1024 * 1024;
+    let src = blob;
+    let fmt = formatFromMime(blob.type || recMime);
+    if (fmt === "mp4") {
+      const wav = await transcodeToWav(blob, deps && deps.actx, maxWavBytes);
+      if (wav) {
+        src = wav;
+        fmt = "wav";
+      } else {
+        try {
+          onDiag && onDiag({ stage: "mp4-no-transcode", hint: "mp4 \u6CA1\u80FD\u8F6C\u6210 wav\uFF0C\u6309\u539F\u5B57\u8282\u4E0A\u4F20" });
+        } catch (e) {
+        }
+      }
+    }
+    const b64 = await blobToBase64(src);
+    if (!b64) return null;
+    return { base64: b64, format: hostAsrFormat(fmt) };
+  }
+
+  // src/shared/noise.ts
+  var NOISE_TEXTS = [
+    "\u55EF",
+    "\u5443",
+    "\u554A",
+    "\u54E6",
+    "\u6069",
+    "\u55EF\u55EF",
+    "\u554A\u554A",
+    "\u8C22\u8C22\u89C2\u770B",
+    "\u8C22\u8C22\u5927\u5BB6",
+    "\u5B57\u5E55",
+    "\u8BF7\u4E0D\u541D\u70B9\u8D5E",
+    "\u70B9\u8D5E",
+    "\u8BA2\u9605",
+    "\u8F6C\u53D1",
+    "\u6253\u8D4F",
+    "\u518D\u89C1",
+    "\u672C\u9C7C\u5728\u542C",
+    "\u55EF\u672C\u9C7C\u5728\u542C",
+    "\u5B57\u5E55\u7531",
+    "\u660E\u955C\u4E0E\u70B9\u70B9"
+  ];
+  deepFreeze(NOISE_TEXTS);
+  function normalizeNoiseKey(text) {
+    return String(text == null ? "" : text).replace(/\s+/g, "").replace(/[。，、！？；：,.!?;:…~～·""''（）()【】\[\]]/g, "").toLowerCase();
+  }
+  function isNoiseText(text) {
+    const k = normalizeNoiseKey(text);
+    if (!k) return true;
+    if (k.length <= 1) return true;
+    if (NOISE_TEXTS.indexOf(k) >= 0) return true;
+    if (k.length <= 6 && /^([\u4e00-\u9fa5])\1{2,}$/.test(k)) return true;
+    return false;
+  }
+
+  // src/client/sim.ts
+  function normalizeText(s) {
+    return String(s || "").toLowerCase().replace(/[\s\u3000]+/g, "").replace(/[\s。，！？、；：,.!?;:"'”’“”（）()【】\[\]<>《》~～`@#$%^&*_+=|\\/-]/g, "");
+  }
+  function bigrams(s) {
+    const out = /* @__PURE__ */ new Set();
+    const t = String(s || "");
+    if (!t) return out;
+    if (t.length === 1) {
+      out.add(t);
+      return out;
+    }
+    for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
+    return out;
+  }
+  function similarity(a, b) {
+    const A = bigrams(normalizeText(a));
+    const B = bigrams(normalizeText(b));
+    if (A.size === 0 || B.size === 0) return 0;
+    let inter = 0;
+    for (const g of A) if (B.has(g)) inter++;
+    const union = A.size + B.size - inter;
+    return union === 0 ? 0 : inter / union;
+  }
+  function isRepeat(text, opts) {
+    const threshold = opts.threshold === void 0 ? 0.85 : opts.threshold;
+    const minLen = opts.minLen === void 0 ? 4 : opts.minLen;
+    const windowMs = opts.windowMs === void 0 ? 2e4 : opts.windowMs;
+    const now = opts.now === void 0 ? Date.now() : opts.now;
+    const cur = normalizeText(text);
+    if (!cur) return false;
+    for (const item of opts.recent || []) {
+      if (now - Number(item && item.at || 0) > windowMs) continue;
+      const prev = normalizeText(item && item.text ? item.text : "");
+      if (!prev) continue;
+      if (cur === prev) return true;
+      const shortOne = cur.length <= prev.length ? cur : prev;
+      const longOne = cur.length <= prev.length ? prev : cur;
+      if (shortOne.length >= minLen && longOne.indexOf(shortOne) >= 0) return true;
+      if (cur.length >= minLen && prev.length >= minLen && similarity(cur, prev) >= threshold) return true;
+    }
+    return false;
+  }
+
+  // src/client/voice/echo-filter.ts
+  function createEchoFilter() {
+    const spokenRecent = [];
+    const recentHeard = [];
+    let lastText = "";
+    let lastTextAt = 0;
+    function noteSpoken(text, now) {
+      const t = String(text || "").trim();
+      if (!t) return;
+      spokenRecent.push({ text: t, at: typeof now === "number" ? now : Date.now() });
+      while (spokenRecent.length > 12) spokenRecent.shift();
+    }
+    function accept(text, nowIn) {
+      const plain = text.replace(/[\s。，！？,.!?、…~～]/g, "");
+      const plainKey = echoKey(text);
+      if (plain.length < 2 && !/^[停别不]$/.test(plain)) return { ok: false, reason: "trivial" };
+      if (isNoiseText(plain)) return { ok: false, reason: "noise" };
+      if (/^本鱼在听/.test(plain)) return { ok: false, reason: "self" };
+      const now = typeof nowIn === "number" ? nowIn : Date.now();
+      let hadRecentSpeech = false;
+      for (const s of spokenRecent) {
+        if (now - s.at > 15e3) continue;
+        if (now - s.at <= 8e3) hadRecentSpeech = true;
+        const target = s.text.replace(/[\s。，！？,.!?、…~～]/g, "");
+        if (!target) continue;
+        const targetKey = echoKey(s.text);
+        if (plainKey && targetKey && (plainKey === targetKey || targetKey.length >= 6 && plainKey.indexOf(targetKey.slice(0, 6)) >= 0)) {
+          return { ok: false, reason: "echo" };
+        }
+        if (plain === target) return { ok: false, reason: "echo" };
+        if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return { ok: false, reason: "echo" };
+        if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return { ok: false, reason: "echo" };
+        if (plain.length >= 3 && now - s.at < 6e3 && target.indexOf(plain) >= 0) return { ok: false, reason: "echo" };
+      }
+      if (isShortEchoFragment(plain, hadRecentSpeech)) return { ok: false, reason: "short" };
+      if (isRepeat(plain, { recent: recentHeard, windowMs: 8e3, threshold: 0.9, minLen: 4, now })) {
+        return { ok: false, reason: "dup" };
+      }
+      recentHeard.push({ text, at: now });
+      while (recentHeard.length > 3) recentHeard.shift();
+      if (text === lastText && now - lastTextAt < 8e3) return { ok: false, reason: "dup" };
+      lastText = text;
+      lastTextAt = now;
+      return { ok: true };
+    }
+    return {
+      accept,
+      noteSpoken,
+      reset() {
+        spokenRecent.length = 0;
+        recentHeard.length = 0;
+        lastText = "";
+        lastTextAt = 0;
+      }
+    };
+  }
+
+  // src/client/voice/fetch.ts
+  async function fetchWithTimeout(url, init, ms2, outer) {
+    const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => {
+      try {
+        ctl.abort();
+      } catch (e) {
+      }
+    }, ms2) : null;
+    let sig = ctl ? ctl.signal : void 0;
+    const forwardOuter = () => {
+      try {
+        if (ctl) ctl.abort();
+      } catch (e) {
+      }
+    };
+    let hooked = false;
+    if (outer && ctl) {
+      const AnySig = AbortSignal;
+      if (typeof AnySig.any === "function") {
+        try {
+          sig = AnySig.any([ctl.signal, outer]);
+        } catch (e) {
+          sig = ctl.signal;
+        }
+      } else {
+        try {
+          if (outer.aborted) forwardOuter();
+          else {
+            outer.addEventListener("abort", forwardOuter, { once: true });
+            hooked = true;
+          }
+        } catch (e) {
+        }
+        sig = ctl.signal;
+      }
+    } else if (!ctl && outer) {
+      sig = outer;
+    }
+    try {
+      return await fetch(url, sig ? { ...init, signal: sig } : init);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (hooked) {
+        try {
+          outer.removeEventListener("abort", forwardOuter);
+        } catch (e) {
+        }
+      }
+    }
+  }
+
+  // src/client/voice/voices.ts
   var TTS_VOICES = [
     "zh-CN-XiaoyiNeural",
     "zh-CN-XiaoxiaoNeural",
@@ -1657,15 +1862,10 @@
       return DEFAULT_VOICE2;
     }
   }
-  function createVoice(opts) {
-    const apiBase = opts.apiBase || "/api/chubby-whale";
-    let voiceName = normalizeVoiceName(opts.voiceName || readStoredVoiceName());
-    let epMode = readEndpointMode();
-    const ape = new Ape();
-    let lastApe = null;
-    let lastSeg = null;
-    let lastTts = null;
-    const stats = {
+
+  // src/client/voice/status.ts
+  function createVoiceStats() {
+    return {
       windows: 0,
       skippedSilent: 0,
       uploaded: 0,
@@ -1680,21 +1880,196 @@
       ttsZombie: 0,
       lastError: ""
     };
+  }
+  function createStatusHolder(sink) {
     let status = "idle";
-    function setStatus(s) {
-      if (status === s) return;
-      status = s;
+    return {
+      get: () => status,
+      set(s) {
+        if (status === s) return;
+        status = s;
+        try {
+          if (sink) sink(s);
+        } catch (e) {
+        }
+      }
+    };
+  }
+  function createDiagSnapshots() {
+    let lastApe = null;
+    let lastSegment = null;
+    let lastTts = null;
+    return {
+      setApe: (v) => {
+        lastApe = v;
+      },
+      getApe: () => lastApe,
+      setSegment: (v) => {
+        lastSegment = v;
+      },
+      getSegment: () => lastSegment,
+      setTts: (v) => {
+        lastTts = v;
+      },
+      getTts: () => lastTts
+    };
+  }
+
+  // src/client/voice/tts-queue.ts
+  var TTS_TIMEOUT_MS = 2e4;
+  var TTS_WATCH_MS = 1e3;
+  var TTS_ZOMBIE_MS = 2500;
+  var ECHO_MUTE_MS = 700;
+  var TTS_RETRY_MAX = 3;
+  var TTS_RETRY_BASE_MS = 300;
+  function ttsRetryDelayMs(attempt) {
+    return TTS_RETRY_BASE_MS * Math.max(1, Math.floor(Number(attempt) || 1));
+  }
+  function narrationPauseFor(text) {
+    const t = String(text || "").trim();
+    if (!t) return 200;
+    const last = t.slice(-1);
+    if (/[。！？!?…]/.test(last)) return 260;
+    if (/[，、；,;]/.test(last)) return 140;
+    return 200;
+  }
+  function prefetchTargets(queue, narration) {
+    const out = [];
+    if (queue[0]) out.push(queue[0]);
+    if (narration && queue[1]) out.push(queue[1]);
+    return out;
+  }
+  function buildTtsJobs(segs, opts) {
+    const out = [];
+    for (let i = 0; i < segs.length; i++) {
+      out.push({
+        seq: opts.nextSeq + i,
+        text: segs[i],
+        rate: opts.rate,
+        narration: opts.narration,
+        attempts: 0,
+        strict: opts.strict,
+        onDone: i === segs.length - 1 ? opts.onDone : void 0
+      });
+    }
+    return out;
+  }
+  function isStaleToken(token, current) {
+    return typeof token === "number" && token !== current;
+  }
+
+  // src/client/voice/recorder.ts
+  var WINDOW_MS = 6e3;
+  var EARLY_STOP_QUIET = 700;
+  var MIN_SPEECH_MS = 400;
+  var SILENT_PEAK_DB = -35;
+  var CLASSIC_SPEECH_DB = -45;
+  var MUTED_SPEECH_DB = 0;
+  var TICK_MS = 60;
+  var TICK_ERROR_MS = 120;
+  var LEVEL_PROBE_MS = 1200;
+  var MIN_SEGMENT_BYTES = 1200;
+  var APE_MIN_SPEECH_MS = 150;
+  function readLevel(analyser, timeBuf, box) {
+    const an = analyser;
+    if (!an || !timeBuf) return { db: -160, read: false };
+    let ok = false;
+    try {
+      if (typeof an.getFloatTimeDomainData === "function") {
+        an.getFloatTimeDomainData(timeBuf);
+        ok = true;
+      } else if (typeof an.getByteTimeDomainData === "function") {
+        let bytes = box.byte;
+        if (!bytes || bytes.length !== timeBuf.length) {
+          bytes = new Uint8Array(timeBuf.length);
+          box.byte = bytes;
+        }
+        an.getByteTimeDomainData(bytes);
+        for (let i = 0; i < timeBuf.length; i++) timeBuf[i] = (bytes[i] - 128) / 128;
+        ok = true;
+      }
+    } catch (e) {
+      ok = false;
+    }
+    if (!ok) return { db: -160, read: false };
+    let sum = 0;
+    for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
+    const rms = Math.sqrt(sum / timeBuf.length);
+    const db = 20 * Math.log10(rms + 1e-8);
+    return { db, read: true };
+  }
+  function createSegmentState() {
+    return { chunks: [], peakDb: -160, speechMs: 0, quietMs: 0, startedAt: 0 };
+  }
+  function resetSegmentState(s, startedAt) {
+    s.chunks = [];
+    s.peakDb = -160;
+    s.speechMs = 0;
+    s.quietMs = 0;
+    s.startedAt = startedAt;
+  }
+  function addChunk(s, blob) {
+    s.chunks.push(blob);
+  }
+  function clearChunks(s) {
+    s.chunks = [];
+  }
+  function notePeak(s, db) {
+    if (db > s.peakDb) s.peakDb = db;
+  }
+  function accrueClassic(s, db, muted) {
+    if (db > (muted ? MUTED_SPEECH_DB : CLASSIC_SPEECH_DB)) {
+      s.speechMs += TICK_MS;
+      s.quietMs = 0;
+    } else {
+      s.quietMs += TICK_MS;
+    }
+  }
+  function shouldStopClassic(s, now) {
+    if (s.speechMs >= MIN_SPEECH_MS && s.quietMs >= EARLY_STOP_QUIET) return "quiet";
+    if (now - s.startedAt >= WINDOW_MS) return "timeout";
+    return "";
+  }
+  function shouldStopApeNoLevel(s, levelDead, now) {
+    return !!(levelDead && now - s.startedAt >= WINDOW_MS);
+  }
+  function takeBlob(s, type) {
+    const blob = new Blob(s.chunks, { type });
+    s.chunks = [];
+    return blob;
+  }
+  function isTooSmallSegment(bytes) {
+    return bytes < MIN_SEGMENT_BYTES;
+  }
+  function isSilentPeak(peakDb) {
+    return peakDb < SILENT_PEAK_DB;
+  }
+  function hadApeSpeech(step) {
+    return !!(step && step.hadSpeech && step.speechMs >= APE_MIN_SPEECH_MS);
+  }
+
+  // src/client/voice.ts
+  var ASR_TIMEOUT_MS = 15e3;
+  function createVoice(opts) {
+    const apiBase = opts.apiBase || "/api/chubby-whale";
+    let voiceName = normalizeVoiceName(opts.voiceName || readStoredVoiceName());
+    let epMode = readEndpointMode();
+    const ape = new Ape();
+    const diag2 = createDiagSnapshots();
+    const stats = createVoiceStats();
+    const statusHolder = createStatusHolder((s) => {
       try {
         opts.onStatus && opts.onStatus(s);
       } catch (e) {
       }
-    }
+    });
+    const setStatus = statusHolder.set;
     let stream = null;
     let actx = null;
     let analyser = null;
     let rec = null;
     let timeBuf = null;
-    let byteBuf = null;
+    const levelBuf = { byte: null };
     let running = false;
     let recMime = "";
     let recFormat = "webm";
@@ -1704,17 +2079,10 @@
     let gestureHooks = null;
     let asrNoKey = false;
     let muted = false;
-    let parts = [];
-    let winPeak = -160;
-    let speechMs = 0;
-    let quietMs = 0;
-    let winStart = 0;
+    const seg = createSegmentState();
     let tickTimer = null;
     let restartTimer = null;
-    let lastText = "";
-    let lastTextAt = 0;
-    const spokenRecent = [];
-    const recentHeard = [];
+    const echoFilter = createEchoFilter();
     const ttsQ = [];
     let ttsBusy = false;
     let ttsAudio = null;
@@ -1726,29 +2094,9 @@
     let mutedUntil = 0;
     let speakToken = 0;
     const level = () => {
-      const an = analyser;
-      if (!an || !timeBuf) return -160;
-      let ok = false;
-      try {
-        if (typeof an.getFloatTimeDomainData === "function") {
-          an.getFloatTimeDomainData(timeBuf);
-          ok = true;
-        } else if (typeof an.getByteTimeDomainData === "function") {
-          if (!byteBuf || byteBuf.length !== timeBuf.length) byteBuf = new Uint8Array(timeBuf.length);
-          an.getByteTimeDomainData(byteBuf);
-          for (let i = 0; i < timeBuf.length; i++) timeBuf[i] = (byteBuf[i] - 128) / 128;
-          ok = true;
-        }
-      } catch (e) {
-        ok = false;
-      }
-      if (!ok) return -160;
-      let sum = 0;
-      for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
-      const rms = Math.sqrt(sum / timeBuf.length);
-      const db = 20 * Math.log10(rms + 1e-8);
-      if (db > -159) levelOk = true;
-      return db;
+      const r = readLevel(analyser, timeBuf, levelBuf);
+      if (r.db > -159) levelOk = true;
+      return r.db;
     };
     function micOn(on) {
       try {
@@ -1778,7 +2126,7 @@
       analyser = null;
       stream = null;
       timeBuf = null;
-      byteBuf = null;
+      levelBuf.byte = null;
     }
     function unhookGestureResume() {
       const g = gestureHooks;
@@ -1839,13 +2187,9 @@
           scheduleNext(200);
           return;
         }
-        parts = [];
-        winPeak = -160;
-        speechMs = 0;
-        quietMs = 0;
-        winStart = performance.now();
+        resetSegmentState(seg, performance.now());
         ape.resetSegment();
-        lastApe = null;
+        diag2.setApe(null);
         rec.start();
         scheduleNext(0);
         if (restartTimer) {
@@ -1862,7 +2206,7 @@
       if (!running || !rec || rec.state !== "recording") return;
       try {
         const db = level();
-        if (!levelOk && !levelDead && levelProbeAt && performance.now() - levelProbeAt > 1200) {
+        if (!levelOk && !levelDead && levelProbeAt && performance.now() - levelProbeAt > LEVEL_PROBE_MS) {
           levelDead = true;
           try {
             opts.onDiag && opts.onDiag({ stage: "analyser-dead", hint: "\u7535\u5E73\u4E0D\u53EF\u7528\uFF0C\u9759\u97F3\u5224\u5B9A\u5DF2\u964D\u7EA7\uFF08\u6539\u6309\u6BB5\u957F/\u4F53\u79EF\uFF09" });
@@ -1871,8 +2215,8 @@
         }
         if (epMode === "ape") {
           const st = ape.step(db);
-          lastApe = st;
-          if (db > winPeak) winPeak = db;
+          diag2.setApe(st);
+          notePeak(seg, db);
           if (st.commit && rec && rec.state === "recording") {
             try {
               rec.stop();
@@ -1884,7 +2228,7 @@
             }
             return;
           }
-          if (levelDead && performance.now() - winStart >= WINDOW_MS) {
+          if (shouldStopApeNoLevel(seg, levelDead, performance.now())) {
             try {
               rec.stop();
             } catch (e) {
@@ -1895,35 +2239,28 @@
             }
             return;
           }
-          tickTimer = setTimeout(tick, 60);
+          tickTimer = setTimeout(tick, TICK_MS);
           return;
         }
-        if (db > winPeak) winPeak = db;
         const now = performance.now();
-        const elapsed = now - winStart;
-        if (db > (muted ? 0 : -45)) {
-          speechMs += 60;
-          quietMs = 0;
-        } else {
-          quietMs += 60;
-        }
-        const earlyStop = speechMs >= MIN_SPEECH_MS && quietMs >= EARLY_STOP_QUIET;
-        const tooLong = elapsed >= WINDOW_MS;
-        if (earlyStop || tooLong) {
+        notePeak(seg, db);
+        accrueClassic(seg, db, muted);
+        const why = shouldStopClassic(seg, now);
+        if (why) {
           try {
             rec.stop();
           } catch (e) {
           }
           try {
-            opts.onDiag && opts.onDiag({ stage: "window-end", why: earlyStop ? "quiet" : "timeout", peak: Math.round(winPeak), speechMs });
+            opts.onDiag && opts.onDiag({ stage: "window-end", why, peak: Math.round(seg.peakDb), speechMs: seg.speechMs });
           } catch (e) {
           }
           return;
         }
-        tickTimer = setTimeout(tick, 60);
+        tickTimer = setTimeout(tick, TICK_MS);
       } catch (e) {
         stats.lastError = "tick: " + String(e && e.name);
-        tickTimer = setTimeout(tick, 120);
+        tickTimer = setTimeout(tick, TICK_ERROR_MS);
       }
     }
     async function onWindowDone(blob) {
@@ -1936,13 +2273,12 @@
       stats.windows++;
       if (!levelDead) {
         if (epMode === "ape") {
-          const okSpeech = !!(lastApe && lastApe.hadSpeech && lastApe.speechMs >= 150);
-          if (!okSpeech) {
+          if (!hadApeSpeech(diag2.getApe())) {
             stats.skippedSilent++;
             scheduleNext(150);
             return;
           }
-        } else if (winPeak < SILENT_PEAK_DB) {
+        } else if (isSilentPeak(seg.peakDb)) {
           stats.skippedSilent++;
           scheduleNext(150);
           return;
@@ -1953,7 +2289,7 @@
         scheduleNext(150);
         return;
       }
-      if (blob.size < 1200) {
+      if (isTooSmallSegment(blob.size)) {
         stats.skippedSilent++;
         scheduleNext(150);
         return;
@@ -1961,7 +2297,7 @@
       stats.uploaded++;
       setStatus("recognizing");
       try {
-        const wire = await prepareAudioForAsr(blob);
+        const wire = await prepareAudioForAsr(blob, { actx, recMime, onDiag: opts.onDiag });
         if (!wire || !wire.base64) {
           stats.asrFail++;
           stats.lastError = "b64-empty";
@@ -1999,19 +2335,34 @@
           return;
         }
         try {
-          lastSeg = { mode: epMode, fmt: wire.format, winMs: Math.round(performance.now() - winStart), peMs: lastApe ? lastApe.speechMs : speechMs, quMs: lastApe ? lastApe.quietMs : quietMs, floor: lastApe ? Math.round(lastApe.floorDb) : null, target: lastApe ? lastApe.quietTargetMs : null, text: String(data.text || "").slice(0, 24) };
+          const cur = diag2.getApe();
+          diag2.setSegment({
+            mode: epMode,
+            fmt: wire.format,
+            winMs: Math.round(performance.now() - seg.startedAt),
+            peMs: cur ? cur.speechMs : seg.speechMs,
+            quMs: cur ? cur.quietMs : seg.quietMs,
+            floor: cur ? Math.round(cur.floorDb) : null,
+            target: cur ? cur.quietTargetMs : null,
+            text: String(data.text || "").slice(0, 24)
+          });
         } catch (e) {
         }
         const text = String(data.text || "").trim();
         if (!text) return;
         stats.asrTexts++;
-        if (acceptText(text)) {
+        const verdict = echoFilter.accept(text);
+        if (verdict.ok) {
           stats.heard++;
           setStatus("thinking");
           try {
             opts.onHeard(text);
           } catch (e) {
           }
+        } else if (verdict.reason === "short") {
+          stats.shortDropped = (stats.shortDropped || 0) + 1;
+        } else if (verdict.reason === "dup") {
+          stats.dupDropped = (stats.dupDropped || 0) + 1;
         } else {
           stats.echoDropped++;
         }
@@ -2019,69 +2370,9 @@
         stats.asrFail++;
         stats.lastError = "asr-ex: " + String(e && e.name || e);
       } finally {
-        if (status === "recognizing") setStatus("listening");
+        if (statusHolder.get() === "recognizing") setStatus("listening");
         if (!rec || rec.state === "inactive") scheduleNext(150);
       }
-    }
-    function acceptText(text) {
-      const plain = text.replace(/[\s。，！？,.!?、…~～]/g, "");
-      const plainKey = echoKey(text);
-      if (plain.length < 2 && !/^[停别不]$/.test(plain)) return false;
-      if (isNoiseText(plain)) return false;
-      if (/^本鱼在听/.test(plain)) return false;
-      const now = Date.now();
-      let hadRecentSpeech = false;
-      for (const s of spokenRecent) {
-        if (now - s.at > 15e3) continue;
-        if (now - s.at <= 8e3) hadRecentSpeech = true;
-        const target = s.text.replace(/[\s。，！？,.!?、…~～]/g, "");
-        if (!target) continue;
-        const targetKey = echoKey(s.text);
-        if (plainKey && targetKey && (plainKey === targetKey || targetKey.length >= 6 && plainKey.indexOf(targetKey.slice(0, 6)) >= 0)) {
-          try {
-            stats.echoDropped++;
-          } catch (e) {
-          }
-          return false;
-        }
-        if (plain === target) return false;
-        if (target.length >= 6 && plain.indexOf(target.slice(0, 6)) >= 0) return false;
-        if (plain.length >= 6 && target.indexOf(plain.slice(0, 6)) >= 0) return false;
-        if (plain.length >= 3 && now - s.at < 6e3 && target.indexOf(plain) >= 0) {
-          try {
-            stats.echoDropped++;
-          } catch (e) {
-          }
-          ;
-          return false;
-        }
-      }
-      if (isShortEchoFragment(plain, hadRecentSpeech)) {
-        try {
-          stats.shortDropped = (stats.shortDropped || 0) + 1;
-        } catch (e) {
-        }
-        return false;
-      }
-      if (isRepeat(plain, { recent: recentHeard, windowMs: 8e3, threshold: 0.9, minLen: 4, now })) {
-        try {
-          stats.dupDropped = (stats.dupDropped || 0) + 1;
-        } catch (e) {
-        }
-        return false;
-      }
-      recentHeard.push({ text, at: now });
-      while (recentHeard.length > 3) recentHeard.shift();
-      if (text === lastText && now - lastTextAt < 8e3) return false;
-      lastText = text;
-      lastTextAt = now;
-      return true;
-    }
-    function noteSpoken(text) {
-      const t = String(text || "").trim();
-      if (!t) return;
-      spokenRecent.push({ text: t, at: Date.now() });
-      while (spokenRecent.length > 12) spokenRecent.shift();
     }
     function ttsWatchdog() {
       try {
@@ -2104,6 +2395,7 @@
         const dead = ttsCurJob;
         ttsCurJob = null;
         speakToken++;
+        if (dead) dead.token = speakToken;
         try {
           if (ttsAudio) {
             ttsAudio.pause();
@@ -2158,14 +2450,6 @@
         if (ctl) ttsAborts.delete(ctl);
       });
     }
-    function narrationPauseFor(text) {
-      const t = String(text || "").trim();
-      if (!t) return 200;
-      const last = t.slice(-1);
-      if (/[。！？!?…]/.test(last)) return 260;
-      if (/[，、；,;]/.test(last)) return 140;
-      return 200;
-    }
     function finishJob(j) {
       ttsBusy = false;
       if (ttsCurJob === j) ttsCurJob = null;
@@ -2178,8 +2462,18 @@
         j.onDone && j.onDone();
       } catch (e) {
       }
-      if (j.narration && ttsQ.length > 0) setTimeout(() => pumpTts(), narrationPauseFor(j.text));
-      else pumpTts();
+      if (j.narration && ttsQ.length > 0) {
+        const token = j.token;
+        setTimeout(() => {
+          if (isStaleToken(token, speakToken)) return;
+          try {
+            pumpTts();
+          } catch (e) {
+          }
+        }, narrationPauseFor(j.text));
+      } else {
+        pumpTts();
+      }
     }
     function pumpTts() {
       if (ttsBusy) return;
@@ -2193,29 +2487,32 @@
       ttsProgressAt = Date.now();
       ttsCurJob = job;
       const myToken = ++speakToken;
+      job.token = myToken;
       setStatus("speaking");
       stats.ttsRequests++;
       const cur = ttsPrefetch.get(job.seq) || synth(job);
       ttsSynthAt = Date.now();
       ttsPrefetch.delete(job.seq);
-      const next = ttsQ[0];
-      if (next && !ttsPrefetch.has(next.seq)) ttsPrefetch.set(next.seq, synth(next));
-      const next2 = ttsQ[1];
-      if (job.narration && next2 && !ttsPrefetch.has(next2.seq)) ttsPrefetch.set(next2.seq, synth(next2));
+      const wants = prefetchTargets(ttsQ, job.narration);
+      for (let i = 0; i < wants.length; i++) {
+        const target = wants[i];
+        if (!ttsPrefetch.has(target.seq)) ttsPrefetch.set(target.seq, synth(target));
+      }
       cur.then((buf) => {
         if (myToken !== speakToken) return;
         ttsSynthAt = 0;
         if (!buf) {
-          if (job.attempts < 3) {
+          if (job.attempts < TTS_RETRY_MAX) {
             job.attempts++;
             ttsQ.unshift(job);
             ttsBusy = false;
-            const backoff = 300 * job.attempts;
+            const backoff = ttsRetryDelayMs(job.attempts);
             try {
               window.__chubbyWhale.ttsRetry = (window.__chubbyWhale.ttsRetry || 0) + 1;
             } catch (e) {
             }
             setTimeout(() => {
+              if (myToken !== speakToken) return;
               try {
                 pumpTts();
               } catch (e) {
@@ -2225,7 +2522,7 @@
           }
           stats.ttsFail++;
           try {
-            lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
+            diag2.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() });
           } catch (e) {
           }
           try {
@@ -2236,7 +2533,10 @@
           } catch (e) {
           }
           const canBrowser = !job.strict && browserVoiceUsable();
-          if (canBrowser) speakViaBrowser(job.text).then(() => finishJob(job));
+          if (canBrowser) speakViaBrowser(job.text).then(() => {
+            if (myToken !== speakToken) return;
+            finishJob(job);
+          });
           else finishJob(job);
           return;
         }
@@ -2258,7 +2558,7 @@
           a.onloadeddata = bump2;
         } catch (e) {
         }
-        const finish = () => {
+        const finish = (played) => {
           if (myToken !== speakToken) {
             try {
               URL.revokeObjectURL(url);
@@ -2276,15 +2576,23 @@
           } catch (e) {
           }
           ttsAudio = null;
-          stats.ttsPlayed++;
-          try {
-            lastTts = { failed: false, text: job.text.slice(0, 20), at: Date.now() };
-          } catch (e) {
+          if (played) {
+            stats.ttsPlayed++;
+            try {
+              diag2.setTts({ failed: false, text: job.text.slice(0, 20), at: Date.now() });
+            } catch (e) {
+            }
+          } else {
+            stats.ttsFail++;
+            try {
+              diag2.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() });
+            } catch (e) {
+            }
           }
           finishJob(job);
         };
-        a.onended = finish;
-        a.onerror = finish;
+        a.onended = () => finish(true);
+        a.onerror = () => finish(false);
         micOn(false);
         a.play().catch(() => {
           if (myToken !== speakToken) {
@@ -2298,7 +2606,7 @@
           if (!muted) micOn(true);
           stats.ttsFail++;
           try {
-            lastTts = { failed: true, text: job.text.slice(0, 20), at: Date.now() };
+            diag2.setTts({ failed: true, text: job.text.slice(0, 20), at: Date.now() });
           } catch (e) {
           }
           try {
@@ -2313,6 +2621,7 @@
             ttsQ.unshift(job);
             ttsBusy = false;
             setTimeout(() => {
+              if (myToken !== speakToken) return;
               try {
                 pumpTts();
               } catch (e) {
@@ -2321,7 +2630,10 @@
             return;
           }
           const canBrowser2 = !job.strict && browserVoiceUsable();
-          if (canBrowser2) speakViaBrowser(job.text).then(() => finishJob(job));
+          if (canBrowser2) speakViaBrowser(job.text).then(() => {
+            if (myToken !== speakToken) return;
+            finishJob(job);
+          });
           else finishJob(job);
         });
       });
@@ -2332,134 +2644,33 @@
       if (!src.trim()) return out;
       if (maxLen < 8) maxLen = 8;
       const firstMax = Math.min(maxLen, 14);
+      const isWordChar = function(ch) {
+        return /[A-Za-z0-9]/.test(ch);
+      };
       let sbuf = "";
       for (const c of src) {
         sbuf += c;
         const boundary = /[。，！？!?；;、,\n]/.test(c);
         const cap = out.length === 0 ? firstMax : maxLen;
-        if (sbuf.length >= cap || boundary && sbuf.length >= Math.max(8, Math.floor(cap / 3))) {
-          const seg = sbuf.trim();
-          if (seg) out.push(seg);
-          sbuf = "";
+        const atBoundary = boundary && sbuf.length >= Math.max(8, Math.floor(cap / 3));
+        if (sbuf.length >= cap || atBoundary) {
+          let cut = sbuf.length;
+          if (!atBoundary) {
+            const limit = Math.min(sbuf.length, cap);
+            if (limit > 1 && isWordChar(sbuf[limit - 1])) {
+              let back = limit;
+              while (back > 0 && isWordChar(sbuf[back - 1])) back--;
+              if (back > 0) cut = back;
+            }
+          }
+          const seg2 = sbuf.slice(0, cut).trim();
+          if (seg2) out.push(seg2);
+          sbuf = sbuf.slice(cut);
         }
       }
       const rest = sbuf.trim();
       if (rest) out.push(rest);
       return out;
-    }
-    function readBlobBuffer(blob) {
-      return new Promise((resolve) => {
-        try {
-          const fr = new FileReader();
-          fr.onload = () => resolve(fr.result || null);
-          fr.onerror = () => resolve(null);
-          fr.readAsArrayBuffer(blob);
-        } catch (e) {
-          resolve(null);
-        }
-      });
-    }
-    function transcodeToWav(blob) {
-      return new Promise((resolve) => {
-        const ctx = actx;
-        if (!ctx || typeof ctx.decodeAudioData !== "function") {
-          resolve(null);
-          return;
-        }
-        let settled = false;
-        const done = (wav) => {
-          if (settled) return;
-          settled = true;
-          resolve(wav);
-        };
-        const finish = (buf) => {
-          try {
-            if (!buf || !buf.numberOfChannels) {
-              done(null);
-              return;
-            }
-            const chans = [];
-            const n = Math.min(2, Number(buf.numberOfChannels) || 1);
-            for (let i = 0; i < n; i++) chans.push(buf.getChannelData(i));
-            const mono = downmixToMono(chans);
-            if (wavBytes(mono.length / (Number(buf.sampleRate) || 48e3), buf.sampleRate) > 6 * 1024 * 1024) {
-              done(null);
-              return;
-            }
-            done(new Blob([encodeWavPcm16(mono, buf.sampleRate)], { type: "audio/wav" }));
-          } catch (e) {
-            done(null);
-          }
-        };
-        readBlobBuffer(blob).then((ab) => {
-          if (!ab) {
-            done(null);
-            return;
-          }
-          try {
-            const ret = ctx.decodeAudioData(ab, finish, () => done(null));
-            if (ret && typeof ret.then === "function") ret.then(finish).catch(() => done(null));
-          } catch (e) {
-            done(null);
-          }
-        });
-        setTimeout(() => done(null), 3e3);
-      });
-    }
-    async function prepareAudioForAsr(blob) {
-      let src = blob;
-      let fmt = formatFromMime(blob.type || recMime);
-      if (fmt === "mp4") {
-        const wav = await transcodeToWav(blob);
-        if (wav) {
-          src = wav;
-          fmt = "wav";
-        } else {
-          try {
-            opts.onDiag && opts.onDiag({ stage: "mp4-no-transcode", hint: "mp4 \u6CA1\u80FD\u8F6C\u6210 wav\uFF0C\u6309\u539F\u5B57\u8282\u4E0A\u4F20" });
-          } catch (e) {
-          }
-        }
-      }
-      const b64 = await blobToBase64(src);
-      if (!b64) return null;
-      return { base64: b64, format: hostAsrFormat(fmt) };
-    }
-    async function blobToBase64(blob) {
-      return new Promise((resolve) => {
-        try {
-          const fr = new FileReader();
-          fr.onloadend = () => {
-            const s = String(fr.result || "");
-            resolve(s.indexOf(",") >= 0 ? s.slice(s.indexOf(",") + 1) : s);
-          };
-          fr.readAsDataURL(blob);
-        } catch (e) {
-          resolve("");
-        }
-      });
-    }
-    async function fetchWithTimeout(url, init, ms2, outer) {
-      const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timer = ctl ? setTimeout(() => {
-        try {
-          ctl.abort();
-        } catch (e) {
-        }
-      }, ms2) : null;
-      let sig = ctl ? ctl.signal : void 0;
-      if (outer) {
-        try {
-          sig = ctl && typeof AbortSignal.any === "function" ? AbortSignal.any([ctl.signal, outer]) : outer || ctl.signal;
-        } catch (e) {
-          sig = outer || sig;
-        }
-      }
-      try {
-        return await fetch(url, sig ? { ...init, signal: sig } : init);
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
     }
     async function start() {
       asrNoKey = false;
@@ -2519,16 +2730,15 @@
         } catch (e) {
         }
         rec.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) parts.push(e.data);
+          if (e.data && e.data.size > 0) addChunk(seg, e.data);
         };
         rec.onstop = () => {
           if (!running) {
-            parts = [];
+            clearChunks(seg);
             return;
           }
           const blobType = String(rec && rec.mimeType || recMime || "audio/webm");
-          const blob = new Blob(parts, { type: blobType });
-          parts = [];
+          const blob = takeBlob(seg, blobType);
           void onWindowDone(blob);
         };
         rec.onerror = (e) => {
@@ -2611,18 +2821,16 @@
       const strict = !!(o && o.strict);
       const segs = splitForTts(raw, 56);
       if (!segs.length) return;
-      noteSpoken(raw);
-      for (let i = 0; i < segs.length; i++) {
-        ttsQ.push({
-          seq: ++ttsSeq,
-          text: segs[i],
-          rate,
-          narration,
-          attempts: 0,
-          strict,
-          onDone: i === segs.length - 1 ? o && o.onDone : void 0
-        });
-      }
+      echoFilter.noteSpoken(raw);
+      const jobs = buildTtsJobs(segs, {
+        rate,
+        narration,
+        strict,
+        nextSeq: ttsSeq + 1,
+        onDone: o && o.onDone
+      });
+      ttsSeq += segs.length;
+      for (let i = 0; i < jobs.length; i++) ttsQ.push(jobs[i]);
       pumpTts();
     }
     function stopSpeaking() {
@@ -2665,7 +2873,7 @@
       }
       if (!muted) micOn(true);
       mutedUntil = Date.now() + ECHO_MUTE_MS;
-      setStatus("listening");
+      setStatus(running ? "listening" : "idle");
     }
     return {
       start,
@@ -2673,15 +2881,15 @@
       speak,
       stopSpeaking,
       speaking: () => ttsBusy,
-      recognizing: () => status === "recognizing",
+      recognizing: () => statusHolder.get() === "recognizing",
       setEndpointMode: (m) => {
         epMode = normalizeEndpointMode(m);
         writeEndpointMode(epMode);
       },
       // 端点检测：报告当前实际生效的模式（ape / classic），不再写死 classic
       endpointInfo: () => ({ mode: epMode }),
-      lastSegment: () => lastSeg,
-      lastTtsInfo: () => lastTts,
+      lastSegment: () => diag2.getSegment(),
+      lastTtsInfo: () => diag2.getTts(),
       // 立即换音色：下一个 /tts 请求就带新 voice（不重建实例）；白名单外的值不改
       setVoiceName: (n) => {
         voiceName = normalizeVoiceName(n, voiceName);
@@ -2692,7 +2900,7 @@
         micOn(!on);
       },
       stats,
-      status: () => status
+      status: () => statusHolder.get()
     };
   }
 
