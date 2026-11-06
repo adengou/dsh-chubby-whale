@@ -15,6 +15,7 @@
 import { fetchJson, isAbortError, isTimeoutError, isTimeoutOnly, sendTooLarge, watchClientGone } from '../http.js';
 import { readJsonBody } from '../body.js';
 import { sendJson, sendError } from '../respond.js';
+import { estimateCostCny, readUsageSplit } from '../../shared/pricing.js';
 import { DEFAULT_CHAT_MODEL } from '../config.js';
 import { CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, summarizeMemory, } from '../chat-core.js';
 // 兼容旧导入方（scripts/selftest.mjs、chat-stream 历史版本）：纯函数仍从本模块可导出
@@ -173,8 +174,15 @@ export function createChatHandler(opts) {
             //   · 空回复走兜底文案仍算一次正常回复，token 照记——这次请求确实消耗了。
             try {
                 const u = data?.usage;
-                if (u && typeof u.total_tokens === 'number' && opts.addTokens)
-                    opts.addTokens('chat', u.total_tokens);
+                if (u && typeof u.total_tokens === 'number' && opts.addTokens) {
+                    // 鱼账本（2026-11-07）：把输入/输出拆分与人民币估算一起记进 fishfood.json。
+                    // 拿不到拆分就只记总量（不猜金额）；金额随「模型 × 高峰/空闲」变化，见 shared/pricing.ts
+                    const split = readUsageSplit(u);
+                    const cost = split ? estimateCostCny(split, opts.model) : null;
+                    opts.addTokens('chat', u.total_tokens, split
+                        ? { promptTokens: split.promptTokens, completionTokens: split.completionTokens, cacheHitTokens: split.cacheHitTokens, costCny: cost ? cost.cny : undefined }
+                        : undefined);
+                }
             }
             catch { }
             // 记忆写回：单轮原子追加，不再「读整份 history → 覆盖写」（并发两路会互相覆盖，/clear-memory 也会被写回）

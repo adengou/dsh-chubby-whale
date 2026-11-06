@@ -41,6 +41,7 @@
 import { sendTooLarge, watchClientGone } from '../http.js'
 import { readJsonBody } from '../body.js'
 import { sendJson, sendSseHeaders } from '../respond.js'
+import { estimateCostCny, readUsageSplit } from '../../shared/pricing.js'
 import type { ChatStreamRouteDeps } from '../ports.js'
 import { DEFAULT_CHAT_MODEL } from '../config.js'
 import {
@@ -347,7 +348,14 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       //   · 上游不回 usage（部分兼容服务不实现）时同样跳过，不猜。
       try {
         const u = usage
-        if (u && typeof u.total_tokens === 'number' && opts.addTokens) opts.addTokens('chat', u.total_tokens)
+        if (u && typeof u.total_tokens === 'number' && opts.addTokens) {
+          // 与 /chat 同口径：有拆分就带金额，没拆分只记总量
+          const split = readUsageSplit(u)
+          const cost = split ? estimateCostCny(split, opts.model) : null
+          opts.addTokens('chat', u.total_tokens, split
+            ? { promptTokens: split.promptTokens, completionTokens: split.completionTokens, cacheHitTokens: split.cacheHitTokens, costCny: cost ? cost.cny : undefined }
+            : undefined)
+        }
       } catch { }
       try {
         if (typeof opts.appendTurns === 'function') opts.appendTurns(message, text)

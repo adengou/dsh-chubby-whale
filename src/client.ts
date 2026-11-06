@@ -21,7 +21,7 @@ import { createPersona, applyServerMood } from './client/persona.js'
 import { createDeduper } from './client/text.js'
 import { getJson } from './client/http.js'
 import { createMelodyPlayer } from './client/melody.js'
-import { createBubble, ensureBubbleStyle } from './client/bubble.js'
+import { createBubble, clearBubbleTimer, ensureBubbleStyle } from './client/bubble.js'
 import { createNarrationLock } from './client/narration.js'
 import { createBusyLock, createEpoch } from './client/busy.js'
 import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag, endDrag, decayVelocity, bindDragInput } from './client/stage.js'
@@ -433,11 +433,18 @@ import { evPrevent, evStop } from './client/util.js'
       // 拖窗口时 resize 会连续触发，savePos 走 200ms 节流（位置本身仍逐次钳制）
       R.useEffect(() => {
         let saveTimer: any = null
-        return bindResize(window, () => {
+        const off = bindResize(window, () => {
           applyPos(posRef.current.x, posRef.current.y)
           if (saveTimer) return
           saveTimer = setTimeout(() => { saveTimer = null; savePos() }, 200)
         })
+        // bindResize 只摘监听；200ms 的存盘定时器也要在卸载时撤掉，
+        // 否则组件销毁后还会再写一次 localStorage（危害低，但属该清的没清）。
+        return () => {
+          try { off() } catch (e) { }
+          try { if (saveTimer) clearTimeout(saveTimer) } catch (e) { }
+          saveTimer = null
+        }
       }, [])
 
       // 卸载：取消惯性动画帧（否则组件销毁后最多还会写位置 ~0.7 秒）
@@ -450,7 +457,7 @@ import { evPrevent, evStop } from './client/util.js'
           reminderPoller: () => reminderPollerRef.current,
           stopTts: () => stopTts(),
           stopMelody: () => melody.stop(),
-          bubbleEl: () => bubbleRef.current,
+          clearBubble: () => clearBubbleTimer(bubbleRef.current),
         })
       }, [])
 
@@ -633,12 +640,14 @@ import { evPrevent, evStop } from './client/util.js'
         dragBeginAt(e.clientX, e.clientY)
         try { e.currentTarget.setPointerCapture(e.pointerId) } catch { }
       }
+      // 注意：原来这里会写 e.__chubbyDragHandled 想给 stage 的 window 兜底去重，但 React 把标记写在
+      // SyntheticEvent 上、stage 读的是原生事件（e.nativeEvent），标记永远对不上 —— 那是死代码，
+      // 且会让人误以为「重复驱动已被去重」。去重改由 stage.bindDragInput 按「指针是否已在鱼身内」分流
+      // （2026-11-07 B96），这里不再写任何标记。
       function onPointerMove(e: any): void {
-        try { e.__chubbyDragHandled = true } catch (e2) { }
         dragMoveTo(e.clientX, e.clientY)
       }
-      function onPointerUp(e?: any): void {
-        try { if (e) e.__chubbyDragHandled = true } catch (e2) { }
+      function onPointerUp(): void {
         dragFinish()
       }
 

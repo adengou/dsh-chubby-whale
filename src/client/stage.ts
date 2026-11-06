@@ -147,13 +147,19 @@ export type DragInputHandlers = {
  * 三家差异：
  *   · Safari 13 之前没有 PointerEvent → 改挂 touch + mouse（元素上 touchstart/mousemove）；
  *   · iOS Safari 的 setPointerCapture 可能失效、指针会滑出元素 → 在 window 上兜一层 move/up；
- *   · 兜底与元素处理器会收到同一个事件：先处理的一方在事件上打 __chubbyDragHandled，
- *     后来的一看标记就跳过，绝不会把一次移动算两遍（那会让鱼瞬移）；
+ *   · touch 模式的事件只有一套（本模块自己处理）：元素处理器先算、在原生事件上打
+ *     __chubbyDragHandled，window 兜底看到标记就跳过，一次移动不会算两遍；
  *   · 多点触控：只认「先按下的那根手指」。其余手指的事件在捕获阶段拦下 —— 否则第二根手指
  *     会重置拖拽基线（鱼瞬移）、甚至抬手时提前结束拖拽。主指针/主触点抬起后自动让位。
  *
- * pointer 模式的按下/移动/抬起由 client.ts 的 React 处理器负责，这里补 window 兜底与多指过滤；
- * touch 模式（无 PointerEvent 的老 Safari）整套都在这里。
+ * pointer 模式的按下/移动/抬起由 client.ts 的 React 处理器负责，这里补 window 兜底与多指过滤。
+ * 注意 React 处理器拿到的 e 是 **SyntheticEvent**，在它上面打标记到不了原生事件，
+ * 所以 pointer 模式不能靠 __chubbyDragHandled 去重：兜底只在事件目标已经不在鱼身上
+ * （capture 失效、指针滑出）时接手；目标还在鱼身上时 React 已经处理过，再算一次会把
+ * 末帧速度清零（惯性直接消失），也会让 applyPos 每帧写两遍样式。
+ *
+ * blur（切窗口/切标签）时抬起事件永远不会到：必须在这里补一次 onEnd，
+ * 只清 activeId 会让 client.ts 的 dragging 卡住，切回来动鼠标时鱼会粘着指针跑。
  *
  * 返回 mode 便于诊断：'pointer' 还是 'touch' 一眼能看出走的是哪套。
  */
@@ -177,7 +183,16 @@ export function bindDragInput(target: any, win: any, handlers: DragInputHandlers
   }
   /** 正在拖拽的指针 / 触点 id；null = 没有活动指针 */
   let activeId: number | null = null
-  const release = (): void => { activeId = null }
+  /**
+   * 失焦收尾。window blur 之后 pointerup/touchend 不会再送达：只把 activeId 清空，
+   * client.ts 的 dragRef 仍是 dragging=true —— 切回来移动鼠标时 onMove 照样会驱动鱼（粘手）。
+   * 因此这里必须补一次 onEnd（没有活动指针时不通知，避免凭空触发一次 dragFinish）。
+   */
+  const release = (): void => {
+    if (activeId === null) return
+    activeId = null
+    try { handlers.onEnd() } catch (e) { }
+  }
   const pointerIdOf = (e: any): number | null => (e && typeof e.pointerId === 'number') ? e.pointerId : null
   const touchOf = (e: any, id: number): any => {
     const list = (e && e.touches) || []
@@ -246,23 +261,28 @@ export function bindDragInput(target: any, win: any, handlers: DragInputHandlers
   }
   const onMove = (e: any): void => {
     if (handled(e)) return
-    if (mode === 'touch') {
-      if (activeId !== null) {
-        const t = touchOf(e, activeId)
-        if (!t) return
-        handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0)
-        return
-      }
-      // 没有活动触点时只剩鼠标兜底（触屏模式下的老桌面浏览器）
+    if (mode === 'pointer') {
+      // 目标还在鱼身上 → React 的 onPointerMove 已经处理过（见函数头注释）；
+      // 只有 capture 失效、指针滑到页面其它地方时才由这里接手。
+      if (inside(e)) return
       const p = pointOf(e)
       handlers.onMove(p.x, p.y)
       return
     }
+    if (activeId !== null) {
+      const t = touchOf(e, activeId)
+      if (!t) return
+      handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0)
+      return
+    }
+    // 没有活动触点时只剩鼠标兜底（触屏模式下的老桌面浏览器）
     const p = pointOf(e)
     handlers.onMove(p.x, p.y)
   }
   const onEnd = (e: any): void => {
     if (handled(e)) return
+    // 同 onMove：抬起发生在鱼身上时由 React 的 onPointerUp/onPointerCancel 收尾
+    if (mode === 'pointer' && inside(e)) return
     handlers.onEnd()
   }
 

@@ -25,7 +25,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.67";
+  var VERSION = "1.1.68";
 
   // src/client/styles.ts
   var W = 240;
@@ -5422,9 +5422,22 @@
     });
     table.define("fishfood", (host) => {
       getJson("/fishfood").then((d) => {
-        if (d && d.ok) {
-          host.bubble("鱼粮账本：聊天 " + d.chatTokens + " tokens，说书 " + d.storyTokens + " tokens，共 " + d.total, 5e3);
-        } else host.bubble("鱼粮查不到");
+        if (!d || !d.ok) {
+          host.bubble("鱼粮查不到");
+          return;
+        }
+        const inTok = Number(d.promptTokens) || 0;
+        const outTok = Number(d.completionTokens) || 0;
+        const hitTok = Number(d.cacheHitTokens) || 0;
+        const cny = Number(d.costCny) || 0;
+        const dayCny = Number(d.dayCostCny) || 0;
+        const parts = [
+          "鱼粮账本：共 " + (Number(d.total) || 0) + " tokens（聊天 " + (Number(d.chatTokens) || 0) + " / 说书 " + (Number(d.storyTokens) || 0) + "）",
+          inTok > 0 ? "输入 " + inTok + "（缓存命中 " + hitTok + "）· 输出 " + outTok : "",
+          cny > 0 ? "≈ ¥" + cny.toFixed(4) + "（今日 ¥" + dayCny.toFixed(4) + "）" : "金额：暂无可拆分用量",
+          cny > 0 ? "按官方价目（" + String(d.priceCheckedAt || "") + " 核对）估算" : ""
+        ].filter(Boolean);
+        host.bubble(parts.join("，"), 6e3);
       }).catch(() => host.bubble("鱼粮查不到"));
     });
     table.define("growth", (host) => {
@@ -6268,6 +6281,15 @@
     } catch (e) {
     }
   }
+  function clearBubbleTimer(el) {
+    try {
+      if (el && el._t) {
+        clearTimeout(el._t);
+        el._t = null;
+      }
+    } catch (e) {
+    }
+  }
   function createBubble(opts) {
     function viewport() {
       try {
@@ -6277,15 +6299,7 @@
         return { w: 1024, h: 768 };
       }
     }
-    function clearTimer(el) {
-      try {
-        if (el && el._t) {
-          clearTimeout(el._t);
-          el._t = null;
-        }
-      } catch (e) {
-      }
-    }
+    const clearTimer = clearBubbleTimer;
     function hide() {
       try {
         const el = opts.el();
@@ -6544,7 +6558,12 @@
     };
     let activeId = null;
     const release = () => {
+      if (activeId === null) return;
       activeId = null;
+      try {
+        handlers.onEnd();
+      } catch (e) {
+      }
     };
     const pointerIdOf = (e) => e && typeof e.pointerId === "number" ? e.pointerId : null;
     const touchOf = (e, id) => {
@@ -6610,15 +6629,16 @@
     };
     const onMove = (e) => {
       if (handled(e)) return;
-      if (mode === "touch") {
-        if (activeId !== null) {
-          const t = touchOf(e, activeId);
-          if (!t) return;
-          handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0);
-          return;
-        }
+      if (mode === "pointer") {
+        if (inside(e)) return;
         const p2 = pointOf(e);
         handlers.onMove(p2.x, p2.y);
+        return;
+      }
+      if (activeId !== null) {
+        const t = touchOf(e, activeId);
+        if (!t) return;
+        handlers.onMove(Number(t.clientX) || 0, Number(t.clientY) || 0);
         return;
       }
       const p = pointOf(e);
@@ -6626,6 +6646,7 @@
     };
     const onEnd = (e) => {
       if (handled(e)) return;
+      if (mode === "pointer" && inside(e)) return;
       handlers.onEnd();
     };
     if (target && win) {
@@ -8252,11 +8273,8 @@
       } catch (e) {
       }
       try {
-        const el = opts.bubbleEl();
-        if (el && el._t) {
-          clearTimeout(el._t);
-          el._t = null;
-        }
+        const f = opts.clearBubble;
+        if (typeof f === "function") f();
       } catch (e) {
       }
     };
@@ -8786,7 +8804,7 @@
         }
         R.useEffect(() => {
           let saveTimer = null;
-          return bindResize(window, () => {
+          const off = bindResize(window, () => {
             applyPos(posRef.current.x, posRef.current.y);
             if (saveTimer) return;
             saveTimer = setTimeout(() => {
@@ -8794,6 +8812,17 @@
               savePos();
             }, 200);
           });
+          return () => {
+            try {
+              off();
+            } catch (e) {
+            }
+            try {
+              if (saveTimer) clearTimeout(saveTimer);
+            } catch (e) {
+            }
+            saveTimer = null;
+          };
         }, []);
         R.useEffect(() => () => {
           try {
@@ -8806,7 +8835,7 @@
             reminderPoller: () => reminderPollerRef.current,
             stopTts: () => stopTts(),
             stopMelody: () => melody.stop(),
-            bubbleEl: () => bubbleRef.current
+            clearBubble: () => clearBubbleTimer(bubbleRef.current)
           });
         }, []);
         const bubble = createBubble({
@@ -9029,17 +9058,9 @@
           }
         }
         function onPointerMove(e) {
-          try {
-            e.__chubbyDragHandled = true;
-          } catch (e2) {
-          }
           dragMoveTo(e.clientX, e.clientY);
         }
-        function onPointerUp(e) {
-          try {
-            if (e) e.__chubbyDragHandled = true;
-          } catch (e2) {
-          }
+        function onPointerUp() {
           dragFinish();
         }
         R.useEffect(() => {

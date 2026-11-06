@@ -1,7 +1,7 @@
 /**
- * scripts/test-render-layer.mjs —— 「分身·客户端渲染层」独立回归（不并入 npm test）
+ * scripts/test-render-layer.mjs —— 「分身·客户端渲染层」独立回归（已接入 npm test，见 package.json）
  *
- * 覆盖本轮审查里真正有证据的四处（其余为纯函数不变量）：
+ * 覆盖审查里真正有证据的几类（其余为纯函数不变量）：
  *   A. stage.ts：bindDragInput 的 window 捕获监听在 dispose 时必须撤干净 ——
  *      add(..., true) 与 removeEventListener 的 capture 参数必须一致，
  *      否则每挂载/卸载一次就漏 4 个监听（闭包一直攥着旧 stage 元素与回调）。
@@ -10,15 +10,25 @@
  *      连续异常要有上限，别拿 60fps 空转烧 CPU；stop() 要撤掉 rAF 与 resize 监听。
  *   D. styles.ts：菜单样式在无 window（SSR / 打桩环境）下不能抛错，
  *      菜单坐标 NaN 不能生成 "NaNpx"（浏览器会整条忽略，菜单跑到左上角）。
+ *   E. look / render 纯函数不变量。
+ *   F.（B96）effects.ts：定时器/监听器与卸载成对（StrictMode 双跑、快速卸载）——
+ *      bindChatFocus 等 animationend 的上限定时器、startGreeting 两枚延时、startWatchdog 周期、
+ *      createUnmountCleanup 的固定顺序与「前一步抛错不跳过后一步」、bindOutsideClose/bindResize 摘监听。
+ *   G.（B96）stage.ts：window blur 必须补一次 onEnd（否则 dragRef 卡在 dragging，鱼粘鼠标）；
+ *      pointer 模式下 React 处理器（SyntheticEvent，标记到不了原生事件）与 window 兜底的分工：
+ *      目标还在鱼身上时兜底不得重复算，目标滑出鱼身（capture 失效）时兜底必须接手。
  *
  * 纯离线：DOM / rAF / Image / localStorage 全部打桩，结束还原；不联网、不碰 dist。
+ * F/G 两节用 esbuild 把 src 现打成 ESM（离线，写临时目录，跑完即删），验证的是构建后的同一份代码。
  * 用法：node scripts/test-render-layer.mjs   （失败退出码 1）
  */
 
 import { register } from 'node:module'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { build } from 'esbuild'
 
 register(new URL('./ts-resolve.mjs', import.meta.url))
 
@@ -132,16 +142,18 @@ try {
   ok('第二根手指移动被拦下', m2.stopped === true)
   const m1 = pev(1, 20, 20, fish)
   win.fire('pointermove', m1, true)
-  ok('主指针移动放行', m1.stopped === false)
-  win.fire('pointermove', m1, false)                // window 冒泡兜底 → handlers.onMove
-  ok('主指针移动只算一次（捕获过滤 + 冒泡兜底不重复）', moves === 1, 'moves=' + moves)
+  ok('主指针移动放行（capture 不拦）', m1.stopped === false)
+  moves++                                           // React onPointerMove（SyntheticEvent）
+  win.fire('pointermove', m1, false)                // window 兜底：目标还在鱼身上 → 必须跳过
+  ok('主指针移动只算一次（React 处理 + window 兜底不重复）', moves === 1, 'moves=' + moves)
   const u2 = pev(2, 40, 40, fish)
   win.fire('pointerup', u2, true)
   ok('第二根手指抬起被拦（不提前结束拖拽）', u2.stopped === true)
   const u1 = pev(1, 20, 20, fish)
   win.fire('pointerup', u1, true)
-  win.fire('pointerup', u1, false)                  // window 冒泡兜底 → handlers.onEnd
-  ok('主指针抬起放行并收尾', u1.stopped === false && ends === 1, 'ends=' + ends)
+  ends++                                            // React onPointerUp
+  win.fire('pointerup', u1, false)                  // window 兜底：目标在鱼身上 → 跳过
+  ok('主指针抬起放行并收尾（不重复收尾）', u1.stopped === false && ends === 1, 'ends=' + ends)
   b.dispose()
 
   // ---- touch：只认先按下的那根手指 ----
@@ -480,6 +492,227 @@ try {
   }
 } catch (e) {
   ok('look/render 测试未抛错', false, String(e && e.stack || e))
+}
+
+// ======================================================================
+// F/G：本轮新增的 effects/stage 生命周期与 drag 收尾。
+// 用 esbuild 把 src 现打成 ESM（离线、临时目录），跑的是「构建后同一份代码」；
+// 打桩只依赖 FakeTarget / 假 window，不需要真实浏览器。
+console.log('\n[F] effects：定时器 / 监听器与卸载成对（StrictMode 双跑、快速卸载）')
+const TMP_RENDER = mkdtempSync(join(tmpdir(), 'chubby-render-layer-'))
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+try {
+  await build({
+    stdin: {
+      contents: "export * as effects from './client/effects.js'\nexport * as stage from './client/stage.js'\n",
+      resolveDir: join(ROOT, 'src'),
+      sourcefile: 'render-layer-entry.ts',
+      loader: 'ts',
+    },
+    bundle: true,
+    format: 'esm',
+    platform: 'neutral',
+    target: 'node22',
+    charset: 'utf8',
+    logLevel: 'silent',
+    outfile: join(TMP_RENDER, 'render-layer.mjs'),
+  })
+  const M = await import(pathToFileURL(join(TMP_RENDER, 'render-layer.mjs')).href)
+  const EFF = M.effects
+  const STAGE = M.stage
+
+  // ---- bindChatFocus：等动画时的上限定时器 / animationend 监听必须随 cleanup 撤 ----
+  {
+    const panel = new FakeTarget()
+    panel.getAnimations = () => [{}]
+    let focus = 0
+    const input = { focus() { focus++ }, blur() { } }
+    const dispose = EFF.bindChatFocus({ win: {}, open: true, input: () => input, panel: () => panel, maxWaitMs: 20 })
+    ok('bindChatFocus：等入场动画时不立即聚焦、挂上 animationend', focus === 0 && panel.count() === 1, 'focus=' + focus + ' listeners=' + panel.count())
+    panel.fire('animationend', {})
+    ok('bindChatFocus：animationend 后聚焦一次', focus === 1, 'focus=' + focus)
+    ok('bindChatFocus：聚焦后 animationend 监听已撤', panel.count() === 0, 'listeners=' + panel.count())
+    dispose()
+
+    const panel2 = new FakeTarget()
+    panel2.getAnimations = () => [{}]
+    let focus2 = 0
+    const input2 = { focus() { focus2++ }, blur() { } }
+    const dispose2 = EFF.bindChatFocus({ win: {}, open: true, input: () => input2, panel: () => panel2, maxWaitMs: 15 })
+    dispose2()                       // 快速关闭 / StrictMode 的 cleanup 都走这里
+    await sleep(45)
+    ok('bindChatFocus：卸载清掉上限定时器（不会再补聚焦）', focus2 === 0 && panel2.count() === 0, 'focus=' + focus2 + ' listeners=' + panel2.count())
+
+    let blur3 = 0
+    const closeDispose = EFF.bindChatFocus({ open: false, input: () => ({ blur() { blur3++ }, focus() { } }) })
+    ok('bindChatFocus：关闭时输入框失焦', blur3 === 1, 'blur=' + blur3)
+    closeDispose()
+
+    let focus4 = 0
+    const input4 = { focus() { focus4++ }, blur() { } }
+    EFF.bindChatFocus({ win: { matchMedia: () => ({ matches: true }) }, open: true, input: () => input4 })()
+    ok('bindChatFocus：减少动效时立即聚焦（不干等动画）', focus4 === 1, 'focus=' + focus4)
+  }
+
+  // ---- startGreeting：两枚延时都必须能撤（StrictMode 挂→卸→再挂不许叠加）----
+  {
+    let greet = 0
+    let hungry = 0
+    const stopA = EFF.startGreeting({ greet: () => greet++, hungry: () => hungry++, hungryNow: true, greetMs: 5, hungryMs: 10 })
+    stopA()
+    const stopB = EFF.startGreeting({ greet: () => greet++, hungry: () => hungry++, hungryNow: true, greetMs: 5, hungryMs: 10 })
+    for (let i = 0; i < 40 && (greet === 0 || hungry === 0); i++) await sleep(5)   // 轮询而非死等，慢机器不误报
+    ok('startGreeting：卸载撤掉两枚定时器，重挂后各触发一次', greet === 1 && hungry === 1, 'greet=' + greet + ' hungry=' + hungry)
+    stopB()
+    await sleep(20)
+    ok('startGreeting：停表后不再冒台词', greet === 1 && hungry === 1, 'greet=' + greet + ' hungry=' + hungry)
+
+    let late = 0
+    const stopD = EFF.startGreeting({ greet: () => late++, hungry: () => late++, hungryNow: true, greetMs: 30, hungryMs: 60 })
+    await sleep(5)
+    stopD()
+    await sleep(85)
+    ok('startGreeting：停表撤销尚未触发的定时器', late === 0, 'late=' + late)
+
+    let hungryOff = 0
+    const stopC = EFF.startGreeting({ greet: () => { }, hungry: () => hungryOff++, hungryNow: false, greetMs: 5, hungryMs: 5 })
+    await sleep(25)
+    stopC()
+    ok('startGreeting：不饿时不排第二句', hungryOff === 0, 'hungry=' + hungryOff)
+  }
+
+  // ---- startWatchdog：周期表必须停 ----
+  {
+    let ticks = 0
+    const stop = EFF.startWatchdog(() => ticks++, 5)
+    for (let i = 0; i < 40 && ticks === 0; i++) await sleep(5)   // 等第一次 tick，别依赖固定 30ms
+    const n = ticks
+    stop()
+    await sleep(30)
+    ok('startWatchdog：卸载后周期任务真的停表', n > 0 && ticks === n, 'ticks ' + n + '→' + ticks)
+  }
+
+  // ---- createUnmountCleanup：固定顺序 + 前一步抛错不跳过后一步 + 气泡计时器真的取消 ----
+  {
+    const order = []
+    let fired = 0
+    const el = { _t: setTimeout(() => { fired++ }, 5) }
+    const EFF_TEST_CLEAR = () => { if (el && el._t) { clearTimeout(el._t); el._t = null } }
+  const cleanup = EFF.createUnmountCleanup({
+      reminderPoller: () => ({ dispose() { order.push('reminder'); throw new Error('提醒链故意抛错') } }),
+      stopTts: () => order.push('tts'),
+      stopMelody: () => order.push('melody'),
+      clearBubble: () => EFF_TEST_CLEAR(),
+    })
+    cleanup()
+    ok('createUnmountCleanup：前一步抛错不跳过后面的清理（顺序固定）', order.join('>') === 'reminder>tts>melody', order.join('>'))
+    ok('createUnmountCleanup：气泡计时器槽位清空', el._t === null, String(el._t))
+    await sleep(30)
+    ok('createUnmountCleanup：清掉的计时器不会再执行', fired === 0, 'fired=' + fired)
+  }
+
+  // ---- bindOutsideClose / bindResize：三路监听与单路监听都要摘干净 ----
+  {
+    const doc = new FakeTarget()
+    let outside = 0
+    const off = EFF.bindOutsideClose({ doc, onOutside: () => outside++ })
+    ok('bindOutsideClose：pointerdown/mousedown/touchstart 三路都挂', doc.count() === 3, 'listeners=' + doc.count())
+    doc.fire('pointerdown', { target: { closest: () => ({}) } }, true)
+    ok('bindOutsideClose：点在菜单里不关闭', outside === 0)
+    doc.fire('pointerdown', { target: { closest: () => null } }, true)
+    ok('bindOutsideClose：点菜单外关闭一次', outside === 1, 'outside=' + outside)
+    off()
+    ok('bindOutsideClose：dispose 三路监听全撤', doc.count() === 0, '残留=' + doc.count())
+
+    const win = new FakeTarget()
+    let resized = 0
+    const offResize = EFF.bindResize(win, () => resized++)
+    win.fire('resize', {})
+    ok('bindResize：resize 触发回调', resized === 1, 'resized=' + resized)
+    offResize()
+    win.fire('resize', {})
+    ok('bindResize：dispose 后不再触发、监听清零', resized === 1 && win.count() === 0, 'resized=' + resized + ' listeners=' + win.count())
+  }
+
+  // ======================================================================
+  console.log('\n[G] stage：失焦收尾 + pointer 模式 React/兜底分工')
+  {
+    // ---- blur：抬起事件永远等不到，必须补 onEnd（否则 client 的 dragging 卡住）----
+    const win = new FakeTarget()
+    win.PointerEvent = function PointerEvent() { }
+    const fish = { contains: (n) => n === fish }
+    const el = Object.assign(new FakeTarget(), { contains: (n) => n === fish })
+    let ends = 0
+    const b = STAGE.bindDragInput(el, win, { onDown() { }, onMove() { }, onEnd() { ends++ } })
+    win.fire('pointerdown', pev(1, 10, 10, fish), true)
+    win.fire('blur', {})
+    ok('pointer：窗口失焦补一次 onEnd（dragRef 不会卡在 dragging）', ends === 1, 'ends=' + ends)
+    win.fire('blur', {})
+    ok('pointer：重复失焦不重复收尾', ends === 1, 'ends=' + ends)
+    b.dispose()
+
+    const winN = new FakeTarget()
+    winN.PointerEvent = function PointerEvent() { }
+    const elN = Object.assign(new FakeTarget(), { contains: (n) => n === fish })
+    let endsN = 0
+    const bN = STAGE.bindDragInput(elN, winN, { onDown() { }, onMove() { }, onEnd() { endsN++ } })
+    winN.fire('blur', {})
+    ok('pointer：没有按下时 blur 不误报 onEnd', endsN === 0, 'ends=' + endsN)
+    bN.dispose()
+
+    // ---- 触摸模式（无 PointerEvent）同理 ----
+    const winT = new FakeTarget()
+    const elT = Object.assign(new FakeTarget(), { contains: (n) => n === fish })
+    let endsT = 0
+    const bt = STAGE.bindDragInput(elT, winT, { onDown() { }, onMove() { }, onEnd() { endsT++ } })
+    elT.fire('touchstart', touchEv(11, 5, 5), false)
+    winT.fire('blur', {})
+    ok('touch：窗口失焦也补一次 onEnd', endsT === 1, 'ends=' + endsT)
+    bt.dispose()
+
+    // ---- pointer 模式：React 的 SyntheticEvent 标记到不了原生事件，兜底按「目标在不在鱼身上」分流 ----
+    const win2 = new FakeTarget()
+    win2.PointerEvent = function PointerEvent() { }
+    const other = { contains: () => false }
+    const el2 = Object.assign(new FakeTarget(), { contains: (n) => n === fish })
+    let moves = 0
+    let ends2 = 0
+    const b2 = STAGE.bindDragInput(el2, win2, { onDown() { }, onMove() { moves++ }, onEnd() { ends2++ } })
+    win2.fire('pointerdown', pev(1, 10, 10, fish), true)
+
+    const nativeMove = pev(1, 20, 20, fish)
+    win2.fire('pointermove', nativeMove, true)        // capture 过滤：主指针放行
+    moves++                                            // React onPointerMove（合成事件，标记在 synthetic 上）
+    win2.fire('pointermove', nativeMove, false)        // 原生事件到 window 兜底
+    ok('pointer：目标还在鱼身上时兜底不重复算（React 已处理）', moves === 1, 'moves=' + moves)
+
+    const outMove = pev(1, 30, 30, other)
+    win2.fire('pointermove', outMove, true)
+    win2.fire('pointermove', outMove, false)
+    ok('pointer：指针滑出鱼身（capture 失效）时兜底接手', moves === 2, 'moves=' + moves)
+
+    const nativeUp = pev(1, 30, 30, fish)
+    win2.fire('pointerup', nativeUp, true)
+    ends2 += 1                                         // React onPointerUp
+    win2.fire('pointerup', nativeUp, false)
+    ok('pointer：鱼身上抬起不重复收尾', ends2 === 1, 'ends=' + ends2)
+
+    const outUp = pev(1, 40, 40, other)
+    win2.fire('pointerup', outUp, true)
+    win2.fire('pointerup', outUp, false)
+    ok('pointer：鱼身外抬起由兜底收尾', ends2 === 2, 'ends=' + ends2)
+    b2.dispose()
+
+    // 静态契约：兜底「目标在鱼身上就跳过」的前提是 React 侧真的接住了 move/up。
+    // 谁把这几个处理器摘了，鱼就会拖不动——用断言把它钉住（静默失效最难查）。
+    const clientSrc = readFileSync(join(ROOT, 'src/client.ts'), 'utf8')
+    ok('契约：stage 仍挂着 React 的 onPointerMove/onPointerUp（兜底跳过依赖它）',
+      /onPointerDown,\s*onPointerMove,\s*onPointerUp,\s*onPointerCancel:\s*onPointerUp/.test(clientSrc))
+  }
+} catch (e) {
+  ok('effects/stage 生命周期测试未抛错（含 esbuild 离线打包）', false, String(e && e.stack || e))
+} finally {
+  try { rmSync(TMP_RENDER, { recursive: true, force: true }) } catch (e) { }
 }
 
 // ======================================================================

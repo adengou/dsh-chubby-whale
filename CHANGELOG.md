@@ -4,6 +4,29 @@
 
 ## [未发布]
 
+## [1.1.68] - 2026-11-07
+
+### 新增：鱼账本（真实 token 明细 + 人民币估算）
+- `/fishfood` 与 `/stats` 除总量外，给出**输入/输出拆分、缓存命中数、人民币估算**（总/今日/当月）
+- 价格来自官方页（`https://api-docs.deepseek.com/zh-cn/quick_start/pricing`，2026-11-07 实抓）：三段计价（缓存命中/未命中/输出）× 高峰/空闲两档；价目表带核对日期，调价后改 `shared/pricing.ts` 两行并同步测试
+- **不猜**：拿不到 `usage` 拆分就只记 token、不记金额（界面说「暂无可拆分用量」），绝不显示 ¥0.00 冒充花了 0 元；法定节假日无法内置，**按高峰算**（只多估）
+- 客户端 `fishfood` 指令与面板概况显示明细与 ¥
+
+### 修复（B96 渲染层分身）
+- **惯性永远不跑**：pointer 模式下 window 兜底与 React 处理器**重复驱动同一次移动**，第二次 `dx=0` 把末帧速度清零 → `endDrag` 恒返回 0，惯性失效且每帧双写 style。兜底改为只在指针滑出鱼身（capture 失效）时接手
+- **切窗口后鱼粘着鼠标**：`window blur` 只清 activeId 不结束拖拽，`dragging` 永真；现在 blur 补一次 `onEnd`
+
+### 修复（B96 说书宿主分身取证）
+- **BOM 书文件静默读不出来**：`src/story-worker.ts` 读 JSON 不剥 UTF-8 BOM，而 player/local/cloud 三处都剥。用户用 PowerShell `Set-Content -Encoding UTF8` 改书就中招：整本读成 0 段，还被 mtime 负缓存住。现在剥 BOM，真 Worker 验证 + 回归断言
+
+### 修复（主代理收尾）
+- 气泡计时器卸载清理改走 `bubble.clearBubbleTimer()` 公开访问器（原来直读 `el._t`，字段改名会**静默失效**）；`effects` 与 `bubble` 解耦为注入回调（顺带避免把 persona→`data/*.json` 链拉进引用 effects 的测试）
+- 删除写不到原生事件、也无人读取的 `__chubbyDragHandled` 死标记；resize 的 200ms 存盘定时器卸载时撤销
+
+### 测试
+- 新增 `test-ledger-cost.mjs`(45)、`test-story-host.mjs`(107，并入说书真链路与 BOM 回归) 接入 `npm test`；`test-render-layer` 79→109
+- 全链 **4287 项 0 失败**（`node tools/test-count.mjs`：60 个套件，失败 0，未识别 0）
+
 ## [1.1.67] - 2026-11-07
 
 ### 新增

@@ -9,6 +9,7 @@ import { readFile } from 'node:fs/promises'
 import { growthStage } from '../../shared/growth.js'
 import { fetchJson, isTimeoutError } from '../http.js'
 import { sendJson, sendText, sendError, sendBuffer } from '../respond.js'
+import { PRICING_CHECKED_AT, PRICING_SOURCE } from '../../shared/pricing.js'
 
 /** 余额查询超时：15 秒 */
 const BALANCE_TIMEOUT = 15 * 1000
@@ -123,18 +124,43 @@ export function createMiscHandlers(opts: {
     }
   }
 
+  /** 金额清洗：非负有限，保留 6 位小数（与记账时精度一致） */
+  function nonNegCost(v: any): number {
+    const n = Number(v)
+    if (!Number.isFinite(n) || n <= 0) return 0
+    return Math.round(Math.min(1e9, n) * 1e6) / 1e6
+  }
+
   async function handleFishfood(_req: any, res: any): Promise<void> {
     try {
       // loadFishfood 读入时已做跨天/跨月滚动，这里拿到的今日/本月计数不会停在昨天
       const f = opts.loadFishfood() || {}
       const chatTokens = nonNegInt(f.chatTokens)
       const storyTokens = nonNegInt(f.storyTokens)
+      // 鱼账本（2026-11-07）：token 明细 + 人民币估算。金额由 shared/pricing.ts 在**记账时**算好落下，
+      // 这里只读不算 —— 否则跨高峰/空闲边界重算会与当时实际单价不一致。
+      const promptTokens = nonNegInt(f.promptTokens)
+      const completionTokens = nonNegInt(f.completionTokens)
+      const cacheHitTokens = nonNegInt(f.cacheHitTokens)
+      const costCny = nonNegCost(f.costCny)
       sendJson(res, {
         ok: true,
         chatTokens,
         storyTokens,
         total: chatTokens + storyTokens,
         dayTokens: nonNegInt(f.dayTokens),
+        // —— 明细与金额（老版本文件里没有这些字段，按 0 处理）——
+        promptTokens,
+        completionTokens,
+        cacheHitTokens,
+        costCny,
+        dayCostCny: nonNegCost(f.dayCostCny),
+        monthCostCny: nonNegCost(f.monthCostCny),
+        monthTokens: nonNegInt(f.monthTokens),
+        // 估算说明：金额随高峰/空闲单价变化，且只有拿到 usage 拆分才计（说明来自 shared/pricing.ts）
+        costIsEstimate: true,
+        priceSource: PRICING_SOURCE,
+        priceCheckedAt: PRICING_CHECKED_AT,
       })
     } catch (err: any) {
       sendError(res, err, { chatTokens: 0, storyTokens: 0, total: 0, dayTokens: 0 })

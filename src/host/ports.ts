@@ -138,7 +138,8 @@ export interface ChatRouteDeps {
   saveState: (obj: any) => void
   systemPrompt: string | (() => string)
   addExp?: (n: number, source?: string) => any
-  addTokens?: (kind: string, n: number) => any
+  /** 可选第 3 参：一次用量的输入/输出拆分与本次人民币估算（鱼账本 2026-11-07）；老调用方只传两个参数 */
+  addTokens?: (kind: string, n: number, detail?: { promptTokens?: number; completionTokens?: number; cacheHitTokens?: number; costCny?: number }) => any
   cache?: CachePort
   loadMemorySummary?: () => string
   saveMemorySummary?: (s: string) => void
@@ -155,7 +156,8 @@ export interface ChatStreamRouteDeps {
   loadHistory: () => any[]
   appendTurns?: (userText: string, replyText: string) => any
   systemPrompt: string | (() => string)
-  addTokens?: (kind: string, n: number) => any
+  /** 可选第 3 参：一次用量的输入/输出拆分与本次人民币估算（鱼账本 2026-11-07）；老调用方只传两个参数 */
+  addTokens?: (kind: string, n: number, detail?: { promptTokens?: number; completionTokens?: number; cacheHitTokens?: number; costCny?: number }) => any
   cache?: CachePort
   loadMemorySummary?: () => string
   cacheEnabled?: () => boolean
