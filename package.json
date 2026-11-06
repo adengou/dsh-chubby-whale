@@ -68,7 +68,7 @@
   "scripts": {
     "build": "node scripts/gen-version.mjs && node scripts/check-bom.mjs && tsc -p tsconfig.json && tsc -p tsconfig.client.json && esbuild src/client.ts --bundle --format=iife --external:react --charset=utf8 --outfile=dist/client.js",
     "prepublishOnly": "npm run build",
-    "test": "node scripts/check-imports.mjs && node scripts/gen-module-index.mjs --check && node scripts/check-boundaries.mjs && node scripts/check-diag-keys.mjs && node scripts/check-text.mjs && node scripts/test.mjs && node scripts/verify-voice.mjs && node scripts/smoke-client.mjs && node scripts/ape-bench.mjs && node scripts/smoke-host.mjs",
+    "test": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/check-imports.mjs && node scripts/gen-module-index.mjs --check && node scripts/check-boundaries.mjs && node scripts/check-diag-keys.mjs && node scripts/check-text.mjs && node scripts/test.mjs && node scripts/verify-voice.mjs && node scripts/smoke-client.mjs && node scripts/ape-bench.mjs && node scripts/smoke-host.mjs",
     "version:check": "node tools/version-check.mjs --deep",
     "sync:github": "node tools/gh-sync.mjs",
     "typecheck": "node scripts/gen-version.mjs && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
