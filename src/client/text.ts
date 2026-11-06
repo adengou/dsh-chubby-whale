@@ -207,7 +207,9 @@ export function isShortEchoFragment(plain: string, hadRecentSpeech: boolean): bo
  */
 export function stripStageDirections(raw: any): string {
   let t = str(raw)
-  t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, ' ')
+  // 不能给长度上限：超过上限的动作描写（>60 字）会只掉星号、正文被念出来。
+  // 用否定字符类 `[^*＊\n]*`，无嵌套量词，不存在回溯爆炸风险。
+  t = t.replace(/[\*＊][^*＊\n]*[\*＊]/g, ' ')
   t = t.replace(/[\*＊]/g, ' ')
   // 剥完动作后别留"主人， 白饭"这种标点后空格
   t = t.replace(/([，。！？；：、])\s+/g, '$1')
@@ -284,9 +286,22 @@ export function createSentenceBuffer(maxLen = 40): SentenceBuffer {
       break
     }
     if (force || tail.length + lead.length >= limit) {
-      const seg = (lead + tail).trim()
+      const buf = lead + tail
       lead = ''
       tail = ''
+      // maxLen 只是「触发阈值」，长句不能整段吐给 TTS（一次念几百字，打断也晚）。
+      // 这里按阈值硬切，保证不切断代理对（emoji）与不留下孤立高代理。
+      let rest = buf
+      while (rest.length > limit) {
+        let cut = limit
+        const code = rest.charCodeAt(cut - 1)
+        // 高代理（0xD800-0xDBFF）不能作为切点结尾，往后挪一位
+        if (code >= 0xd800 && code <= 0xdbff) cut += 1
+        const seg = rest.slice(0, cut).trim()
+        if (seg) out.push(seg)
+        rest = rest.slice(cut)
+      }
+      const seg = rest.trim()
       if (seg) out.push(seg)
     }
     return out

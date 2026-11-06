@@ -372,7 +372,7 @@
   }
   function chatRate() {
     try {
-      const s = localStorage.getItem("chubby-chat-rate");
+      const s = String(localStorage.getItem("chubby-chat-rate") || "").trim();
       if (s && CHAT_RATES.indexOf(s) >= 0) return s;
     } catch (e) {
     }
@@ -390,7 +390,7 @@
   }
   function narrationRate() {
     try {
-      const s = localStorage.getItem("chubby-narration-rate");
+      const s = String(localStorage.getItem("chubby-narration-rate") || "").trim();
       if (s && NARRATION_RATES.indexOf(s) >= 0) return s;
     } catch (e) {
     }
@@ -574,7 +574,7 @@
   }
   function stripStageDirections(raw) {
     let t = str(raw);
-    t = t.replace(/[\*＊][^*＊\n]{1,60}[\*＊]/g, " ");
+    t = t.replace(/[\*＊][^*＊\n]*[\*＊]/g, " ");
     t = t.replace(/[\*＊]/g, " ");
     t = t.replace(/([，。！？；：、])\s+/g, "$1");
     return t.replace(/\s{2,}/g, " ").trim();
@@ -630,9 +630,19 @@
         break;
       }
       if (force || tail.length + lead.length >= limit) {
-        const seg = (lead + tail).trim();
+        const buf = lead + tail;
         lead = "";
         tail = "";
+        let rest = buf;
+        while (rest.length > limit) {
+          let cut = limit;
+          const code = rest.charCodeAt(cut - 1);
+          if (code >= 55296 && code <= 56319) cut += 1;
+          const seg2 = rest.slice(0, cut).trim();
+          if (seg2) out.push(seg2);
+          rest = rest.slice(cut);
+        }
+        const seg = rest.trim();
         if (seg) out.push(seg);
       }
       return out;
