@@ -5064,6 +5064,18 @@
     }
     return activeState ? activeState.mood : "idle";
   }
+  function applyServerMood(m) {
+    const s = String(m == null ? "" : m).toLowerCase();
+    const map = { happy: "excited", excited: "excited", hungry: "hungry", normal: "idle", idle: "idle" };
+    const mood = map[s];
+    if (!mood) return;
+    if (activeState) {
+      try {
+        activeState.mood = mood;
+      } catch (e) {
+      }
+    }
+  }
   function moodFace(mood) {
     return MOOD_FACES[String(mood == null ? "" : mood)] || "";
   }
@@ -7923,6 +7935,15 @@
           }
           return chat.send(rawText, opts).then((ok) => ok !== false);
         }
+        R.useEffect(() => {
+          try {
+            getJson("/pet").then((d) => {
+              if (d && d.pet && d.pet.mood) applyServerMood(String(d.pet.mood));
+            }).catch(() => {
+            });
+          } catch (e) {
+          }
+        }, []);
         R.useEffect(() => {
           try {
             const w = window.__chubbyWhale || (window.__chubbyWhale = {});

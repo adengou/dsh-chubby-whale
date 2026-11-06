@@ -57,6 +57,19 @@ export function currentMood(): Mood {
   return activeState ? activeState.mood : 'idle'
 }
 
+/**
+ * 服务端 mood → 客户端 Mood（启动时从 /pet 同步一次）。
+ * 服务端只发 normal/happy/hungry：happy→excited、hungry→hungry、normal→idle；
+ * 其余值不覆盖（sleepy/sulk/shy/guard 是客户端本地情绪）。
+ */
+export function applyServerMood(m: string): void {
+  const s = String(m == null ? '' : m).toLowerCase()
+  const map: Record<string, Mood> = { happy: 'excited', excited: 'excited', hungry: 'hungry', normal: 'idle', idle: 'idle' }
+  const mood = map[s]
+  if (!mood) return
+  if (activeState) { try { activeState.mood = mood } catch (e) { } }
+}
+
 /** mood → 表情；未知情绪返回空串（不显示） */
 export function moodFace(mood?: string): string {
   return (MOOD_FACES as any)[String(mood == null ? '' : mood)] || ''

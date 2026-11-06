@@ -17,7 +17,7 @@ import { registerCultureActions } from './client/actions/culture.js'
 import { registerContentActions } from './client/actions/content.js'
 import { registerSystemActions } from './client/actions/system.js'
 import { registerVoiceActions } from './client/actions/voice.js'
-import { createPersona } from './client/persona.js'
+import { createPersona, applyServerMood } from './client/persona.js'
 import { createDeduper } from './client/text.js'
 import { getJson } from './client/http.js'
 import { createMelodyPlayer } from './client/melody.js'
@@ -743,7 +743,13 @@ import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime } f
   return chat.send(rawText, opts).then((ok: any) => ok !== false)
       }
 
-      // 调试口：控制台输入 __chubbyWhale.say("你好呀") 可直接测「对话 + 朗读」链路（不经过麦克风）
+      // 启动时把服务端 pet.mood 同步给客户端（服务端只发 normal/happy/hungry；失败静默，不阻塞渲染）
+  // SYNC-PET-MOOD
+  R.useEffect(() => {
+    try { getJson('/pet').then((d: any) => { if (d && d.pet && d.pet.mood) applyServerMood(String(d.pet.mood)) }).catch(() => { }) } catch (e) { }
+  }, [])
+
+  // 调试口：控制台输入 __chubbyWhale.say("你好呀") 可直接测「对话 + 朗读」链路（不经过麦克风）
       R.useEffect(() => {
         try {
           const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
