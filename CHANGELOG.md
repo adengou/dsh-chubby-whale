@@ -4,6 +4,35 @@
 
 ## [未发布]
 
+## [1.1.59] - 2026-11-07
+
+### 修复（B82 装配层分身：云端 TTS 从未接线）
+- **「云端 → edge-tts → 浏览器」实际只有两层**：`cloudTts` 在 `index.ts` 构造出来却从未注入（`git log -S createCloudTts` 自 1.1.37 起没有一次 `cloudTts:` 实参），而路由一直依赖 `opts.cloudTts`。配了 `cloudVoice.apiKey` 的主人也一直走 edge-tts
+- **TTS 常驻 python 子进程无人回收**：引擎在 `routes/tts.ts` 工厂内部自建，`dispose()` 传不出来，只能等 5 分钟 idle；改由装配层建引擎并登记 `ctx.effect`
+- **`routes.ts` 的 `HandlerSet` 是 `any`**：表里写错 handler 名只有运行期才炸；改成各工厂 `ReturnType` 的编译期契约
+- 死导入（`deepFreeze`、`mkdirSync/existsSync/copyFileSync/cpSync`）、死变量 `cloudTts`、两份重复的 Key 读取器、poem 的不可达 `dataDir` 注入一并清掉
+
+### 修复（B83 ASR 并发治理）
+- **ASR 没有单飞**：`onWindowDone` 可重入，两段识别并发（实测第二个 `/asr` 照发、`uploaded` 计 2）→ 现在忙则丢（不排队：识别是「说完马上回话」的交互，排队会让第二句等第一段，且断网时队列无界）
+- **ASR 没有纪元**：Stop→start 后旧结果当新话（实测旧话被 `onHeard` 送出）；现在 `start`/`stop`/`stopSpeaking` 各 +1，`prepare` 之后、`res.json()` 之后、catch 里都校验，过期一律不送、不写缓存、不改状态
+- **P0 打断不作废在途识别**：`stopSpeaking` 只处理 TTS；现在同时 abort 在途 ASR（`abortAsrFlight`）
+- **主动作废被记成识别失败**：abort go catch 后无条件 `asrFail++`；现在过期/主动取消不计失败
+
+### 修复（B84 组件入口：叙述锁与文案）
+- **诗尾 onDone 会解掉说书的锁**：念诗播到一半点「讲段书」，诗 segment 播完的 `clearNarrate()` 把说书刚上的锁清掉（`narration.ts` 只有一份 `until`）→ 说书段没有锁、气泡不更新、麦克风提前拾音。现在锁按**持有者令牌**归属：`clearNarrate` 只在仍是自己持有时才清；「停止说话」与过期看门狗走权威清锁
+- **说书长段没有朗读兜底**：`story.ts` 只在估算 ≤2 分钟时挂兜底，1000 字≈4 分钟，`onDone` 一丢就永久「正讲着呢」。入口在 narrate 后挂**只报警不放锁**的探针（`max(30s, 1.5×估算)`），到点写 `__chubbyWhale.narrateOverdue` + `narrateOverdueInfo`
+- **文案与实现相反**：「语音待命：开（先喊「大肥鱼」，本鲸才答话）」「待唤醒（先喊…）」——唤醒词自 2026-11-06 起已不是拦话门槛；改为「随时可以说，喊不喊名字都行」等真实表述
+- `wakeHint` 不再补「重开语音待命后生效」：`syncWakeWords` 已让换词即时生效，那句提示本身是错误信息（`test-actions-rest` 对应 2 条期望同步更新）
+
+### 修复（B85 基础设施）
+- **读图无等待上限**：`FileReader` 在安全软件拦截/文件被占用时会永不回调，`handleFileDrop` 永远 pending、气泡卡在「本鲸看看这张图…」；加 30s 超时 + `abort()` + 收尾清定时器
+- **检查器自检探针**：新增 `test-boundaries-guard.mjs`，临时塞入「路由直连 store/cache」两个违规探针，断言 `check-boundaries` 必须 exit 1 并报出 B6，删探针后回到 exit 0（防「规则假绿」重演）
+- **`tools/test-count.mjs`**：逐脚本取最后一条汇总行求和，避免人工加总漏掉「全部通过：N/N」这类格式（此前手算虽正确，但工具化后可复跑）
+
+### 测试
+- 新增 `test-assembly.mjs`(20)、`test-asr-concurrency.mjs`(49)、`test-entry-narration.mjs`(37)、`test-image-reader.mjs`(7)、`test-boundaries-guard.mjs`(9)，均接入 `npm test`
+- 全链 **2845 项 0 失败**（`node tools/test-count.mjs` 实跑：39 个套件，失败 0，未识别 0）
+
 ## [1.1.58] - 2026-11-07
 
 ### 修复（B74 配置/备份/迁移分身）
