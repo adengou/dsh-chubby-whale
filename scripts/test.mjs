@@ -3293,6 +3293,18 @@ try {
   ok('能加载语音桥（随时说）', false, String(e.message))
 }
 
+
+// ---------- 61 聊天限额与安全（独立脚本 scripts/test-chat-limits.mjs） ----------
+console.log('\n[61] 聊天限额与安全（消息截断 / 图片上限 / lang 注入 / 缓存键 / NO_KEY / 中断 / mime）')
+try {
+  // 单独脚本也已纳入 package.json 的 test 链，可脱离 test.mjs 独立运行
+  const { runChatLimits } = await import('./test-chat-limits.mjs')
+  const result = await runChatLimits(ok, { registerResolver: false })
+  if (!result || result.total === 0) ok('限额与安全用例有断言', false)
+} catch (e) {
+  ok('能运行聊天限额与安全用例', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
