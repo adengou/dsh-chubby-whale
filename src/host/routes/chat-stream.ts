@@ -18,6 +18,9 @@
  *   · 请求解析、system 片段、messages 结构全部走 host/chat-core.ts（同一输入 → 同一请求体）；
  *   · 命中缓存：直接发一条 delta + done(cached:true)
  *   · 未命中：边转发边累积，结束时写缓存、写记忆、记 token；半截（中断/客户端断开）一律不落盘。
+ *   · 客户端断连（B94）：req 'aborted' / req close(complete=false) / res close(响应没写完) 都算
+ *     「客户端走了」——立刻 abort 上游、不写记忆不记账；正常结束的 res close（writableFinished）
+ *     不算断连。判定与 /chat、/asr 共用 host/http.ts 的 watchClientGone 一份实现。
  *
  * 记账口径（2026-11-06 起与普通 /chat 一致）：
  *   · 成功回复：亲密度 +1、经验 +1（可升级）、appendTurns、token、onReply；
@@ -35,7 +38,7 @@
  * 纯函数与其它路由共用 host/chat-core.ts，不再从 routes/chat.ts 横向 import。
  */
 
-import { sendTooLarge } from '../http.js'
+import { sendTooLarge, watchClientGone } from '../http.js'
 import { readJsonBody } from '../body.js'
 import { sendJson, sendSseHeaders } from '../respond.js'
 import type { ChatStreamRouteDeps } from '../ports.js'
@@ -53,6 +56,12 @@ const SSE_PING_MS = 12 * 1000            // SSE 心跳间隔
 const CHAT_MAX_BODY = 6 * 1024 * 1024
 /** 图片超限文案：与 host/routes/chat.ts 的同一句保持一致（路由之间不横向 import，各持一份） */
 const IMAGE_TOO_LARGE_FALLBACK = '主人，这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～'
+/**
+ * 客户端已经走了的日志标签（B94）：与上游超时/网络错误分开，排障时一眼能分清谁先放弃。
+ * 分两条对应时机：外呼/读流途中断开（中止外呼）/ 还没发起外呼就断开（body 阶段断连）。
+ */
+const LOG_CLIENT_ABORT_OUTBOUND = '[chat-stream] CHAT-CLIENT-ABORT 客户端已断开，上游外呼已中止（不计入上游超时/网络失败）'
+const LOG_CLIENT_ABORT_REQUEST = '[chat-stream] CHAT-CLIENT-ABORT 客户端已断开，请求中止（未发起外呼）'
 
 export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
   // 与普通 /chat 共用同一个装配值（index.ts 的 readChatModel），缓存 key 也带它
@@ -102,6 +111,16 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       idleTimer = setTimeout(() => abortUpstream('idle timeout ' + CHAT_IDLE_TIMEOUT + 'ms'), CHAT_IDLE_TIMEOUT)
     }
 
+    /**
+     * 断连观察器（B94，与 /asr、/chat 共用 host/http.ts 的同一套判定）：
+     * 覆盖 req 'aborted' / req close(complete=false) / res close(响应没写完) 三种真实断连形状，
+     * 正常结束的 res close（writableFinished=true）不会命中 —— 基线只看 res close 时，
+     * 客户端在**上传 body 阶段**断开会漏掉（req 侧没人听）。
+     * 客户端一走就 abort 上游：没有读者的流继续读到 30s 空闲/120s 硬上限，等于白烧 token；
+     * 收尾阶段（上游已读完）不再 abort。
+     */
+    const client = watchClientGone(req, res, () => { if (!finished) abortUpstream('client closed') })
+
     try {
       const parsed = await readJsonBody(req, CHAT_MAX_BODY)
       if (!parsed.ok) { sendTooLarge(res); return }
@@ -128,19 +147,8 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       }
 
       sendSseHeaders(res)
-      // 立刻把 SSE 头刷出去，客户端不必等首帧；同时记录客户端断开
+      // 立刻把 SSE 头刷出去，客户端不必等首帧（断连监听已由上面的 watchClientGone 挂好）
       try { (res as any).flushHeaders && (res as any).flushHeaders() } catch { }
-      let clientGone = false
-      try {
-        if (typeof (res as any).on === 'function') {
-          (res as any).on('close', () => {
-            clientGone = true
-            // 客户端已经走了：没有读者的流继续读到 30s 空闲/120s 硬上限，等于白烧 token。
-            // 收尾阶段（上游已读完/已 res.end）不再 abort。
-            if (!finished) abortUpstream('client closed')
-          })
-        }
-      } catch { }
 
       // SSE 心跳：浏览器/反向代理会掐掉长时间没有数据的连接（豆包/nginx 一类默认 60s 左右），
       // 每 12s 写一行注释帧（以 : 开头，客户端解析器直接跳过）既保活又不污染事件流。
@@ -217,6 +225,9 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
         totalTimer = setTimeout(() => abortUpstream('total timeout ' + CHAT_MAX_DURATION + 'ms'), CHAT_MAX_DURATION)
         touchIdle()
       }
+      // 客户端在发起外呼之前就走了（读完 body 就断开/切页）：把中止补到刚建好的 controller 上。
+      // fetch 拿到的是已中止的 signal，真实网络请求不会真的打出去；日志由下面的 connect 分支统一出。
+      if (client.gone() && ctl && !ctl.signal.aborted) { try { ctl.abort() } catch { } }
       let upstream: any = null
       try {
         upstream = await fetch(CHAT_URL, {
@@ -234,6 +245,12 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
           signal: ctl ? ctl.signal : undefined,
         })
       } catch (err: any) {
+        // 客户端先走了：这次外呼是我们自己 abort 的（不是上游超时/网络故障），断开后也没人收帧
+        if (client.gone()) {
+          console.error(LOG_CLIENT_ABORT_OUTBOUND)
+          try { res.end() } catch { }
+          return
+        }
         // 空闲/总时长中止时抛的是 AbortError，消息没用，用我们记下的原因
         send({ error: 'connect: ' + (abortReason || String(err?.message || err)) })
         res.end()
@@ -294,7 +311,9 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
         }
       } catch (err: any) {
         aborted = true
-        send({ error: 'stream: ' + (abortReason || String(err?.message || err)) })
+        // 客户端先走了：这是我们自己 abort 的，不是上游故障；连接已断，也别再往死 socket 上写 error 帧
+        if (client.gone()) console.error(LOG_CLIENT_ABORT_OUTBOUND)
+        else send({ error: 'stream: ' + (abortReason || String(err?.message || err)) })
       } finally {
         // 流已结束（正常或异常），超时定时器再留着只会误伤后续收尾
         clearTimers()
@@ -302,13 +321,20 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
 
       // 上游已读完：后面的收尾与客户端断开无关，close 事件不再 abort
       finished = true
-      // 流中断或客户端已断开：这段回复是半截的，绝不能写进缓存和记忆（否则被永久命中）
-      if (aborted || clientGone) { try { res.end() } catch { } ; return }
+      // 流中断或客户端已断开：这段回复是半截的，绝不能写进缓存和记忆（否则被永久命中）。
+      // 注意这里保持保守口径：客户端在流读取途中断开一律不落盘 —— 既有用例
+      // （test-stream-ledger ③B / test-chat-limits ⑦B）钉的就是这一条；「完整回复只是回不去」
+      // 的记账口径属于普通 /chat 那条同步路径（它没有半截概念），两边不混用。
+      if (aborted || client.gone()) {
+        if (client.gone()) console.error('[chat-stream] CHAT-CLIENT-ABORT 客户端已断开：本轮不写缓存/记忆、不记 token、不加经验')
+        try { res.end() } catch { }
+        return
+      }
       const text = reply.trim() || '主人……本鲸刚刚走神了。'
       // 收尾：token / 记忆 / done（与普通 /chat 同口径）
       // token 口径：
       //   · 请求体已带 stream_options.include_usage，usage 在 [DONE] 之前的最后一帧里给，拿到就记；
-      //   · 中断（空闲/总时长超时、客户端断开、上游异常）在上面的 aborted/clientGone 分支已 return，
+      //   · 中断（空闲/总时长超时、客户端断开、上游异常）在上面的 aborted / client.gone() 分支已 return，
       //     不计 token —— 半截流没有最终 usage，估算只会虚记，宁可漏记；
       //   · 上游不回 usage（部分兼容服务不实现）时同样跳过，不猜。
       try {
@@ -377,13 +403,16 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       }
     } catch (err: any) {
       try {
-        send({ error: String(err?.message || err) })
+        // 请求体都没收完客户端就断了（req 'aborted' / ECONNRESET）：不算内部错误，也不往死连接写 error 帧
+        if (client.gone()) console.error(LOG_CLIENT_ABORT_REQUEST)
+        else send({ error: String(err?.message || err) })
         res.end()
       } catch { }
     } finally {
-      // 所有退出路径统一收口：心跳 interval 与两个超时定时器一个都不许残留
+      // 所有退出路径统一收口：心跳 interval、两个超时定时器、req/res 上的断连监听，一个都不许残留
       clearTimers()
       stopPing()
+      client.dispose()
     }
   }
 }
