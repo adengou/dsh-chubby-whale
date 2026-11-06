@@ -14,7 +14,6 @@
  *     FAT / exFAT 只有 2 秒精度，会出现「刚写就被判过期/排序并列」的偶发现象，属已知限制，
  *     只影响缓存命中率，不影响正确性（宁可重算，不返回错内容）。
  */
-import { createHash } from 'node:crypto'
 import { readFile, writeFile, mkdir, readdir, unlink, stat, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CachePort } from './ports.js'
@@ -26,19 +25,9 @@ const RENAME_RETRY_DELAY_MS = 20
 /** prune 节流窗口：每次写都全量 readdir+stat 会把磁盘扫描串进回复延迟 */
 const PRUNE_INTERVAL_MS = 30000
 
-export function hashKey(text: string): string {
-  return createHash('sha1').update(text).digest('hex')
-}
-
-/** 短指纹（md5 前 8 位）：拼缓存 key 用（如长期记忆摘要的指纹） */
-export function shortHash(text: string): string {
-  return createHash('md5').update(String(text || '')).digest('hex').slice(0, 8)
-}
-
-/** 二进制内容 hash（ASR 音频用完整字节，避免只取前 4000 字符撞 key） */
-export function hashBytes(buf: Uint8Array | Buffer): string {
-  return createHash('sha1').update(buf).digest('hex')
-}
+// hash 纯函数已移到 shared/hash.ts（路由也能直接 import，不必为了算 hash 依赖缓存实现）。
+// 这里保留同名 re-export：旧导入路径（历史代码 / 测试）继续可用。
+export { hashKey, shortHash, hashBytes } from '../shared/hash.js'
 
 function sizeOf(value: any): number {
   if (value == null) return 0

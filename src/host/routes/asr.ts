@@ -4,7 +4,7 @@
  * Key 由入口注入（getKey），路由不再自己读 config.json / 环境变量。
  * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB；外呼超时 60 秒
  */
-import { hashBytes } from '../cache.js'
+import { hashBytes } from '../../shared/hash.js'
 import { isInterruptWord, isNoiseText } from '../../shared/noise.js'
 import { fetchJson, isTimeoutError, sendTooLarge } from '../http.js'
 import { readJsonBody } from '../body.js'
