@@ -78,6 +78,28 @@ export function formatClock(at: any): string {
   return hh + ':' + mm
 }
 
+/**
+ * 顺延提示用的时刻：与「现在」不是同一天时补上「明天 / 昨天 / M月D日」。
+ * 为什么要它：顺延只有 10 分钟，23:55 的提醒顺延后落在次日 00:05，
+ * 只显示「顺延到 00:05」会被当成今天凌晨（已经过去的时间），主人会以为没顺延上。
+ * 只在模块内部用（不新增导出，免得改动 docs/模块接口清单.md）。
+ */
+function formatClockWithDay(at: any, nowMs?: number): string {
+  const d = new Date(at)
+  if (isNaN(d.getTime())) return '--:--'
+  const clock = formatClock(d)
+  const baseMs = typeof nowMs === 'number' && isFinite(nowMs) ? nowMs : Date.now()
+  const today = new Date(baseMs)
+  // 按「本地零点」比较日历日，再按天数差选措辞（用 round 兜住夏令时 23/25 小时的日子）
+  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
+  const startTarget = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const days = Math.round((startTarget - startToday) / (24 * 60 * 60 * 1000))
+  if (days === 0) return clock
+  if (days === 1) return '明天 ' + clock
+  if (days === -1) return '昨天 ' + clock
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + clock
+}
+
 /** 清单里显示的时间：照旧用中文 locale，坏时间原样回退 */
 function stampOf(item: ManageItem): string {
   const raw = item.nextAt || item.at
@@ -277,7 +299,8 @@ export function createReminderManager(host: ManageHost): ReminderManager {
     // 已到点的从「现在」起顺延；还没到点的在原定时间上顺延，保持主人的原意
     const base = Number.isFinite(dueMs) ? Math.max(clock(), dueMs) : clock()
     const at = new Date(base + POSTPONE_MS)
-    const when = formatClock(at)
+    // 顺延可能跨零点（23:55 → 次日 00:05）：提示里带上「明天」，别让主人以为顺延到了已经过去的今晨
+    const when = formatClockWithDay(at, clock())
     const body = {
       text: pick.text,
       at: at.toISOString(),
