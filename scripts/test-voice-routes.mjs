@@ -184,6 +184,18 @@ try {
     ok('非字符串 text → 400（不当作文本送进引擎）',
       res.code === 400 && calls.length === 0, 'code=' + res.code)
 
+    // 2026-11-07：超长不再静默截断（原来 6001 字回 200，引擎只收到 6000 字、听到半句）
+    res = mkRes(); calls.length = 0
+    await handle(mkReq({ text: '字'.repeat(6001) }), res)
+    const tooLong = res.json() || {}
+    ok('超长文本 → 413 text too large（不静默截断）',
+      res.code === 413 && tooLong.ok === false && tooLong.limit === 6000 && calls.length === 0,
+      'code=' + res.code + ' body=' + JSON.stringify(tooLong))
+
+    res = mkRes(); calls.length = 0
+    await handle(mkReq({ text: '字'.repeat(6000) }), res)
+    ok('正好 6000 字仍正常合成', res.code === 200 && calls.length === 1, 'code=' + res.code)
+
     res = mkRes(); calls.length = 0
     // 每条用不同文本：缓存键 = voice|rate|pitch|text，同文本会命中上一条（那是缓存正确行为，不是音色没生效）
     await handle(mkReq({ text: 'hello crlf', voice: 'zh-CN-XiaoyiNeural\r\nX-Injected: 1' }), res)
