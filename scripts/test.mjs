@@ -1146,6 +1146,7 @@ try {
   const { createBackupHandlers, BACKUP_MAX_BYTES } = await import('../src/host/routes/backup.ts')
   const saved = {}
   const notes = { story: 0 }
+  const cacheCleared = { count: 0 }
   const deps = {
     version: '1.0.1',
     loadMemory: () => ({ history: [{ role: 'user', content: '主人好' }], summary: '摘要' }),
@@ -1165,6 +1166,7 @@ try {
     loadStoryProgress: () => ({ '甲|0': true }),
     saveStoryProgress: (o) => { saved.storyProgress = o },
     onStoryProgressImported: () => { notes.story++ },
+    clearChatCache: () => { cacheCleared.count++; return 0 },
     now: () => new Date('2026-11-06T00:00:00Z'),
   }
   const { handleExport, handleImport } = createBackupHandlers(deps)
@@ -1222,6 +1224,12 @@ try {
   ok('元数据不写盘也不进 skipped', imp.skipped.indexOf('ok') < 0 && imp.skipped.indexOf('version') < 0 && imp.skipped.indexOf('exportedAt') < 0)
   ok('未知字段进 skipped', imp.skipped.indexOf('未知字段') >= 0, imp.skipped.join(','))
   ok('说书进度导入后刷新播放器内存', imp.imported.indexOf('storyProgress') >= 0 && notes.story === 1)
+  ok('导入记忆后作废服务端聊天缓存', cacheCleared.count === 1, 'clearChatCache 调用 ' + cacheCleared.count + ' 次')
+
+  // ④b 只导入 state（不含 memory/personality）→ 不清缓存
+  res = mkRes()
+  await handleImport(mkReq({ state: { intimacy: 77 } }, 'POST'), res)
+  ok('只导入 state 不清聊天缓存', cacheCleared.count === 1, 'clearChatCache 调用 ' + cacheCleared.count + ' 次')
 
   // ⑤ 类型不对 → 跳过且不落盘
   delete saved.state

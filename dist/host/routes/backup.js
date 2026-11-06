@@ -93,6 +93,15 @@ export function createBackupHandlers(deps) {
                 return;
             }
             const report = runImport(deps, judged.body);
+            // 记忆/人格换了内容 → 旧聊天缓存必须作废（失败只记日志，不影响导入结果）
+            if (deps.clearChatCache && (report.imported.indexOf('memory') >= 0 || report.imported.indexOf('personality') >= 0)) {
+                try {
+                    await deps.clearChatCache();
+                }
+                catch (e) {
+                    console.error('[backup] CACHE-CLEAR-FAIL ' + String((e && e.message) || e));
+                }
+            }
             sendJson(res, { ok: true, imported: report.imported, skipped: report.skipped });
         }
         catch (err) {

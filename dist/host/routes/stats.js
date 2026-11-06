@@ -22,6 +22,18 @@
  */
 import { growthStage } from '../../shared/growth.js';
 import { sendJson, sendError } from '../respond.js';
+function resolve(v, fallback) {
+    if (typeof v === 'function') {
+        try {
+            const got = v();
+            return got === undefined || got === null ? fallback : got;
+        }
+        catch {
+            return fallback;
+        }
+    }
+    return v === undefined || v === null ? fallback : v;
+}
 /** 非负整数（NaN/负数/小数一律归零或取整，展示用不需要负值） */
 function count(value) {
     const n = Number(value);
@@ -62,9 +74,12 @@ export function createStatsHandler(opts) {
         const elapsed = nowFn() - startedAt;
         // 时钟坏了（now() 非有限数）时 elapsed 是 NaN，JSON 会把它写成 null；这里给 0，保持数字类型
         const uptimeMs = startedAt > 0 && Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : 0;
-        // 自检字段是"外部注入"的：形状由调用方决定，这里逐项归一再出包
-        const ttsRaw = opts.tts || {};
-        const backupRaw = opts.backup || {};
+        // 自检字段是"外部注入"的：形状由调用方决定，这里逐项归一再出包；
+        // 支持 getter（备份份数/模型名要反映"现在"，而不是插件加载那一刻）
+        const ttsRaw = resolve(opts.tts, {}) || {};
+        const backupRaw = resolve(opts.backup, {}) || {};
+        const dataSource = String(resolve(opts.dataSource, 'local') || 'local');
+        const model = String(resolve(opts.model, '') || '');
         return {
             ok: true,
             cache: { tts: count(cache.tts), chat: count(cache.chat), asr: count(cache.asr) },
@@ -79,8 +94,8 @@ export function createStatsHandler(opts) {
             },
             uptimeMs,
             // 自检：数据源 / 模型 / TTS 引擎 / 备份（缺省不报错；坏值也不许把 null/负数/怪类型漏出去）
-            dataSource: String(opts.dataSource || 'local'),
-            model: String(opts.model || ''),
+            dataSource,
+            model,
             tts: {
                 available: ttsRaw.available === true,
                 interpreter: typeof ttsRaw.interpreter === 'string' ? ttsRaw.interpreter : '',

@@ -632,6 +632,43 @@ try {
   ok('能加载备份路由', false, String(e.message))
 }
 
+console.log('\n[C2] 统计路由支持 getter（值要反映「现在」，getter 抛错按缺省）')
+try {
+  const { createStatsHandler } = await imp('src/host/routes/stats.ts')
+  let ds = 'local'
+  let bk = { lastAt: 1, count: 2 }
+  let mode = 0
+  const h = createStatsHandler({
+    cacheStats: async () => ({}),
+    loadState: () => ({}),
+    loadGrowth: () => ({ exp: 0 }),
+    loadFishfood: () => ({}),
+    loadPersonality: () => ({}),
+    startedAt: Date.now(),
+    dataSource: () => ds,
+    model: () => 'm-' + mode,
+    backup: () => bk,
+    tts: () => {
+      if (mode === 2) throw new Error('boom')
+      return { available: mode === 0, interpreter: 'python', cooling: false }
+    },
+  })
+  const r1 = (await call(h.handleStats)).json
+  ok('getter：首次取值', r1.ok === true && r1.dataSource === 'local' && r1.model === 'm-0' && r1.backup.count === 2 && r1.backup.lastAt === 1 && r1.tts.available === true && r1.tts.interpreter === 'python', JSON.stringify({ d: r1.dataSource, m: r1.model, b: r1.backup, t: r1.tts }))
+  ds = 'cloud'
+  bk = { lastAt: 9, count: 7 }
+  mode = 1
+  const r2 = (await call(h.handleStats)).json
+  ok('getter：第二次取到新值（不是加载时快照）', r2.dataSource === 'cloud' && r2.model === 'm-1' && r2.backup.count === 7 && r2.backup.lastAt === 9, JSON.stringify({ d: r2.dataSource, m: r2.model, b: r2.backup }))
+  ok('getter：返回「未确认可用」时 tts.available=false', r2.tts.available === false && r2.tts.interpreter === 'python')
+  mode = 2
+  const r3 = await capture(() => call(h.handleStats))
+  const j3 = r3.value.json
+  ok('getter 抛错 → 回落缺省且 ok:true（不把异常抛给 /stats）', j3.ok === true && j3.tts.available === false && j3.tts.interpreter === '', JSON.stringify(j3.tts))
+} catch (e) {
+  ok('能加载统计路由（getter 用例）', false, String(e.message))
+}
+
 // ===========================================================================
 console.log('\n结果：通过 ' + pass + ' 项 / 失败 ' + fail + ' 项')
 if (fail > 0) {
