@@ -136,6 +136,51 @@ console.log('\n[D] 与真实仓储联动：建出来就能被清单/到点看到
   }
 }
 
+
+console.log('\n[E] 走一遍真实 /chat handler（不是只测函数）')
+{
+  const { createChatHandler } = await imp('src/host/routes/chat.ts')
+  const made = []
+  const handler = createChatHandler({
+    getKey: () => '',                       // 没配 Key：聊天会回 NO_KEY，但提醒必须已经建好
+    loadHistory: () => [],
+    appendTurns: () => { },
+    loadState: () => ({}),
+    saveState: () => { },
+    systemPrompt: 'test',
+    addReminder: (text, at, repeat) => { made.push({ text, at, repeat }); return { id: 'x' } },
+  })
+  const body = Buffer.from(JSON.stringify({ message: '十分钟后提醒我吃药' }))
+  const req = {
+    method: 'POST',
+    url: '/api/chubby-whale/chat',
+    headers: { 'content-length': String(body.length) },
+    destroy() { }, on() { }, resume() { },
+    async *[Symbol.asyncIterator]() { yield body },
+  }
+  const res = { code: 0, chunks: [] }
+  res.writeHead = (c) => { res.code = c }
+  res.setHeader = () => { }
+  res.write = (c) => { res.chunks.push(Buffer.from(String(c))); return true }
+  res.end = (c) => { if (c !== undefined) res.chunks.push(Buffer.from(String(c))) }
+  res.on = () => { }
+  await handler(req, res)
+  ok('E1 真实路由会建提醒（不是只有函数能跑）', made.length === 1 && made[0].text === '吃药', JSON.stringify(made))
+  const payload = JSON.parse(Buffer.concat(res.chunks).toString('utf8') || '{}')
+  ok('E2 没配 Key 时仍先把提醒建好，再回 NO_KEY', made.length === 1 && payload.error === 'NO_KEY', JSON.stringify({ made: made.length, error: payload.error }))
+
+  // 同一条消息重发一次：去重，不重复建
+  const req2 = { ...req, async *[Symbol.asyncIterator]() { yield body } }
+  const res2 = { code: 0, chunks: [] }
+  res2.writeHead = (c) => { res2.code = c }
+  res2.setHeader = () => { }
+  res2.write = (c) => { res2.chunks.push(Buffer.from(String(c))); return true }
+  res2.end = (c) => { if (c !== undefined) res2.chunks.push(Buffer.from(String(c))) }
+  res2.on = () => { }
+  await handler(req2, res2)
+  ok('E3 同一条消息重发不重复建提醒', made.length === 1, 'made=' + made.length)
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) {
