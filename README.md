@@ -91,6 +91,19 @@ dsh plugin --profile web remove dsh-chubby-whale
 | 工具 | 提醒（口语时间：9点 / 明天9点 / 半小时后 / 每天8点；**管理面板**：回数字删除、回 `d` 顺延 10 分钟）、看图、拖文件（图片识别 / 文本总结）、成长与亲密度、鱼粮账本、余额、清除记忆、**数据导出/导入**、**使用统计** |
 | 界面 | **界面语言**（中文默认 / 英文）、右键菜单键盘导航（↑↓/Enter/Esc）、「让它游走」可逆（右下角「○」或 Ctrl+Shift+W 恢复）、多标签页各自独立 |
 
+## 手机简版（/whale-mobile）
+
+同一个插件里自带一个**手机端简版页面**：聊天 / 说书 / 提醒三件套，安卓优先，纯静态无构建。
+
+- 装了本插件、电脑端 dsh web 开着，手机浏览器打开 `http://<电脑IP>:<端口>/whale-mobile/` 即可
+- 模型与 Key **复用本插件自己的**（`config.json` 的 `deepseekKey`，逐级回退到环境变量）
+- 数据落在 `$DSH_HOME/whale-mobile/state.json`（与桌宠的 `data/` 分开）
+- 页面顶部会自述依赖：电脑端 dsh web（硬依赖）+ 伴生桌宠版本
+- 关掉：`config.mobile === false`，或删掉 `mobile/` 与 `dist/host/mobile.js`
+
+> **它不是独立 App**：离开电脑端的 dsh web 进程，页面只剩空壳。原因见
+> `docs/DEPENDENCIES.md`（注意：该文档在独立仓库里，本节即其摘要）。
+
 ## 目录结构
 
 ```

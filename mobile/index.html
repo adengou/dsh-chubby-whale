@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="description" content="大肥鱼移动端原型：聊天 / 说书 / 提醒，纯静态单页。" />
+  <title>大肥鱼 · 移动端</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css?v=0.1.1" />
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主内容</a>
+
+  <!-- 断网 / 离线提示条 -->
+  <div class="offline-bar" id="offlineBar" role="status" aria-live="polite" hidden>
+    📴 网络断开了，请求可能会失败。等网络回来本鱼会自己接上。
+  </div>
+
+  <!-- 顶部标题栏 -->
+  <header class="appbar">
+    <div class="appbar__brand">
+      <span class="appbar__logo" aria-hidden="true">🐟</span>
+      <span class="appbar__title">大肥鱼</span>
+    </div>
+    <div class="conn" id="conn" role="status" aria-live="polite" aria-label="连接状态：待连接">
+      <span class="conn__dot" id="connDot" data-state="idle" aria-hidden="true"></span>
+      <span class="conn__text" id="connText">待连接</span>
+    </div>
+  </header>
+
+  <!-- toast 浮层（顶部弹出，不阻塞） -->
+  <div class="toast-host" id="toastHost" aria-live="assertive" aria-atomic="true"></div>
+
+  <main class="main" id="main">
+
+    <!-- ============================================================ -->
+    <!-- 1. 聊天                                                       -->
+    <!-- ============================================================ -->
+    <section class="panel" id="panel-chat" role="tabpanel" aria-labelledby="tab-chat">
+      <details class="card welcome" id="welcome" open>
+        <summary class="welcome__summary">
+          <span class="welcome__emoji" aria-hidden="true">🐟</span>
+          <span>本鱼的使用说明（点这里展开 / 收起）</span>
+        </summary>
+        <div class="welcome__body">
+          <p class="welcome__lead">哼，才、才不是特意为你写的说明……不过你既然点进来了，就顺势看一眼吧。</p>
+          <ul class="welcome__list">
+            <li><b>💬 聊天</b>：发一句话，本鱼边吃白饭边回你，回答会一个字一个字往外蹦。</li>
+            <li><b>📖 说书</b>：给个主题（空着也行），本鱼现场憋一个 500 / 800 / 1200 字的故事。</li>
+            <li><b>⏰ 提醒</b>：说清要提醒啥、什么时候，到点会弹提示、响一声、抖一下。</li>
+          </ul>
+          <p class="welcome__meta" id="welcomeMeta"></p>
+          <p class="welcome__meta" id="depLine" hidden></p>
+        </div>
+      </details>
+
+      <section class="chat" aria-labelledby="chatHeading">
+        <h2 class="sr-only" id="chatHeading">聊天</h2>
+
+        <div class="chat__bar">
+          <span class="chat__hint" id="chatHint">还没开始聊，说点什么吧</span>
+          <button class="btn btn--ghost" id="newChatBtn" type="button" aria-label="开始新对话，清空当前聊天记录">新对话</button>
+        </div>
+
+        <div class="chat__list" id="chatList" role="log" aria-live="polite" aria-relevant="additions" aria-busy="false" aria-label="聊天记录"></div>
+
+        <form class="chat__form" id="chatForm">
+          <label class="sr-only" for="chatInput">输入要发给大肥鱼的消息</label>
+          <textarea class="chat__input" id="chatInput" rows="1" placeholder="跟大肥鱼说点什么…"
+                    autocomplete="off" enterkeyhint="send"></textarea>
+          <button class="btn btn--primary chat__send" id="chatSend" type="submit" aria-label="发送消息">发送</button>
+        </form>
+      </section>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 2. 说书                                                       -->
+    <!-- ============================================================ -->
+    <section class="panel" id="panel-story" role="tabpanel" aria-labelledby="tab-story" hidden>
+      <h2 class="sr-only">说书</h2>
+
+      <form class="card stack" id="storyForm">
+        <label class="field-label" for="storyTopic">
+          故事主题<span class="field-hint">（可空，空着本鱼自己编）</span>
+        </label>
+        <input class="input" id="storyTopic" type="text" maxlength="80" enterkeyhint="go"
+               placeholder="比如：一条鱼偷吃 token 被抓" />
+
+        <div class="field-label" id="storyWordsLabel">字数</div>
+        <div class="seg" id="storyWords" role="radiogroup" aria-labelledby="storyWordsLabel">
+          <button class="seg__btn" type="button" role="radio" aria-checked="false" data-words="500">500 字</button>
+          <button class="seg__btn" type="button" role="radio" aria-checked="true" data-words="800">800 字</button>
+          <button class="seg__btn" type="button" role="radio" aria-checked="false" data-words="1200">1200 字</button>
+        </div>
+
+        <button class="btn btn--primary btn--block" id="storyGo" type="submit" aria-label="让大肥鱼讲一个故事">讲一个</button>
+      </form>
+
+      <div class="card loading" id="storyLoading" role="status" aria-live="polite" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <span class="loading__text">本鱼正在憋故事…</span>
+      </div>
+
+      <article class="card story" id="storyResult" aria-live="polite" hidden>
+        <h3 class="story__title" id="storyTitle"></h3>
+        <p class="story__meta" id="storyMeta"></p>
+        <div class="story__body" id="storyBody" tabindex="0" role="region" aria-label="故事正文"></div>
+      </article>
+
+      <section class="card" aria-labelledby="storyHistHeading">
+        <div class="card__head">
+          <h3 class="card__title" id="storyHistHeading">历史故事</h3>
+          <button class="btn btn--ghost" id="storyReload" type="button" aria-label="刷新历史故事列表">刷新</button>
+        </div>
+        <ul class="list" id="storyList"></ul>
+        <p class="empty" id="storyEmpty">还没有历史故事。先让本鱼讲一个？</p>
+      </section>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 3. 提醒                                                       -->
+    <!-- ============================================================ -->
+    <section class="panel" id="panel-remind" role="tabpanel" aria-labelledby="tab-remind" hidden>
+      <h2 class="sr-only">提醒</h2>
+
+      <form class="card stack" id="remindForm">
+        <label class="field-label" for="remindText">提醒内容</label>
+        <input class="input" id="remindText" type="text" maxlength="120" enterkeyhint="done"
+               placeholder="比如：吃白饭（顺便看看 token）" />
+
+        <div class="field-label" id="remindTimeLabel">什么时候提醒</div>
+        <div class="chips" id="remindQuick" role="group" aria-labelledby="remindTimeLabel">
+          <button class="chip" type="button" data-sec="60" aria-pressed="false">1 分钟后</button>
+          <button class="chip" type="button" data-sec="600" aria-pressed="true">10 分钟后</button>
+          <button class="chip" type="button" data-sec="1800" aria-pressed="false">30 分钟后</button>
+          <button class="chip" type="button" data-custom="1" aria-pressed="false">自定义时间</button>
+        </div>
+
+        <div class="custom-time" id="customWrap" hidden>
+          <label class="field-label" for="remindAt">选择日期和时间</label>
+          <input class="input" id="remindAt" type="datetime-local" />
+        </div>
+
+        <button class="btn btn--primary btn--block" id="remindGo" type="submit" aria-label="创建提醒">设个提醒</button>
+      </form>
+
+      <section class="card" aria-labelledby="remindListHeading">
+        <div class="card__head">
+          <h3 class="card__title" id="remindListHeading">我的提醒</h3>
+          <button class="btn btn--ghost" id="remindReload" type="button" aria-label="刷新提醒列表">刷新</button>
+        </div>
+        <p class="card__sub">倒计时每秒刷新一次；到点会弹提示 + 响一声 + 抖一下。</p>
+        <ul class="list" id="remindList"></ul>
+        <p class="empty" id="remindEmpty">暂时没有提醒。本鱼很闲，可以帮你记事儿。</p>
+      </section>
+    </section>
+  </main>
+
+  <!-- 底部 Tab -->
+  <nav class="tabbar" role="tablist" aria-label="主功能导航">
+    <button class="tab" id="tab-chat" type="button" role="tab" aria-selected="true"
+            aria-controls="panel-chat" data-tab="chat" tabindex="0">
+      <span class="tab__icon" aria-hidden="true">💬</span>
+      <span class="tab__label">聊天</span>
+    </button>
+    <button class="tab" id="tab-story" type="button" role="tab" aria-selected="false"
+            aria-controls="panel-story" data-tab="story" tabindex="-1">
+      <span class="tab__icon" aria-hidden="true">📖</span>
+      <span class="tab__label">说书</span>
+    </button>
+    <button class="tab" id="tab-remind" type="button" role="tab" aria-selected="false"
+            aria-controls="panel-remind" data-tab="remind" tabindex="-1">
+      <span class="tab__icon" aria-hidden="true">⏰</span>
+      <span class="tab__label">提醒</span>
+    </button>
+  </nav>
+
+  <!-- 原生 ES module，无框架、无外部依赖 -->
+  <script type="module" src="app.js?v=0.1.1"></script>
+</body>
+</html>
