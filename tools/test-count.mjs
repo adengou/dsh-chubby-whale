@@ -68,6 +68,7 @@ const CHECK_ONLY = new Set([
   'scripts/gen-module-index.mjs',
   'scripts/check-imports.mjs',
   'scripts/check-no-shell.mjs',
+  'scripts/gen-font.mjs',
   'scripts/check-boundaries.mjs',
   'scripts/check-diag-keys.mjs',
   'scripts/check-text.mjs',

@@ -167,7 +167,7 @@ export function readSiliconFlowKey(pluginDir) {
  * 语音识别语言（硅基流动 Qwen3-ASR 的 language 参数）：默认 zh。
  * 为什么默认 zh：不传该参数时模型自动检测，短句/带噪声的音频常被识别成英文（"No, no"），
  * 主人的语音几乎都是中文，显式指定能显著减少误识别。
- * config.json 可改：asrLanguage（zh / en / auto）
+ * config.json 可改：asrLanguage（zh / en / auto）；2026-11-07 起由入口注入，真正生效。
  */
 export function readAsrLanguage(pluginDir) {
     const cfg = readConfigJson(pluginDir);

@@ -12,6 +12,23 @@ import { readJsonBody } from '../body.js';
 import { sendJson, sendError } from '../respond.js';
 const ASR_MODEL = 'Qwen/Qwen3-ASR-1.7B';
 const ENDPOINT = 'https://api.siliconflow.cn/v1/audio/transcriptions';
+/** 汉字（含扩展 A） */
+const HAN_RE = /[\u3400-\u4DBF\u4E00-\u9FFF]/;
+/** 拉丁字母 */
+const LATIN_RE = /[A-Za-z]/;
+/**
+ * 输出脚本是否符合识别语言：
+ *   zh   → 必须含汉字（纯外语/纯数字/符号一律拒绝）
+ *   en   → 必须含拉丁字母
+ *   auto → 不拦（保留旧行为，给双语主人用）
+ */
+function scriptAccepted(text, lang) {
+    if (lang === 'auto')
+        return true;
+    if (lang === 'en')
+        return LATIN_RE.test(text);
+    return HAN_RE.test(text);
+}
 /** 识别结果的缓存有效期：7 天（音频字节内容 hash，同一个录音重放可直接命中） */
 const ASR_CACHE_MAX_AGE = 7 * 24 * 3600 * 1000;
 /** 请求体上限（base64 之后）：12MB */
@@ -79,16 +96,24 @@ export function createAsrHandler(opts) {
             // 识别成功，再以 format=webm 上传会直接命中上一次的文本（cached:true）——A 容器的结果
             // 顶了 B 容器的请求。v1 前缀的旧条目没有 format，刻意升到 v2 让它们自然失效（7 天 TTL 内
             // 最多少几次命中，不会读出别人的文本）。
-            const ck = hashBytes(Buffer.concat([Buffer.from('v2|' + ASR_MODEL + '|' + format + '|'), buf]));
+            // v3：识别语言也进 key——同一段音频换 language（zh/en/auto）会得到不同文本，
+            // 不把 asrLang 写进 key 的话，切语言后仍命中旧语言的缓存（2026-11-07 严查发现）。
+            // 识别语言：默认 zh，可由 config.json 的 asrLanguage 覆盖（zh/en/auto，2026-11-07 起真正生效）
+            const rawLang = opts.language ? String(opts.language() || '').trim().toLowerCase() : '';
+            const asrLang = rawLang === 'en' || rawLang === 'auto' ? rawLang : 'zh';
+            const ck = hashBytes(Buffer.concat([Buffer.from('v3|' + ASR_MODEL + '|' + asrLang + '|' + format + '|'), buf]));
             if (opts.cache) {
                 const hit = await opts.cache.getJson(ck, 'json', ASR_CACHE_MAX_AGE);
                 if (hit && typeof hit.text === 'string') {
-                    sendJson(res, { ok: true, text: hit.text, cached: true });
-                    return;
+                    // 旧缓存里可能还躺着外语（v3 之前的条目 7 天内有效）：命中也要过闸门，
+                    // 不合格就当作没命中，重新识别一次（识别结果同样会被闸门拦）。
+                    if (scriptAccepted(hit.text, asrLang)) {
+                        sendJson(res, { ok: true, text: hit.text, cached: true });
+                        return;
+                    }
+                    console.error('[asr] CACHE-SCRIPT-SKIP lang=' + asrLang + ' text=' + JSON.stringify(String(hit.text).slice(0, 60)));
                 }
             }
-            // 识别语言：默认 zh（不传会自动检测，短句常被识别成英文）
-            const asrLang = 'zh'; // 固定中文：不传该参数时模型自动检测，短句常被识别成英文（"No, no"）
             // 构造 multipart
             const boundary = '----chubbywhale' + Math.random().toString(36).slice(2, 10);
             const mime = format === 'wav' ? 'audio/wav' : format === 'mp3' ? 'audio/mpeg' : 'audio/webm';
@@ -143,6 +168,15 @@ export function createAsrHandler(opts) {
                 return;
             }
             const recognized = String(r.data?.text || '').trim();
+            // 脚本闸门（2026-11-07 严查）：Qwen3-ASR 在静音/噪声/音乐上会"编"外语
+            // （实测纯静音 → "No."；缓存里还有西/葡/越/泰整句）。language=zh 并不会阻止它。
+            // 中文模式下：一个汉字都没有的输出一律当噪声（不写缓存、不上行），
+            // 否则会被当主人说的话写进记忆，模型还会跟着回英文。
+            if (recognized && !scriptAccepted(recognized, asrLang)) {
+                console.error('[asr] SCRIPT-REJECT lang=' + asrLang + ' text=' + JSON.stringify(recognized.slice(0, 60)));
+                sendJson(res, { ok: true, text: '', noise: true, rejected: 'script' });
+                return;
+            }
             // 静音/气口/片头片尾会被识别成"嗯""谢谢观看"这类编词：
             // ① 不写缓存（缓存里曾堆满 17 字节的噪声条目）② 当空文本返回，别让上层当真话
             // 打断词（停/别/不/闭嘴/打住）例外：它们和单字气口同形，但必须原样上行——

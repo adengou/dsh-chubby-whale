@@ -3440,6 +3440,93 @@ try {
   ok('能加载泰文字体用例', false, String(e.message))
 }
 
+
+// ---------- 65 ASR 脚本闸门：静音/噪声编出来的外语不许上行 ----------
+console.log('\n[65] ASR 脚本闸门（中文模式拒绝纯外语）')
+try {
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const dir = mkdtempSync(join(tmpdir(), 'chubby-asr-script-'))
+  const { createCache } = await import('../src/host/cache.ts')
+  const { createAsrHandler } = await import('../src/host/routes/asr.ts')
+  const { readAsrLanguage } = await import('../src/host/config.ts')
+  const cache = createCache({ dir, memBytes: 1024 * 1024 })
+  const audio = Buffer.from('fake-audio-bytes').toString('base64')
+  const mkReq = (body) => {
+    const buf = Buffer.from(JSON.stringify(body))
+    return { headers: {}, destroy() { }, on() { }, resume() { }, async *[Symbol.asyncIterator]() { yield buf } }
+  }
+  const mkRes = () => {
+    const out = { code: 0, chunks: [] }
+    out.writeHead = (c) => { out.code = c }
+    out.end = (b) => { if (b) out.chunks.push(Buffer.from(String(b))) }
+    out.setHeader = () => { }
+    out.bodyText = () => Buffer.concat(out.chunks).toString('utf8')
+    out.json = () => { try { return JSON.parse(out.bodyText()) } catch (e) { return null } }
+    return out
+  }
+  let replyText = ''
+  const writes = []
+  let fetchCount = 0
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => { fetchCount++; return { ok: true, status: 200, text: async () => JSON.stringify({ text: replyText }) } }
+  const realSet = cache.setJson.bind(cache)
+  cache.setJson = async (k, v, ttl) => { writes.push(v); return realSet(k, v, ttl) }
+  const run = async (text, lang, audioSeed = 'fake-audio') => {
+    replyText = text
+    const res = mkRes()
+    const deps = { cache, getKey: () => 'k' }
+    if (lang) deps.language = () => lang
+    await createAsrHandler(deps)(mkReq({ audio: Buffer.from(audioSeed).toString('base64') }), res)
+    return res.json()
+  }
+
+  // ① 中文模式（默认）：纯外语/静音编词一律拒绝
+  let r = await run('No.')
+  ok('静音编出来的 "No." 被拒绝', r && r.ok === true && r.text === '' && r.noise === true && r.rejected === 'script', JSON.stringify(r))
+  r = await run('มันเป็นปีหวาน')
+  ok('泰文整句被拒绝', r && r.text === '' && r.rejected === 'script')
+  r = await run('El nombre de la ciudad proviene del río')
+  ok('西语整句被拒绝', r && r.text === '' && r.rejected === 'script')
+  ok('被拒绝的结果不写缓存', writes.length === 0, JSON.stringify(writes))
+
+  // ② 中文正常放行并写缓存
+  r = await run('主人今天吃什么')
+  ok('中文放行', r && r.text === '主人今天吃什么' && !r.rejected)
+  ok('放行结果写缓存', writes.length === 1)
+
+  // ③ en 模式：英文放行、中文拒绝
+  // 同一段音频换语言不能命中 zh 的缓存（v3 key 含 asrLang）
+  const beforeEn = fetchCount
+  r = await run('I am here', 'en')
+  ok('en 模式英文放行', r && r.text === 'I am here')
+  ok('同一音频换语言不命中旧缓存', fetchCount === beforeEn + 1, 'fetch=' + fetchCount)
+  r = await run('主人今天吃什么', 'en', 'audio-en-chinese')
+  ok('en 模式中文拒绝', r && r.text === '' && r.rejected === 'script')
+
+  // ④ auto 模式：保留旧行为（不拦）
+  r = await run('มันเป็นปีหวาน', 'auto', 'audio-auto')
+  ok('auto 模式不拦外语', r && r.text === 'มันเป็นปีหวาน' && !r.rejected)
+
+  // ⑤ config.json 的 asrLanguage 真正可读（此前是死键）
+  const { writeFileSync: wf, mkdirSync } = await import('node:fs')
+  const cfgDir = mkdtempSync(join(tmpdir(), 'chubby-asr-lang-'))
+  wf(join(cfgDir, 'config.json'), JSON.stringify({ asrLanguage: 'en' }), 'utf8')
+  ok('asrLanguage=en 被读到', readAsrLanguage(cfgDir) === 'en')
+  wf(join(cfgDir, 'config.json'), JSON.stringify({ asrLanguage: '乱写' }), 'utf8')
+  ok('非法 asrLanguage 回落 zh', readAsrLanguage(cfgDir) === 'zh')
+  wf(join(cfgDir, 'config.json'), JSON.stringify({ asrLanguage: 'auto' }), 'utf8')
+  ok('asrLanguage=auto 被读到', readAsrLanguage(cfgDir) === 'auto')
+
+  globalThis.fetch = realFetch
+  cache.setJson = realSet
+  rmSync(dir, { recursive: true, force: true })
+  rmSync(cfgDir, { recursive: true, force: true })
+} catch (e) {
+  ok('能加载 ASR 脚本闸门用例', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
