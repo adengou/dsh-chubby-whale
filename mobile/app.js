@@ -1902,6 +1902,19 @@ window.addEventListener('beforeinstallprompt', (e) => {
   installPrompt = e;
 });
 
+function showInstallHelp() {
+  const sheet = $('#installHelp');
+  if (!sheet) {
+    toast('点浏览器菜单 →「添加到主屏幕」', 'info', 6000);
+    return;
+  }
+  sheet.hidden = false;
+  const card = sheet.querySelector('.sheet__card');
+  const close = () => { sheet.hidden = true; };
+  $('#installClose')?.addEventListener('click', close, { once: true });
+  sheet.addEventListener('click', (ev) => { if (ev.target === sheet) close(); }, { once: true });
+  card?.focus?.();
+}
 function setupInstall() {
   const btn = $('#installBtn');
   if (!btn) return;
@@ -1915,7 +1928,7 @@ function setupInstall() {
       installPrompt = null;
       return;
     }
-    toast('点浏览器右上角 ⋮（或分享）→「添加到主屏幕 / 添加到桌面」，桌面上就有本鱼了', 'info', 7000);
+showInstallHelp();
   });
 }
 function init() {

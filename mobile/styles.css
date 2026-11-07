@@ -1055,6 +1055,51 @@ body {
 }
 
 /* ==========================================================================
+   底部弹层：加到桌面引导
+   ========================================================================== */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(2, 6, 23, 0.66);
+  padding: 16px;
+}
+
+.sheet__card {
+  width: 100%;
+  max-width: 460px;
+  max-height: 78vh;
+  overflow-y: auto;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: #1a2540;
+  padding: 18px 16px calc(16px + env(safe-area-inset-bottom));
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+
+.sheet__title {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.sheet__sub {
+  margin: 8px 0;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+
+.sheet__list {
+  margin: 8px 0 12px;
+  padding-left: 20px;
+  font-size: 13.5px;
+  line-height: 1.9;
+  color: var(--text);
+}
+/* ==========================================================================
    文化：分类 chips + 行内按钮
    ========================================================================== */
 .chips {
