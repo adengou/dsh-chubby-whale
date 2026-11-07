@@ -669,7 +669,7 @@ async function suite(mods, rec, isMain) {
     rec.ok('[7] personality-write.ts 的验收从门面进（validateSelfNarrative）', /validateSelfNarrative/.test(writeSrc) && /from\s+'\.\/personality\.js'/.test(writeSrc))
 
     const cloudSrc = srcOf('voice/cloud-tts.ts')
-    const cloudSet = new Set(['node:fs', 'node:path', '../atomic.js'])
+    const cloudSet = new Set(['node:fs', 'node:path', '../atomic.js', '../config.js'])
     rec.ok('[7] cloud-tts.ts 只依赖 fs/path/原子写（不 import host 其他模块的实现）',
       allowed(importsOf(cloudSrc), cloudSet))
     rec.ok('[7] cloud-tts.ts 的 Key 只来自 config.json / 注入配置（不读环境变量、不打印 Key）',

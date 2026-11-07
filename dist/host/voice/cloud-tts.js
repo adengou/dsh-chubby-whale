@@ -26,7 +26,8 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isMissingFileError, readTextNoBom, writeJsonAtomic } from '../atomic.js';
+import { writeJsonAtomic } from '../atomic.js';
+import { readConfigJson } from '../config.js';
 /** 官方 HTTP 接口地址（个人版/企业版一致） */
 export const CLOUD_TTS_URL = 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional';
 /** 资源 ID：豆包语音合成模型 2.0 */
@@ -81,19 +82,11 @@ function warnCloudConfig(msg) {
     warnedCloudConfig.add(msg);
     console.warn('[chubby-whale][cloudVoice] ' + msg);
 }
-/** 有界文本：控制字符折成空格、超长截断（与 host/config.ts 的 clip 同一口径） */
-function clipText(raw, max) {
-    let s = '';
-    try {
-        s = raw == null ? '' : String(raw);
-    }
-    catch {
-        return '(无法转成文本)';
-    }
-    s = s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
-    return s.length > max ? s.slice(0, max) + '…' : s;
-}
-/** 值形状描述（只报类型/长度，绝不回显内容；与 host/config.ts 的 shapeOf 同一口径） */
+/**
+ * 值形状描述（只报类型/长度，绝不回显内容）。
+ * 与 host/config.ts 的 shapeOf 同一口径；这里保留一份是因为它只用于 cloudVoice 段与 Key 字段的类型告警，
+ * 不外泄内容，复制风险低（真正危险的「拼 err.message / 回显前 60 字符」已经随解析器一起并到 config.ts）。
+ */
 function shapeOf(raw) {
     try {
         if (raw === undefined)
@@ -117,58 +110,13 @@ function shapeOf(raw) {
         return '无法识别的值';
     }
 }
-/**
- * JSON.parse 报错摘要：只取错误类型与 `at position N` 里的数字。
- * **绝不拼 err.message**：Node ≥20 的报错消息本身带源文本片段，config.json 里有 Key。
- */
-function jsonErrorBrief(err) {
-    const name = clipText(String((err && err.name) || 'Error'), 40);
-    let position = '';
-    try {
-        const m = /at position (\d+)/.exec(String((err && err.message) || ''));
-        if (m)
-            position = ' @ position ' + m[1];
-    }
-    catch { }
-    return name + position;
-}
-/**
- * 读 config.json 的原始对象 —— cloudVoice 的**唯一**解析入口（不再有第二条读盘路径）。
- * 返回 null = 没有文件 / 读不出来 / 坏 JSON / 根不是对象：调用方一律按默认值处理。
- */
-function readRawConfig(pluginDir) {
-    const file = join(pluginDir, 'config.json');
-    let text;
-    try {
-        text = readTextNoBom(file);
-    }
-    catch (err) {
-        if (!isMissingFileError(err)) {
-            warnCloudConfig('config.json 读取失败（' + file + '）：' + clipText((err && err.message) || err, 200));
-        }
-        return null;
-    }
-    let parsed;
-    try {
-        parsed = JSON.parse(text);
-    }
-    catch (err) {
-        warnCloudConfig('config.json 不是合法 JSON（' + file + '），已按未配置处理（' + jsonErrorBrief(err) + '）');
-        return null;
-    }
-    if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        warnCloudConfig('config.json 应为对象（实际 ' + shapeOf(parsed) + '），已按未配置处理');
-        return null;
-    }
-    return parsed;
-}
 /** 从 pluginDir/config.json 读 cloudVoice 段（缺省/无 Key = 不启用；语义与默认值保持原样） */
 export function readCloudVoice(pluginDir) {
     const empty = {
         enabled: false, apiKey: '', speaker: CLOUD_TTS_DEFAULT_SPEAKER,
         resourceId: CLOUD_TTS_RESOURCE_ID, dailyChars: 5000,
     };
-    const raw = readRawConfig(pluginDir);
+    const raw = readConfigJson(pluginDir, warnCloudConfig);
     if (!raw)
         return empty;
     const cv = raw.cloudVoice;

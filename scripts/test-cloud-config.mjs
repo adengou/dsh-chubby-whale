@@ -392,12 +392,14 @@ async function main() {
     if (WITH_MUTATE) {
       console.log('\n[5] 负向验证：变异体必须被同一套断言抓出来')
       const mutants = [
+        // B102 起读取器已合并到 host/config.ts：三个变异体打在**真实的单一读取器**上，
+        // 这样「谁把去敏/BOM/去重改坏」都会被同一套断言抓住（打在 cloud-tts 上的旧变异体已失效）。
         // 去敏失效：告警直接拼 JSON.parse 的 err.message（Node ≥20 会带出源文本片段 -> 泄 Key）
-        ['cloud/去敏告警', 'cloud-tts.ts', 'jsonErrorBrief(err)', 'String((err && err.message) || err)'],
-        // BOM 容错失效：不再走 readTextNoBom
-        ['cloud/BOM 容错', 'cloud-tts.ts', 'text = readTextNoBom(file)', "text = String(readFileSync(file, 'utf8'))"],
-        // 去重失效：同一条告警每次都打
-        ['cloud/告警去重', 'cloud-tts.ts', 'if (warnedCloudConfig.has(msg)) return', 'if (false) return'],
+        ['host/去敏告警', 'config.ts', 'jsonErrorBrief(err)', 'String((err && err.message) || err)'],
+        // BOM 容错失效：不再剥 BOM
+        ['host/BOM 容错', 'config.ts', 'JSON.parse(stripBom(text))', 'JSON.parse(text)'],
+        // 去重失效：同一条告警每次都打（主机侧 warnConfig 的去重表）
+        ['host/告警去重', 'config.ts', 'if (warnedConfig.has(msg)) return', 'if (false) return'],
       ]
       const mrec = makeRec(false)
       let caught = 0

@@ -92,19 +92,26 @@ function readKeyField(cfg: any, field: string): string {
  *     照坑 35 的教训，“没反应”比“报错”更糟；
  *   · 配置对象必须是普通对象：数组/字符串没有对应字段，照原样返回只会让 cfg.deepseekKey 取到原型链上的怪值。
  *
- * 口径同步（B101）：src/host/voice/cloud-tts.ts 的 readCloudVoice 读的是**同一个** config.json，
- * 必须与本函数保持同一套降级/去敏口径（坏 JSON 只告警一次、只报形状、绝不拼 err.message、BOM 走 readTextNoBom）。
- * 两边的文案与去重逐条比对在 scripts/test-cloud-config.mjs；改这里务必同步改那里。
- * （为什么还没合并成同一个函数：cloud-tts 的 import 白名单与模块接口清单 docs 都在本批禁改范围内，
- * 理由与解禁步骤见 cloud-tts.ts 里 readRawConfig 上方的注释。）
+ * 单一读取器（B102 起）：src/host/voice/cloud-tts.ts 的 readCloudVoice **复用本函数**，
+ * 传自己的告警出口（日志前缀 [cloudVoice]）与去重集合。全仓只有这一条读 config.json 的路径，
+ * 口径（坏 JSON 只报位置、只报形状、绝不拼 err.message、BOM 走 readTextNoBom）不可能再漂移。
  */
-function readConfigJson(pluginDir: string): any {
+/** 告警出口：默认 warnConfig；云端传自己的（带 [cloudVoice] 前缀、独立去重） */
+export type ConfigWarn = (msg: string) => void
+
+/**
+ * 读 pluginDir/config.json 的原始对象（全仓唯一入口）。
+ * @param onWarn 告警出口；缺省用本模块的 warnConfig（前缀 [chubby-whale]）
+ * @returns null = 没有文件 / 读不出来 / 坏 JSON / 根不是对象（调用方一律按默认值处理）
+ */
+export function readConfigJson(pluginDir: string, onWarn?: ConfigWarn): any {
+  const warn = onWarn || warnConfig
   const file = join(pluginDir, 'config.json')
   let text: string
   try {
     text = String(readFileSync(file, 'utf8'))
   } catch (err: any) {
-    if (!isMissingFileError(err)) warnConfig('config.json 读取失败（' + file + '）：' + clip((err && err.message) || err, 200))
+    if (!isMissingFileError(err)) warn('config.json 读取失败（' + file + '）：' + clip((err && err.message) || err, 200))
     return null
   }
   let parsed: any
@@ -114,12 +121,12 @@ function readConfigJson(pluginDir: string): any {
     // 只报错误类型与位置，**绝不拼 err.message**：Node ≥20 的 JSON 报错会带源文本片段
     //（实测 `Unexpected token 's', ..."pseekKey":sk-live-SE"...`）——config.json 里就放着 Key，
     // 拼进去等于把 Key 写进日志。
-    warnConfig('config.json 不是合法 JSON（' + file + '），已按未配置处理（' + jsonErrorBrief(err) + '）')
+    warn('config.json 不是合法 JSON（' + file + '），已按未配置处理（' + jsonErrorBrief(err) + '）')
     return null
   }
   if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     // 只报形状（类型/长度），不回显内容：旧实现 shortValue(parsed) 会把文件前 60 字符原样打出来
-    warnConfig('config.json 应为对象（实际 ' + shapeOf(parsed) + '），已按未配置处理')
+    warn('config.json 应为对象（实际 ' + shapeOf(parsed) + '），已按未配置处理')
     return null
   }
   return parsed
