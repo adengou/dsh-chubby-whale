@@ -9,8 +9,12 @@
  *   · 临时文件名唯一（pid + 随机串），rename 覆盖目标；POSIX 与 Windows 均支持覆盖已存在文件。
  *   · rename 在 Windows 上偶发 EPERM / EACCES / EBUSY（杀毒、索引、文件被其他句柄占用），
  *     这里做有限次重试（3 次、间隔 20ms），最终失败仍抛错并清理临时文件。
+ *   · **目标文件只读**（Windows 的 FILE_ATTRIBUTE_READONLY）会让 rename 恒定 EPERM，重试无用：
+ *     Windows 上先清掉只读位再改名（markTargetWritable），POSIX 不需要（rename(2) 只看目录权限）。
  *   · fsync 只在 POSIX 执行：Windows 的 FlushFileBuffers 语义与代价不同，且 dsh 进程崩溃
  *     不要求缓存落盘，跳过它避免每次写盘都多一次同步等待。
+ *   · POSIX 的 fsync 分两步：先文件（内容落盘），再父目录（目录项落盘，rename 才算真正生效）；
+ *     目录 fsync 失败静默（部分文件系统不支持），不影响调用方。
  *   · 权限位（0600 / 0700）只在 POSIX 收紧；Windows 没有对应语义，全部跳过（失败一律静默）。
  *   · 读入容错 UTF-8 BOM（PowerShell 5.1 的 -Encoding UTF8 会写 BOM），写出统一 UTF-8 无 BOM。
  */
@@ -119,6 +123,101 @@ export function readTextNoBom(file) {
     return stripBom(readFileSync(file, 'utf8'));
 }
 /**
+ * 把「目录项的改动」同步到磁盘（仅 POSIX；best-effort，返回是否成功）。
+ *
+ * 为什么 rename 之后还要这一下：POSIX 的 rename(2) 只保证「并发读者立刻看到新名字」，
+ * 不保证目录项已经落盘——断电/内核崩溃后目录可能还指向旧 inode。要满足「写成功 = 重启后
+ * 也是新内容」，必须再 fsync **父目录**（这就是 ext4/APFS 上做原子落盘的标准两步）。
+ * Windows 不走这里：本模块在 Windows 上本来就不做 fsync（见文件头约定）。
+ *
+ * 打不开/不支持目录 fsync（网络盘、FUSE、只读镜像等）一律返回 false，
+ * **绝不让一次成功的写入因此变成失败**：持久性是尽力而为，正确性不依赖它。
+ */
+function fsyncDir(dir) {
+    if (!isPosixModePlatform())
+        return false;
+    let fd = -1;
+    try {
+        fd = openSync(dir, 'r');
+        fsyncSync(fd);
+        return true;
+    }
+    catch {
+        return false;
+    }
+    finally {
+        if (fd >= 0) {
+            try {
+                closeSync(fd);
+            }
+            catch { }
+        }
+    }
+}
+/**
+ * rename 失败后判断「是不是目标只读」并就地解毒：**只 Windows 做**，返回是否清过只读位。
+ *
+ * 证据（2026-11-07 本机 Windows 实测）：目标带只读属性时 `renameSync` 恒定回 EPERM
+ * （Node 文档：Windows 上 chmod 只负责读写属性位），清掉只读位（`chmodSync(file, 0o666)`）
+ * 后同一次 rename 立刻成功。数据文件带只读属性的真实来源：从只读备份/同步盘恢复、
+ * 用户手工勾「只读」、某些备份工具按源盘属性还原。
+ *
+ * 为什么 POSIX 不做：rename(2) 只要求**父目录**可写，目标自身的权限位与「能否被覆盖」
+ * 无关（只读文件在同一目录内照样被 rename 覆盖）。也就是说同一个只读文件，
+ * Linux/macOS 上这条写入路径本来就能成功，Windows 才是特例。
+ *
+ * 非瞬时错误（ENOSPC / ENOENT / EXDEV…）不清只读位：清也没用，别白折腾一次 chmod。
+ */
+function markTargetWritable(file, err) {
+    if (isPosixModePlatform())
+        return false;
+    if (!isRetriableRenameError(err))
+        return false;
+    try {
+        if (!existsSync(file))
+            return false;
+    }
+    catch {
+        return false;
+    }
+    try {
+        chmodSync(file, 0o666);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * 用临时文件替换目标：rename 覆盖，失败按平台重试（策略与 renameWithRetry 完全一致：
+ * 只对 EPERM/EACCES/EBUSY 重试 3 次、间隔 20ms），唯一的额外一步是 Windows 的「目标只读」解毒。
+ *
+ * 为什么解毒要插在重试循环里而不是「重试全失败之后再试」：只读是**确定性**失败，
+ * 等 20ms 再撞 3 次纯属白等（一次写入要多花 60ms 且日志里看不出所以然）。
+ * 这里遇到第一次就立刻清只读位再改名，只消耗 2 次 rename；清过之后若再失败，
+ * 就按普通的占用类错误继续走 1+3 次重试，边界仍然有界。
+ */
+function replaceFile(tmp, file) {
+    let detoxed = false;
+    let attempt = 0;
+    for (;;) {
+        try {
+            renameSync(tmp, file);
+            return;
+        }
+        catch (err) {
+            if (!detoxed && markTargetWritable(file, err)) {
+                detoxed = true;
+                continue;
+            }
+            if (attempt >= RENAME_RETRY_LIMIT || !isRetriableRenameError(err))
+                throw err;
+            attempt++;
+            sleepSync(RENAME_RETRY_DELAY_MS);
+        }
+    }
+}
+/**
  * 原子写文本/Buffer：先建父目录，写唯一临时文件（POSIX 创建即 0600），
  * POSIX 下 fsync 后 rename 覆盖目标；rename 失败按平台重试，最终失败清理临时文件。
  */
@@ -159,7 +258,7 @@ export function writeFileAtomic(file, data) {
     catch { }
     chmodPrivateFile(tmp); // 兜底：临时文件若已存在，'w' 会保留旧权限
     try {
-        renameWithRetry(() => renameSync(tmp, file));
+        replaceFile(tmp, file);
     }
     catch (err) {
         try {
@@ -168,6 +267,9 @@ export function writeFileAtomic(file, data) {
         catch { } // 改名失败别留垃圾
         throw err;
     }
+    // 目录项落盘（仅 POSIX）：rename 原子可见 ≠ 断电后还在，见 fsyncDir 的注释。
+    // 放在改名成功之后：失败静默，绝不把一次成功的写入改成失败。
+    fsyncDir(dirname(file));
 }
 /** 原子写 JSON（序列化后走字符串版本；JSON.stringify 不会带 BOM） */
 export function writeJsonAtomic(file, obj) {

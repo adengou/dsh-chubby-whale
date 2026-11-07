@@ -4,6 +4,21 @@
 
 ## [未发布]
 
+## [1.1.77] - 2026-11-07
+
+### 修复（跨平台，B104 分身取证 + 本鲸真机复验）
+- **Windows 上目标带只读属性时写盘永久失败**：从只读备份/同步盘恢复、或用户勾了只读的 `memory.json`/`growth.json` 会带 FILE_ATTRIBUTE_READONLY，`rename` 恒 EPERM、重试 3 次全白撞 → 只留一行 WRITE-FAIL，该文件从此永不更新（记忆/亲密度/鱼粮/提醒一起哑掉）。现在遇到只读先清只读位再重试（仅 win32、仅 EPERM/EACCES/EBUSY），POSIX 分支绝不 chmod 目标。**本鲸在真机复验**：设只读后写入成功（改前会失败）
+- **POSIX 缺父目录 fsync**：`rename` 只保证读者看见、不保证目录项落盘，Linux/macOS 断电可能丢最后一次保存。现在 POSIX 写完 rename 再 fsync 目录（失败静默）。macOS 的 fsync 只到盘缓存（要 F_FULLFSYNC，Node 不暴露），这条只记录
+- **TTS worker 回退落点用 /tmp 固定名**：安装目录写不进时（全局安装、只读镜像的常态）回退到 `/tmp/chubby-<文件>`，Linux/macOS 上多用户可抢名（worker 永远起不来）、可预置符号链接（写盘顺链接落到任意文件）、组可写时还有 TOCTOU。现在用 `mkdtempSync` 建进程独占私有目录（0700），建不出来就退单次 spawn 不卡死
+- 运行目录里崩溃残留的 `.tmp` 无人清理（SIGKILL/断电时原子写自己的清理跑不到）：新增清扫——只看第一层、只删 1 小时前的 `.tmp` 普通文件、单次上限 200、失败静默
+
+### 文档
+- 新增 `docs/决策记录.md`（8 条 ADR）：跨平台优先、模块只暴露接口、**说书 isLast 保持「整本讲完才为真」**、**start/next 不强制 x-client-id**、版本只增不改且漏发不补发、发版必须先过一致性自检（坏 tag 可删重建）、外部数据拿不到不编内容、不重启 dsh web
+
+### 测试
+- 新增 `test-xplat-paths.mjs`(79) 接入 npm test（平台差异用注入建模：POSIX 侧依据 rename(2) 语义，Windows 侧为本机实测）
+- 全链 **4986 项 0 失败**（node tools/test-count.mjs：68 个套件，失败 0，未识别 0）
+
 ## [1.1.76] - 2026-11-07
 
 ### 修复（提醒清单）
