@@ -486,6 +486,25 @@ async function main() {
       return list.length === 1 && list[0].id === 'b'
     })())
     ok('数组形态响应也认', manage.normalizeReminderList([{ id: 'q', text: 'w' }]).length === 1)
+    // 用户报的「提醒清单 BUG」（2026-11-07）：序号必须跟到期先后一致，空正文不能占号
+    {
+      const now = Date.now()
+      const payload = {
+        reminders: [
+          { id: 'late', text: '晚上吃药', at: new Date(now + 3 * 3600_000).toISOString() },
+          { id: 'early', text: '喝水', at: new Date(now + 1 * 3600_000).toISOString() },
+          { id: 'later', text: '明天开会', at: new Date(now + 20 * 3600_000).toISOString() },
+          { id: 'empty', text: '   ', at: new Date(now + 60_000).toISOString() },
+          { id: 'bad', text: '时间坏的', at: 'not-a-date' },
+        ],
+      }
+      const list = manage.normalizeReminderList(payload)
+      ok('清单按到期时间升序（序号与先后一致）', list.map((x) => x.id).join(',') === 'early,late,later,bad', list.map((x) => x.id).join(','))
+      ok('空正文条目不再占号', !list.some((x) => x.id === 'empty'))
+      ok('时间坏/缺失的排最后（稳定）', list[list.length - 1].id === 'bad')
+      const text = manage.boardText(list, '提醒清单（' + list.length + ' 条）：')
+      ok('清单文本首条就是最早到期的', text.indexOf('1. 喝水（') > 0, text.split('\n')[1])
+    }
     ok('坏响应不崩', manage.normalizeReminderList(null).length === 0)
     ok('最早到期优先（nextAt 优先于 at）', manage.pickNextDue(items).id === 'c', manage.pickNextDue(items).id)
     ok('空清单没有可顺延项', manage.pickNextDue([]) === null)

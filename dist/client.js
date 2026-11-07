@@ -7902,6 +7902,10 @@
     if (!lines.length) return head + "没有提醒了";
     return head + lines.join("\n") + "\n" + MANAGE_HINT;
   }
+  function dueMsOf(it) {
+    const ms2 = new Date(it && (it.nextAt || it.at)).getTime();
+    return Number.isFinite(ms2) ? ms2 : Infinity;
+  }
   function normalizeReminderList(payload) {
     const arr = Array.isArray(payload && payload.reminders) ? payload.reminders : Array.isArray(payload) ? payload : [];
     const out = [];
@@ -7910,14 +7914,17 @@
       if (x.done === true) continue;
       const id = str(x.id);
       if (!id) continue;
+      const text = str(x.text);
+      if (!text.trim()) continue;
       out.push({
         id,
-        text: str(x.text),
+        text,
         at: x.at,
         nextAt: x.nextAt,
         repeat: x.repeat
       });
     }
+    out.sort((a, b) => dueMsOf(a) - dueMsOf(b));
     return out;
   }
   function pickNextDue(items) {
