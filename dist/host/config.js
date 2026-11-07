@@ -106,6 +106,12 @@ function readKeyField(cfg, field) {
  *     不能让坏文件把日志刷满）；旧实现是全静默，用户只会看到“Key 没了、语音没反应”，
  *     照坑 35 的教训，“没反应”比“报错”更糟；
  *   · 配置对象必须是普通对象：数组/字符串没有对应字段，照原样返回只会让 cfg.deepseekKey 取到原型链上的怪值。
+ *
+ * 口径同步（B101）：src/host/voice/cloud-tts.ts 的 readCloudVoice 读的是**同一个** config.json，
+ * 必须与本函数保持同一套降级/去敏口径（坏 JSON 只告警一次、只报形状、绝不拼 err.message、BOM 走 readTextNoBom）。
+ * 两边的文案与去重逐条比对在 scripts/test-cloud-config.mjs；改这里务必同步改那里。
+ * （为什么还没合并成同一个函数：cloud-tts 的 import 白名单与模块接口清单 docs 都在本批禁改范围内，
+ * 理由与解禁步骤见 cloud-tts.ts 里 readRawConfig 上方的注释。）
  */
 function readConfigJson(pluginDir) {
     const file = join(pluginDir, 'config.json');

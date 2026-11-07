@@ -17,6 +17,7 @@
  * 本文件不读盘、不写盘、不 import 任何路由/仓储实现。
  */
 import { deepFreeze } from '../../shared/immutable.js';
+import { clipCodePoints } from '../../shared/text.js';
 import { sanitizePersonality, isSafeLearnedText } from '../personality.js';
 /** 备份体积上限：2MB（导出超限 413；导入 body 超限 413） */
 export const BACKUP_MAX_BYTES = 2 * 1024 * 1024;
@@ -75,8 +76,16 @@ const MAX_TOKEN = Number.MAX_SAFE_INTEGER;
 function toToken(v) {
     return Math.min(MAX_TOKEN, Math.max(0, Math.floor(v)));
 }
+/**
+ * 外部 JSON 字段的「字」上限：按 Unicode 码点截断（B101）。
+ *
+ * 旧实现 `String(v).slice(0, max)` 按 UTF-16 码元切：导入一份 reminderTextLen=200
+ * 的提醒正文时，200 个 emoji 会被砍成 100 个；199 个汉字 + emoji 时第 200 个码元
+ * 是代理对前半截 → 孤立代理项写进 reminders.json / personality.json / memory.json
+ * （UTF-8 落盘成 U+FFFD）。备份导入的上限口径与运行时一致：都是「字」= 码点。
+ */
 function clip(v, max) {
-    return String(v == null ? '' : v).slice(0, max);
+    return clipCodePoints(v == null ? '' : v, max);
 }
 /** 动态键里永远不写的三个名字（会命中对象原型/构造器语义） */
 const UNSAFE_KEYS = ['__proto__', 'constructor', 'prototype'];

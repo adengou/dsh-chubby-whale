@@ -10,6 +10,7 @@ import { getJson, postJson, delJson } from '../http.js'
 import { VISION_PROMPT } from '../dropzone.js'
 import { imageToB64 } from '../image.js'
 import { parseDue, cleanReminderText } from '../../shared/time.js'
+import { clipCodePoints } from '../../shared/text.js'
 import { clearT } from '../util.js'
 import { exportBackup, importBackup } from './data.js'
 
@@ -313,7 +314,10 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
       parsed = parseDue(ans)
       if (!parsed) { host.bubble('这个时间本鱼没听懂……试试「9点」「明天9点」「半小时后」', 5000); return }
     }
-    const text = String(parsed.cleaned || cleanReminderText(msg) || msg).slice(0, 200)
+    // 与宿主 /reminders 同口径（B101）：按码点截到 200 字。
+    // 旧写法 `.slice(0, 200)` 数的是 UTF-16 码元，会把 200 个 emoji 砍成 100 个，
+    // 还可能在边界切出孤立代理项，跟着请求体落进 reminders.json。
+    const text = clipCodePoints(String(parsed.cleaned || cleanReminderText(msg) || msg), 200)
     const dueAt = parsed.at
     const repeat = parsed.repeat || 0
     let p: Promise<any>

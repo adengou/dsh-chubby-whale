@@ -21,10 +21,12 @@
  * 与自己的超时用 AbortSignal.any 合并 —— 客户端一走就断开云端调用，不再等满 15s；同样不记账。
  *
  * 安全：API Key 只从本地 config.json 读，不进包、不进备份导出。
+ * 配置读取口径（B101）：与 host/config.ts 的 readConfigJson 同一套 —— 去敏告警、只报形状、
+ * 坏 JSON 只提示一次并回落默认；边界与理由见 readCloudVoice 上方的注释。
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { writeJsonAtomic } from '../atomic.js'
+import { isMissingFileError, readTextNoBom, writeJsonAtomic } from '../atomic.js'
 
 /** 官方 HTTP 接口地址（个人版/企业版一致） */
 export const CLOUD_TTS_URL = 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional'
@@ -61,32 +63,141 @@ export type CloudVoiceConfig = {
   note?: string
 }
 
-/** 从 pluginDir/config.json 读 cloudVoice 段（缺省/无 Key = 不启用） */
+/* ------------------------------------------------------------------------- *
+ * config.json 的读取（B101 收敛：与 host/config.ts 的 readConfigJson 同一套口径）
+ *
+ * 口径（两处逐条对齐，改一边必须改另一边）：
+ *   · 没有文件（ENOENT/ENOTDIR）是常态（Key 也可从环境变量来），静默按“未配置”处理；
+ *   · 坏 JSON / 根不是普通对象：**只告警一次**并回落默认——旧实现在这里全静默，
+ *     用户只会看到“语音没反应”，照坑 35 的教训，“没反应”比“报错”更糟；
+ *   · 告警只报「形状」（类型/长度）与错误类型 + `at position N`，**绝不拼 err.message、
+ *     绝不回显任何值**：Node ≥20 的 JSON 报错消息里带源文本片段，而 config.json 就放着 Key，
+ *     直接拼等于把 Key 写进日志（B100 给 config.ts 补的加固，本文件此前是旁路，B101 补齐）；
+ *   · BOM 一律走 atomic.ts 的 readTextNoBom，不再自写一份 /^\uFEFF/ 正则。
+ *
+ * 为什么这里是「同一份口径」而不是「同一个函数」（边界，别悄悄“优化”）：
+ *   ① cloud-tts 的依赖白名单被 scripts/test-persona-cloud.mjs 的 [7] 钉成
+ *      node:fs / node:path / ../atomic.js，多一个 import 就红（本批禁改该测试）；
+ *   ② 把读取器从 config.ts 导出会改动导出面，npm test 里的 gen-module-index --check
+ *      会要求重生成 docs/模块接口清单.md（本批禁改 docs）。
+ *   两条解禁后才能真的共用实现；在那之前由 scripts/test-cloud-config.mjs 逐条比对两边的
+ *   文案/去敏/去重/回落，任一边漂移即红。
+ * ------------------------------------------------------------------------- */
+const CLOUD_VOICE_KEY_FIELD = 'cloudVoice.apiKey'
+
+/** 去敏告警去重：readCloudVoice 每次合成都会现读配置，同一条只提示一次 */
+const warnedCloudConfig = new Set<string>()
+
+/**
+ * 告警出口。前缀带 cloudVoice：同一个 config.json 由 host/config.ts 与本文件两处读，
+ * 文案相同、来源不同，日志里要能分清是谁在报（也避免两行一模一样的日志看着像重复刷屏）。
+ */
+function warnCloudConfig(msg: string): void {
+  if (warnedCloudConfig.has(msg)) return
+  warnedCloudConfig.add(msg)
+  console.warn('[chubby-whale][cloudVoice] ' + msg)
+}
+
+/** 有界文本：控制字符折成空格、超长截断（与 host/config.ts 的 clip 同一口径） */
+function clipText(raw: any, max: number): string {
+  let s = ''
+  try { s = raw == null ? '' : String(raw) } catch { return '(无法转成文本)' }
+  s = s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return s.length > max ? s.slice(0, max) + '…' : s
+}
+
+/** 值形状描述（只报类型/长度，绝不回显内容；与 host/config.ts 的 shapeOf 同一口径） */
+function shapeOf(raw: any): string {
+  try {
+    if (raw === undefined) return 'undefined'
+    if (raw === null) return 'null'
+    if (Array.isArray(raw)) return '数组（长度 ' + raw.length + '）'
+    const t = typeof raw
+    if (t === 'object') {
+      let keys = 0
+      try { keys = Object.keys(raw).length } catch { }
+      return '对象（' + keys + ' 个键）'
+    }
+    return t
+  } catch { return '无法识别的值' }
+}
+
+/**
+ * JSON.parse 报错摘要：只取错误类型与 `at position N` 里的数字。
+ * **绝不拼 err.message**：Node ≥20 的报错消息本身带源文本片段，config.json 里有 Key。
+ */
+function jsonErrorBrief(err: any): string {
+  const name = clipText(String((err && err.name) || 'Error'), 40)
+  let position = ''
+  try {
+    const m = /at position (\d+)/.exec(String((err && err.message) || ''))
+    if (m) position = ' @ position ' + m[1]
+  } catch { }
+  return name + position
+}
+
+/**
+ * 读 config.json 的原始对象 —— cloudVoice 的**唯一**解析入口（不再有第二条读盘路径）。
+ * 返回 null = 没有文件 / 读不出来 / 坏 JSON / 根不是对象：调用方一律按默认值处理。
+ */
+function readRawConfig(pluginDir: string): any {
+  const file = join(pluginDir, 'config.json')
+  let text: string
+  try {
+    text = readTextNoBom(file)
+  } catch (err: any) {
+    if (!isMissingFileError(err)) {
+      warnCloudConfig('config.json 读取失败（' + file + '）：' + clipText((err && err.message) || err, 200))
+    }
+    return null
+  }
+  let parsed: any
+  try {
+    parsed = JSON.parse(text)
+  } catch (err: any) {
+    warnCloudConfig('config.json 不是合法 JSON（' + file + '），已按未配置处理（' + jsonErrorBrief(err) + '）')
+    return null
+  }
+  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    warnCloudConfig('config.json 应为对象（实际 ' + shapeOf(parsed) + '），已按未配置处理')
+    return null
+  }
+  return parsed
+}
+
+/** 从 pluginDir/config.json 读 cloudVoice 段（缺省/无 Key = 不启用；语义与默认值保持原样） */
 export function readCloudVoice(pluginDir: string): CloudVoiceConfig {
   const empty: CloudVoiceConfig = {
     enabled: false, apiKey: '', speaker: CLOUD_TTS_DEFAULT_SPEAKER,
     resourceId: CLOUD_TTS_RESOURCE_ID, dailyChars: 5000,
   }
-  try {
-    const file = join(pluginDir, 'config.json')
-    if (!existsSync(file)) return empty
-    const raw = JSON.parse(String(readFileSync(file, 'utf8')).replace(/^\uFEFF/, ''))
-    const cv = raw && typeof raw === 'object' ? raw.cloudVoice : null
-    if (!cv || typeof cv !== 'object') return empty
-    const apiKey = typeof cv.apiKey === 'string' ? cv.apiKey.trim() : ''
-    if (!apiKey) return empty
-    const speaker = typeof cv.speaker === 'string' && cv.speaker ? cv.speaker : CLOUD_TTS_DEFAULT_SPEAKER
-    const resourceId = typeof cv.resourceId === 'string' && cv.resourceId ? cv.resourceId : CLOUD_TTS_RESOURCE_ID
-    const dailyChars = Number(cv.dailyChars)
-    return {
-      enabled: cv.enabled !== false,
-      apiKey,
-      speaker,
-      resourceId,
-      dailyChars: Number.isFinite(dailyChars) && dailyChars > 0 ? Math.floor(dailyChars) : 5000,
-    }
-  } catch {
+  const raw = readRawConfig(pluginDir)
+  if (!raw) return empty
+  const cv = raw.cloudVoice
+  if (cv == null) return empty // 没配这一段：常态，静默
+  if (typeof cv !== 'object' || Array.isArray(cv)) {
+    warnCloudConfig('config.json 的 cloudVoice 应为对象（实际 ' + shapeOf(cv) + '），已按未配置处理')
     return empty
+  }
+  const apiKeyRaw = cv.apiKey
+  const apiKey = typeof apiKeyRaw === 'string' ? apiKeyRaw.trim() : ''
+  if (!apiKey) {
+    // 写成 number/对象要告警（用户只会看到“没声”，没有线索）；
+    // null/undefined/空白字符串＝没配，静默（与 config.ts 的 readKeyField 同一口径）
+    if (apiKeyRaw !== undefined && apiKeyRaw !== null && typeof apiKeyRaw !== 'string') {
+      warnCloudConfig('config.json 的 ' + CLOUD_VOICE_KEY_FIELD + ' 应为字符串（实际 ' + shapeOf(apiKeyRaw) + '），已忽略')
+    }
+    return empty
+  }
+  const speaker = typeof cv.speaker === 'string' && cv.speaker ? cv.speaker : CLOUD_TTS_DEFAULT_SPEAKER
+  const resourceId = typeof cv.resourceId === 'string' && cv.resourceId ? cv.resourceId : CLOUD_TTS_RESOURCE_ID
+  const dailyChars = Number(cv.dailyChars)
+  return {
+    enabled: cv.enabled !== false,
+    apiKey,
+    speaker,
+    resourceId,
+    dailyChars: Number.isFinite(dailyChars) && dailyChars > 0 ? Math.floor(dailyChars) : 5000,
   }
 }
 

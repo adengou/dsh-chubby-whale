@@ -36,28 +36,76 @@ export function createReminderRepo(dataDir) {
             return null;
         return nextMs;
     }
+    /**
+     * 写盘失败后的「本次已响过」内存标记（2026-11-07 B101）。
+     * 为什么需要：原来 saveReminders 吞掉写盘失败后 as usual 返回 due，而仓库每次调用都从磁盘读，
+     * fired 标记没落盘 → 同一提醒每 20s 轮询就再响一次（磁盘满/只读时非常吵）。
+     * 现在：写盘失败就把「id|触发时刻」记进内存，本进程内不再重复返回；下次进程启动可能再响一次（可接受）。
+     * 写盘一旦成功就清空（磁盘成了唯一权威）。
+     */
+    const firedMem = new Set();
+    /** 单份提醒列表上限：与备份导入上限一致（200），防止无限追加把轮询拖慢 */
+    const MAX_REMINDERS = 200;
+    /**
+     * 本实例是否见过「损坏的 reminders.json」（2026-11-07 B101）。
+     * 为什么：解析失败时文件已被 quarantine 移走，下一次 add/remove 会走 ENOENT → 空表 → 写出新文件，
+     * 等于把「隔离出去的旧数据」从活动路径里彻底丢掉。见到损坏之后本实例只读不写，等运维处理。
+     */
+    let sawCorrupt = false;
     function loadReminders() {
+        const arr = parseReminders();
+        return arr === null ? [] : arr;
+    }
+    /**
+     * 读原始列表：文件不存在 → []；内容坏（JSON 解析失败/不是数组）→ null。
+     * 为什么区分（2026-11-07 B101）：删除/新增走的都是「读-改-写」，原来坏文件被读成 []，
+     * 于是一次 DELETE 就会把整份提醒列表覆盖成空表（隔离备份还在，但用户看到的是全没了）。
+     * 现在坏文件返回 null，调用方拒绝改写。
+     */
+    function parseReminders() {
         try {
             const arr = JSON.parse(readTextNoBom(REMINDERS));
             if (Array.isArray(arr))
                 return arr;
+            quarantineFile(REMINDERS, new Error('not an array'), '[store]');
+            sawCorrupt = true;
+            return null;
         }
         catch (err) {
-            if (!isMissingFileError(err))
-                quarantineFile(REMINDERS, err, '[store]');
+            if (isMissingFileError(err))
+                return [];
+            quarantineFile(REMINDERS, err, '[store]');
+            sawCorrupt = true;
+            return null;
         }
-        return [];
     }
+    /** @returns 是否真的写进了磁盘（失败已打日志，调用方据此决定要不要用内存兜底） */
     function saveReminders(arr) {
         try {
             writeJsonAtomic(REMINDERS, arr);
+            firedMem.clear(); // 落盘成功：磁盘里的 fired/nextAt 才是权威
+            return true;
         }
         catch (err) {
             console.error('[store] WRITE-FAIL ' + String(REMINDERS) + ' err=' + String(err?.message || err));
+            return false;
         }
     }
     function addReminder(text, at, repeat) {
-        const arr = loadReminders();
+        const arr = parseReminders();
+        if (sawCorrupt) {
+            console.error('[store] REMINDER-ADD-SKIP 本实例见过损坏的提醒文件，拒绝改写（请先人工处理）');
+            return null;
+        }
+        if (arr === null) {
+            sawCorrupt = true;
+            console.error('[store] REMINDER-ADD-SKIP 提醒文件损坏，拒绝覆盖（已隔离备份）');
+            return null;
+        }
+        if (arr.length >= MAX_REMINDERS) {
+            console.error('[store] REMINDER-FULL 已达上限 ' + MAX_REMINDERS + ' 条');
+            return null;
+        }
         // repeat 只接受「有限正整数秒」：Infinity/NaN 落成 Infinity 会让 dueReminders 算出非法时间
         const repIn = Math.round(Number(repeat) || 0);
         const rep = Number.isFinite(repIn) && repIn > 0 ? repIn : 0;
@@ -92,6 +140,9 @@ export function createReminderRepo(dataDir) {
                 continue;
             if (r.fired)
                 continue;
+            // 写盘失败时的内存兜底：同一条提醒（同 id + 同触发时刻）本进程内只响一次
+            if (firedMem.has(String(r.id) + '|' + String(stamp)))
+                continue;
             r.fired = true;
             r.remindCount = (Number(r.remindCount) || 0) + 1;
             due.push(r);
@@ -116,12 +167,27 @@ export function createReminderRepo(dataDir) {
                 r.done = true;
             }
         }
-        if (changed)
-            saveReminders(arr);
-        return due;
+        if (changed && !saveReminders(arr)) {
+            // 写盘失败：把本次响过的「id|触发时刻」记进内存，避免每 20s 轮询重复响同一条
+            for (const r of due)
+                firedMem.add(String(r && r.id) + '|' + String((r && (r.nextAt || r.at)) || ''));
+            console.error('[store] REMINDER-FIRED-UNPERSISTED 写盘失败，本进程内不再重复提醒（重启后可能再响一次）');
+        }
+        return due; // 本次到点照常返回（内存标记只用于「下次别再响」，不能把本次也吃掉）
     }
     function removeReminder(id) {
-        saveReminders(loadReminders().filter((r) => r.id !== id));
+        const arr = parseReminders();
+        if (sawCorrupt) {
+            console.error('[store] REMINDER-DEL-SKIP 本实例见过损坏的提醒文件，拒绝改写（请先人工处理）');
+            return;
+        }
+        if (arr === null) {
+            sawCorrupt = true;
+            console.error('[store] REMINDER-DEL-SKIP 提醒文件损坏，拒绝覆盖（已隔离备份）');
+            return;
+        }
+        const next = arr.filter((r) => r.id !== id);
+        saveReminders(next);
     }
     return { loadReminders, saveReminders, addReminder, dueReminders, removeReminder };
 }

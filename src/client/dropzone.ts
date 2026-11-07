@@ -4,6 +4,7 @@
  */
 
 import { str } from './util.js'
+import { clipCodePoints } from '../shared/text.js'
 import { imageToB64 } from './image.js'
 
 // 图片读成 base64（去掉 data: 前缀）的实现已统一到 image.ts；这里原样再导出，保持 dropzone 的旧接口不变
@@ -51,9 +52,15 @@ export function isTextFile(file: any): boolean {
   return false
 }
 
-/** 文档正文 → 送给模型的 message（截前 4000 字） */
+/**
+ * 文档正文 → 送给模型的 message（截前 4000 字）。
+ *
+ * 「字」= Unicode 码点（B101）：拖进来的是**未知外部文件**，整篇 emoji / 扩展 B 汉字
+ * 很常见。旧写法 `.slice(0, 4000)` 按 UTF-16 码元切，4000 个 emoji 只留 2000 个，
+ * 第 4000 个码元落在代理对中间时还会切出孤立代理项，跟着 /chat 请求体外呼。
+ */
 export function buildTextPrompt(text: string): string {
-  return '总结一下这篇文档：\n' + String(text || '').slice(0, MAX_TEXT_CHARS)
+  return '总结一下这篇文档：\n' + clipCodePoints(text, MAX_TEXT_CHARS)
 }
 
 /** 优先 Blob.text()；老 Safari 没有这个方法时退回 FileReader，别把"读不出"误报成空文件 */
