@@ -12,6 +12,8 @@
 - **加桌面**：PWA manifest（192/512 PNG + maskable）、顶栏 📲 引导（分浏览器步骤）
 - **配置**：`config.mobile`（`basePath` / `token` / `dataDir` / `model`）；`mobile: false` 可整体关闭
 - **文档**：[docs/MOBILE.md](docs/MOBILE.md)
+- **长文朗读**：说书/长回复按句切块（每块 ≤110 字）逐段合成播放，不再念到 300 字就停；「停」清空整条队列
+- **提醒**：桌面端轮询 20s → 2s；一次性提醒响过即删（重复提醒保留并推进下次）
 - 注意：录音需要**安全上下文**（HTTPS 或 `http://localhost`）
 ## [1.1.83] - 2026-11-07
 
