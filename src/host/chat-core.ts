@@ -10,6 +10,7 @@
  */
 import { shortHash, hashKey } from '../shared/hash.js'
 import { estimateCostCny, readUsageSplit } from '../shared/pricing.js'
+import { clipCodePoints } from '../shared/text.js'
 import { fetchJson } from './http.js'
 
 /** DeepSeek 对话接口地址（聊天与摘要共用） */
@@ -81,8 +82,11 @@ export function readChatRequest(body: any): {
   lang: 'zh' | 'en' | 'auto'
   cacheable: boolean
 } {
+  // 按码点截断（B101）：原来 `body.message.slice(0, 500)` 数的是 UTF-16 码元，
+  // 500 个 emoji 会被截成 250 个，499 个汉字 + 一个 emoji 时还会切出孤立代理项——
+  // 这条 message 要进 prompt 外呼、进 chatCacheKey、并经 appendTurns 落进 memory.json。
   const message = typeof (body && body.message) === 'string'
-    ? body.message.slice(0, CHAT_MAX_MESSAGE_CHARS)
+    ? clipCodePoints(body.message, CHAT_MAX_MESSAGE_CHARS)
     : ''
   const b64 = typeof (body && body.image) === 'string' ? body.image : ''
   const rawMime = typeof (body && body.imageMime) === 'string' ? body.imageMime.trim() : ''
