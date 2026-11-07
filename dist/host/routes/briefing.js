@@ -75,7 +75,7 @@ export function createBriefingHandlers(opts) {
         catch { }
         // 天气（清洗/截断后只留一行；失败/超时/非 2xx 就不出这段）
         try {
-            const w = await fetch('https://wttr.in/Beihai?format=%C+%t&lang=zh', { signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS) });
+            const w = await fetch('https://wttr.in/Beihai?format=%C+%t&lang=zh-cn', { signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS) });
             if (w && w.ok) {
                 const txt = cleanWeather(await w.text());
                 if (txt)
@@ -92,11 +92,40 @@ export function createBriefingHandlers(opts) {
         }
         catch { }
         // 提醒（非数组说明读不到，就别编一个"0 条"；坏项丢弃，好项照数）
+        //
+        // 2026-11-07（主人反馈「说了提醒，简报里也没有这条」）：原来只报条数，看不到是哪件事。
+        // 现在除了条数，再按到点时间列出最近 3 条的任务正文（只列盘上真实存在的，不编）。
         try {
             const rs = opts.loadReminders();
             if (Array.isArray(rs)) {
-                const pending = rs.filter((r) => Boolean(r) && !r.done).length;
-                parts.push('待办提醒：' + pending + ' 条');
+                const pendingList = rs
+                    .filter((r) => Boolean(r) && !r.done)
+                    .map((r) => {
+                    const raw = r.nextAt || r.at;
+                    const ms = new Date(raw).getTime();
+                    return { text: String(r.text || '').trim(), ms: Number.isFinite(ms) ? ms : Infinity };
+                })
+                    .filter((x) => Boolean(x.text))
+                    .sort((a, b) => a.ms - b.ms);
+                parts.push('待办提醒：' + rs.filter((r) => Boolean(r) && !r.done).length + ' 条');
+                const nowMs = safeNow(opts.now).getTime();
+                const top = pendingList.slice(0, 3).map((x) => {
+                    if (!Number.isFinite(x.ms))
+                        return x.text;
+                    const d = new Date(x.ms);
+                    const hh = String(d.getHours()).padStart(2, '0');
+                    const mm = String(d.getMinutes()).padStart(2, '0');
+                    const today = safeNow(opts.now);
+                    const sameDay = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
+                    // 只标「今天/明天」，更远的写日期：避免主人把明天的 9 点看成今天 9 点
+                    const diffDays = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+                        - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) / 86400000);
+                    const dayWord = diffDays === 0 ? '今天' : (diffDays === 1 ? '明天' : ((d.getMonth() + 1) + '月' + d.getDate() + '日'));
+                    return dayWord + hh + ':' + mm + ' ' + x.text;
+                });
+                if (top.length)
+                    parts.push('待办：' + top.join('；'));
+                void nowMs;
             }
         }
         catch { }
