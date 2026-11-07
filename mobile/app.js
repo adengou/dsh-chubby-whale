@@ -182,35 +182,51 @@ function showPetBubble(text) {
   showPetBubble.timer = setTimeout(() => { bubble.hidden = true; }, 3200);
 }
 
+/** 把长文切成适合逐段合成的句子块（每块 <= 110 字） */
+function splitSpeech(text, max = 110) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  const sentences = clean.match(/[^。！？!?；;\n]+[。！？!?；;\n]?/g) || [clean];
+  const chunks = [];
+  let buf = '';
+  for (const s of sentences) {
+    if ((buf + s).length <= max) {
+      buf += s;
+    } else {
+      if (buf) chunks.push(buf);
+      // 单句本身就超长：硬切，避免一次性合成几千字
+      let rest = s;
+      while (rest.length > max) {
+        chunks.push(rest.slice(0, max));
+        rest = rest.slice(max);
+      }
+      buf = rest;
+    }
+  }
+  if (buf) chunks.push(buf);
+  return chunks;
+}
+
+/** 朗读令牌：每次新的朗读/停止都会 +1，旧队列看到令牌变化就退出 */
+let speechToken = 0;
+
 async function speak(text) {
   if (!voiceOn) return;
-  const said = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!said) return;
-  // 只念前 300 字：手机听个声，不烧整段合成
-  const piece = said.slice(0, 300);
-  try {
-    const res = await fetch('/api/chubby-whale/tts', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: piece, rate: '+0%' }),
-    });
-    if (!res.ok) {
-      toast(res.status === 501 ? '电脑端没有安装 edge-tts，语音用不了' : `语音失败（${res.status}）`, 'error');
+  const chunks = splitSpeech(text);
+  if (!chunks.length) return;
+  const token = ++speechToken;
+  stopCurrentAudio();
+  for (const chunk of chunks) {
+    if (token !== speechToken) return;
+    try {
+      await playChunk(chunk, token);
+    } catch {
       return;
     }
-    const buf = await res.arrayBuffer();
-    await playAudioBuffer(buf);
-  } catch (err) {
-    setPetSpeaking(false);
-    toast(`语音失败：${err && err.message ? err.message : '网络错误'}`, 'error');
   }
 }
 
-/** 正在朗读的 BufferSource（供「停」按钮用） */
-let currentSpeech = null;
-
-/** 停掉当前朗读 */
-function stopSpeak() {
+function stopCurrentAudio() {
   try { currentSpeech?.stop(); } catch { /* 已结束 */ }
   currentSpeech = null;
   if (ttsAudio) {
@@ -219,46 +235,66 @@ function stopSpeak() {
   setPetSpeaking(false);
 }
 
-/**
- * 播放音频字节。
- * 优先走已经解锁的 AudioContext（手机浏览器只在用户手势里允许出声，
- * 而 TTS 是异步拿到的，用 <audio>.play() 容易被判成自动播放而静音）；
- * AudioContext 用不了再退回 <audio>。
- */
-async function playAudioBuffer(buf) {
-  stopSpeak();
+/** 停掉当前朗读（含队列） */
+function stopSpeak() {
+  speechToken += 1;
+  stopCurrentAudio();
+}
+
+async function playChunk(piece, token) {
+  const res = await fetch('/api/chubby-whale/tts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: piece, rate: '+0%' }),
+  });
+  if (!res.ok) {
+    toast(res.status === 501 ? '电脑端没有安装 edge-tts，语音用不了' : `语音失败（${res.status}）`, 'error');
+    return;
+  }
+  const buf = await res.arrayBuffer();
+  if (token !== speechToken) return;   // 合成期间被停止/被新朗读顶掉
+  await playAudioBuffer(buf, token);
+}
+
+/** 正在朗读的 BufferSource（供「停」按钮用） */
+let currentSpeech = null;
+
+async function playAudioBuffer(buf, token) {
   if (audioCtx && audioCtx.state === 'running' && typeof audioCtx.decodeAudioData === 'function') {
     try {
       const data = await audioCtx.decodeAudioData(buf.slice(0));
-      const src = audioCtx.createBufferSource();
-      src.buffer = data;
-      src.connect(audioCtx.destination);
-      setPetSpeaking(true);
-      currentSpeech = src;
-      src.onended = () => {
-        if (currentSpeech === src) currentSpeech = null;
-        setPetSpeaking(false);
-      };
-      src.start(0);
+      if (token !== undefined && token !== speechToken) return;
+      await new Promise((resolve) => {
+        const src = audioCtx.createBufferSource();
+        src.buffer = data;
+        src.connect(audioCtx.destination);
+        setPetSpeaking(true);
+        currentSpeech = src;
+        src.onended = () => {
+          if (currentSpeech === src) currentSpeech = null;
+          setPetSpeaking(false);
+          resolve();
+        };
+        src.start(0);
+      });
       return;
     } catch {
       /* 解码失败就退回 <audio> */
     }
   }
-
-  // 退化路径：<audio>（桌面浏览器通常没问题）
-  ttsAudio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' })));
-  ttsAudio.addEventListener('playing', () => setPetSpeaking(true));
-  ttsAudio.addEventListener('ended', () => setPetSpeaking(false));
-  ttsAudio.addEventListener('error', () => setPetSpeaking(false));
-  try {
-    await ttsAudio.play();
-  } catch {
-    setPetSpeaking(false);
-    toast('手机拦了自动播放：先点一下页面任意位置，再发消息', 'error');
-  }
+  // 退化路径：<audio>
+  await new Promise((resolve) => {
+    ttsAudio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' })));
+    ttsAudio.addEventListener('playing', () => setPetSpeaking(true));
+    ttsAudio.addEventListener('ended', () => { setPetSpeaking(false); resolve(); });
+    ttsAudio.addEventListener('error', () => { setPetSpeaking(false); resolve(); });
+    ttsAudio.play().catch(() => {
+      setPetSpeaking(false);
+      toast('手机拦了自动播放：先点一下页面任意位置', 'error');
+      resolve();
+    });
+  });
 }
-
 /* ========================================================================== *
  * 语音输入：录音 → 电脑端 /api/chubby-whale/asr（硅基流动）→ 文字 → 发送
  * ========================================================================== */

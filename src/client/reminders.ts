@@ -63,7 +63,7 @@ function ms(v: any, def: number): number {
 
 export function createReminderPoller(host: ReminderHost, opts?: ReminderPollerOptions): ReminderPoller {
   const o = opts || {}
-  const intervalMs = ms(o.intervalMs, 20000)
+  const intervalMs = ms(o.intervalMs, 2000)
   const retryMs = ms(o.retryMs, 2000)
   const gapMs = ms(o.gapMs, 3000)
   const bubbleMs = ms(o.bubbleMs, 8000)

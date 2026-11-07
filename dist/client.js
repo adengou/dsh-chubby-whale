@@ -7933,7 +7933,7 @@
   }
   function createReminderPoller(host, opts) {
     const o = opts || {};
-    const intervalMs = ms(o.intervalMs, 2e4);
+    const intervalMs = ms(o.intervalMs, 2e3);
     const retryMs = ms(o.retryMs, 2e3);
     const gapMs = ms(o.gapMs, 3e3);
     const bubbleMs = ms(o.bubbleMs, 8e3);
