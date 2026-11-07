@@ -192,12 +192,55 @@ const HERE = join(typeof import.meta.dirname === 'string'
     ? String(import.meta.dirname)
     : fileURLToPath(new URL('.', import.meta.url)), '..');
 /**
+ * 私有临时目录（进程内只建一次）：worker 脚本的第二落点。
+ *
+ * ── 为什么要「目录」而不是直接写 tmpdir（2026-11-07 跨平台审计）──────────────
+ *   原来的第二落点是 `join(tmpdir(), 'chubby-' + WORKER_FILE)`——一个**固定名字**直接放在
+ *   临时根目录里。这在 Windows 上无害（%TEMP% 是每用户目录），但在 Linux/macOS 上
+ *   `/tmp` 是全世界可写（mode 1777，只防删不防建）：
+ *     · 另一个用户先建同名文件（0644，属他）→ 本进程 writeFile 直接 EACCES，
+ *       worker 永远起不来，只能退单次 spawn（每段朗读都慢一截，日志里只有一行警告）；
+ *     · 对方先建同名的**符号链接**指向别的文件 → 本进程的写盘会顺着链接写到那个文件上
+ *       （CWE-377 不安全临时文件：写到哪由别人决定）；
+ *     · 组可写 umask（如 0002 → 文件 0664）时，同组用户还能在我们「读完比对」之后、
+ *       python「打开执行」之前把内容换掉（TOCTOU）→ 等于让我们执行任意脚本。
+ *   `mkdtempSync` 建的是**本进程独占的新目录**：POSIX 规定权限 0700，umask 只能更严，
+ *   别人既写不进来也猜不到名字，上面三条一起消失。Windows 上同样只是"更干净"（无副作用）。
+ *
+ * ── 为什么用 process.getBuiltinModule 而不是 import ─────────────────────────
+ *   现有测试沙箱（test-tts-engine / test-tts-abort / test-tts-cancel）把 `node:fs`
+ *   换成只导出 existsSync 的桩；在文件头新加 import 会让那些套件在加载期就炸。
+ *   getBuiltinModule 是 Node 22.3+ 的内置模块通道（engines 已声明 >=22.3，client 侧
+ *   poem-titles.ts 也是同一手法），既拿到真实实现，又不动模块的 import 面。
+ *
+ * 建不出来（只读的 /tmp、Node 版本过低）时抛错：调用方按「脚本落盘失败」处理——
+ * 退单次 spawn，功能不受影响（只是慢一点），不把插件卡死。
+ */
+let workerTmpDir = null;
+function privateWorkerDir() {
+    if (workerTmpDir)
+        return workerTmpDir;
+    const p = process;
+    if (typeof p.getBuiltinModule !== 'function')
+        throw new Error('当前 Node 不支持 getBuiltinModule（需要 >=22.3）');
+    const fs = p.getBuiltinModule('node:fs');
+    if (!fs || typeof fs.mkdtempSync !== 'function')
+        throw new Error('取不到 node:fs.mkdtempSync');
+    workerTmpDir = String(fs.mkdtempSync(join(tmpdir(), 'chubby-tts-worker-')));
+    return workerTmpDir;
+}
+/**
  * 把 worker 源码落盘。路径一律 join 构造：
  * 优先放本模块同目录（拆分前的 dist/host），随产物走、路径确定；
- * 全局安装/只读镜像写不进去时回退系统临时目录。
+ * 全局安装/只读镜像写不进去时回退**私有临时目录**（见 privateWorkerDir，不再用固定名）。
  */
 async function ensureWorkerFile() {
-    const targets = [join(HERE, WORKER_FILE), join(tmpdir(), 'chubby-' + WORKER_FILE)];
+    const targets = [join(HERE, WORKER_FILE)];
+    // 私有目录建不出来时不把它当候选：留着只会让错误信息更乱（真正的落盘错误仍在下面抛出）
+    try {
+        targets.push(join(privateWorkerDir(), WORKER_FILE));
+    }
+    catch { }
     let lastError = null;
     for (const p of targets) {
         try {

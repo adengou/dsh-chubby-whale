@@ -17,7 +17,13 @@
  * 目录里的运行数据（含记忆/人格/状态/宠物这些隐私文件）收成 0600；Windows 跳过（无对应语义）。
  * 后续每次原子写也会把文件创建成 0600（见 host/atomic.ts），所以只有「升级前已存在」的
  * 旧文件需要这里补一次 chmod；失败静默，不影响功能。
+ *
+ * 临时文件清扫（跨平台，2026-11-07）：atomic.ts 的原子写在**进程被强杀/断电**时无法执行
+ * 自己的清理分支，运行目录里会留下 `<文件名>.<pid>.<随机串>.tmp`。三平台语义一致，
+ * 所以这里按 mtime（> 1 小时）清扫一次：正在写的临时文件活不过几毫秒，一小时前的只可能是
+ * 崩溃遗留。两个实例共用同一运行目录时也不会误删对方在途的写入（阈值远大于一次写盘的耗时）。
  */
+import { readdirSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   writeJsonAtomic, isMissingFileError, quarantineFile, ensurePrivateDir, chmodPrivateFile, readTextNoBom,
@@ -51,10 +57,50 @@ const PRIVATE_DATA_FILES = [
   'prefs.json',
 ]
 
+/** 崩溃残留临时文件的判定门槛：一小时前的 `.tmp` 只可能是崩溃遗留（写盘耗时是毫秒级） */
+const STALE_TMP_MS = 60 * 60 * 1000
+/** 单次清扫最多删多少个：坏成一片时也别把启动卡成一次全目录删除 */
+const STALE_TMP_MAX = 200
+
+/**
+ * 清掉运行目录里崩溃遗留的 `.tmp`（atomic.ts 的临时文件命名：`<文件>.<pid>.<随机串>.tmp`）。
+ *
+ * 为什么需要：写盘失败/rename 失败都有清理分支，但**进程被 SIGKILL / 断电**时没人执行它，
+ * 残留会一直躺在运行目录里（Windows / Linux / macOS 都一样）。它不影响读取（数据文件名
+ * 不带 .tmp 后缀），只会让目录越来越脏，且排障时容易被当成"未完成的写入"。
+ *
+ * 保守：只看运行目录第一层、只认 `.tmp` 结尾、只删 mtime 早于一小时的，失败静默。
+ * 返回删掉的个数（0 表示没有残留）。
+ */
+function sweepStaleTmp(dataDir: string): number {
+  let names: string[] = []
+  try { names = readdirSync(dataDir) } catch { return 0 }
+  const now = Date.now()
+  let removed = 0
+  for (const name of names) {
+    if (removed >= STALE_TMP_MAX) break
+    if (!name.endsWith('.tmp')) continue
+    const full = join(dataDir, name)
+    try {
+      const st = statSync(full)
+      if (!st.isFile()) continue
+      // mtime 异常（NaN）时保守不删：宁留垃圾，不删可能还想用的东西
+      const mtime = Number(st.mtimeMs)
+      if (!Number.isFinite(mtime)) continue
+      if (now - mtime <= STALE_TMP_MS) continue
+      unlinkSync(full)
+      removed++
+    } catch { }
+  }
+  if (removed > 0) console.log('[store] 已清理崩溃残留的临时文件 ' + removed + ' 个：' + dataDir)
+  return removed
+}
+
 /** 收紧运行目录权限：建目录（0700）+ 给已存在的旧数据文件补 0600；POSIX 之外全部静默跳过 */
 function hardenRuntimeDir(dataDir: string): void {
   ensurePrivateDir(dataDir)
   for (const name of PRIVATE_DATA_FILES) chmodPrivateFile(join(dataDir, name))
+  sweepStaleTmp(dataDir)
 }
 
 export function createStore(dataDir: string) {
