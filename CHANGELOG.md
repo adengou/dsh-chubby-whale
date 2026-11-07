@@ -18,6 +18,19 @@
 
 ## [未发布]
 
+### 修复（泰文显示不依赖系统字体）
+- **换泰语会显示方框/乱码**：此前只把 `Leelawaddee UI` / Tahoma 加进字体链，仍要求系统装有泰文字体；系统没有就退化成方框。现在把 **Noto Sans Thai 的泰文子集（9,112 B，OFL-1.1）内联成 data URL**，由客户端注入 `@font-face`（family `ChubbyThai`），气泡、菜单、聊天面板、恢复点的字体链都优先用它
+- 新增 `scripts/gen-font.mjs`：从 `assets/fonts/NotoSansThai-Regular.woff2` 生成 `src/client/thai-font.ts`；`npm run build` 自动生成，`npm test` 用 `--check` 防止字体换了产物没更新
+- 许可证：`assets/fonts/OFL.txt`（Noto Sans Thai，SIL OFL 1.1）
+
+### 修复（编码统一）
+- 新增的 `scripts/gen-font.mjs` 曾带 UTF-8 BOM，已去除；仓库统一 **UTF-8 无 BOM**（`npm run build` 内置 `check-bom` 会拦住）
+
+### 测试
+- `test.mjs` 新增 [64] 泰文显示 10 条：字体已生成/woff2 data URL/unicode-range 覆盖泰文/内联与 assets 一致/气泡注入/四条字体链/gen-font --check
+- 全链断言见 `node tools/test-count.mjs`
+
+
 ## [1.1.81] - 2026-11-07
 
 ### 修复（客户端请求没有超时）

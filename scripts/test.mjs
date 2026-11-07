@@ -3404,6 +3404,42 @@ try {
   ok('能运行行为回归用例', false, String(e.message))
 }
 
+
+// ---------- 64 泰文显示：内置字体，不依赖系统安装 ----------
+console.log('\n[64] 泰文显示：内置字体（data URL）')
+try {
+  const thai = await import('../src/client/thai-font.ts')
+  // 不能直接 import bubble.ts：它经 persona.ts 牵出 data/persona.json（ESM 需 import attribute）
+  const { recoverDotStyle, menuStyle, chatPanelStyle } = await import('../src/client/styles.ts')
+  const { readFileSync: rf } = await import('node:fs')
+  const { spawnSync } = await import('node:child_process')
+
+  ok('内置泰文字体已生成', thai.THAI_FONT_BYTES > 1000 && thai.THAI_FONT_FAMILY === 'ChubbyThai', String(thai.THAI_FONT_BYTES))
+  ok('@font-face 是 woff2 data URL', thai.THAI_FONT_FACE.indexOf('@font-face') >= 0 && thai.THAI_FONT_FACE.indexOf('data:font/woff2;base64,') > 0)
+  ok('unicode-range 覆盖泰文', thai.THAI_FONT_FACE.indexOf('U+0E01-0E5B') > 0)
+
+  // 内联 base64 必须等于 assets 里的字体文件（防止改了字体忘了重新生成）
+  const asset = rf('assets/fonts/NotoSansThai-Regular.woff2')
+  const b64 = asset.toString('base64')
+  ok('内联字体与 assets 字体一致', thai.THAI_FONT_FACE.indexOf(b64) > 0, 'asset=' + asset.length + 'B')
+
+  // 气泡层：源码契约（BUBBLE_CSS = THAI_FONT_FACE + ...，字体链用 THAI_FONT_FAMILY）
+  const bubbleSrc = rf('src/client/bubble.ts', 'utf8')
+  ok('气泡注入内置 @font-face', bubbleSrc.indexOf('THAI_FONT_FACE +') > 0)
+  ok('气泡字体链优先内置泰文', bubbleSrc.indexOf("font:13px/1.6 ' + THAI_FONT_FAMILY") > 0)
+
+  // 菜单 / 聊天面板 / 恢复点字体链同样带上内置字体
+  ok('菜单字体链含内置泰文', String(menuStyle(null).font || '').indexOf('ChubbyThai') >= 0)
+  ok('聊天面板字体链含内置泰文', String(chatPanelStyle(false).font || '').indexOf('ChubbyThai') >= 0)
+  ok('恢复点字体链含内置泰文', String(recoverDotStyle.font || '').indexOf('ChubbyThai') >= 0)
+
+  // 生成物与字体文件同步（npm test 链里也会单独跑一次）
+  const gen = spawnSync(process.execPath, ['scripts/gen-font.mjs', '--check'], { cwd: process.cwd(), encoding: 'utf8' })
+  ok('gen-font --check 通过', gen.status === 0, (gen.stdout || '').trim().slice(0, 80))
+} catch (e) {
+  ok('能加载泰文字体用例', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
