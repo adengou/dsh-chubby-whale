@@ -41,7 +41,7 @@ export interface TtsEngine {
   warm?(): Promise<void>
 }
 
-/** 数据源类型：本地 data/（默认）或云端 adengou.cn/culture/v1/ */
+/** 数据源类型：本地 data/（默认）或使用者自建的云端文化数据服务（地址由 cloudBase 配置） */
 export type DataSourceKind = 'local' | 'cloud'
 
 /** 文化数据类型（对应路由 ?type=chengyu|idiom|minsu） */

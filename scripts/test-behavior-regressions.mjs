@@ -503,7 +503,7 @@ async function groupCloud(ok) {
   {
     const counter = { manifest: 0, daily: 0 }
     const local = mkLocal('local-fallback')
-    const port = createCloudDataPort({ local, fetchImpl: mkFetch(counter) })
+    const port = createCloudDataPort({ local, baseUrl: 'https://cloud.example/culture/v1/', fetchImpl: mkFetch(counter) })
     const [a, b] = await Promise.all([port.readDaily(), port.readDaily()])
     check('并发同 key 只拉一次 manifest', counter.manifest === 1, '实际 ' + counter.manifest)
     check('并发同 key 只拉一次 daily.json（singleFlight）', counter.daily === 1, '实际 ' + counter.daily)
@@ -519,7 +519,7 @@ async function groupCloud(ok) {
     const counter = { manifest: 0, daily: 0 }
     const local = mkLocal('local-fallback')
     let failDaily = true
-    const port = createCloudDataPort({ local, fetchImpl: mkFetch(counter, { get failDaily() { return failDaily } }) })
+    const port = createCloudDataPort({ local, baseUrl: 'https://cloud.example/culture/v1/', fetchImpl: mkFetch(counter, { get failDaily() { return failDaily } }) })
     const realNow = Date.now
     let offset = 0
     Date.now = () => realNow() + offset

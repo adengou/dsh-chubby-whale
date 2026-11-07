@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { readApiKey, readSiliconFlowKey, readAsrLanguage, readDataSource, readPersonalityLearning, readPersonalityWriting, readChatModel, sanitizePluginConfig, } from './host/config.js';
+import { readApiKey, readSiliconFlowKey, readAsrLanguage, readDataSource, readCloudBase, readPersonalityLearning, readPersonalityWriting, readChatModel, sanitizePluginConfig, } from './host/config.js';
 import { createStore, growthStage } from './host/store.js';
 import { createCache } from './host/cache.js';
 import { createPrefs, createCacheToggleHandler } from './host/prefs.js';
@@ -31,7 +31,7 @@ import { createStoryHandlers } from './host/routes/story.js';
 import { createStoryRepo } from './host/story/repo.js';
 import { createStoryPlayer } from './host/story/player.js';
 import { createLocalDataPort } from './host/data/local.js';
-import { createCloudDataPort, CLOUD_DATA_BASE } from './host/data/cloud.js';
+import { createCloudDataPort } from './host/data/cloud.js';
 import { createStorySource } from './host/data/story-source.js';
 import { createMiscHandlers } from './host/routes/misc.js';
 import { createReminderHandlers } from './host/routes/reminders.js';
@@ -196,9 +196,10 @@ export function apply(ctx, rawConfig) {
         dataDir: DATA_DIR,
         story: createStoryRepo({ dataDir: DATA_DIR, workerPath: join(__dirname, 'story-worker.js') }),
     });
-    const dataPort = dataSource === 'cloud' ? createCloudDataPort({ local: localData }) : localData;
+    const cloudBase = readCloudBase(PLUGIN_DIR, config);
+    const dataPort = dataSource === 'cloud' ? createCloudDataPort({ local: localData, baseUrl: cloudBase || undefined }) : localData;
     if (dataSource === 'cloud') {
-        console.log('[chubby-whale] dataSource=cloud base=' + CLOUD_DATA_BASE + '（网络失败自动回退本地）');
+        console.log('[chubby-whale] dataSource=cloud base=' + (cloudBase || '（未配置 cloudBase，直接回退本地）') + '（网络失败自动回退本地）');
     }
     const chat = createChatHandler({
         getKey,
