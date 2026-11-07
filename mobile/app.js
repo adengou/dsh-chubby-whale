@@ -135,7 +135,8 @@ function toast(message, kind = 'info', timeout = 4200) {
  * 语音朗读：调电脑端 chubby-whale 的 /api/chubby-whale/tts（edge-tts）
  * ========================================================================== */
 
-let voiceOn = store.get(VOICE_KEY) === '1';
+// 默认开；只有用户明确关过（存了 '0'）才关
+let voiceOn = store.get(VOICE_KEY) !== '0';
 let ttsAudio = null;
 
 function updateVoiceButton() {
@@ -157,7 +158,13 @@ function setupVoice() {
       try { ttsAudio.pause(); } catch { /* 忽略 */ }
       setPetSpeaking(false);
     }
-    toast(voiceOn ? '语音开了：本鱼会念给你听' : '语音关了');
+    if (voiceOn) {
+      // 当场试一句：让用户立刻知道声音通不通
+      toast('语音开了：本鱼会念给你听');
+      speak('本鱼在手机上说话了，听到没');
+    } else {
+      toast('语音关了');
+    }
   });
 }
 
@@ -191,21 +198,49 @@ async function speak(text) {
       toast(res.status === 501 ? '电脑端没有安装 edge-tts，语音用不了' : `语音失败（${res.status}）`, 'error');
       return;
     }
-    const blob = await res.blob();
-    if (ttsAudio) {
-      try { ttsAudio.pause(); } catch { /* 忽略 */ }
-    }
-    ttsAudio = new Audio(URL.createObjectURL(blob));
-    ttsAudio.addEventListener('playing', () => setPetSpeaking(true));
-    ttsAudio.addEventListener('ended', () => setPetSpeaking(false));
-    ttsAudio.addEventListener('error', () => setPetSpeaking(false));
-    await ttsAudio.play().catch(() => {
-      setPetSpeaking(false);
-      toast('浏览器拦了自动播放，点一下页面再试', 'error');
-    });
+    const buf = await res.arrayBuffer();
+    await playAudioBuffer(buf);
   } catch (err) {
     setPetSpeaking(false);
     toast(`语音失败：${err && err.message ? err.message : '网络错误'}`, 'error');
+  }
+}
+
+/**
+ * 播放音频字节。
+ * 优先走已经解锁的 AudioContext（手机浏览器只在用户手势里允许出声，
+ * 而 TTS 是异步拿到的，用 <audio>.play() 容易被判成自动播放而静音）；
+ * AudioContext 用不了再退回 <audio>。
+ */
+async function playAudioBuffer(buf) {
+  if (audioCtx && audioCtx.state === 'running' && typeof audioCtx.decodeAudioData === 'function') {
+    try {
+      const data = await audioCtx.decodeAudioData(buf.slice(0));
+      const src = audioCtx.createBufferSource();
+      src.buffer = data;
+      src.connect(audioCtx.destination);
+      setPetSpeaking(true);
+      src.onended = () => setPetSpeaking(false);
+      src.start(0);
+      return;
+    } catch {
+      /* 解码失败就退回 <audio> */
+    }
+  }
+
+  // 退化路径：<audio>（桌面浏览器通常没问题）
+  if (ttsAudio) {
+    try { ttsAudio.pause(); } catch { /* 忽略 */ }
+  }
+  ttsAudio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' })));
+  ttsAudio.addEventListener('playing', () => setPetSpeaking(true));
+  ttsAudio.addEventListener('ended', () => setPetSpeaking(false));
+  ttsAudio.addEventListener('error', () => setPetSpeaking(false));
+  try {
+    await ttsAudio.play();
+  } catch {
+    setPetSpeaking(false);
+    toast('手机拦了自动播放：先点一下页面任意位置，再发消息', 'error');
   }
 }
 
