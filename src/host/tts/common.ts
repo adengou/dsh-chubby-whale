@@ -98,23 +98,30 @@ export function logWarn(msg: string, err?: any): void {
 }
 
 /**
- * 统一杀子进程：先 child.kill()；Windows 上 500ms 后仍未退出才 taskkill /T /F 兜底。
+ * 统一杀子进程：先 child.kill()；500ms 后仍未退出再补刀——
+ * Windows 用 `taskkill /T /F`（连进程树），POSIX 用 `SIGKILL`（默认信号可能被忽略，必须有第二级）。
+ * 2026-11-07 补 POSIX 补刀：原来只有 Windows 有第二级，Linux/macOS 上子进程忽略 SIGTERM 时会一直挂着。
  * 进程一旦退出（exit 事件到达）就撤销补刀：PID 可能在退出后被系统复用，
  * 撤销得越早，taskkill 误杀复用 PID 的窗口越小。
  */
 export function killChild(child: ChildProcess): void {
   const pid = child.pid
   try { child.kill() } catch { }
-  if (process.platform !== 'win32' || !pid) return
+  if (!pid) return
   // taskkill 兜底只在必要时用：正常退出（exitCode/signalCode 已置）绝不再补刀，
   // 避免误杀复用了同一 PID 的其他进程。
   const timer = setTimeout(() => {
     if (child.exitCode !== null || child.signalCode !== null) return
-    try {
-      const tk = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
-      tk.on('error', () => { })
-      try { tk.unref() } catch { }
-    } catch { }
+    if (process.platform === 'win32') {
+      try {
+        const tk = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+        tk.on('error', () => { })
+        try { tk.unref() } catch { }
+      } catch { }
+      return
+    }
+    // POSIX：SIGTERM 可能被忽略（python 子进程装了处理器就会），第二级必须是 SIGKILL
+    try { child.kill('SIGKILL') } catch { }
   }, 500)
   try {
     child.once('exit', () => { try { clearTimeout(timer) } catch { } })

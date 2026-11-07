@@ -25,7 +25,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.80";
+  var VERSION = "1.1.82";
 
   // src/client/styles.ts
   var W = 240;
@@ -67,7 +67,7 @@
     background: "rgba(12,28,52,0.72)",
     border: "1px solid rgba(93,160,240,0.55)",
     color: "#9FD8FF",
-    font: '12px/22px "Microsoft YaHei", sans-serif',
+    font: '12px/22px "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif',
     cursor: "pointer",
     userSelect: "none",
     opacity: 0.75,
@@ -107,7 +107,7 @@
       borderRadius: 10,
       boxShadow: "0 12px 32px rgba(0,0,0,0.5)",
       zIndex: 10001,
-      font: '13px/1.5 "Microsoft YaHei", sans-serif',
+      font: '13px/1.5 "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif',
       display: menu ? "block" : "none",
       color: "#cfe9ff"
     };
@@ -142,7 +142,7 @@
       border: "1px solid rgba(93,160,240,0.55)",
       borderRadius: 18,
       boxShadow: "0 18px 48px rgba(0,0,0,0.55)",
-      font: '14px/1.6 "Microsoft YaHei", sans-serif',
+      font: '14px/1.6 "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif',
       color: "#dbeaff",
       overflow: "hidden",
       zIndex: 1e4,
@@ -4332,6 +4332,7 @@
 
   // src/client/http.ts
   var API_BASE = "/api/chubby-whale";
+  var DEFAULT_TIMEOUT_MS = 15e3;
   function apiUrl(path) {
     const p = String(path || "");
     if (!p) return API_BASE;
@@ -4344,28 +4345,172 @@
     if (clientId) h["x-client-id"] = clientId;
     return h;
   }
-  function request(path, init) {
-    return fetch(apiUrl(path), Object.assign({}, init || {}));
+  function budgetOf(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return n;
+  }
+  function makeAbortController() {
+    try {
+      const AC = typeof AbortController !== "undefined" ? AbortController : null;
+      if (AC) return new AC();
+    } catch (e) {
+    }
+    return null;
+  }
+  function timeoutError(ms2) {
+    const msg = "请求超时（" + ms2 + "ms）";
+    try {
+      const D = typeof DOMException !== "undefined" ? DOMException : null;
+      if (D) return new D(msg, "TimeoutError");
+    } catch (e) {
+    }
+    const err = new Error(msg);
+    err.name = "TimeoutError";
+    return err;
+  }
+  function abortReasonOf(src) {
+    if (src && src.reason !== void 0) return src.reason;
+    try {
+      const D = typeof DOMException !== "undefined" ? DOMException : null;
+      if (D) return new D("aborted", "AbortError");
+    } catch (e) {
+    }
+    const err = new Error("aborted");
+    err.name = "AbortError";
+    return err;
+  }
+  function fetchWithBudget(url, init, useDefault) {
+    const o = Object.assign({}, init || {});
+    const hasExplicit = o.timeout !== void 0 && o.timeout !== null;
+    const wanted = hasExplicit ? budgetOf(o.timeout) : useDefault && !o.signal ? DEFAULT_TIMEOUT_MS : 0;
+    delete o.timeout;
+    const external = o.signal;
+    const canListen = !!external && typeof external.addEventListener === "function";
+    if (!wanted && !canListen) return fetch(url, o);
+    const ctrl = wanted ? makeAbortController() : null;
+    const detach = [];
+    if (ctrl) {
+      o.signal = ctrl.signal;
+      if (external) {
+        if (external.aborted) {
+          try {
+            ctrl.abort();
+          } catch (e) {
+          }
+        } else if (typeof external.addEventListener === "function") {
+          const forward = () => {
+            try {
+              ctrl.abort();
+            } catch (e) {
+            }
+          };
+          try {
+            external.addEventListener("abort", forward);
+            detach.push(() => {
+              try {
+                external.removeEventListener("abort", forward);
+              } catch (e) {
+              }
+            });
+          } catch (e) {
+          }
+        }
+      }
+    } else if (external) {
+      o.signal = external;
+    }
+    return new Promise((resolve, reject) => {
+      let done = false;
+      let timer = null;
+      const cleanup = () => {
+        while (detach.length) {
+          const fn = detach.pop();
+          try {
+            if (fn) fn();
+          } catch (e) {
+          }
+        }
+      };
+      const finish = (fn, v) => {
+        if (done) return;
+        done = true;
+        try {
+          if (timer) clearTimeout(timer);
+        } catch (e) {
+        }
+        cleanup();
+        fn(v);
+      };
+      if (wanted) {
+        timer = setTimeout(() => {
+          if (ctrl) {
+            try {
+              ctrl.abort();
+            } catch (e) {
+            }
+          }
+          finish(reject, timeoutError(wanted));
+        }, wanted);
+        try {
+          if (timer && typeof timer.unref === "function") timer.unref();
+        } catch (e) {
+        }
+      }
+      if (canListen) {
+        const onAbort = () => {
+          finish(reject, abortReasonOf(external));
+        };
+        if (external.aborted) {
+          onAbort();
+          return;
+        }
+        try {
+          external.addEventListener("abort", onAbort);
+          detach.push(() => {
+            try {
+              external.removeEventListener("abort", onAbort);
+            } catch (e) {
+            }
+          });
+        } catch (e) {
+        }
+      }
+      let pending;
+      try {
+        pending = fetch(url, o);
+      } catch (e) {
+        finish(reject, e);
+        return;
+      }
+      Promise.resolve(pending).then(
+        (r) => finish(resolve, r),
+        (e) => finish(reject, e)
+      );
+    });
   }
   function getJson(path, init) {
-    return request(path, init).then((r) => r.json());
+    return fetchWithBudget(apiUrl(path), init, true).then((r) => r.json());
   }
-  function postRaw(path, body, init) {
+  function postInit(body, init) {
     const o = Object.assign({}, init || {});
     o.method = "POST";
     if (body !== void 0) {
       o.headers = Object.assign({ "content-type": "application/json" }, o.headers || {});
       o.body = JSON.stringify(body);
     }
-    return fetch(apiUrl(path), o);
+    return o;
+  }
+  function postRaw(path, body, init) {
+    return fetchWithBudget(apiUrl(path), postInit(body, init), false);
   }
   function postJson(path, body, init) {
-    return postRaw(path, body, init).then((r) => r.json());
+    return fetchWithBudget(apiUrl(path), postInit(body, init), true).then((r) => r.json());
   }
   function delJson(path, init) {
     const o = Object.assign({}, init || {});
     o.method = "DELETE";
-    return fetch(apiUrl(path), o).then((r) => r.json());
+    return fetchWithBudget(apiUrl(path), o, true).then((r) => r.json());
   }
   function timeoutSignal(ms2) {
     try {
@@ -6308,7 +6453,7 @@
   }
 
   // src/client/bubble.ts
-  var BUBBLE_CSS = '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 "Microsoft YaHei",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}';
+  var BUBBLE_CSS = '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 "Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}';
   var STATUS_TEXTS = ["在听…", "在想…", "识别中…", "在说…"];
   deepFreeze(STATUS_TEXTS);
   function decorateText(text) {
@@ -6777,7 +6922,7 @@
     }
     return s;
   }
-  function makeAbortController() {
+  function makeAbortController2() {
     try {
       const AC = typeof AbortController !== "undefined" ? AbortController : null;
       if (AC) return new AC();
@@ -6873,7 +7018,7 @@
       abortInflightOf(shared, "superseded");
       const token = beginRound();
       const deadline = armDeadline(token, texts.slow);
-      const ctrl = makeAbortController();
+      const ctrl = makeAbortController2();
       const timeoutSig = timeoutSignal(REQUEST_TIMEOUT_MS);
       const round = ctrl ? { ctrl, reason: "" } : null;
       let detachTimeout = null;
@@ -7265,6 +7410,8 @@
   }
 
   // src/client/chat-route.ts
+  var CULTURE_TIMEOUT_MS = 2e4;
+  var POEM_TIMEOUT_MS = 15e3;
   function createLocalRouter(host) {
     function takeOver() {
       if (!host.abortChat) return;
@@ -7274,7 +7421,7 @@
       }
     }
     function fetchPoem(query, onItem) {
-      getJson("/poem" + query).then((d) => {
+      getJson("/poem" + query, { timeout: POEM_TIMEOUT_MS }).then((d) => {
         const p = d && d.ok && d.item ? d.item : null;
         if (!p) {
           host.bubble("诗册没读到", 4e3);
@@ -7334,7 +7481,7 @@
         }
         const saidIdiom = /成语/.test(t0);
         host.bubble(saidIdiom ? "（点播）讲个成语" : "（点播）讲个典故", 3e3);
-        getJson("/culture?type=" + type).then((d) => {
+        getJson("/culture?type=" + type, { timeout: CULTURE_TIMEOUT_MS }).then((d) => {
           const it = d && d.ok && d.item ? d.item : null;
           if (!it) {
             host.bubble("这个没读到", 4e3);

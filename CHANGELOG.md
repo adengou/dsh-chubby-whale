@@ -2,7 +2,37 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [1.1.82] - 2026-11-07
+
+### 修复（提醒：嘴上答应、其实没建）
+- **「十分钟后提醒我。」没有任务正文**：主人实测原句只有时间，旧规则判 `null` → 鱼嘴上答应了，`reminders.json` 里却没有这条提醒。现在**只要有明确时间 + 第一人称祈使就建**，正文可以为空；到点由客户端用兜底文案「时间到了」，不编造主人没说的事
+- 同时接受「提醒一下我」这类说法；清理任务正文里残留的「我/你/一下」；转述句（「他提醒我…」）仍然不建
+
+### 修复（泰文与多语言字体）
+- 气泡、恢复点、菜单、聊天面板的字体链补泰文回退（`Leelawaddee UI` / `Tahoma` / `Noto Sans Thai`）。微软雅黑没有泰文字形，之前会显示成方框
+
+### 构建与测试（随本版发布）
+- 新增 `scripts/check-no-shell.mjs`：源码与工具里禁止硬编码 `powershell` / `pwsh` / `.ps1` / `cmd /c`（`taskkill` 的 win32 分支除外），已纳入 `npm test`，保证 Linux/macOS 上发版与运行不被 Windows shell 卡住
+- `test-remind-nl` 27→34（空正文、清理残留「我」、转述不建等）
+- 全链 **5125 项 0 失败**（`node tools/test-count.mjs`：73 个套件，失败 0，未识别 0）
+
 ## [未发布]
+
+## [1.1.81] - 2026-11-07
+
+### 修复（客户端请求没有超时）
+- **取数请求会一直挂着**：`getJson/postJson/delJson` 没有总预算，云端数据源不可达时 `/culture`、`/poem` 界面最坏「清单 10s + 文件 10s」才有兜底。现在默认 **15s**（宿主数据接口 10s + 错误回传余量），到点抛 `TimeoutError` 并丢弃迟到响应
+- 预算可被 `init.timeout` 覆盖；**调用方自带 `signal` 时不叠加默认值**（说书 25s / 聊天 30s 的既有语义不变）；老浏览器用 `setTimeout + AbortController` 手工组合，不依赖 `AbortSignal.timeout` / `AbortSignal.any`
+
+### 修复（迁移与运行目录加固）
+- **0 字节半成品被永久当成「已迁移」**：pre-B74 崩溃会留下 0 字节目标文件，`existsSync` 让插件包里的旧数据再也搬不过去。现在「存在但 0 字节」视为半成品：先改名成 `<名>.empty-<时间戳>.bak` 留证，再落新文件；**有内容的目标仍绝不覆盖**
+- 崩溃遗留的 `.migrating-*` 无人清理：按 mtime > 1 小时清运行目录第一层（一次拷贝是毫秒级），上限 200
+- POSIX 首建运行目录 0755 → **0700**（Windows 忽略权限位、不报错）
+- 数据名单三份不一致（migrate 9 / store 11 / auto-backup 9）：统一从 `store.RUNTIME_DATA_FILES` 读，`personality.json`、`prefs.json` 这些以前从没被迁移过的文件补上了
+
+### 测试
+- 新增 `test-client-net.mjs`(37)、`test-migrate.mjs`(51) 接入 npm test
+- 全链 **5121 项 0 失败**（node tools/test-count.mjs：72 个套件，失败 0，未识别 0）
 
 ## [1.1.80] - 2026-11-07
 

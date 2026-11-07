@@ -67,6 +67,19 @@ console.log('\n[A] 解析器：说得出的时间都要认')
   ok('A7 秒级：20秒后 = +20 秒', !!r7 && new Date(r7.at).getTime() === NOW + 20_000, r7 && r7.at)
 }
 
+console.log('\n[A1b] 没有任务正文也要建（主人实测原句）')
+{
+  // 2026-11-07 主人说「十分钟后提醒我。」，鱼答应了但提醒没建：
+  // 旧规则要求「提醒我」后面必须有正文，任务为空就 return null。
+  const r = parseReminderIntent('十分钟后提醒我。', NOW)
+  ok('A13 空正文也建（任务留空，到点用「时间到了」兜底）', !!r && r.task === '' && new Date(r.at).getTime() === NOW + 10 * 60_000, r ? JSON.stringify(r) : 'null')
+  const r2 = parseReminderIntent('提醒我，十分钟后。', NOW)
+  ok('A14 语序颠倒（提醒我，十分钟后）也认', !!r2 && new Date(r2.at).getTime() === NOW + 10 * 60_000)
+  const r3 = parseReminderIntent('半小时后提醒一下我', NOW)
+  ok('A15 「提醒一下我」也算祈使，且任务不残留「我」', !!r3 && r3.task === '' && new Date(r3.at).getTime() === NOW + 30 * 60_000, r3 ? JSON.stringify(r3) : 'null')
+  ok('A16 仍然不认转述「他提醒一下我十分钟后开会」', parseReminderIntent('他提醒一下我十分钟后开会', NOW) === null)
+}
+
 console.log('\n[A2] 不该建的一定不建')
 {
   ok('A8 转述「他提醒我…」不建', parseReminderIntent('他提醒我十分钟后开会', NOW) === null)

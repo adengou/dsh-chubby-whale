@@ -36,22 +36,35 @@ import { createPetRepo } from './repos/pet.js';
 // （misc/briefing 仍从 store 取 growthStage，仓库内不出现循环依赖）。
 export { GROWTH_STAGES, EXP_DAILY_CAP, EXP_SOURCE_CAP, EXP_SOURCE_DEFAULT_CAP, growthStage } from './repos/growth.js';
 /**
- * 运行目录里的数据文件：全部属于主人本机隐私（聊天记忆、可变人格、亲密度、宠物状态…）。
- * POSIX 下统一补 0600；Windows 跳过。新增数据文件时记得加进这张表。
+ * 运行目录里的全部数据文件（**唯一真源**）：全部属于主人本机隐私（聊天记忆、可变人格、
+ * 亲密度、宠物状态…），也是 host/migrate.ts 从插件包 data/ 搬过来的那一组。
+ *
+ * 这张表供两处读，别再各写一份（2026-11-07 B105，B100 配置分身审计的证据）：
+ *   · hardenRuntimeDir：POSIX 下统一补 0600（Windows 跳过）；
+ *   · host/migrate.ts：决定从插件包 data/ 搬哪些文件（缺文件不算错误）。
+ * 历史口径 migrate(9) / store(11) / auto-backup(9) 三份名单不一致：personality.json 与
+ * prefs.json 从来没被迁移过，culture-seen.json / poem-seen.json 不在自动备份里。
+ * 新增运行数据文件时改这一处；自动备份（auto-backup.ts 的 AUTO_BACKUP_FILES）本次仍是
+ * 独立清单（不在可改范围），加文件时别漏了它。
+ *
+ * 「不新增对外导出」：用 `export { ... }` 而不是 `export const`。`docs/模块接口清单.md` 的
+ * 生成规则只扫 `export const|function|...` 与 `export {...} from`，所以公开接口清单保持原样
+ * （本批不允许改 docs）；这个名字只给 host 内部模块（migrate）用。
  */
-const PRIVATE_DATA_FILES = [
+const RUNTIME_DATA_FILES = [
     'memory.json', // 聊天记忆
     'personality.json', // L2 可变人格 / L3 近期心境
     'state.json', // 亲密度
     'pet_state.json', // 宠物状态
-    'growth.json',
-    'fishfood.json',
-    'reminders.json',
-    'story_progress.json',
-    'culture-seen.json',
-    'poem-seen.json',
-    'prefs.json',
+    'growth.json', // 成长阶段与经验
+    'fishfood.json', // token 统计
+    'reminders.json', // 提醒
+    'story_progress.json', // 说书进度
+    'culture-seen.json', // 文化内容去重
+    'poem-seen.json', // 念诗去重
+    'prefs.json', // 偏好（聊天缓存开关等）
 ];
+export { RUNTIME_DATA_FILES };
 /** 崩溃残留临时文件的判定门槛：一小时前的 `.tmp` 只可能是崩溃遗留（写盘耗时是毫秒级） */
 const STALE_TMP_MS = 60 * 60 * 1000;
 /** 单次清扫最多删多少个：坏成一片时也别把启动卡成一次全目录删除 */
@@ -104,7 +117,7 @@ function sweepStaleTmp(dataDir) {
 /** 收紧运行目录权限：建目录（0700）+ 给已存在的旧数据文件补 0600；POSIX 之外全部静默跳过 */
 function hardenRuntimeDir(dataDir) {
     ensurePrivateDir(dataDir);
-    for (const name of PRIVATE_DATA_FILES)
+    for (const name of RUNTIME_DATA_FILES)
         chmodPrivateFile(join(dataDir, name));
     sweepStaleTmp(dataDir);
 }
