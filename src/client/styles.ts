@@ -1,4 +1,5 @@
 import { deepFreeze } from '../shared/immutable.js'
+import { THAI_FONT_FAMILY } from './thai-font.js'
 /**
  * client/styles.ts —— 所有样式常量（可复用）
  */
@@ -61,7 +62,7 @@ export const recoverDotStyle = {
   background: 'rgba(12,28,52,0.72)',
   border: '1px solid rgba(93,160,240,0.55)',
   color: '#9FD8FF',
-  font: '12px/22px "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif',
+  font: `12px/22px ${THAI_FONT_FAMILY}, "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif`,
   cursor: 'pointer',
   userSelect: 'none' as const,
   opacity: 0.75,
@@ -110,7 +111,7 @@ export const menuStyle = (menu: any) => {
     borderRadius: 10,
     boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
     zIndex: 10001,
-    font: '13px/1.5 "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif',
+    font: `13px/1.5 ${THAI_FONT_FAMILY}, "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif`,
     display: menu ? 'block' : 'none',
     color: '#cfe9ff',
   }
@@ -162,7 +163,7 @@ export const chatPanelStyle = (open: boolean) => {
     border: '1px solid rgba(93,160,240,0.55)',
     borderRadius: 18,
     boxShadow: '0 18px 48px rgba(0,0,0,0.55)',
-    font: '14px/1.6 "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif',
+    font: `14px/1.6 ${THAI_FONT_FAMILY}, "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif`,
     color: '#dbeaff',
     overflow: 'hidden',
     zIndex: 10000,
@@ -192,7 +193,7 @@ export const inputStyle = {
   background: 'rgba(8,20,40,0.9)',
   color: '#dbeaff',
   borderRadius: 12,
-  font: '14px "Microsoft YaHei"',
+  font: `14px ${THAI_FONT_FAMILY}, "Microsoft YaHei"`,
 }
 export const sendStyle = {
   border: 0,

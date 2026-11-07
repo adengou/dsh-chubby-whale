@@ -199,4 +199,6 @@ export interface TtsRouteDeps {
 export interface AsrRouteDeps {
   getKey: KeyReader
   cache?: CachePort
+  /** 识别语言（zh/en/auto）；缺省 zh。配置键 asrLanguage，2026-11-07 起真正生效 */
+  language?: () => string
 }

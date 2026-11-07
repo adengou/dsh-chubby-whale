@@ -16,7 +16,7 @@ import { homedir } from 'node:os'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  readApiKey, readSiliconFlowKey, readDataSource, readPersonalityLearning, readPersonalityWriting,
+  readApiKey, readSiliconFlowKey, readAsrLanguage, readDataSource, readPersonalityLearning, readPersonalityWriting,
   readChatModel, sanitizePluginConfig,
 } from './host/config.js'
 import { createStore, growthStage } from './host/store.js'
@@ -309,7 +309,7 @@ export function apply(ctx: any, rawConfig?: any): void {
   // 云端优先、edge-tts 兜底的「三层降级」要两条通路都接上：
   // cloudTts 此前只构造没注入 → /tts 的 opts.cloudTts 恒为 undefined，云端一直不可达（配置了也不生效）。
   const tts = createTtsHandler({ cache: ttsCache, engine: ttsEngine, cloudTts })
-  const asr = createAsrHandler({ getKey: getSiliconflowKey, cache: asrCache })
+  const asr = createAsrHandler({ getKey: getSiliconflowKey, cache: asrCache, language: () => readAsrLanguage(PLUGIN_DIR) })
   const personalityRoutes = createPersonalityHandlers({
     repo: personality,
     learningEnabled: () => personalityLearningEnabled,

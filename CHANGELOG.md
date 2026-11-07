@@ -2,6 +2,27 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [1.1.83] - 2026-11-07
+
+### 修复（语音识别：静音/噪声会"编"出外语）
+- **泰文/西语/葡语/越语不是主人说的**：Qwen3-ASR 在静音、噪声、音乐上会输出整句外语（实测纯静音 → `No.`；缓存里还有 `El nombre de la ciudad…`、`Ou seja…`、`มันเป็นปีหวาน`）。`language=zh` 并不会阻止它，旧实现也没有任何脚本校验 → 这些文本被当主人说的话写进记忆，模型还可能跟着回英文
+- 现在 ASR 输出过**脚本闸门**：`asrLanguage=zh`（默认）时，一个汉字都没有的输出一律当噪声（`ok:true, text:'', noise:true, rejected:'script'`），**不写缓存、不上行**；`en` 要求拉丁字母；`auto` 保留旧行为
+- `asrLanguage` 配置**此前是死键**（route 写死 `zh`），现在由入口注入 `readAsrLanguage`，真正生效（`zh` / `en` / `auto`）
+- ASR 缓存 key 升到 **v3（含 asrLang）**：同一段音频切语言不再命中旧语言缓存；命中旧外语条目也会被闸门拦下并重新识别
+
+### 修复（泰文显示不依赖系统字体）
+- **换泰语会显示方框/乱码**：此前只把 `Leelawaddee UI` / Tahoma 加进字体链，仍要求系统装有泰文字体；系统没有就退化成方框。现在把 **Noto Sans Thai 的泰文子集（9,112 B，OFL-1.1）内联成 data URL**，由客户端注入 `@font-face`（family `ChubbyThai`），气泡、菜单、聊天面板、恢复点的字体链都优先用它
+- 新增 `scripts/gen-font.mjs`：从 `assets/fonts/NotoSansThai-Regular.woff2` 生成 `src/client/thai-font.ts`；`npm run build` 自动生成，`npm test` 用 `--check` 防止字体换了产物没更新
+- 许可证：`assets/fonts/OFL.txt`（Noto Sans Thai，SIL OFL 1.1）
+
+### 修复（编码统一）
+- 新增的 `scripts/gen-font.mjs` 曾带 UTF-8 BOM，已去除；仓库统一 **UTF-8 无 BOM**（`npm run build` 内置 `check-bom` 会拦住）
+
+### 测试
+- `test.mjs` 新增 [64] 泰文显示 10 条：字体已生成 / woff2 data URL / unicode-range 覆盖泰文 / 内联与 assets 一致 / 气泡注入 / 四条字体链 / gen-font --check
+- `test.mjs` 新增 [65] ASR 脚本闸门 12 条：静音 `No.` / 泰文 / 西语被拒绝、不写缓存、中文放行、en 模式双向、auto 不拦、同音频换语言不命中旧缓存、asrLanguage 配置可读（含非法值回落）
+- 全链 **5148 项 0 失败**（`node tools/test-count.mjs`：74 个套件，失败 0，未识别 0）
+
 ## [1.1.82] - 2026-11-07
 
 ### 修复（提醒：嘴上答应、其实没建）
@@ -15,8 +36,6 @@
 - 新增 `scripts/check-no-shell.mjs`：源码与工具里禁止硬编码 `powershell` / `pwsh` / `.ps1` / `cmd /c`（`taskkill` 的 win32 分支除外），已纳入 `npm test`，保证 Linux/macOS 上发版与运行不被 Windows shell 卡住
 - `test-remind-nl` 27→34（空正文、清理残留「我」、转述不建等）
 - 全链 **5125 项 0 失败**（`node tools/test-count.mjs`：73 个套件，失败 0，未识别 0）
-
-## [未发布]
 
 ## [1.1.81] - 2026-11-07
 
