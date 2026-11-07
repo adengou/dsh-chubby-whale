@@ -20,6 +20,14 @@ export const EXP_SOURCE_CAP: Record<string, number> = { chat: 5, praise: 6, feed
 deepFreeze(EXP_SOURCE_CAP)
 export const EXP_SOURCE_DEFAULT_CAP = 3
 
+/**
+ * 经验上限（2026-11-07 B105）：读入时封顶到安全整数。
+ * 为什么：导入/手改的 growth.json 可以是 1e308，旧实现 Math.floor(Number(g.exp)||0) 会原样保留，
+ * 再写盘还是 1e308；之后任何 exp + gain 都在浮点边界上抖，阶段与进度条也失去意义。
+ * 与鱼粮 token 的 MAX_SAFE_INTEGER 口径一致（导入层也按同一数值封顶）。
+ */
+const MAX_EXP = Number.MAX_SAFE_INTEGER
+
 /** 今天（本地时区）的 'YYYY-MM-DD'，跨天判断用 */
 function todayKey(): string {
   const d = new Date()
@@ -51,13 +59,14 @@ export function createGrowthRepo(dataDir: string): GrowthRepo {
   }
   function addExp(amount: number, source?: string): { exp: number; stage: any; upgraded: boolean; prevStage: any; capped: boolean } {
     const g = loadGrowth()
-    const exp0 = Math.max(0, Math.floor(Number(g.exp) || 0))
+    // 读入即封顶：脏文件里的 1e308/Infinity 只当「很多」，不当真值
+    const exp0 = Math.min(MAX_EXP, Math.max(0, Math.floor(Number(g.exp) || 0)))
     const prev = growthStage(exp0)
     const srcName = String(source || 'chat')            // 老调用方不传来源：按 chat 记（照 C# 的 AddExp(reason) 必须有来源）
     const capSrc = Object.prototype.hasOwnProperty.call(EXP_SOURCE_CAP, srcName) ? EXP_SOURCE_CAP[srcName] : EXP_SOURCE_DEFAULT_CAP
     // 老文件兜底：缺 dayKey / dayExp / src / src[source] 都按 0 算，不动其它字段
     const today = todayKey()
-    let dayExp = Math.max(0, Math.floor(Number(g.dayExp) || 0))
+    let dayExp = Math.min(MAX_EXP, Math.max(0, Math.floor(Number(g.dayExp) || 0)))
     let src: any = (g.src && typeof g.src === 'object' && !Array.isArray(g.src)) ? g.src : {}
     if (String(g.dayKey || '') !== today) {             // 跨天：日计数重置、各来源额度清零
       dayExp = 0
@@ -94,7 +103,8 @@ export function createGrowthRepo(dataDir: string): GrowthRepo {
         }
       }
     }
-    const exp = exp0 + gain
+    // 结果也要封顶：exp0 已经是 MAX_SAFE_INTEGER 时再加 gain 会越过 2^53（不再是安全整数，JSON 里会变 9007199254740992）
+    const exp = Math.min(MAX_EXP, exp0 + gain)
     if (gain > 0) {
       dayExp += gain
       src[srcName] = used + gain

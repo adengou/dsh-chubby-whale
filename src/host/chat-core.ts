@@ -14,6 +14,8 @@ import { clipCodePoints } from '../shared/text.js'
 import { fetchJson } from './http.js'
 
 /** DeepSeek 对话接口地址（聊天与摘要共用） */
+import { parseReminderIntent } from '../shared/remind-nl.js'
+
 export const CHAT_URL = 'https://api.deepseek.com/chat/completions'
 /** 只把最近 8 条历史喂给模型（4 轮）；更早的靠长期记忆摘要，省 token */
 export const HISTORY_IN_PROMPT = 8
@@ -46,6 +48,45 @@ export const SUMMARY_MAX_TOKENS = 400
  *   - 不把历史长度/记忆摘要放进键（否则每聊一句键就变，缓存等于没有）
  * 代价：同一句话在不同上下文会得到同一条回复——对语音闲聊这正是省 token 的关键。
  */
+/**
+ * 聊天里说的提醒（2026-11-07 B106）。
+ *
+ * 用户实测：对鱼说「十分钟后提醒我吃早餐」，鱼答应了，但 reminders.json 根本没这个文件——
+ * 它只是记住了对话，没有排程。这里把「提醒我 + 时间 + 任务」解析出来并写进提醒仓储，
+ * 与菜单「记个饭点…」走同一个 addReminder 端口，所以提醒清单、到点轮询、简报待办都能看到它。
+ *
+ * 去重：同一条消息可能被客户端重试（网络抖动），60 秒内同一个「任务|时刻」只建一次；
+ * 上限 64 条键，防止长期运行无限增长。
+ */
+const reminderDedupe = new Map<string, number>()
+const REMINDER_DEDUPE_MS = 60 * 1000
+const REMINDER_DEDUPE_MAX = 64
+
+/** @returns 真正新建的提醒；没命中/被去重/端口未接 → null */
+export function maybeCreateReminder(
+  addReminder: ((text: string, at: string, repeat?: number) => any) | undefined,
+  message: string,
+  now: number = Date.now(),
+): any | null {
+  if (typeof addReminder !== 'function') return null
+  const hit = parseReminderIntent(message, now)
+  if (!hit) return null
+  // 键按「任务 + 到点分钟」：客户端重试会晚几百毫秒~几秒，用精确 ISO 当键会让同一条提醒重复建。
+  const atMs = new Date(hit.at).getTime()
+  const key = hit.task + '|' + (Number.isFinite(atMs) ? Math.round(atMs / 60000) : hit.at)
+  const seen = reminderDedupe.get(key)
+  if (seen !== undefined && now - seen < REMINDER_DEDUPE_MS) return null
+  // 先占位再写：即使 addReminder 抛错也不会因为「写失败→重试」把去重表撑大
+  if (reminderDedupe.size >= REMINDER_DEDUPE_MAX) {
+    const oldest = reminderDedupe.keys().next()
+    if (!oldest.done) reminderDedupe.delete(oldest.value)
+  }
+  reminderDedupe.set(key, now)
+  const created = addReminder(hit.task, hit.at, hit.repeat || 0)
+  console.log('[chat] REMINDER-CREATED task=' + hit.task.slice(0, 40) + ' at=' + hit.at + (hit.repeat ? ' repeat=' + hit.repeat : ''))
+  return created
+}
+
 export function normalizeChatText(s: string): string {
   return String(s || '')
     .trim()

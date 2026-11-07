@@ -218,6 +218,8 @@ export function apply(ctx: any, rawConfig?: any): void {
     cacheEnabled: prefs.chatCacheEnabled,
     model: chatModel,
     onReply: onModelReply,
+    // 「十分钟后提醒我吃早餐」这类话：聊天路由解析后写进提醒仓储（B106）
+    addReminder: store.addReminder,
   })
   const chatStream = createChatStreamHandler({
     getKey,
@@ -230,6 +232,8 @@ export function apply(ctx: any, rawConfig?: any): void {
     cacheEnabled: prefs.chatCacheEnabled,
     model: chatModel,
     onReply: onModelReply,
+    // 与 /chat 同口径：流式路径也建提醒（B106）
+    addReminder: store.addReminder,
     // 流式路径与普通 /chat 同口径：亲密度/成长/长期摘要（此前漏注入，导致客户端优先走流式时日常聊天不记账）
     loadState: store.loadState,
     saveState: store.saveState,
