@@ -564,6 +564,14 @@ try {
 
 
 // 简报待办段：条数 + 最近 3 条的任务正文（2026-11-07 主人反馈「简报里也没有这条」）
+console.log('\n[K0] 天气语言参数（主人截图里那句英文）')
+{
+  const src = readSrc('src/host/routes/briefing.ts')
+  const hasCn = src.includes('lang=zh-cn')
+  const hasBareZh = /[?&]lang=zh(?![\w-])/.test(src)
+  ok('天气用中文语言参数 zh-cn（lang=zh 实测仍回英文）', hasCn && !hasBareZh, 'hasCn=' + hasCn + ' hasBareZh=' + hasBareZh)
+}
+
 console.log('\n[K] 简报待办段带任务正文')
 {
   const { createBriefingHandlers } = await imp('src/host/routes/briefing.ts')

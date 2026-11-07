@@ -75,7 +75,7 @@ export function createBriefingHandlers(opts) {
         catch { }
         // 天气（清洗/截断后只留一行；失败/超时/非 2xx 就不出这段）
         try {
-            const w = await fetch('https://wttr.in/Beihai?format=%C+%t&lang=zh', { signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS) });
+            const w = await fetch('https://wttr.in/Beihai?format=%C+%t&lang=zh-cn', { signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS) });
             if (w && w.ok) {
                 const txt = cleanWeather(await w.text());
                 if (txt)
