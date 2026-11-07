@@ -190,7 +190,7 @@ Key 读取优先级：`config.json` → 专属环境变量（`CHUBBY_WHALE_DEEPS
 ### 数据源：本地 / 云端
 
 说书、念诗、典故、成语、民间故事、对联的数据来自 `DataPort`，默认读插件包内 `data/`。
-把 `dataSource` 改成 `cloud` 后，改为按需从 `https://adengou.cn/culture/v1/` 拉取：
+把 `dataSource` 改成 `cloud` 后，改为按需从**你自己部署的文化数据服务**拉取（地址由 `cloudBase` 配置提供，仓库不内置任何域名）：
 
 ```json
 {

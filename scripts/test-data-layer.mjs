@@ -228,7 +228,7 @@ try {
   {
     const { impl, calls } = mkFetch(files)
     const local = mkLocal('local')
-    const port = createCloudDataPort({ local, fetchImpl: impl })
+    const port = createCloudDataPort({ local, baseUrl: 'https://cloud.example/culture/v1/', fetchImpl: impl })
     const [a, b] = await Promise.all([port.readDaily(), port.readDaily()])
     ok('并发同 key 只拉一次 manifest', calls.filter((c) => c === 'manifest.json').length === 1)
     ok('并发同 key 只拉一次数据文件', calls.filter((c) => c === 'daily.json').length === 1)
@@ -244,7 +244,7 @@ try {
     Date.now = () => realNow() + offset
     const { impl, calls } = mkFetch(files, { throwOn: 'daily.json' })
     const local = mkLocal('local')
-    const port = createCloudDataPort({ local, fetchImpl: impl })
+    const port = createCloudDataPort({ local, baseUrl: 'https://cloud.example/culture/v1/', fetchImpl: impl })
     try {
       const first = await capture(() => port.readDaily())
       ok('网络失败 → 回退本地且记一次 CLOUD-DATA-FAIL',
@@ -281,7 +281,7 @@ try {
   }
   const { impl, calls } = mkFetch(files)
   const local = mkLocal('local')
-  const port = createCloudDataPort({ local, fetchImpl: impl })
+  const port = createCloudDataPort({ local, baseUrl: 'https://cloud.example/culture/v1/', fetchImpl: impl })
 
   const miss = await capture(() => port.readStoryIndex())
   ok('清单里没有的书单 → 回退本地', miss.value[0].book === '本地书' && local.stats.index === 1)
@@ -305,7 +305,7 @@ try {
   // 反过来：真链路故障仍然要进冷却（原有语义不能丢）
   const bad = mkFetch(files, { throwOn: 'daily.json' })
   const local2 = mkLocal('local2')
-  const port2 = createCloudDataPort({ local: local2, fetchImpl: bad.impl })
+  const port2 = createCloudDataPort({ local: local2, baseUrl: 'https://cloud.example/culture/v1/', fetchImpl: bad.impl })
   const f1 = await capture(() => port2.readDaily())
   const f2 = await capture(() => port2.readDaily())
   const netCalls = bad.calls.filter((c) => c === 'daily.json').length
@@ -336,7 +336,7 @@ try {
   Date.now = () => realNow() + offset
   const { impl, calls } = mkFetch(files)
   const local = mkLocal('local')
-  const port = createCloudDataPort({ local, fetchImpl: impl })
+  const port = createCloudDataPort({ local, baseUrl: 'https://cloud.example/culture/v1/', fetchImpl: impl })
   try {
     await port.readDaily()
     offset = 31000
@@ -507,7 +507,7 @@ try {
   const want = ['readCulture', 'readDaily', 'readDuilian', 'readMelodies', 'readPoemTitles', 'readPoemsChunk', 'readStoryBook', 'readStoryIndex']
   const dir = mkTmp('whale-data-face-')
   const local = createLocalDataPort({ dataDir: dir, story: { listBooks: async () => [], loadBook: async () => [] } })
-  const cloud = createCloudDataPort({ local, fetchImpl: async () => ({ ok: false, status: 500, text: async () => '' }) })
+  const cloud = createCloudDataPort({ local, baseUrl: 'https://cloud.example/culture/v1/', fetchImpl: async () => ({ ok: false, status: 500, text: async () => '' }) })
   ok('本地端口只暴露 DataPort 的 8 个方法（不泄漏缓存/inflight/路径）', Object.keys(local).sort().join(',') === want.join(','), Object.keys(local).join(','))
   ok('云端端口只暴露 DataPort 的 8 个方法', Object.keys(cloud).sort().join(',') === want.join(','))
 

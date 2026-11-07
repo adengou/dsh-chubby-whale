@@ -1,7 +1,7 @@
 /**
  * host/data/cloud.ts —— 云端数据源（可选，配置 dataSource=cloud 时启用）
  *
- * 数据来自 https://adengou.cn/culture/v1/（静态 JSON，无需 CORS）：
+ * 数据来自使用者自建的文化数据服务（静态 JSON，无需 CORS；地址由配置提供，仓库不含任何默认地址）：
  *   manifest.json、daily.json、duilian.json、poems/poems-00..14.json、
  *   culture/chengyu.json、culture/idioms.json、culture/minsu-00..09.json、
  *   story/index.json、story/<书名>.json。
@@ -36,7 +36,12 @@ import {
   normalizeCultureItems, normalizeDaily, normalizeDuilian, normalizePoemItems, normalizeStoryChunks,
 } from './normalize.js'
 
-export const CLOUD_DATA_BASE = 'https://adengou.cn/culture/v1/'
+/**
+ * 云端数据源地址：仓库**不带任何默认地址**，必须由使用者在配置里提供：
+ * config.json 的 cloudBase / cordis 配置的 cloudBase / 环境变量 CHUBBY_WHALE_CLOUD_BASE。
+ * 留空时 dataSource=cloud 直接回退本地 data/，不发起任何网络请求。
+ */
+export const CLOUD_DATA_BASE = ''
 /**
  * 单次请求超时；云端挂了也不能让本地说书/念诗一起卡死。
  * 保持模块私有（对外只暴露 createCloudDataPort；需要缩短走 opts.timeoutMs），
@@ -99,7 +104,10 @@ export function createCloudDataPort(opts: {
   maxBytes?: number
 }): DataPort {
   const local = opts.local
-  const base = String(opts.baseUrl || CLOUD_DATA_BASE).replace(/\/+$/, '') + '/'
+  const rawBase = String(opts.baseUrl || CLOUD_DATA_BASE || process.env.CHUBBY_WHALE_CLOUD_BASE || '').trim()
+  // 没配地址 = 云端不可用：直接复用本地数据源，不猜、不回环、不发请求
+  if (!rawBase) return opts.local
+  const base = rawBase.replace(/\/+$/, '') + '/'
   const doFetch: FetchLike = opts.fetchImpl || ((url: string, init?: any) => fetch(url, init))
   /**
    * 两个护栏只在「显式传了正数」时被覆盖：传 0/NaN/负数/字符串都按默认值走，

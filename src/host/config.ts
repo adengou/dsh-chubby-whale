@@ -196,6 +196,7 @@ function parseDataSource(raw: any, from: string): DataSourceKind | null {
   return 'local'
 }
 
+
 /**
  * 数据源：默认 local（读插件包内 data/）。
  * 优先级：cordis config.dataSource → 本插件 config.json 的 dataSource → 环境变量 CHUBBY_WHALE_DATA_SOURCE → local。
@@ -210,6 +211,22 @@ export function readDataSource(pluginDir: string, runtimeConfig?: any): DataSour
   const fromEnv = parseDataSource(process.env.CHUBBY_WHALE_DATA_SOURCE, 'CHUBBY_WHALE_DATA_SOURCE')
   if (fromEnv) return fromEnv
   return 'local'
+}
+
+
+/**
+ * 云端文化数据服务地址（dataSource=cloud 时使用）。
+ * 优先级：cordis 配置 cloudBase > config.json 的 cloudBase > 环境变量 CHUBBY_WHALE_CLOUD_BASE。
+ * 仓库不内置任何地址；留空时 cloud 模式直接回退本地 data/。
+ */
+export function readCloudBase(pluginDir: string, runtimeConfig?: any): string {
+  const pick = (v: any): string => (typeof v === 'string' ? v.trim() : '')
+  const fromRuntime = pick(runtimeConfig && runtimeConfig.cloudBase)
+  if (fromRuntime) return fromRuntime
+  const cfg = readConfigJson(pluginDir)
+  const fromFile = pick(cfg && cfg.cloudBase)
+  if (fromFile) return fromFile
+  return pick(process.env.CHUBBY_WHALE_CLOUD_BASE)
 }
 
 /**

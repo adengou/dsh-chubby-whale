@@ -217,6 +217,22 @@ export function readDataSource(pluginDir, runtimeConfig) {
     return 'local';
 }
 /**
+ * 云端文化数据服务地址（dataSource=cloud 时使用）。
+ * 优先级：cordis 配置 cloudBase > config.json 的 cloudBase > 环境变量 CHUBBY_WHALE_CLOUD_BASE。
+ * 仓库不内置任何地址；留空时 cloud 模式直接回退本地 data/。
+ */
+export function readCloudBase(pluginDir, runtimeConfig) {
+    const pick = (v) => (typeof v === 'string' ? v.trim() : '');
+    const fromRuntime = pick(runtimeConfig && runtimeConfig.cloudBase);
+    if (fromRuntime)
+        return fromRuntime;
+    const cfg = readConfigJson(pluginDir);
+    const fromFile = pick(cfg && cfg.cloudBase);
+    if (fromFile)
+        return fromFile;
+    return pick(process.env.CHUBBY_WHALE_CLOUD_BASE);
+}
+/**
  * 布尔开关解析：只认明确的布尔值或 true/false/on/off/1/0/yes/no（大小写、空白不敏感）。
  * 认不出的值返回 null（按“未配置”处理，继续看下一层），绝不因配置笔误把功能弄成意外状态。
  */

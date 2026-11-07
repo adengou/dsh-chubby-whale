@@ -17,7 +17,7 @@ import { homedir } from 'node:os'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  readApiKey, readSiliconFlowKey, readAsrLanguage, readDataSource, readPersonalityLearning, readPersonalityWriting,
+  readApiKey, readSiliconFlowKey, readAsrLanguage, readDataSource, readCloudBase, readPersonalityLearning, readPersonalityWriting,
   readChatModel, sanitizePluginConfig,
 } from './host/config.js'
 import { createStore, growthStage } from './host/store.js'
@@ -199,9 +199,10 @@ export function apply(ctx: any, rawConfig?: any): void {
     dataDir: DATA_DIR,
     story: createStoryRepo({ dataDir: DATA_DIR, workerPath: join(__dirname, 'story-worker.js') }),
   })
-  const dataPort = dataSource === 'cloud' ? createCloudDataPort({ local: localData }) : localData
+  const cloudBase = readCloudBase(PLUGIN_DIR, config)
+  const dataPort = dataSource === 'cloud' ? createCloudDataPort({ local: localData, baseUrl: cloudBase || undefined }) : localData
   if (dataSource === 'cloud') {
-    console.log('[chubby-whale] dataSource=cloud base=' + CLOUD_DATA_BASE + '（网络失败自动回退本地）')
+    console.log('[chubby-whale] dataSource=cloud base=' + (cloudBase || '（未配置 cloudBase，直接回退本地）') + '（网络失败自动回退本地）')
   }
 
   const chat = createChatHandler({
