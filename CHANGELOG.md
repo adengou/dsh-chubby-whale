@@ -4,6 +4,22 @@
 
 ## [未发布]
 
+## [1.1.81] - 2026-11-07
+
+### 修复（客户端请求没有超时）
+- **取数请求会一直挂着**：`getJson/postJson/delJson` 没有总预算，云端数据源不可达时 `/culture`、`/poem` 界面最坏「清单 10s + 文件 10s」才有兜底。现在默认 **15s**（宿主数据接口 10s + 错误回传余量），到点抛 `TimeoutError` 并丢弃迟到响应
+- 预算可被 `init.timeout` 覆盖；**调用方自带 `signal` 时不叠加默认值**（说书 25s / 聊天 30s 的既有语义不变）；老浏览器用 `setTimeout + AbortController` 手工组合，不依赖 `AbortSignal.timeout` / `AbortSignal.any`
+
+### 修复（迁移与运行目录加固）
+- **0 字节半成品被永久当成「已迁移」**：pre-B74 崩溃会留下 0 字节目标文件，`existsSync` 让插件包里的旧数据再也搬不过去。现在「存在但 0 字节」视为半成品：先改名成 `<名>.empty-<时间戳>.bak` 留证，再落新文件；**有内容的目标仍绝不覆盖**
+- 崩溃遗留的 `.migrating-*` 无人清理：按 mtime > 1 小时清运行目录第一层（一次拷贝是毫秒级），上限 200
+- POSIX 首建运行目录 0755 → **0700**（Windows 忽略权限位、不报错）
+- 数据名单三份不一致（migrate 9 / store 11 / auto-backup 9）：统一从 `store.RUNTIME_DATA_FILES` 读，`personality.json`、`prefs.json` 这些以前从没被迁移过的文件补上了
+
+### 测试
+- 新增 `test-client-net.mjs`(37)、`test-migrate.mjs`(51) 接入 npm test
+- 全链 **5121 项 0 失败**（node tools/test-count.mjs：72 个套件，失败 0，未识别 0）
+
 ## [1.1.80] - 2026-11-07
 
 ### 修复（主人截图反馈「简报是不是坏了」）
