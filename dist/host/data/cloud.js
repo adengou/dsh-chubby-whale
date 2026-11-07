@@ -20,6 +20,10 @@
  *   · 数据缺失（清单里没这个文件 / 规范化后为空 / 索引非法）**不算链路故障**：
  *     回退本地，但不进冷却、不刷错误日志（同一 op 只留一条）。否则一本云端缺书
  *     就会把诗词、文化、每日一起拖去本地兜底——局部数据问题被放大成全局降级。
+ *   · 外呼两道硬闸（2026-11-07 B102 审计补）：**每请求超时 + 响应体字节上限**。
+ *     这里是外部数据（CDN/镜像/被劫持的域名），不能把「回包有多大」交给对方决定：
+ *     超时到点中止（也盖住响应体读取阶段），回包超过上限时先看 content-length
+ *     （声明超了就一个字节都不读），没声明/声明偏小就按流累计、越线立刻取消。
  *
  * 跨平台：这里只有 URL 路径（一律 '/'，不是文件系统路径，无需 join）；
  * 响应体读入容错 UTF-8 BOM，避免 CDN/镜像加 BOM 后整类数据解析失败。
@@ -27,8 +31,21 @@
 import { stripBom } from '../atomic.js';
 import { normalizeCultureItems, normalizeDaily, normalizeDuilian, normalizePoemItems, normalizeStoryChunks, } from './normalize.js';
 export const CLOUD_DATA_BASE = 'https://adengou.cn/culture/v1/';
-/** 单次请求超时；云端挂了也不能让本地说书/念诗一起卡死 */
-const FETCH_TIMEOUT_MS = 10000;
+/**
+ * 单次请求超时；云端挂了也不能让本地说书/念诗一起卡死。
+ * 保持模块私有（对外只暴露 createCloudDataPort；需要缩短走 opts.timeoutMs），
+ * 这是《模块接口清单》的契约：新增导出必须同步更新文档，本批不动文档。
+ */
+const CLOUD_FETCH_TIMEOUT_MS = 10000;
+/**
+ * 单个响应体的字节上限（响应体无上限 = 内存无上限）。
+ * 取值依据：包内最大的一部书 data/story/三言二拍.json 约 6.4MB，留一倍余量到 16MB；
+ * 正常数据不可能触顶，被劫持/写坏/无限 chunked 的回包一定触顶。
+ * `res.text()` 会把整个回包先读进内存再 JSON.parse，几百 MB 的回包能把 dsh web 吃穿，
+ * 所以这里必须先看 content-length、再按流累计，越线立刻取消（见 readBodyText）。
+ * 同样保持模块私有，默认值由 scripts/test-culture-source.mjs 做源码级防漂移断言。
+ */
+const CLOUD_MAX_BODY_BYTES = 16 * 1024 * 1024;
 /** 清单检查间隔：30 秒内复用上次检查结果，避免每次念诗都多打一个请求 */
 const MANIFEST_TTL_MS = 30000;
 /** 失败冷却：这段时间内不再尝试网络，直接回退本地 */
@@ -58,6 +75,16 @@ export function createCloudDataPort(opts) {
     const local = opts.local;
     const base = String(opts.baseUrl || CLOUD_DATA_BASE).replace(/\/+$/, '') + '/';
     const doFetch = opts.fetchImpl || ((url, init) => fetch(url, init));
+    /**
+     * 两个护栏只在「显式传了正数」时被覆盖：传 0/NaN/负数/字符串都按默认值走，
+     * 免得一次配置写坏把超时或上限变成「立即中止」/「零字节」。
+     */
+    const timeoutMs = Number.isFinite(Number(opts.timeoutMs)) && Number(opts.timeoutMs) > 0
+        ? Number(opts.timeoutMs)
+        : CLOUD_FETCH_TIMEOUT_MS;
+    const maxBytes = Number.isFinite(Number(opts.maxBytes)) && Number(opts.maxBytes) > 0
+        ? Number(opts.maxBytes)
+        : CLOUD_MAX_BODY_BYTES;
     /** 文件路径 → 已解析的 JSON（清单签名变化时整体清空） */
     const fileCache = new Map();
     /**
@@ -112,12 +139,90 @@ export function createCloudDataPort(opts) {
             .filter((p) => /^poems\/poems-\d+\.json$/.test(p))
             .sort();
     }
+    /**
+     * 响应头里声明的字节数（content-length）。假 fetch / 轻微封装没有 headers 时返回 NaN
+     * ——按「没声明」处理，后面还有流式累计兜底，不会因为拿不到声明就放过一个大包。
+     */
+    function declaredBytes(res) {
+        try {
+            const h = res && res.headers;
+            const raw = h && typeof h.get === 'function'
+                ? h.get('content-length')
+                : (h ? (h['content-length'] !== undefined ? h['content-length'] : h['Content-Length']) : undefined);
+            const n = Number(raw);
+            return Number.isFinite(n) && n >= 0 ? n : NaN;
+        }
+        catch {
+            return NaN;
+        }
+    }
+    /** 放弃这次回包的剩余数据（别让未消费的 body 占着连接与内存） */
+    function cancelBody(res) {
+        try {
+            const body = res && res.body;
+            if (body && typeof body.cancel === 'function') {
+                const p = body.cancel();
+                if (p && typeof p.catch === 'function')
+                    p.catch(() => { });
+            }
+        }
+        catch { }
+    }
+    /** 回包超限：与坏 JSON / 非 2xx 同口径（链路故障 → 回退本地 + 60 秒冷却） */
+    function bodyTooLarge(why) {
+        return new Error('response body too large (' + why + ' > ' + maxBytes + ' bytes)');
+    }
+    /**
+     * 读响应体文本，硬上限 maxBytes。
+     *
+     * 为什么不能直接 `await res.text()`：它先把整个回包收进内存再解析，回包多大就吃多少内存，
+     * 而回包大小完全由外部接口决定（chunked 还能永远不结束）。三道处理：
+     *   ① content-length 已声明且超限 → **一个字节都不读**，取消 body 后直接判失败；
+     *   ② 有 body 流（真实 fetch / undici）→ 按块累计字节数，越线立刻取消并失败，
+     *      不把整包读进内存；
+     *   ③ 没有 body 流（离线测试的假 fetch / 老运行时）→ 退回 text()，
+     *      读回来按 UTF-8 字节数再判一次（内存代价不可避免，但结论与①②一致）。
+     * 失败原因（超时/断连/超限）都按链路故障抛出，由 withFallback 回退本地，绝不抛给路由。
+     */
+    async function readBodyText(res) {
+        const declared = declaredBytes(res);
+        if (declared > maxBytes) {
+            cancelBody(res);
+            throw bodyTooLarge('content-length ' + declared);
+        }
+        const body = res && res.body;
+        if (body && typeof body[Symbol.asyncIterator] === 'function') {
+            const chunks = [];
+            let total = 0;
+            try {
+                for await (const chunk of body) {
+                    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+                    total += buf.length;
+                    // 越线就跳出：不继续往 chunks 里堆，剩余数据交给 catch 里的 cancel 放弃
+                    if (total > maxBytes)
+                        throw bodyTooLarge('streamed ' + total);
+                    chunks.push(buf);
+                }
+            }
+            catch (err) {
+                cancelBody(res);
+                throw err;
+            }
+            return Buffer.concat(chunks).toString('utf8');
+        }
+        const text = String(await res.text());
+        // 按 UTF-8 字节数判：中文一个字 3 字节，按码元数算会放过 3 倍大的包
+        const bytes = Buffer.byteLength(text, 'utf8');
+        if (bytes > maxBytes)
+            throw bodyTooLarge('text ' + bytes);
+        return text;
+    }
     async function fetchJson(path) {
         // 每请求独立超时；finally 清定时器，避免拖住进程/累积计时器
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
-            // unref：dsh web 关停/重启时，这个 10 秒超时不该把进程退出拖住
+            // unref：dsh web 关停/重启时，这个超时不该把进程退出拖住
             try {
                 if (typeof timer.unref === 'function')
                     timer.unref();
@@ -129,7 +234,7 @@ export function createCloudDataPort(opts) {
             });
             if (!res || !res.ok)
                 throw new Error('HTTP ' + String(res && res.status));
-            return JSON.parse(stripBom(await res.text()));
+            return JSON.parse(stripBom(await readBodyText(res)));
         }
         finally {
             clearTimeout(timer);
