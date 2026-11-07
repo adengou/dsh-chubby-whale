@@ -28,6 +28,7 @@
 
 const API_BASE = '/whale-mobile/api';
 const TOKEN_KEY = 'whale.token';
+const VOICE_KEY = 'whale.voice.on';
 const WELCOME_KEY = 'whale.welcome.open';
 const TAB_KEY = 'whale.tab';
 const TABS = ['chat', 'story', 'remind'];
@@ -128,6 +129,84 @@ function toast(message, kind = 'info', timeout = 4200) {
   };
   timer = setTimeout(kill, timeout);
   node.addEventListener('click', kill);
+}
+
+/* ========================================================================== *
+ * 语音朗读：调电脑端 chubby-whale 的 /api/chubby-whale/tts（edge-tts）
+ * ========================================================================== */
+
+let voiceOn = store.get(VOICE_KEY) === '1';
+let ttsAudio = null;
+
+function updateVoiceButton() {
+  const btn = $('#voiceBtn');
+  if (!btn) return;
+  btn.textContent = voiceOn ? '🔊 语音开' : '🔇 语音';
+  btn.setAttribute('aria-pressed', voiceOn ? 'true' : 'false');
+}
+
+function setupVoice() {
+  const btn = $('#voiceBtn');
+  if (!btn) return;
+  updateVoiceButton();
+  btn.addEventListener('click', () => {
+    voiceOn = !voiceOn;
+    store.set(VOICE_KEY, voiceOn ? '1' : '0');
+    updateVoiceButton();
+    if (!voiceOn && ttsAudio) {
+      try { ttsAudio.pause(); } catch { /* 忽略 */ }
+      setPetSpeaking(false);
+    }
+    toast(voiceOn ? '语音开了：本鱼会念给你听' : '语音关了');
+  });
+}
+
+function setPetSpeaking(on) {
+  const pet = $('#pet');
+  if (pet) pet.classList.toggle('is-speaking', !!on);
+}
+
+function showPetBubble(text) {
+  const bubble = $('#petBubble');
+  if (!bubble) return;
+  bubble.textContent = text;
+  bubble.hidden = false;
+  clearTimeout(showPetBubble.timer);
+  showPetBubble.timer = setTimeout(() => { bubble.hidden = true; }, 3200);
+}
+
+async function speak(text) {
+  if (!voiceOn) return;
+  const said = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!said) return;
+  // 只念前 300 字：手机听个声，不烧整段合成
+  const piece = said.slice(0, 300);
+  try {
+    const res = await fetch('/api/chubby-whale/tts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: piece, rate: '+0%' }),
+    });
+    if (!res.ok) {
+      toast(res.status === 501 ? '电脑端没有安装 edge-tts，语音用不了' : `语音失败（${res.status}）`, 'error');
+      return;
+    }
+    const blob = await res.blob();
+    if (ttsAudio) {
+      try { ttsAudio.pause(); } catch { /* 忽略 */ }
+    }
+    ttsAudio = new Audio(URL.createObjectURL(blob));
+    ttsAudio.addEventListener('playing', () => setPetSpeaking(true));
+    ttsAudio.addEventListener('ended', () => setPetSpeaking(false));
+    ttsAudio.addEventListener('error', () => setPetSpeaking(false));
+    await ttsAudio.play().catch(() => {
+      setPetSpeaking(false);
+      toast('浏览器拦了自动播放，点一下页面再试', 'error');
+    });
+  } catch (err) {
+    setPetSpeaking(false);
+    toast(`语音失败：${err && err.message ? err.message : '网络错误'}`, 'error');
+  }
 }
 
 /* ========================================================================== *
@@ -524,6 +603,8 @@ async function sendChat() {
         if (streamed) {
           setTyping(reply, false);
           reply.textNode.textContent = streamed;
+          speak(streamed);
+          showPetBubble('本鱼说完了，吃口白饭先');
         }
         return;
       }
@@ -1349,6 +1430,7 @@ function init() {
   setupWelcome();
   loadDependencies();  // 依赖自述：电脑端 dsh web + 伴生桌宠
   setupChat();
+  setupVoice();      // 语音朗读开关（调电脑端 edge-tts）
   setupStory();      // 内含历史故事首屏加载
   setupReminders();  // 内含提醒列表首屏加载 + 倒计时
   setupConnectivity();

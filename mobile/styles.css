@@ -965,6 +965,58 @@ body {
 }
 
 /* ==========================================================================
+   大肥鱼立绘（桌面桌宠搬到手机：同一张 whale.png）
+   ========================================================================== */
+.pet-wrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 2px;
+  min-height: 96px;
+}
+
+.pet {
+  width: 118px;
+  max-width: 34vw;
+  height: auto;
+  border-radius: 18px;
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35));
+  animation: pet-float 4.2s ease-in-out infinite;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.pet.is-speaking {
+  animation: pet-talk 0.42s ease-in-out infinite;
+}
+
+@keyframes pet-float {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-7px) rotate(1deg); }
+}
+
+@keyframes pet-talk {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-3px) scale(1.035); }
+}
+
+.pet__bubble {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%) translateY(100%);
+  max-width: 76%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: rgba(30, 41, 59, 0.96);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+/* ==========================================================================
    动效减弱
    ========================================================================== */
 @media (prefers-reduced-motion: reduce) {

@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
-  <link rel="stylesheet" href="styles.css?v=0.1.1" />
+  <link rel="stylesheet" href="styles.css?v=0.1.2" />
 </head>
 <body>
   <a class="skip-link" href="#main">跳到主内容</a>
@@ -61,8 +61,14 @@
       <section class="chat" aria-labelledby="chatHeading">
         <h2 class="sr-only" id="chatHeading">聊天</h2>
 
+        <div class="pet-wrap">
+          <img class="pet" id="pet" src="/api/chubby-whale/asset" alt="大肥鱼" draggable="false" />
+          <span class="pet__bubble" id="petBubble" hidden></span>
+        </div>
+
         <div class="chat__bar">
           <span class="chat__hint" id="chatHint">还没开始聊，说点什么吧</span>
+          <button class="btn btn--ghost" id="voiceBtn" type="button" aria-pressed="false" aria-label="切换语音朗读">🔇 语音</button>
           <button class="btn btn--ghost" id="newChatBtn" type="button" aria-label="开始新对话，清空当前聊天记录">新对话</button>
         </div>
 
@@ -180,6 +186,6 @@
   </nav>
 
   <!-- 原生 ES module，无框架、无外部依赖 -->
-  <script type="module" src="app.js?v=0.1.1"></script>
+  <script type="module" src="app.js?v=0.1.2"></script>
 </body>
 </html>
