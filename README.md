@@ -101,8 +101,21 @@ dsh plugin --profile web remove dsh-chubby-whale
 - 页面顶部会自述依赖：电脑端 dsh web（硬依赖）+ 伴生桌宠版本
 - 关掉：`config.mobile === false`，或删掉 `mobile/` 与 `dist/host/mobile.js`
 
-> **它不是独立 App**：离开电脑端的 dsh web 进程，页面只剩空壳。原因见
-> `docs/DEPENDENCIES.md`（注意：该文档在独立仓库里，本节即其摘要）。
+> **它不是独立 App**：离开电脑端的 dsh web 进程，页面只剩空壳。
+
+### 语音功能的前置条件
+
+| 能力 | 要求 | 说明 |
+|---|---|---|
+| 说话（TTS） | 电脑端装了 `python` + `edge-tts` | 没装时页面提示，文字聊天不受影响 |
+| 听你说话（录音） | 页面必须是**安全上下文**（HTTPS，或 `http://localhost`） | 浏览器规定：`http://` + 局域网 IP 时 `navigator.mediaDevices` 直接不可用 |
+| 转文字（ASR） | `config.json` 配了 `siliconflowKey` | 走硅基流动的语音识别 |
+
+**录音在手机上打不开，不是手机的问题**，是 `http://192.168.x.x` 不算安全上下文。通用解法（不涉及任何私有域名）：
+
+1. **电脑上用**：`http://127.0.0.1:<端口>/whale-mobile/` 属于安全上下文，麦克风直接可用
+2. **手机上用快捷键**：浏览器地址栏固定页面的"添加到主屏幕"不改变协议，仍然不能用；改用输入法自带的语音键
+3. **要在手机上用页面录音**：给 dsh web 配 HTTPS（`dsh web --tls-cert <证书> --tls-key <私钥>`），或走你自有的 HTTPS 反代；只代理 `/whale-mobile/` 与 `/api/chubby-whale/`，别把整个 dsh 暴露到公网
 
 ## 目录结构
 
