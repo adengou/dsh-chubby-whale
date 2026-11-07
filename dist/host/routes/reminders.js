@@ -80,7 +80,14 @@ export function createReminderHandlers(opts) {
                     sendJson(res, { ok: false, error: 'text and at required' }, 400);
                     return;
                 }
-                sendJson(res, { ok: true, reminder: opts.addReminder(msg, at, repeat) });
+                const created = opts.addReminder(msg, at, repeat);
+                // 仓储在两处会拒绝写入并返回 null（2026-11-07 B101）：提醒文件损坏（已隔离备份，拒绝覆盖）、
+                // 列表已达 200 条上限。这时不能回 ok:true + reminder:null —— 客户端会显示「已设置」但列表里没有。
+                if (!created) {
+                    sendJson(res, { ok: false, error: 'reminder store unavailable or full' }, 507);
+                    return;
+                }
+                sendJson(res, { ok: true, reminder: created });
                 return;
             }
             if (req.method === 'DELETE') {

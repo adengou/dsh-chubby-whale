@@ -23,7 +23,7 @@
  */
 import { register } from 'node:module'
 import { pathToFileURL, fileURLToPath } from 'node:url'
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, mkdtempSync, rmSync, readdirSync, mkdirSync, writeFileSync, chmodSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 
@@ -453,6 +453,115 @@ console.log('\n[I] 封装治理静态检查（只经注入端口 / 请求体与�
 }
 
 // ===========================================================================
+
+// ===========================================================================
+// [J] 提醒仓储三修（B101）：写盘失败不刷屏 / 坏文件不误清空 / 数量上限
+console.log('\n[J] 提醒仓储三修（写盘失败/坏文件/上限）')
+try {
+  const os = await import('node:os')
+  const nodePath = await import('node:path')
+  const { createReminderRepo } = await imp('src/host/repos/reminders.ts')
+
+  // J1 写盘失败：同一条提醒不应每 20s 反复返回
+  {
+    const dir = mkdtempSync(nodePath.join(os.tmpdir(), 'rem-fail-'))
+    try {
+      const repo = createReminderRepo(dir)
+      const r = repo.addReminder('喝水', new Date(Date.now() - 1000).toISOString())
+      ok('J1 提醒已创建', !!r && typeof r.id === 'string')
+      // 用 chmod 444 模拟「读得到、写不进」（磁盘满/只读目录的等价形状）
+      const f = nodePath.join(dir, 'reminders.json')
+      const raw = readFileSync(f, 'utf8')
+      chmodSync(f, 0o444)
+      const first = repo.dueReminders()
+      ok('J1 写盘失败仍返回本次到点（用户不能漏提醒）', first.length === 1, 'n=' + first.length)
+      const second = repo.dueReminders()
+      ok('J1 写盘失败后不再重复返回同一条（本进程内存兜底）', second.length === 0, 'n=' + second.length)
+      const third = repo.dueReminders()
+      ok('J1 继续调用也不刷屏', third.length === 0, 'n=' + third.length)
+      // 恢复可写后：内存标记被清空（写盘成功后磁盘为准）
+      chmodSync(f, 0o666)
+      writeFileSync(f, raw, 'utf8')
+      repo.saveReminders([])
+      ok('J1 恢复写盘后内存标记被清空（不残留）', repo.dueReminders().length === 0 && repo.loadReminders().length === 0)
+    } finally {
+      try { rmSync(dir, { recursive: true, force: true }) } catch { }
+    }
+  }
+
+  // J2 坏文件：删除/新增都不能把整份列表覆盖成空表
+  {
+    const dir = mkdtempSync(nodePath.join(os.tmpdir(), 'rem-bad-'))
+    try {
+      const repo = createReminderRepo(dir)
+      const f = nodePath.join(dir, 'reminders.json')
+      writeFileSync(f, '[{"id":"a"', 'utf8')   // 坏 JSON
+      const before = readFileSync(f, 'utf8')
+      repo.removeReminder('a')
+      const bad = readdirSync(dir).filter((n) => n.indexOf('.bad-') >= 0)
+      ok('J2 坏文件已隔离备份（.bad-* 出现）', bad.length === 1, JSON.stringify(readdirSync(dir)))
+      ok('J2 备份内容与原文逐字一致', bad.length === 1 && readFileSync(nodePath.join(dir, bad[0]), 'utf8') === before)
+      ok('J2 删除没有把列表写成空表（reminders.json 不存在或被保留原样）', !existsSync(f) || readFileSync(f, 'utf8') === before)
+      const added = repo.addReminder('别覆盖我', new Date().toISOString())
+      ok('J2 坏文件时新增被拒绝（返回 null）', added === null)
+      ok('J2 新增没有写出空表/单条表', !existsSync(f) || readFileSync(f, 'utf8') === before)
+      // 再次读取：按空表降级（坏文件已隔离）
+      const fresh = createReminderRepo(dir)
+      ok('J2 坏文件时读取按空表降级（不抛）', Array.isArray(fresh.loadReminders()) && fresh.loadReminders().length === 0)
+    } finally {
+      try { rmSync(dir, { recursive: true, force: true }) } catch { }
+    }
+  }
+
+  // J3 数量上限：第 201 条被拒绝，前 200 条保留
+  {
+    const dir = mkdtempSync(nodePath.join(os.tmpdir(), 'rem-max-'))
+    try {
+      const repo = createReminderRepo(dir)
+      const at = new Date(Date.now() + 3600_000).toISOString()
+      let last = null
+      for (let i = 0; i < 200; i++) last = repo.addReminder('第' + i + '条', at)
+      ok('J3 前 200 条都能加', !!last && repo.loadReminders().length === 200)
+      ok('J3 第 201 条被拒绝（返回 null）', repo.addReminder('溢出', at) === null)
+      ok('J3 上限没有被写坏（仍 200 条）', repo.loadReminders().length === 200)
+    } finally {
+      try { rmSync(dir, { recursive: true, force: true }) } catch { }
+    }
+  }
+  // J4 仓储拒绝写入（文件损坏/超上限）→ 路由必须回 507，不能回 ok:true + reminder:null
+  {
+    const { createReminderHandlers } = await imp('src/host/routes/reminders.ts')
+    const deps = {
+      listReminders: () => [],
+      dueReminders: () => [],
+      addReminder: () => null,          // 仓储拒绝
+      removeReminder: () => { },
+    }
+    const h = createReminderHandlers(deps)
+    const body = Buffer.from(JSON.stringify({ text: '测试提醒', at: new Date(Date.now() + 60000).toISOString() }))
+    const req = {
+      method: 'POST',
+      url: '/api/chubby-whale/reminders',
+      headers: { 'content-length': String(body.length) },
+      destroy() { }, on() { }, resume() { },
+      async *[Symbol.asyncIterator]() { yield body },
+    }
+    const res = { code: 0, chunks: [] }
+    res.writeHead = (c) => { res.code = c }
+    res.setHeader = () => { }
+    res.write = (c) => { res.chunks.push(Buffer.from(String(c))); return true }
+    res.end = (c) => { if (c !== undefined) res.chunks.push(Buffer.from(String(c))) }
+    res.on = () => { }
+    await h.handleReminders(req, res)
+    const payload = JSON.parse(Buffer.concat(res.chunks).toString('utf8') || '{}')
+    ok('J4 仓储拒绝写入时路由回 507', res.code === 507, 'code=' + res.code)
+    ok('J4 且不带成功语义（ok:false + reminder 缺失）', payload.ok === false && !payload.reminder, JSON.stringify(payload))
+  }
+
+} catch (e) {
+  ok('J 段执行', false, String(e && e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) {
