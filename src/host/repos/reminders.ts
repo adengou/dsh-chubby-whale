@@ -137,6 +137,7 @@ export function createReminderRepo(dataDir: string): ReminderRepo {
     const arr = loadReminders()
     const now = Date.now()
     const due: any[] = []
+    const pendingDelete = new Set<string>()
     let changed = false
     for (const r of arr) {
       if (!r || r.done) continue                    // 已完成的一律跳过
@@ -166,7 +167,13 @@ export function createReminderRepo(dataDir: string): ReminderRepo {
           r.fired = false
         }
       } else {
-        r.done = true
+        // 一次性提醒：响过即删，别把 done=true 的空壳留在列表里占地（2026-11-07 需求）
+        pendingDelete.add(String(r.id))
+      }
+    }
+    if (pendingDelete.size > 0) {
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (arr[i] && pendingDelete.has(String(arr[i].id))) arr.splice(i, 1)
       }
     }
     if (changed && !saveReminders(arr)) {

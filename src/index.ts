@@ -9,6 +9,7 @@
  * chat-core.ts（聊天纯函数）、prefs.ts（偏好）、atomic/body/respond/http（小工具）。
  */
 import { migrateRuntimeData } from './host/migrate.js'
+import { mountWhaleMobile } from './host/mobile.js'
 import { startAutoBackup, autoBackupInfo } from './host/auto-backup.js'
 import { buildSystemPrompt, SYSTEM_PROMPT } from './host/persona.js'
 import { dirname, join } from 'node:path'
@@ -433,4 +434,13 @@ export function apply(ctx: any, rawConfig?: any): void {
   // cordis 的 ctx.effect(setup) 会把 setup 返回的清理函数挂到当前 fiber，卸载时自动执行
   if (typeof ctx.effect === 'function') ctx.effect(registerRoutes, 'chubby-whale: routes')
   else registerRoutes()
+
+  // 手机简版（/whale-mobile）：聊天 / 说书 / 提醒。
+  // 与桌宠共用同一个宿主、同一份模型配置；rawConfig.mobile === false 可整体关掉。
+  const mobileOptions = rawConfig && typeof rawConfig === 'object' ? rawConfig.mobile : undefined
+  if (mobileOptions !== false) {
+    const mount = () => mountWhaleMobile(ctx, mobileOptions && typeof mobileOptions === 'object' ? mobileOptions : {})
+    if (typeof ctx.effect === 'function') ctx.effect(mount, 'chubby-whale: whale-mobile')
+    else mount()
+  }
 }

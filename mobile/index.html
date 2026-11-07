@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="description" content="大肥鱼移动端原型：聊天 / 说书 / 提醒，纯静态单页。" />
+  <title>大肥鱼 · 移动端</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css?v=0.1.4" />
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主内容</a>
+
+  <!-- 断网 / 离线提示条 -->
+  <div class="offline-bar" id="offlineBar" role="status" aria-live="polite" hidden>
+    📴 网络断开了，请求可能会失败。等网络回来本鱼会自己接上。
+  </div>
+
+  <!-- 顶部标题栏 -->
+  <header class="appbar">
+    <button class="appbar__install" id="installBtn" type="button" aria-label="添加到手机桌面">📲</button>
+    <div class="appbar__brand">
+      <span class="appbar__logo" aria-hidden="true">🐟</span>
+      <span class="appbar__title">大肥鱼</span>
+    </div>
+    <div class="conn" id="conn" role="status" aria-live="polite" aria-label="连接状态：待连接">
+      <span class="conn__dot" id="connDot" data-state="idle" aria-hidden="true"></span>
+      <span class="conn__text" id="connText">待连接</span>
+    </div>
+  </header>
+
+  <!-- 加到桌面：分浏览器步骤 -->
+  <div class="sheet" id="installHelp" hidden>
+    <div class="sheet__card" role="dialog" aria-modal="true" aria-labelledby="installTitle">
+      <h3 class="sheet__title" id="installTitle">把本鱼放到桌面</h3>
+      <p class="sheet__sub">不同浏览器的位置不一样，对号入座：</p>
+      <ul class="sheet__list">
+        <li><b>Chrome</b>：右上角 <b>⋮</b> →「添加到主屏幕」/「安装应用」</li>
+        <li><b>荣耀 / 华为浏览器</b>：底部 <b>≡</b> → 更多 →「添加到桌面」</li>
+        <li><b>Edge</b>：右下角 <b>⋯</b> →「添加到手机」</li>
+        <li><b>Firefox</b>：菜单 →「添加到主屏幕」</li>
+        <li><b>微信里打开的</b>：先点右上角 <b>…</b> →「在浏览器打开」，再按上面的步骤</li>
+      </ul>
+      <p class="sheet__sub">找不到这一项？多半是这个浏览器不支持（<b>http://</b> 页面尤其容易没有），换 Chrome 或 Firefox 试试。</p>
+      <button class="btn btn--primary btn--block" id="installClose" type="button">知道了</button>
+    </div>
+  </div>
+  <!-- toast 浮层（顶部弹出，不阻塞） -->
+  <div class="toast-host" id="toastHost" aria-live="assertive" aria-atomic="true"></div>
+
+  <main class="main" id="main">
+
+    <!-- ============================================================ -->
+    <!-- 1. 聊天                                                       -->
+    <!-- ============================================================ -->
+    <section class="panel" id="panel-chat" role="tabpanel" aria-labelledby="tab-chat">
+      <details class="card welcome" id="welcome" open>
+        <summary class="welcome__summary">
+          <span class="welcome__emoji" aria-hidden="true">🐟</span>
+          <span>本鱼的使用说明（点这里展开 / 收起）</span>
+        </summary>
+        <div class="welcome__body">
+          <p class="welcome__lead">哼，才、才不是特意为你写的说明……不过你既然点进来了，就顺势看一眼吧。</p>
+          <ul class="welcome__list">
+            <li><b>💬 聊天</b>：发一句话，本鱼边吃白饭边回你，回答会一个字一个字往外蹦。</li>
+            <li><b>📖 说书</b>：给个主题（空着也行），本鱼现场憋一个 500 / 800 / 1200 字的故事。</li>
+            <li><b>⏰ 提醒</b>：说清要提醒啥、什么时候，到点会弹提示、响一声、抖一下。</li>
+          </ul>
+          <p class="welcome__meta" id="welcomeMeta"></p>
+          <p class="welcome__meta" id="depLine" hidden></p>
+        </div>
+      </details>
+
+      <section class="chat" aria-labelledby="chatHeading">
+        <h2 class="sr-only" id="chatHeading">聊天</h2>
+
+        <div class="pet-wrap">
+          <img class="pet" id="pet" src="/api/chubby-whale/asset" alt="大肥鱼" draggable="false" />
+          <span class="pet__bubble" id="petBubble" hidden></span>
+        </div>
+
+        <div class="chat__bar">
+          <span class="chat__hint" id="chatHint">还没开始聊，说点什么吧</span>
+          <button class="btn btn--ghost" id="voiceBtn" type="button" aria-pressed="false" aria-label="切换语音朗读">🔇 语音</button>
+          <button class="btn btn--ghost" id="newChatBtn" type="button" aria-label="开始新对话，清空当前聊天记录">新对话</button>
+        </div>
+
+        <div class="chat__list" id="chatList" role="log" aria-live="polite" aria-relevant="additions" aria-busy="false" aria-label="聊天记录"></div>
+
+        <form class="chat__form" id="chatForm">
+          <label class="sr-only" for="chatInput">输入要发给大肥鱼的消息</label>
+          <textarea class="chat__input" id="chatInput" rows="1" placeholder="跟大肥鱼说点什么…"
+                    autocomplete="off" enterkeyhint="send"></textarea>
+          <button class="btn btn--ghost chat__mic" id="micBtn" type="button" aria-pressed="false" aria-label="按住说话：点一下开始录音，再点一下结束并发送">🎤</button>
+          <button class="btn btn--primary chat__send" id="chatSend" type="submit" aria-label="发送消息">发送</button>
+        </form>
+      </section>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- ============================================================ -->
+    <!-- 2. 文化（说书 / 念诗 / 典故 / 成语 / 民故 / 对联 / 今日）        -->
+    <!-- ============================================================ -->
+    <section class="panel" id="panel-culture" role="tabpanel" aria-labelledby="tab-culture" hidden>
+      <h2 class="sr-only">文化</h2>
+
+      <div class="chips" id="cultureChips" role="tablist" aria-label="文化分类">
+        <button class="chip" type="button" role="tab" data-kind="book" aria-selected="true">📖 说书</button>
+        <button class="chip" type="button" role="tab" data-kind="poem" aria-selected="false">📜 念诗</button>
+        <button class="chip" type="button" role="tab" data-kind="chengyu" aria-selected="false">🏛 典故</button>
+        <button class="chip" type="button" role="tab" data-kind="idiom" aria-selected="false">🧩 成语</button>
+        <button class="chip" type="button" role="tab" data-kind="minsu" aria-selected="false">🪭 民故</button>
+        <button class="chip" type="button" role="tab" data-kind="couplet" aria-selected="false">🖌 对联</button>
+        <button class="chip" type="button" role="tab" data-kind="daily" aria-selected="false">☀️ 今日</button>
+      </div>
+
+      <!-- 说书：古籍连载 -->
+      <section class="card stack culture-pane" id="pane-book">
+        <label class="field-label" for="bookSelect">选一本 <span class="field-hint">（17 本古籍）</span></label>
+        <select class="input" id="bookSelect"></select>
+        <div class="row">
+          <button class="btn btn--primary" id="bookStart" type="button">开始讲</button>
+          <button class="btn btn--ghost" id="bookNext" type="button" disabled>下一段</button>
+        </div>
+        <p class="story__meta" id="bookMeta"></p>
+        <div class="story__body" id="bookText"></div>
+        <div class="story__actions">
+          <button class="btn btn--ghost" id="bookSpeak" type="button">🔊 朗读</button>
+          <button class="btn btn--ghost" id="bookStop" type="button">⏹ 停</button>
+        </div>
+      </section>
+
+      <!-- 其它类别共用 -->
+      <section class="card stack culture-pane" id="pane-item" hidden>
+        <h3 class="story__title" id="itemTitle"></h3>
+        <p class="story__meta" id="itemMeta"></p>
+        <div class="story__body" id="itemText"></div>
+        <div class="story__actions">
+          <button class="btn btn--ghost" id="itemSpeak" type="button">🔊 朗读</button>
+          <button class="btn btn--ghost" id="itemStop" type="button">⏹ 停</button>
+          <button class="btn btn--primary" id="itemAgain" type="button">再来一个</button>
+        </div>
+      </section>
+
+      <!-- 今日 -->
+      <section class="card stack culture-pane" id="pane-daily" hidden>
+        <h3 class="story__title">今日</h3>
+        <p class="story__meta" id="dailyMeta"></p>
+        <div class="story__body" id="dailyText"></div>
+        <div class="story__body" id="briefingText"></div>
+        <div class="story__actions">
+          <button class="btn btn--ghost" id="dailySpeak" type="button">🔊 朗读</button>
+          <button class="btn btn--ghost" id="dailyStop" type="button">⏹ 停</button>
+          <button class="btn btn--ghost" id="dailyReload" type="button">刷新</button>
+        </div>
+      </section>
+    </section>
+    <!-- 3. 提醒                                                       -->
+    <!-- ============================================================ -->
+    <section class="panel" id="panel-remind" role="tabpanel" aria-labelledby="tab-remind" hidden>
+      <h2 class="sr-only">提醒</h2>
+
+      <form class="card stack" id="remindForm">
+        <label class="field-label" for="remindText">提醒内容</label>
+        <input class="input" id="remindText" type="text" maxlength="120" enterkeyhint="done"
+               placeholder="比如：吃白饭（顺便看看 token）" />
+
+        <div class="field-label" id="remindTimeLabel">什么时候提醒</div>
+        <div class="chips" id="remindQuick" role="group" aria-labelledby="remindTimeLabel">
+          <button class="chip" type="button" data-sec="60" aria-pressed="false">1 分钟后</button>
+          <button class="chip" type="button" data-sec="600" aria-pressed="true">10 分钟后</button>
+          <button class="chip" type="button" data-sec="1800" aria-pressed="false">30 分钟后</button>
+          <button class="chip" type="button" data-custom="1" aria-pressed="false">自定义时间</button>
+        </div>
+
+        <div class="custom-time" id="customWrap" hidden>
+          <label class="field-label" for="remindAt">选择日期和时间</label>
+          <input class="input" id="remindAt" type="datetime-local" />
+        </div>
+
+        <button class="btn btn--primary btn--block" id="remindGo" type="submit" aria-label="创建提醒">设个提醒</button>
+      </form>
+
+      <section class="card" aria-labelledby="remindListHeading">
+        <div class="card__head">
+          <h3 class="card__title" id="remindListHeading">我的提醒</h3>
+          <button class="btn btn--ghost" id="remindReload" type="button" aria-label="刷新提醒列表">刷新</button>
+        </div>
+        <p class="card__sub">倒计时每秒刷新一次；到点会弹提示 + 响一声 + 抖一下。</p>
+        <ul class="list" id="remindList"></ul>
+        <p class="empty" id="remindEmpty">暂时没有提醒。本鱼很闲，可以帮你记事儿。</p>
+      </section>
+    </section>
+  </main>
+
+  <!-- 底部 Tab -->
+  <nav class="tabbar" role="tablist" aria-label="主功能导航">
+    <button class="tab" id="tab-chat" type="button" role="tab" aria-selected="true"
+            aria-controls="panel-chat" data-tab="chat" tabindex="0">
+      <span class="tab__icon" aria-hidden="true">💬</span>
+      <span class="tab__label">聊天</span>
+    </button>
+    <button class="tab" id="tab-culture" type="button" role="tab" aria-selected="false"
+            aria-controls="panel-culture" data-tab="culture" tabindex="-1">
+      <span class="tab__icon" aria-hidden="true">📖</span>
+      <span class="tab__label">文化</span>
+    </button>
+    <button class="tab" id="tab-remind" type="button" role="tab" aria-selected="false"
+            aria-controls="panel-remind" data-tab="remind" tabindex="-1">
+      <span class="tab__icon" aria-hidden="true">⏰</span>
+      <span class="tab__label">提醒</span>
+    </button>
+  </nav>
+
+  <!-- 原生 ES module，无框架、无外部依赖 -->
+  <script type="module" src="app.js?v=0.2.6"></script>
+</body>
+</html>

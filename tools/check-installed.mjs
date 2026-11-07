@@ -20,6 +20,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join, relative, resolve } from 'node:path'
+import { homedir } from 'node:os'
 
 const args = process.argv.slice(2)
 const getArg = (name, def) => {
@@ -27,7 +28,8 @@ const getArg = (name, def) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : def
 }
 const REPO_DIST = resolve(getArg('repo-dist', 'dist'))
-const INSTALL_DIR = resolve(getArg('dir', 'C:/Users/eric8/.dsh/profiles/web/node_modules/dsh-chubby-whale'))
+const DEFAULT_PROFILE = process.env.DSH_PROFILE || 'web'
+const INSTALL_DIR = resolve(getArg('dir', join(homedir(), '.dsh', 'profiles', DEFAULT_PROFILE, 'node_modules', 'dsh-chubby-whale')))
 const INSTALL_DIST = join(INSTALL_DIR, 'dist')
 
 function listFiles(dir) {

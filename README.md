@@ -91,6 +91,46 @@ dsh plugin --profile web remove dsh-chubby-whale
 | 工具 | 提醒（口语时间：9点 / 明天9点 / 半小时后 / 每天8点；**管理面板**：回数字删除、回 `d` 顺延 10 分钟）、看图、拖文件（图片识别 / 文本总结）、成长与亲密度、鱼粮账本、余额、清除记忆、**数据导出/导入**、**使用统计** |
 | 界面 | **界面语言**（中文默认 / 英文）、右键菜单键盘导航（↑↓/Enter/Esc）、「让它游走」可逆（右下角「○」或 Ctrl+Shift+W 恢复）、多标签页各自独立 |
 
+## 手机简版（/whale-mobile）
+
+同一个插件里自带一个**手机端简版页面**：聊天 / 文化 / 提醒，安卓优先，纯静态无构建。
+
+```powershell
+# 装好后打开（本机）
+http://127.0.0.1:<端口>/whale-mobile/
+# 手机（同一局域网，dsh web 用 --host <电脑IP> 启动）
+http://<电脑IP>:<端口>/whale-mobile/
+```
+
+<p>
+  <img src="docs/screenshots/mobile-chat.png" width="45%" alt="手机端聊天：立绘与语音开关" />
+  <img src="docs/screenshots/mobile-culture.png" width="45%" alt="手机端文化：说书/念诗/典故/成语/民故/对联/今日" />
+</p>
+
+- 装了本插件、电脑端 dsh web 开着，手机浏览器打开 `http://<电脑IP>:<端口>/whale-mobile/` 即可
+- **文化**：说书（17 本古籍连载，逐段推进）、念诗（737 首）、典故、成语、民间故事、对联、今日一句 + 今日简报——与桌面端同一套数据与接口- 模型与 Key **复用本插件自己的**（`config.json` 的 `deepseekKey`，逐级回退到环境变量）
+- 数据落在 `$DSH_HOME/whale-mobile/state.json`（与桌宠的 `data/` 分开）
+- 页面顶部会自述依赖：电脑端 dsh web（硬依赖）+ 伴生桌宠版本
+- 关掉：`config.mobile === false`，或删掉 `mobile/` 与 `dist/host/mobile.js`
+- 扩展说明（路由、数据、怎么加分类/加标签页）：[docs/MOBILE.md](docs/MOBILE.md)
+- 手机访问 / 麦克风限制 / 双入口脚本：见 [docs/MOBILE.md](docs/MOBILE.md) 第 9 节（scripts/lan-proxy.mjs）
+
+> **它不是独立 App**：离开电脑端的 dsh web 进程，页面只剩空壳。
+
+### 语音功能的前置条件
+
+| 能力 | 要求 | 说明 |
+|---|---|---|
+| 说话（TTS） | 电脑端装了 `python` + `edge-tts` | 没装时页面提示，文字聊天不受影响 |
+| 听你说话（录音） | 页面必须是**安全上下文**（HTTPS，或 `http://localhost`） | 浏览器规定：`http://` + 局域网 IP 时 `navigator.mediaDevices` 直接不可用 |
+| 转文字（ASR） | `config.json` 配了 `siliconflowKey` | 走硅基流动的语音识别 |
+
+**录音在手机上打不开，不是手机的问题**，是 `http://192.168.x.x` 不算安全上下文。通用解法（不涉及任何私有域名）：
+
+1. **电脑上用**：`http://127.0.0.1:<端口>/whale-mobile/` 属于安全上下文，麦克风直接可用
+2. **手机上用快捷键**：浏览器地址栏固定页面的"添加到主屏幕"不改变协议，仍然不能用；改用输入法自带的语音键
+3. **要在手机上用页面录音**：给 dsh web 配 HTTPS（`dsh web --tls-cert <证书> --tls-key <私钥>`），或走你自有的 HTTPS 反代；只代理 `/whale-mobile/` 与 `/api/chubby-whale/`，别把整个 dsh 暴露到公网
+
 ## 目录结构
 
 ```
