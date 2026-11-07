@@ -247,6 +247,21 @@ group('echo-filter 基础闸门', () => {
   eq('打断词「不」必须放行', f.accept('不', 1600, 7), { ok: true })
 })
 
+// B99：voice-bridge 的叙述期停止判定补到「别读了 / 先不要念了 / 我不想听了」这类说法，
+// 前提是闸门先把它们放行（否则 bridge 永远收不到）。这里只验"闸门不吞"，
+// 是否算停止仍由 voice-bridge 按叙述期规则判 —— 两道闸门各管各的，不在这里重判意图。
+group('echo-filter 放行叙述期停止说法（B99）', () => {
+  const T0 = 6_000_000
+  const a = M.createEchoFilter()
+  eq('「先不要念了」→ 放行（不判 noise/short）', a.accept('先不要念了', T0, 1), { ok: true })
+  const b = M.createEchoFilter()
+  eq('「别读了吧」→ 放行', b.accept('别读了吧', T0, 1), { ok: true })
+  const c = M.createEchoFilter()
+  eq('「我不想听了」→ 放行', c.accept('我不想听了', T0, 1), { ok: true })
+  const d = M.createEchoFilter()
+  eq('含停止词的正文也放行（意图由 bridge 的叙述期判定负责）', d.accept('他停下脚步，回头看了我一眼', T0, 1), { ok: true })
+})
+
 group('echo-filter 回声比对', () => {
   const T0 = 1_000_000
   const f = M.createEchoFilter()

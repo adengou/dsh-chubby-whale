@@ -71,6 +71,22 @@ function toNonNegInt(v: any): number {
   return isNum(v) ? Math.max(0, Math.floor(v)) : 0
 }
 
+/**
+ * token 类整数的上限：与 repos/fishfood.ts 的 MAX_TOKEN（Number.MAX_SAFE_INTEGER）同一口径。
+ *
+ * 审计修复（2026-11-07 B99 备份分身取证）：这里原来只做 `Math.max(0, Math.floor(v))`，
+ * 而仓储的 cleanToken 会在 Number.MAX_SAFE_INTEGER 封顶。于是导入一个 `chatTokens: 1e308`
+ * 的包会把 1e308 原样写进 fishfood.json（仓储自己都不接受的写法），面板显示 1e+308、
+ * 后续 addTokens 再把总量一次性夹回上限——等于一次导入就把真实账目变成垃圾数。
+ * 导入层必须与仓储同口径，不能比仓储更宽松。
+ */
+const MAX_TOKEN = Number.MAX_SAFE_INTEGER
+
+/** 非负 token 整数：向下取整 + 安全整数封顶 */
+function toToken(v: any): number {
+  return Math.min(MAX_TOKEN, Math.max(0, Math.floor(v)))
+}
+
 function clip(v: any, max: number): string {
   return String(v == null ? '' : v).slice(0, max)
 }
@@ -104,22 +120,26 @@ export function cleanMemory(value: any): { history: any[]; summary: string } | n
       out.push({ role, content: clip(t.content, BACKUP_LIMITS.memoryContentLen) })
     }
     // 与运行时的「只留最新 40 条」同口径；不截断会让导入后的内存/文件超过仓储预期
-    return out.length > BACKUP_LIMITS.memoryHistory ? out.slice(-BACKUP_LIMITS.memoryHistory) : out
+    if (out.length > BACKUP_LIMITS.memoryHistory) return out.slice(-BACKUP_LIMITS.memoryHistory)
+    // 非空数组全是坏项 → 当非法（审计修复 2026-11-07 B99，与 cleanReminders 的「全坏不误清空」同口径）：
+    // 旧实现会返回 []，于是「history 里全是 role:system / content 不是字符串的条目」这种脏包
+    // 会被当成「主人本来就没有记忆」，把已有 history 清空。空数组 `[]` 仍然合法（那是真备份的形状）。
+    return out.length === 0 && raw.length > 0 ? null : out
   }
   if (Array.isArray(value)) {
     const history = cleanTurns(value)
     return history === null ? null : { history, summary: '' }
   }
   if (!isPlainObject(value)) return null
-  // 空对象没有可写内容：当非法处理，避免一次误导入把记忆清空
-  if (!('history' in value) && !('summary' in value)) return null
-  const history = value.history === undefined ? [] : cleanTurns(value.history)
+  // 缺键的包按非法处理（审计修复 2026-11-07 B99）：memory 的形状固定是 {history, summary}，
+  // 导出从第一版起就同时给这两个键，所以真备份永远两键齐全。
+  // 旧实现只缺一个键也照写：`{summary:'x'}` 把已有 history 写成 []、`{history:[...]}` 把 summary 写成 ''。
+  // 那等于「字段缺失」去覆盖主人已有的另一半记忆——与「整字段覆盖」不是一回事（缺的不是值，是整个键）。
+  if (!('history' in value) || !('summary' in value)) return null
+  const history = cleanTurns(value.history)
   if (history === null) return null
-  if (value.summary !== undefined && typeof value.summary !== 'string') return null
-  return {
-    history,
-    summary: typeof value.summary === 'string' ? clip(value.summary, BACKUP_LIMITS.memorySummaryLen) : '',
-  }
+  if (typeof value.summary !== 'string') return null
+  return { history, summary: clip(value.summary, BACKUP_LIMITS.memorySummaryLen) }
 }
 
 /** 亲密度：{intimacy:number} */
@@ -175,13 +195,13 @@ export function cleanFishfood(value: any): any | null {
   if (!isPlainObject(value)) return null
   const out: any = {}
   for (const k of ['chatTokens', 'storyTokens', 'totalTokens', 'monthTokens', 'dayTokens']) {
-    if (isNum(value[k])) out[k] = Math.max(0, Math.floor(value[k]))
+    if (isNum(value[k])) out[k] = toToken(value[k])
   }
   // 鱼账本（2026-11-07 B98）：输入/输出拆分、缓存命中、人民币与分桶以前会被这份白名单过滤掉，
   // 于是「备份 — 导入」一轮后金额和分桶归零（token 总量还在，钱不见了）。这里补齐 round-trip；
-  // 字段形状与 src/host/repos/fishfood.ts 的同名清洗函数保持一致。
+  // 字段形状与 src/host/repos/fishfood.ts 的同名清洗函数保持一致（含安全整数封顶）。
   for (const k of ['promptTokens', 'completionTokens', 'cacheHitTokens']) {
-    if (isNum(value[k])) out[k] = Math.max(0, Math.floor(value[k]))
+    if (isNum(value[k])) out[k] = toToken(value[k])
   }
   for (const k of ['costCny', 'dayCostCny', 'monthCostCny']) {
     const v = cleanCost(value[k])
@@ -203,7 +223,7 @@ export function cleanFishfood(value: any): any | null {
         } else {
           // 负数直接丢弃（不夹成 0：写个 0 等于声称「这一桶确实是 0」，与「数据脏」不是一件事）
           const n = Math.floor(raw)
-          if (n >= 0) b[f] = n
+          if (n >= 0) b[f] = Math.min(MAX_TOKEN, n)
         }
       }
       if (Object.keys(b).length) buckets[kind] = b
@@ -220,9 +240,13 @@ export function cleanPet(value: any): any | null {
   if (!isPlainObject(value)) return null
   const out: any = {}
   // lastFeedAt：喂食时刻（mood 的 happy 窗口要用它；漏掉会让导入后情绪退回 normal）
-  for (const k of ['feeds', 'hunger', 'lastSeen', 'lastFeedAt', 'intimacy']) {
+  for (const k of ['feeds', 'lastSeen', 'lastFeedAt', 'intimacy']) {
     if (isNum(value[k])) out[k] = Math.max(0, Math.floor(value[k]))
   }
+  // 饥饿度是连续量，不能向下取整（审计修复 2026-11-07 B99）：repos/pet.ts 的 cleanHunger
+  // 只夹到 [0,100] 不取整，tickPet 会按离线时长写出 21.5 这类小数。导入层取整会让
+  // 「备份 → 导入 → 再导出」把 21.5 变成 21，与本机自己写出的值不一致。
+  if (isNum(value.hunger)) out.hunger = Math.max(0, Math.min(100, value.hunger))
   if (typeof value.mood === 'string') out.mood = clip(value.mood, 20)
   return Object.keys(out).length ? out : null
 }
@@ -242,15 +266,25 @@ export function cleanReminders(value: any): any[] | null {
     if (!isPlainObject(r)) continue
     if (typeof r.text !== 'string' || !r.text.trim()) continue
     if (typeof r.at !== 'string' || !r.at.trim()) continue
+    const at = clip(r.at, BACKUP_LIMITS.reminderStampLen)
+    // 与 routes/reminders.ts:44 同口径：at 必须能解析成真实时间才收（审计修复 2026-11-07 B99）。
+    // 旧实现只判「非空字符串」，`at: "not-a-date"` 会原样落盘，而 dueReminders 用
+    // `new Date(stamp).getTime()` 判到期——非有限数直接 continue，于是这条提醒永远不响，
+    // 主人却看到它好好地躺在列表里（比直接跳过更坏：静默失效）。
+    if (!Number.isFinite(new Date(at).getTime())) continue
+    const nextRaw = typeof r.nextAt === 'string' ? clip(r.nextAt, BACKUP_LIMITS.reminderStampLen) : ''
+    // dueReminders 取 `r.nextAt || r.at`：留一个解析不了的 nextAt 会把合法的 at 挡死。
+    // 解析不了就当没有下一次时间，回落到 at（恢复后照常到点）。
+    const nextAt = nextRaw && Number.isFinite(new Date(nextRaw).getTime()) ? nextRaw : null
     out.push({
       id: typeof r.id === 'string' && r.id ? clip(r.id, 64) : Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       text: clip(r.text, BACKUP_LIMITS.reminderTextLen),
-      at: clip(r.at, BACKUP_LIMITS.reminderStampLen),
+      at,
       // repeat 与路由同口径：只接受 60s ~ 7 天（routes/reminders.ts:43）。
       // 导入的是外部 JSON，此前只判 >0：repeat=1e15 这类值会落到仓储，
       // 算出超出 Date 表示范围的 nextAt（toISOString 抛 RangeError，整份提醒都取不出来）。
       repeat: isNum(r.repeat) && r.repeat >= 60 && r.repeat <= 86400 * 7 ? Math.round(r.repeat) : null,
-      nextAt: typeof r.nextAt === 'string' ? clip(r.nextAt, BACKUP_LIMITS.reminderStampLen) : null,
+      nextAt,
       fired: r.fired === true,
       done: r.done === true,
       remindCount: toNonNegInt(r.remindCount),
@@ -307,9 +341,18 @@ function isSafeNarrativeValue(v: any): boolean {
  * 而 CORE_GUARD 会拦。这里对当前心境与心境历史（回滚会把 old 恢复成当前心境）
  * 再走一遍 isSafeLearnedText，命中即清空/丢弃该条历史，保证“导入写不进核心设定”的承诺成立。
  * 注：personality.ts 门面没有暴露 CORE_GUARD 词表，这里只调用它导出的判定函数，不另抄词表。
+ *
+ * 审计修复（2026-11-07 B99）：没有任何可变层字段的包不再写盘。
+ * 旧实现把 `{}` / `{name:'旺财'}`（只有核心设定键）都 sanitize 成“全空人格”并落盘，
+ * 等于一次误导入把主人的口头禅/偏好/备注/心境历史全清掉，且 imported 报告还说“成功”。
+ * 与 cleanMemory 的「空对象没有可写内容」同一道闸；真备份一定四键齐全（导出走 sanitizePersonality，
+ * 永远是四个可变层字段），所以这里不会误杀任何真实备份包。
  */
+const PERSONALITY_CONTENT_KEYS = ['catchphrases', 'preferences', 'notes', 'selfNarrative']
+
 export function cleanPersonality(value: any): any | null {
   if (!isPlainObject(value)) return null
+  if (!PERSONALITY_CONTENT_KEYS.some((k) => k in value)) return null
   const data = sanitizePersonality(value)
   if (data.selfNarrative && !isSafeLearnedText(data.selfNarrative)) {
     data.selfNarrative = ''
