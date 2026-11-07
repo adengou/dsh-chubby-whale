@@ -2998,6 +2998,19 @@
   var progressIndex = defaultProgress.index;
   var bumpProgress = defaultProgress.bump;
 
+  // src/shared/text.ts
+  function clipCodePoints(value, max) {
+    const s = value == null ? "" : String(value);
+    const n = Number(max);
+    if (Number.isNaN(n)) return "";
+    if (n === Infinity) return s;
+    const limit = Math.floor(n);
+    if (limit <= 0) return "";
+    if (s.length <= limit) return s;
+    const cps = Array.from(s);
+    return cps.length > limit ? cps.slice(0, limit).join("") : s;
+  }
+
   // src/client/image.ts
   var DEFAULT_MAX_EDGE = 1280;
   var DEFAULT_QUALITY = 0.85;
@@ -3172,7 +3185,7 @@
     return false;
   }
   function buildTextPrompt(text) {
-    return "总结一下这篇文档：\n" + String(text || "").slice(0, MAX_TEXT_CHARS);
+    return "总结一下这篇文档：\n" + clipCodePoints(text, MAX_TEXT_CHARS);
   }
   function readTextFile(file) {
     try {
@@ -5645,7 +5658,7 @@
           return;
         }
       }
-      const text = String(parsed.cleaned || cleanReminderText(msg) || msg).slice(0, 200);
+      const text = clipCodePoints(String(parsed.cleaned || cleanReminderText(msg) || msg), 200);
       const dueAt = parsed.at;
       const repeat = parsed.repeat || 0;
       let p;
