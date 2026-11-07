@@ -119,7 +119,24 @@ export function boardText(items: ManageItem[], prefix?: string): string {
   return head + lines.join('\n') + '\n' + MANAGE_HINT
 }
 
-/** 把 /reminders 响应收成面板条目：坏条目、已完成的条目跳过 */
+/**
+ * 一条提醒的「到期时刻」（毫秒）：nextAt 优先，否则 at；解析不出 → Infinity。
+ * 排序与 pickNextDue 必须同口径，否则面板序号与「最近的到期」会打架。
+ */
+function dueMsOf(it: { at?: any; nextAt?: any }): number {
+  const ms = new Date((it && (it.nextAt || it.at)) as any).getTime()
+  return Number.isFinite(ms) ? ms : Infinity
+}
+
+/**
+ * 把 /reminders 响应收成面板条目。
+ *
+ * 2026-11-07 修（用户报「提醒清单 BUG」）：
+ *   · 原样按存储顺序列出来 → 序号与到期先后不一致，而面板正是「回数字删除 / 回 d 顺延最近一条」，
+ *     用户很容易删错、顺延错（最近到期的那条可能排在最后）。现在**按到期时间升序**，时间坏/缺失的排最后；
+ *   · 正文为空（脏文件/半条数据）原来也占一个序号、还显示成「4. （bad）」，删序号时全体错位；现在跳过。
+ * 跳过 done / 坏条目 / 空 id 的既有规则不变。
+ */
 export function normalizeReminderList(payload: any): ManageItem[] {
   const arr = Array.isArray(payload && payload.reminders)
     ? payload.reminders
@@ -130,14 +147,18 @@ export function normalizeReminderList(payload: any): ManageItem[] {
     if (x.done === true) continue
     const id = str(x.id)
     if (!id) continue
+    const text = str(x.text)
+    if (!text.trim()) continue   // 空正文不占序号（见头上注释）
     out.push({
       id,
-      text: str(x.text),
+      text,
       at: x.at,
       nextAt: x.nextAt,
       repeat: x.repeat,
     })
   }
+  // 按到期升序；时间坏的全部 Infinity，稳定排序保持原相对顺序（V8 的 sort 自 ES2019 起稳定）
+  out.sort((a, b) => dueMsOf(a) - dueMsOf(b))
   return out
 }
 
