@@ -286,8 +286,15 @@ function blobToBase64(blob) {
 }
 
 async function startRecording() {
+  // 关键：浏览器只在「安全上下文」里给麦克风。手机用 http://192.168.x.x 打开时
+  // navigator.mediaDevices 直接不存在——这不是手机不支持，是浏览器规定。
+  if (typeof window !== 'undefined' && window.isSecureContext === false) {
+    toast('录音需要 HTTPS：现在用 http:// 局域网地址打开，浏览器禁用了麦克风。' +
+      '可以先用输入法的语音输入；要页面录音得配 HTTPS（本鱼可以帮你配）', 'error', 8000);
+    return;
+  }
   if (!navigator.mediaDevices || typeof MediaRecorder === 'undefined') {
-    toast('这个浏览器不支持录音', 'error');
+    toast('这个浏览器不支持录音（换 Chrome / Edge 试试）', 'error');
     return;
   }
   try {
@@ -355,6 +362,9 @@ async function transcribeAndSend(blob) {
 function setupMic() {
   const btn = $('#micBtn');
   if (!btn) return;
+  if (typeof window !== 'undefined' && window.isSecureContext === false) {
+    btn.title = '需要 HTTPS 才能录音（当前是 http:// 局域网地址）';
+  }
   btn.addEventListener('click', () => {
     if (micState) stopRecording();
     else startRecording();
