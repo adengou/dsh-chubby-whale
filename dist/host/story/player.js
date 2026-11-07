@@ -52,6 +52,23 @@
  *   旧调用方靠它读进度续讲；生产路由（host/routes/story.ts）一律传 { defer: true }。
  *
  * 这里不碰 req/res：HTTP 解析与响应在 host/routes/story.ts。
+ *
+ * 性能（2026-11-07 B104，算法只改「怎么算」不改「算出来是什么」）：
+ *   · **键只拼一次/前缀只拼一次**：旧实现每次「这一段读过没」都现拼三个字符串
+ *     （`<source>:<book>|<i>`、`<book>|<i>`、再一个 pending 键），一本 1129 段就要拼 3387 次；
+ *     现在每本书的两种前缀各缓存一次（`source + ':' + book + '|'`、`book + '|'`），
+ *     每段只剩 1 次「前缀 + 段号」，旧键回退也只在内存里确实存在旧键时（`hasLegacy`）才去试。
+ *   · **在途预约按书分组**：`pending` 从「一个大字符串键的 Map」改成「book → 段号字符串 → 预约」，
+ *     查找不再拼键；reset 清某本书也从「扫全部键的前缀」变成按书一把清（等价，见 reset 注释）。
+ *   · **分段位置不再整本建 map**：旧实现 start()/next() 每次都给整本书建 `Map<段号, SegmentPos>`
+ *     （1129 段 = 1129 个对象 + 1129 个 map 项），其实一次只回一段、只用一个位置；
+ *     现在规范化数据直接按 index 取位置、回边界就地从相邻段扫（一「回」最多 156 段，实测最大），
+ *     只有 index 不规范的怪数据才退回原来的整本 plan（那段代码原样保留，见 planOf）。
+ *   · **连播队列只存段引用**：旧实现每段存一个 `{chunk, piece, total, endsChapter, endsBook}`
+ *     （实测 ~90B/段，1129 段一个客户端就是 ~100KB）；现在队列只存 `StoryChunk` 引用
+ *     （8B/段），位置等真正要回这一段时再算。
+ *   · 以上都只动内存里的算法，进度文件格式、响应字段、选段顺序一字未变；
+ *     `scripts/test-story-perf.mjs` 里内嵌了改动前的逐字段快照做等价证明。
  */
 import { readFileSync } from 'node:fs';
 import { deepFreeze } from '../../shared/immutable.js';
@@ -75,9 +92,16 @@ const QUEUE_TTL_MS = 30 * 60 * 1000;
  * 过期只是让这一段重新可挑（最坏重听一段），绝不写盘、绝不会把没听的段算成已讲。
  */
 const PENDING_TTL_MS = 10 * 60 * 1000;
+/**
+ * 回目标题里的「正文」噪音（有的数据把「正文」拼进标题，念出来很怪）。
+ * 提到模块级只编译一次：每段都新建一个正则对象是白花的内存/GC（替换行为不变，/g 每次都会重置 lastIndex）。
+ */
+const TITLE_NOISE_RE = /正文\s*/g;
+/** plan 里查不到时的安全默认值（不该发生；旧实现每次新建一个同值对象，这里共享一份只读默认值） */
+const DEFAULT_POS = { piece: 1, total: 1, endsChapter: false, endsBook: false };
 /** 新键前缀：`local:` / `cloud:`。两种前缀都没有的键，就是需要迁移的旧格式键 */
 const NAMESPACED_KEY_RE = /^(?:local|cloud):/;
-/** 新键：`<source>:<book>|<index>`（进度写入只走这个格式） */
+/** 新键：`<source>:<book>|<index>`（进度写入只走这个格式；键格式只在这里定义一次） */
 function storyKeyOf(source, book, index) {
     return source + ':' + String(book || '') + '|' + String(index);
 }
@@ -89,21 +113,39 @@ export function createStoryPlayer(opts) {
     const repo = opts.repo;
     // 数据源命名空间：index.ts 装配时注入 readDataSource() 的结果；缺省 local（旧调用方/离线测试）
     const source = opts.source === 'cloud' ? 'cloud' : 'local';
-    const progress = loadProgress();
+    const loaded = loadProgress();
+    const progress = loaded.map;
+    /**
+     * 内存里是否还留着旧格式键（`book|index`）。启动迁移与 reload 迁移都会把它们搬走，
+     * 正常情况下恒为 false；为 false 时读取跳过旧键回退（省一次拼接 + 一次对象查找）。
+     * 保留这个开关而不是删掉回退分支：万一有旧键绕过迁移留在内存里，读取行为与旧实现完全一致。
+     * 计数是 loadProgress 顺路数的（不多扫一遍），迁移真搬了键就置 false（见 migrateLegacyKeys）。
+     */
+    let hasLegacy = loaded.legacy > 0;
     // 启动即迁移旧键（一次性、幂等，见文件头「旧键迁移」）；函数声明会提升，读起来仍是线性顺序
     migrateLegacyKeys();
     // 每个客户端一条连播队列；Map 的插入顺序即 LRU 顺序（命中时移到末尾）
     const clientQueues = new Map();
     /**
-     * 已送出、还没确认的段（只在内存里，绝不落盘）：键与进度键同口径 `<source>:<book>|<index>`。
+     * 已送出、还没确认的段（只在内存里，绝不落盘）：键与进度键同口径，但按书分组，
+     * 「这本书这个段号」直接两级查，不必现拼 `<source>:<book>|<index>`（见文件头「性能」）。
+     * 段号仍按 String(index) 做键：与旧实现的字符串键口径一致（1 与 '1' 算同一段），只是省掉前缀。
      * 作用有二：① 响应写出期间同一段不会被另一个请求再挑走（并发 start 不重复）；
      * ② 只要没 confirm，它就仍算未讲——断开/undo 之后下一次请求还能再讲它。
      */
     const pending = new Map();
+    /**
+     * 每本书的新键前缀 `<source>:<book>|`（只依赖 source + book，建一次就不变）：
+     * 热路径每段只拼一次「前缀 + 段号」，不必每次把 source/book/分隔符再拼一遍。
+     * 缓存只影响速度：前缀内容与 storyKeyOf 的拼接逐字一致；上限只是防外部输入把 Map 撑大。
+     */
+    const progressPrefixes = new Map();
+    const KEY_PREFIX_MAX = 256;
     function loadProgress() {
         try {
             const obj = JSON.parse(String(readFileSync(opts.progressFile, 'utf8')).replace(/^\uFEFF/, ''));
             const out = {};
+            let legacy = 0;
             if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
                 for (const k of Object.keys(obj)) {
                     if (k === '_current') {
@@ -112,13 +154,16 @@ export function createStoryPlayer(opts) {
                     }
                     else if (obj[k]) {
                         out[k] = true;
+                        // 顺便数旧键：这次遍历本来就要走一遍键，不必为了 hasLegacy 再单独扫一遍进度对象
+                        if (!isNamespacedKey(k))
+                            legacy++;
                     }
                 }
             }
-            return out;
+            return { map: out, legacy };
         }
         catch {
-            return {};
+            return { map: {}, legacy: 0 };
         }
     }
     function saveProgress() {
@@ -154,30 +199,99 @@ export function createStoryPlayer(opts) {
             moved++;
         }
         if (moved > 0) {
+            // 搬走的旧键已经删掉了：内存里不再有旧键，读取可跳过旧键回退（行为与「扫到没有」等价）
+            hasLegacy = false;
             saveProgress();
             // 只报数量：书名来自云端清单等外部输入，不往日志里抄
             console.log('STORY-PROGRESS-MIGRATED source=' + source + ' keys=' + moved);
         }
         return moved;
     }
+    /** 取（并缓存）一本书的新键前缀；内容与 storyKeyOf 的拼接逐字一致 */
+    function keyPrefixOf(book) {
+        const b = String(book || '');
+        let p = progressPrefixes.get(b);
+        if (p === undefined) {
+            // 段号传空串：拼出来正好是「前缀」（键格式仍只由 storyKeyOf / legacyStoryKey 定义）
+            if (progressPrefixes.size >= KEY_PREFIX_MAX)
+                progressPrefixes.clear();
+            p = storyKeyOf(source, b, '');
+            progressPrefixes.set(b, p);
+        }
+        return p;
+    }
+    /** 预约表：按书分组，进去只查这一本；没有预约过这本书就返回 undefined（不建空表） */
+    function pendingOf(book) {
+        return pending.get(String(book || ''));
+    }
+    /** 取一段的预约（不判 TTL、不删除）：confirm/discard/tagServed 用，与旧实现「只看在不在」一致 */
+    function peekPending(book, index) {
+        const m = pendingOf(book);
+        return m === undefined ? undefined : m.get(String(index));
+    }
+    /** 取走一段的预约（拿到即删；书里没有别的预约时把空表也摘掉，别留空壳） */
+    function takePending(book, index) {
+        const b = String(book || '');
+        const m = pending.get(b);
+        if (m === undefined)
+            return undefined;
+        const rec = m.get(String(index));
+        if (rec === undefined)
+            return undefined;
+        m.delete(String(index));
+        if (m.size === 0)
+            pending.delete(b);
+        return rec;
+    }
+    function putPending(book, index, rec) {
+        const b = String(book || '');
+        let m = pending.get(b);
+        if (m === undefined) {
+            m = new Map();
+            pending.set(b, m);
+        }
+        m.set(String(index), rec);
+    }
     /** 读进度：先查新键，查不到再回退旧键（兼容窗口只读，绝不把旧键写回去） */
     function getProgress(book, index) {
+        // 热路径（每扫一段都要问一次）：前缀已缓存，这里只拼一次「前缀 + 段号」。
+        if (progress[keyPrefixOf(book) + index] === true)
+            return true;
+        // 迁移后内存里通常一条旧键都没有（hasLegacy=false）：这时连旧键字符串都不必拼。
+        return hasLegacy && legacyReadFallback(book, index);
+    }
+    /**
+     * 旧键读取（兼容窗口只读，绝不把旧键写回去）——getProgress 的回退分支，只有 hasLegacy 时才进来。
+     * 这里的拼法与旧实现逐字一致：scripts/test-behavior-regressions.mjs 用源码形状锁住
+     * 「先新键、再回退旧键」这条兼容约定（它不是热路径，没必要为省字符串把这段改形）。
+     * 新键在这里会再查一次（调用方刚查过）：只为让这段回退的语义与形状和迁移前完全一样。
+     */
+    function legacyReadFallback(book, index) {
         if (progress[storyKeyOf(source, book, index)] === true)
             return true;
         return progress[legacyStoryKey(book, index)] === true;
     }
-    /** 只改内存的「已讲」标记；落盘由调用方统一 saveProgress（一次播放只写一次盘） */
+    /**
+     * 只改内存的「已讲」标记；落盘由调用方统一 saveProgress（一次播放只写一次盘）。
+     * 写入一律走新键（storyKeyOf 口径），旧键只读不写——自测里有源码形状断言锁这条。
+     * 每段只调一次（confirm 之后），不是扫描热路径，不必为了省一次拼接在这里做前缀缓存。
+     */
     function markRead(book, index) {
         progress[storyKeyOf(source, book, index)] = true;
     }
     /** 这一段是否还在「已送出、等确认」的状态（过期即作废：宁可重听一段，也不能漏讲） */
     function isPending(book, index) {
-        const key = storyKeyOf(source, book, index);
-        const rec = pending.get(key);
+        const m = pendingOf(book);
+        if (m === undefined)
+            return false;
+        const k = String(index);
+        const rec = m.get(k);
         if (rec === undefined)
             return false;
         if (Date.now() - rec.at > PENDING_TTL_MS) {
-            pending.delete(key);
+            m.delete(k);
+            if (m.size === 0)
+                pending.delete(String(book || ''));
             return false;
         }
         return true;
@@ -189,20 +303,20 @@ export function createStoryPlayer(opts) {
     /**
      * 记账入口：defer=true 只预约（等响应送出后 confirm 才落盘），否则维持旧语义当场记账落盘。
      * 两套语义共用同一个进度文件格式：确认后才写 `<source>:<book>|<index>: true` + `_current`。
-     * client/entry 只给连播队列用：next 从队列里出队的那一项要记下来，响应没送出去时塞回队首。
+     * client/entry 只给连播队列用：next 从队列里出队的那一段要记下来，响应没送出去时塞回队首。
      */
     function markServed(book, index, defer, client = '', entry) {
         if (defer) {
-            pending.set(storyKeyOf(source, book, index), { at: Date.now(), client, entry });
+            putPending(book, index, { at: Date.now(), client, entry });
             return;
         }
         markRead(book, index);
         progress['_current'] = book;
         saveProgress();
     }
-    /** 只补预约里的「谁领走的、队列项长什么样」，不碰预约时间、更不碰进度文件（pickNext 已预约过） */
+    /** 只补预约里的「谁领走的、队列里那一段长什么样」，不碰预约时间、更不碰进度文件（pickNext 已预约过） */
     function tagServed(book, index, client, entry) {
-        const rec = pending.get(storyKeyOf(source, book, index));
+        const rec = peekPending(book, index);
         if (!rec)
             return;
         rec.client = client;
@@ -213,10 +327,8 @@ export function createStoryPlayer(opts) {
      * 只认预约过的段：reset / 导入备份清掉预约之后迟到的确认，不会把旧段写回来。
      */
     function confirm(book, index) {
-        const key = storyKeyOf(source, book, index);
-        if (!pending.has(key))
+        if (takePending(book, index) === undefined)
             return false;
-        pending.delete(key);
         markRead(book, index);
         progress['_current'] = book;
         saveProgress();
@@ -228,13 +340,11 @@ export function createStoryPlayer(opts) {
      * 这一段要等整本书念完才可能被 pickNext 重新捡到，用户会以为「跳了一段」。
      */
     function discard(book, index) {
-        const key = storyKeyOf(source, book, index);
-        const rec = pending.get(key);
+        const rec = takePending(book, index);
         if (!rec)
             return false;
-        pending.delete(key);
         const st = rec.client ? clientQueues.get(rec.client) : undefined;
-        if (rec.entry && st && st.book === book && !st.queue.some((q) => Number(q.chunk.index) === index)) {
+        if (rec.entry && st && st.book === book && !st.queue.some((q) => Number(q.index) === index)) {
             st.queue.unshift(rec.entry);
         }
         return true;
@@ -244,7 +354,7 @@ export function createStoryPlayer(opts) {
         if (read)
             markRead(book, index);
         else
-            delete progress[storyKeyOf(source, book, index)];
+            delete progress[keyPrefixOf(book) + index];
         saveProgress();
     }
     /**
@@ -256,10 +366,11 @@ export function createStoryPlayer(opts) {
         const next = loadProgress();
         for (const k of Object.keys(progress))
             delete progress[k];
-        for (const k of Object.keys(next))
-            progress[k] = next[k];
+        for (const k of Object.keys(next.map))
+            progress[k] = next.map[k];
         // 导入的备份才是真相：在途预约作废（迟到的 confirm 会因「没预约」被拒绝，不会覆盖导入内容）
         pending.clear();
+        hasLegacy = next.legacy > 0;
         migrateLegacyKeys();
     }
     function resolveBook(books, want) {
@@ -292,7 +403,7 @@ export function createStoryPlayer(opts) {
         const title = String(c.title || '');
         const spoken = String(c.text || '');
         const author = STORY_AUTHORS[bookName] || '';
-        const cleanTitle = title.replace(/正文\s*/g, '');
+        const cleanTitle = title.replace(TITLE_NOISE_RE, '');
         const intro = isFirst ? ('话说，今天给主人讲一段《' + bookName + '》' + (author ? '，' + author + '著' : '') + '，' + cleanTitle + '。') : '';
         // 结尾句按「本回/篇讲完」出，不再跟着 isLast（见文件头：isLast 会被客户端当成整轮结束）
         const tail = seg.endsChapter ? '这一回，就讲到这里。' : '';
@@ -313,12 +424,13 @@ export function createStoryPlayer(opts) {
         };
     }
     /**
-     * 一本书每段的分段位置（键 = String(index)）。
+     * 一本书每段的分段位置（键 = String(index)）——**旧实现**，现在只在「index 不规范的怪数据」上走。
      * 数据里没有 piece 字段，只能从 title 分组推：
      *   · 相邻且同名的段 = 同一「回/篇」（西游记 4 段一回、三言二拍 10 段一卷、聊斋一篇一段）；
      *   · total 的语义两种：回内段数（西游记 4 / 三言二拍 10），或全书段数（聊斋 495 / 世说新语 1129）；
      *   · 判定：total === 本书段数 → 全书累计序号；否则用回内序号；
      *     两者都对不上（空段被过滤、坏数据）时以实际分组为准——保证「第 x/y 段」的 y 永远等于真实段数。
+     * 保留它是因为它按 String(index) 建表：index 重复时「后写覆盖先写」，与 posOf 的按位置推导不等价。
      */
     function planSegments(chunks) {
         const plan = new Map();
@@ -342,16 +454,74 @@ export function createStoryPlayer(opts) {
         }
         return plan;
     }
-    /** 取一段的分段位置；plan 里没有（不该发生）时给安全默认值，绝不让响应缺字段 */
-    function positionOf(plan, c) {
-        return plan.get(String(c.index)) || { piece: 1, total: 1, endsChapter: false, endsBook: false };
+    /**
+     * 决定一本书用哪种分段位置来源。
+     * 规范数据（normalize 的产物：`String(index)` 恰好是数组位置）走「按位置就地推导」，不建任何整本表；
+     * 否则退回旧实现的 planSegments——同一输入 → 同一输出，优化不改变怪数据的行为。
+     */
+    function planOf(chunks) {
+        const n = chunks.length;
+        for (let i = 0; i < n; i++) {
+            const x = chunks[i].index;
+            // 旧实现的键是 String(index)，所以「数字 0 / 字符串 '0'」在同一个位置算规范；
+            // 只有拼出来跟位置对不上的（重复、缺号、非数字）才退回 plan map。
+            if (x !== i && String(x) !== String(i))
+                return { canonical: false, map: planSegments(chunks) };
+        }
+        return { canonical: true, chunks };
     }
-    /** 本书剩余未读段（按数组顺序，供本客户端连播） */
-    function queueAfter(plan, chunks, book, afterIndex) {
-        return chunks
-            .filter((c) => Number(c.index) > afterIndex && !isTaken(book, c.index))
-            .sort((a, b) => Number(a.index) - Number(b.index))
-            .map((c) => ({ chunk: c, ...positionOf(plan, c) }));
+    /**
+     * 取一段的分段位置。
+     * 规范数据：段号就是位置，回边界就地往两边扫同名段（实测最长一「回」156 段）——
+     *   旧实现为此给整本 1129 段各建一个对象 + 一条 map 项，其实一次只要一个位置。
+     * 非规范数据：查旧实现的 plan map（`String(index)` 后写覆盖，与旧行为一致）。
+     * 查不到（不该发生）时给安全默认值，绝不让响应缺字段。
+     */
+    function posOf(plan, c) {
+        if (!plan.canonical) {
+            const hit = plan.map.get(String(c.index));
+            return hit || DEFAULT_POS;
+        }
+        const chunks = plan.chunks;
+        const n = chunks.length;
+        const pos = Number(c.index);
+        if (!Number.isInteger(pos) || pos < 0 || pos >= n)
+            return DEFAULT_POS;
+        const title = String(chunks[pos].title || '');
+        let start = pos;
+        while (start > 0 && String(chunks[start - 1].title || '') === title)
+            start--;
+        let end = pos + 1;
+        while (end < n && String(chunks[end].title || '') === title)
+            end++;
+        const bookWide = Number(chunks[pos].total) === n;
+        return {
+            piece: bookWide ? pos + 1 : pos - start + 1,
+            total: bookWide ? n : end - start,
+            endsChapter: pos === end - 1,
+            endsBook: pos === n - 1,
+        };
+    }
+    /**
+     * 本书剩余未读段（按数组顺序，供本客户端连播）。
+     * 旧实现是 filter → sort → map(段+位置)，每段一个对象（实测 ~90B/段，1129 段 ~100KB）；
+     * 现在只收段引用：位置等真正要回这一段时再由 posOf 算（见文件头「性能」）。
+     * 排序保留：数据若本来没按 index 升序，排序结果与旧实现逐元素一致（稳定排序 + 同一个比较器）。
+     */
+    function queueAfter(chunks, book, afterIndex) {
+        const out = [];
+        for (let i = 0; i < chunks.length; i++) {
+            const c = chunks[i];
+            if (Number(c.index) > afterIndex && !isTaken(book, c.index))
+                out.push(c);
+        }
+        for (let i = 1; i < out.length; i++) {
+            if (Number(out[i - 1].index) > Number(out[i].index)) {
+                out.sort((a, b) => Number(a.index) - Number(b.index));
+                break;
+            }
+        }
+        return out;
     }
     /** 照 C# Story.Next()：当前书里找第一个未读段；读完换下一本；全读完才清零重来 */
     async function pickNext(books, want, defer) {
@@ -389,6 +559,8 @@ export function createStoryPlayer(opts) {
         }
         // 新的一轮开始：在途预约也一起作废（否则刚回卷就会被上一轮的预约挡住，挑不出段）
         pending.clear();
+        // 上面这轮清键把旧格式键也一并删了（非命名空间的键不跳过），所以内存里不再有旧键
+        hasLegacy = false;
         saveProgress();
         // 从头再来也要跳过坏书：按顺序找第一本能读的
         for (let i = 0; i < books.length; i++) {
@@ -416,7 +588,7 @@ export function createStoryPlayer(opts) {
             clientQueues.set(id, st);
             return st;
         }
-        st = { queue: [], book: '', lastSeen: now };
+        st = { queue: [], book: '', plan: null, lastSeen: now };
         clientQueues.set(id, st);
         for (const [k, v] of clientQueues) {
             if (k !== id && now - v.lastSeen > QUEUE_TTL_MS)
@@ -442,10 +614,11 @@ export function createStoryPlayer(opts) {
         if (!picked)
             return { ok: false, error: 'no readable book' };
         const st = stateFor(clientId);
-        const plan = planSegments(picked.chunks);
+        const plan = planOf(picked.chunks);
         st.book = picked.book;
-        st.queue = queueAfter(plan, picked.chunks, picked.book, Number(picked.piece.index));
-        const chunk = buildChunk(picked.piece, true, positionOf(plan, picked.piece));
+        st.plan = plan;
+        st.queue = queueAfter(picked.chunks, picked.book, Number(picked.piece.index));
+        const chunk = buildChunk(picked.piece, true, posOf(plan, picked.piece));
         return { ok: true, chunk, remain: st.queue.length, served: { book: picked.book, index: Number(picked.piece.index) } };
     }
     async function next(clientId, opts) {
@@ -455,7 +628,7 @@ export function createStoryPlayer(opts) {
             return { ok: false, error: 'no books' };
         const st = stateFor(clientId);
         // 队列里若已被别的标签页讲过、或正在送出（等确认），就跳过
-        while (st.queue.length > 0 && isTaken(st.book, st.queue[0].chunk.index))
+        while (st.queue.length > 0 && isTaken(st.book, st.queue[0].index))
             st.queue.shift();
         let entry = null;
         let isFirst = false;
@@ -470,24 +643,24 @@ export function createStoryPlayer(opts) {
                 return { ok: false, error: 'no readable book' };
             // 队列空后重新挑段：还是同一本书就不重复插开场白，真换书才开口
             const switched = !st.book || picked.book !== st.book;
-            const plan = planSegments(picked.chunks);
-            entry = { chunk: picked.piece, ...positionOf(plan, picked.piece) };
+            entry = picked.piece;
             st.book = picked.book;
-            st.queue = queueAfter(plan, picked.chunks, picked.book, Number(picked.piece.index));
+            st.plan = planOf(picked.chunks);
+            st.queue = queueAfter(picked.chunks, picked.book, Number(picked.piece.index));
             isFirst = switched;
             booked = true;
         }
-        const piece = entry.chunk;
+        const piece = entry;
         const bk = st.book || String(piece.book || list[0]);
         if (booked) {
-            // pickNext 已经预约/记账过这一段：defer 时补上「谁领走的 + 队列项」，撤销时好归队
+            // pickNext 已经预约/记账过这一段：defer 时补上「谁领走的 + 队列里那一段」，撤销时好归队
             if (defer)
                 tagServed(bk, piece.index, clientId, entry);
         }
         else {
             markServed(bk, piece.index, defer, clientId, entry);
         }
-        const chunk = buildChunk(piece, isFirst, entry);
+        const chunk = buildChunk(piece, isFirst, st.plan ? posOf(st.plan, piece) : DEFAULT_POS);
         return { ok: true, chunk, remain: st.queue.length, served: { book: bk, index: Number(piece.index) } };
     }
     async function reset(bookHint, clientId) {
@@ -503,16 +676,15 @@ export function createStoryPlayer(opts) {
             return { ok: false, error: 'unknown book' };
         // 只清本数据源下这本书的新键：别的数据源的同书进度键与旧键都不动。
         // 旧键由迁移清理；迁移后还残留旧键说明是迟到的旧格式数据，下一次重读/重启会归一到当时的数据源。
-        const prefix = source + ':' + book + '|';
+        const prefix = keyPrefixOf(book);
         for (const k of Object.keys(progress)) {
             if (k !== '_current' && k.startsWith(prefix))
                 delete progress[k];
         }
-        // 在途预约也一起清：reset 之后这一段必须能马上重讲，别让「刚送出还没确认」的旧预约挡住
-        for (const k of Array.from(pending.keys())) {
-            if (k.startsWith(prefix))
-                pending.delete(k);
-        }
+        // 在途预约也一起清：reset 之后这一段必须能马上重讲，别让「刚送出还没确认」的旧预约挡住。
+        // 预约按书分组（键就是书名），所以这里一把删掉这本书的分组即可——与旧实现「按 <source>:<book>| 前缀扫」
+        // 命中的集合完全相同（预约键的前缀里 source 恒定、book 完全相同）。
+        pending.delete(String(book || ''));
         progress['_current'] = book;
         saveProgress();
         // 该客户端的连播队列里若还排着这本书的段，也一起丢掉，免得 reset 后又接着念旧的
