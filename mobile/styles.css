@@ -1042,6 +1042,18 @@ body {
   50% { opacity: 0.55; }
 }
 
+.appbar__install {
+  margin-left: auto;
+  margin-right: 10px;
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text);
+  font-size: 18px;
+}
+
 /* ==========================================================================
    文化：分类 chips + 行内按钮
    ========================================================================== */

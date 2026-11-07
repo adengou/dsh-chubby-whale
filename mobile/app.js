@@ -1896,6 +1896,28 @@ async function loadDependencies() {
   line.style.whiteSpace = 'pre-wrap';
 }
 
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+});
+
+function setupInstall() {
+  const btn = $('#installBtn');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    if (installPrompt) {
+      try {
+        installPrompt.prompt();
+        const res = await installPrompt.userChoice;
+        toast(res && res.outcome === 'accepted' ? '好嘞，桌面上见' : '那……想装了再点我');
+      } catch { /* 忽略 */ }
+      installPrompt = null;
+      return;
+    }
+    toast('点浏览器右上角 ⋮（或分享）→「添加到主屏幕 / 添加到桌面」，桌面上就有本鱼了', 'info', 7000);
+  });
+}
 function init() {
   markConn('idle');
 
@@ -1904,6 +1926,7 @@ function init() {
   loadDependencies();  // 依赖自述：电脑端 dsh web + 伴生桌宠
   setupChat();
   setupVoice();      // 语音朗读开关（调电脑端 edge-tts）
+  setupInstall();    // 添加到桌面引导
   setupMic();        // 语音输入（调电脑端 ASR）
   setupCulture();    // 文化：说书/念诗/典故/成语/民故/对联/今日
   setupReminders();  // 内含提醒列表首屏加载 + 倒计时

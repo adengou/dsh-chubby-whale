@@ -100,6 +100,7 @@ dsh plugin --profile web remove dsh-chubby-whale
 - 数据落在 `$DSH_HOME/whale-mobile/state.json`（与桌宠的 `data/` 分开）
 - 页面顶部会自述依赖：电脑端 dsh web（硬依赖）+ 伴生桌宠版本
 - 关掉：`config.mobile === false`，或删掉 `mobile/` 与 `dist/host/mobile.js`
+- 扩展说明（路由、数据、怎么加分类/加标签页）：[docs/MOBILE.md](docs/MOBILE.md)
 
 > **它不是独立 App**：离开电脑端的 dsh web 进程，页面只剩空壳。
 
