@@ -100,11 +100,40 @@ export function createBriefingHandlers(opts: {
       parts.push('肥鲸成长：' + st.name + '（' + exp + '）')
     } catch { }
     // 提醒（非数组说明读不到，就别编一个"0 条"；坏项丢弃，好项照数）
+    //
+    // 2026-11-07（主人反馈「说了提醒，简报里也没有这条」）：原来只报条数，看不到是哪件事。
+    // 现在除了条数，再按到点时间列出最近 3 条的任务正文（只列盘上真实存在的，不编）。
     try {
       const rs = opts.loadReminders()
       if (Array.isArray(rs)) {
-        const pending = rs.filter((r: any) => Boolean(r) && !r.done).length
-        parts.push('待办提醒：' + pending + ' 条')
+        const pendingList = rs
+          .filter((r: any) => Boolean(r) && !r.done)
+          .map((r: any) => {
+            const raw = r.nextAt || r.at
+            const ms = new Date(raw).getTime()
+            return { text: String(r.text || '').trim(), ms: Number.isFinite(ms) ? ms : Infinity }
+          })
+          .filter((x: any) => Boolean(x.text))
+          .sort((a: any, b: any) => a.ms - b.ms)
+        parts.push('待办提醒：' + rs.filter((r: any) => Boolean(r) && !r.done).length + ' 条')
+        const nowMs = safeNow(opts.now).getTime()
+        const top = pendingList.slice(0, 3).map((x: any) => {
+          if (!Number.isFinite(x.ms)) return x.text
+          const d = new Date(x.ms)
+          const hh = String(d.getHours()).padStart(2, '0')
+          const mm = String(d.getMinutes()).padStart(2, '0')
+          const today = safeNow(opts.now)
+          const sameDay = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate()
+          // 只标「今天/明天」，更远的写日期：避免主人把明天的 9 点看成今天 9 点
+          const diffDays = Math.round((
+            new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+            - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
+          ) / 86400000)
+          const dayWord = diffDays === 0 ? '今天' : (diffDays === 1 ? '明天' : ((d.getMonth() + 1) + '月' + d.getDate() + '日'))
+          return dayWord + hh + ':' + mm + ' ' + x.text
+        })
+        if (top.length) parts.push('待办：' + top.join('；'))
+        void nowMs
       }
     } catch { }
     sendJson(res, { ok: true, text: parts.join('\n') })

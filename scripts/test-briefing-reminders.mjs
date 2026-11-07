@@ -562,6 +562,46 @@ try {
   ok('J 段执行', false, String(e && e.message))
 }
 
+
+// 简报待办段：条数 + 最近 3 条的任务正文（2026-11-07 主人反馈「简报里也没有这条」）
+console.log('\n[K] 简报待办段带任务正文')
+{
+  const { createBriefingHandlers } = await imp('src/host/routes/briefing.ts')
+  const nowMs = new Date(2026, 10, 7, 10, 0, 0).getTime()
+  const mk = (reminders) => createBriefingHandlers({
+    loadGrowth: () => ({ exp: 3 }),
+    loadReminders: () => reminders,
+    now: () => new Date(nowMs),
+  })
+  const run = async (h) => {
+    const res = { code: 0, chunks: [] }
+    res.writeHead = (c) => { res.code = c }
+    res.setHeader = () => { }
+    res.write = (c) => { res.chunks.push(Buffer.from(String(c))); return true }
+    res.end = (c) => { if (c !== undefined) res.chunks.push(Buffer.from(String(c))) }
+    res.on = () => { }
+    await h.handleBriefing({ method: 'GET', url: '/api/chubby-whale/briefing', headers: {}, on() { }, async *[Symbol.asyncIterator]() { } }, res)
+    return JSON.parse(Buffer.concat(res.chunks).toString('utf8') || '{}')
+  }
+
+  const two = [
+    { id: 'a', text: '吃早餐', at: new Date(nowMs + 10 * 60_000).toISOString(), done: false },
+    { id: 'b', text: '明天开会', at: new Date(nowMs + 20 * 3600_000).toISOString(), done: false },
+    { id: 'c', text: '已完成', at: new Date(nowMs + 5 * 60_000).toISOString(), done: true },
+  ]
+  const d1 = await run(mk(two))
+  ok('K1 待办条数不计已完成', /待办提醒：2 条/.test(d1.text), String(d1.text).split('\n').join(' | '))
+  ok('K2 正文按到点时间列出最近一条（今天 10:10 吃早餐）', /待办：今天10:10 吃早餐/.test(d1.text), String(d1.text))
+  ok('K3 明天的提醒标「明天」而不是今天的时刻', /明天06:00 明天开会/.test(d1.text), String(d1.text))
+  ok('K4 已完成的提醒不出现在正文里', !/已完成/.test(d1.text))
+
+  const none = await run(mk([]))
+  ok('K5 没有提醒时只有 0 条、没有「待办：」行', /待办提醒：0 条/.test(none.text) && !/待办：/.test(none.text), String(none.text))
+
+  const bad = await run(mk([{ id: 'x', text: '   ', at: 'bad', done: false }]))
+  ok('K6 空正文/坏时间的条目不进正文（不编造）', !/待办：/.test(bad.text), String(bad.text))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) {
