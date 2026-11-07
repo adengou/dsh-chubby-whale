@@ -15,6 +15,74 @@ import { isMissingFileError, stripBom } from './atomic.js'
 import type { DataSourceKind } from './ports.js'
 
 /**
+ * 日志用的有界文本：控制字符（含换行/制表）折成单个空格，超长截断加省略号。
+ * 为什么：配置值可能是手滑粘进来的一整段文本；原样拼进日志会把一行告警撕成几十 KB，
+ * 既不便于排错，也容易顺带把不该出现的内容写进日志。
+ */
+function clip(raw: any, max: number): string {
+  let s = ''
+  try { s = raw == null ? '' : String(raw) } catch { return '(无法转成文本)' }
+  s = s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return s.length > max ? s.slice(0, max) + '…' : s
+}
+
+/**
+ * 值形状描述（只报类型/长度，**绝不回显内容**）。
+ * config.json 里就放着 deepseekKey / siliconflowKey，任何“把原始值打进日志”的写法
+ * 都是一条 Key 外泄通路；形状信息足够定位“写错类型”，不需要看到值本身。
+ */
+function shapeOf(raw: any): string {
+  try {
+    if (raw === undefined) return 'undefined'
+    if (raw === null) return 'null'
+    if (Array.isArray(raw)) return '数组（长度 ' + raw.length + '）'
+    const t = typeof raw
+    if (t === 'object') {
+      let keys = 0
+      try { keys = Object.keys(raw).length } catch { }
+      return '对象（' + keys + ' 个键）'
+    }
+    return t
+  } catch { return '无法识别的值' }
+}
+
+/** 配置值摘要：标量给有界文本（方便排错），数组/对象只报形状（不回显内容） */
+function briefValue(raw: any): string {
+  if (raw === null) return 'null'
+  if (typeof raw === 'string') return '"' + clip(raw, 40) + '"'
+  if (typeof raw === 'number' || typeof raw === 'boolean' || typeof raw === 'undefined') return String(raw)
+  return shapeOf(raw)
+}
+
+/**
+ * JSON.parse 报错摘要：只取错误类型与 `at position N` 里的数字。
+ * 原因见 readConfigJson 的调用点：Node ≥20 的报错消息本身带源文本片段，直接拼消息会泄 Key。
+ */
+function jsonErrorBrief(err: any): string {
+  const name = clip(String((err && err.name) || 'Error'), 40)
+  let position = ''
+  try {
+    const m = /at position (\d+)/.exec(String((err && err.message) || ''))
+    if (m) position = ' @ position ' + m[1]
+  } catch { }
+  return name + position
+}
+
+/**
+ * 读 config.json 里的 Key 字段：类型不对时告警一次（只报字段名与形状，不回显值）。
+ * 旧实现是 `typeof cfg.deepseekKey === 'string'` 静默判否——用户把 Key 写成数字/对象时
+ * 只会看到“Key 没了、语音没反应”，没有任何线索（坑 35 的失败模式）。
+ */
+function readKeyField(cfg: any, field: string): string {
+  if (!cfg) return ''
+  const raw = cfg[field]
+  if (raw === undefined || raw === null) return ''
+  if (typeof raw === 'string') return raw.trim()
+  warnConfig('config.json 的 ' + field + ' 应为字符串（实际 ' + shapeOf(raw) + '），已忽略')
+  return ''
+}
+
+/**
  * 读本插件 config.json。
  *
  * 降级口径（2026-11-07 B74 加固）：
@@ -30,18 +98,22 @@ function readConfigJson(pluginDir: string): any {
   try {
     text = String(readFileSync(file, 'utf8'))
   } catch (err: any) {
-    if (!isMissingFileError(err)) warnConfig('config.json 读取失败（' + file + '）：' + String((err && err.message) || err))
+    if (!isMissingFileError(err)) warnConfig('config.json 读取失败（' + file + '）：' + clip((err && err.message) || err, 200))
     return null
   }
   let parsed: any
   try {
     parsed = JSON.parse(stripBom(text))
   } catch (err: any) {
-    warnConfig('config.json 不是合法 JSON（' + file + '），已按未配置处理：' + String((err && err.message) || err))
+    // 只报错误类型与位置，**绝不拼 err.message**：Node ≥20 的 JSON 报错会带源文本片段
+    //（实测 `Unexpected token 's', ..."pseekKey":sk-live-SE"...`）——config.json 里就放着 Key，
+    // 拼进去等于把 Key 写进日志。
+    warnConfig('config.json 不是合法 JSON（' + file + '），已按未配置处理（' + jsonErrorBrief(err) + '）')
     return null
   }
   if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    warnConfig('config.json 应为对象（实际 ' + shortValue(parsed) + '），已按未配置处理')
+    // 只报形状（类型/长度），不回显内容：旧实现 shortValue(parsed) 会把文件前 60 字符原样打出来
+    warnConfig('config.json 应为对象（实际 ' + shapeOf(parsed) + '），已按未配置处理')
     return null
   }
   return parsed
@@ -62,14 +134,16 @@ function fromEnv(own: string, legacy: string): string {
 /** DeepSeek Key（聊天 / 文档总结 / 对联） */
 export function readApiKey(pluginDir: string): string {
   const cfg = readConfigJson(pluginDir)
-  if (cfg && typeof cfg.deepseekKey === 'string' && cfg.deepseekKey.trim()) return cfg.deepseekKey.trim()
+  const fromFileKey = readKeyField(cfg, 'deepseekKey')
+  if (fromFileKey) return fromFileKey
   return fromEnv('CHUBBY_WHALE_DEEPSEEK_KEY', 'DEEPSEEK_API_KEY')
 }
 
 /** 硅基流动 Key（语音识别） */
 export function readSiliconFlowKey(pluginDir: string): string {
   const cfg = readConfigJson(pluginDir)
-  if (cfg && typeof cfg.siliconflowKey === 'string' && cfg.siliconflowKey.trim()) return cfg.siliconflowKey.trim()
+  const fromFileKey = readKeyField(cfg, 'siliconflowKey')
+  if (fromFileKey) return fromFileKey
   return fromEnv('CHUBBY_WHALE_SILICONFLOW_KEY', 'SILICONFLOW_API_KEY')
 }
 
@@ -101,7 +175,7 @@ function parseDataSource(raw: any, from: string): DataSourceKind | null {
   if (raw == null || String(raw).trim() === '') return null
   const s = String(raw).trim().toLowerCase()
   if (s === 'local' || s === 'cloud') return s
-  const msg = '[chubby-whale] 无效的数据源配置（' + from + '=' + String(raw) + '），按 local 处理'
+  const msg = '[chubby-whale] 无效的数据源配置（' + from + '=' + clip(raw, 40) + '），按 local 处理'
   if (!warnedSources.has(msg)) {
     warnedSources.add(msg)
     console.warn(msg)
@@ -185,7 +259,7 @@ export function parseChatModel(raw: any, from: string): string | null {
   const s = String(raw).trim()
   if (!s) return null
   if (MODEL_NAME_RE.test(s)) return s
-  const msg = '[chubby-whale] 无效的模型配置（' + from + '=' + s.slice(0, 80) + '），已忽略'
+  const msg = '[chubby-whale] 无效的模型配置（' + from + '=' + clip(s, 80) + '），已忽略'
   if (!warnedModels.has(msg)) {
     warnedModels.add(msg)
     console.warn(msg)
@@ -220,10 +294,6 @@ function warnConfig(msg: string): void {
   console.warn('[chubby-whale] ' + msg)
 }
 
-const shortValue = (raw: any): string => {
-  try { return JSON.stringify(raw).slice(0, 60) } catch { return String(raw).slice(0, 60) }
-}
-
 /**
  * 配置清洗（cordis Config schema 与 apply 共用同一份规则）：
  *   · 合法值归一化（dataSource 小写、开关转布尔、model 去空白）；
@@ -234,7 +304,7 @@ const shortValue = (raw: any): string => {
 export function sanitizePluginConfig(raw: any): any {
   if (raw == null) return {}
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    warnConfig('配置应为对象，已按空配置处理（实际 ' + shortValue(raw) + '）')
+    warnConfig('配置应为对象，已按空配置处理（实际 ' + shapeOf(raw) + '）')
     return {}
   }
   const out: any = {}
@@ -248,18 +318,18 @@ export function sanitizePluginConfig(raw: any): any {
     }
     if (key === 'enabled') {
       if (typeof value === 'boolean') out.enabled = value
-      else warnConfig('config.enabled 应为布尔值（实际 ' + shortValue(value) + '），已忽略')
+      else warnConfig('config.enabled 应为布尔值（实际 ' + briefValue(value) + '），已忽略')
       continue
     }
     if (key === 'dataSource') {
       const s = String(value == null ? '' : value).trim().toLowerCase()
       if (s === 'local' || s === 'cloud') out.dataSource = s
-      else warnConfig('config.dataSource 只认 local / cloud（实际 ' + shortValue(value) + '），已忽略')
+      else warnConfig('config.dataSource 只认 local / cloud（实际 ' + briefValue(value) + '），已忽略')
       continue
     }
     if (key === 'personalityLearning' || key === 'personalityWriting') {
       const b = parseSwitchValue(value)
-      if (b === null) warnConfig('config.' + key + ' 应为布尔值（实际 ' + shortValue(value) + '），已忽略')
+      if (b === null) warnConfig('config.' + key + ' 应为布尔值（实际 ' + briefValue(value) + '），已忽略')
       else out[key] = b
       continue
     }
