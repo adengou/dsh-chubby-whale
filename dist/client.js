@@ -67,7 +67,7 @@
     background: "rgba(12,28,52,0.72)",
     border: "1px solid rgba(93,160,240,0.55)",
     color: "#9FD8FF",
-    font: '12px/22px "Microsoft YaHei", sans-serif',
+    font: '12px/22px "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif',
     cursor: "pointer",
     userSelect: "none",
     opacity: 0.75,
@@ -107,7 +107,7 @@
       borderRadius: 10,
       boxShadow: "0 12px 32px rgba(0,0,0,0.5)",
       zIndex: 10001,
-      font: '13px/1.5 "Microsoft YaHei", sans-serif',
+      font: '13px/1.5 "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif',
       display: menu ? "block" : "none",
       color: "#cfe9ff"
     };
@@ -142,7 +142,7 @@
       border: "1px solid rgba(93,160,240,0.55)",
       borderRadius: 18,
       boxShadow: "0 18px 48px rgba(0,0,0,0.55)",
-      font: '14px/1.6 "Microsoft YaHei", sans-serif',
+      font: '14px/1.6 "Microsoft YaHei", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif',
       color: "#dbeaff",
       overflow: "hidden",
       zIndex: 1e4,
@@ -6453,7 +6453,7 @@
   }
 
   // src/client/bubble.ts
-  var BUBBLE_CSS = '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 "Microsoft YaHei",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}';
+  var BUBBLE_CSS = '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 "Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}';
   var STATUS_TEXTS = ["在听…", "在想…", "识别中…", "在说…"];
   deepFreeze(STATUS_TEXTS);
   function decorateText(text) {

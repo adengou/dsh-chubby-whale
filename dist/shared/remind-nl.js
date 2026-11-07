@@ -12,6 +12,9 @@
  *   · **必须有明确时间**才建（没时间 → null，行为与以前一致，不乱建）；
  *   · 必须出现「提醒我 / 提醒主人 / 记得提醒」这类第一人称祈使，且排除「他提醒我」这种转述；
  *   · 最多解析一次（一条消息只建一条提醒），解析不出就如实不建；
+ *   · **任务可以为空**（2026-11-07 主人实测）：「十分钟后提醒我。」这句没有正文，旧规则判 null，
+ *     结果鱼嘴上答应、提醒根本没建。现在只要有明确时间 + 第一人称祈使就建，正文留空——
+ *     到点时客户端会用兜底文案「时间到了」，不编造主人没说的事；
  *   · 纯函数：不读文件、不看系统时区以外的状态，`nowMs` 由调用方传入，便于离线测试。
  *
  * 支持的说法（保守清单，够用且不易误判）：
@@ -60,6 +63,8 @@ function clipTask(raw) {
         .replace(/(?:吧|呀|啊|哦|喔|啦|好吗|行吗|可以吗)$/g, '')
         .replace(/\s+/g, ' ')
         .trim();
+    // 句首/句尾孤零零的「我」「你」「一下」不是任务
+    s = s.replace(/^(?:我|你|一下)+/g, '').replace(/(?:我|你)$/g, '').trim();
     if (!s)
         return '';
     const chars = Array.from(s);
@@ -93,9 +98,10 @@ export function parseReminderIntent(text, nowMs) {
         return null;
     const now = typeof nowMs === 'number' && Number.isFinite(nowMs) ? nowMs : Date.now();
     // 1) 必须是第一人称提醒祈使；排除「他/她/老师…提醒我」这类转述
-    if (!/(提醒我|提醒主人|记得提醒)/.test(raw))
+    // 「提醒一下我」「提醒我」都算；单独的「记得提醒」也算（主语常省略）
+    if (!/(提醒一下我|提醒我|提醒主人|记得提醒)/.test(raw))
         return null;
-    if (/(他|她|别人|老师|妈妈|爸爸|朋友|同学|同事|医生)[^。！？\s]{0,6}提醒我/.test(raw))
+    if (/(他|她|别人|老师|妈妈|爸爸|朋友|同学|同事|医生)[^。！？\s]{0,6}提醒(?:一下)?我/.test(raw))
         return null;
     const repeat = /每天|每天|天天|每日/.test(raw) ? 86400 : 0;
     let rest = raw;
@@ -183,15 +189,15 @@ export function parseReminderIntent(text, nowMs) {
         return null;
     // 4) 任务正文：去掉提醒词与残余时间词
     let task = rest
-        .replace(/提醒我|提醒主人|记得提醒|提醒一下|提醒/g, ' ')
+        // 先去掉最长的「提醒一下我」，否则剩下一个「我」会被当成任务正文（2026-11-07 实测）
+        .replace(/提醒一下我|提醒我一下|提醒一下|提醒我|提醒主人|记得提醒|提醒/g, ' ')
         .replace(/每天|天天|每日/g, ' ')
         .replace(/明天|明日|今晚|今早|今天|明早|明晚|明儿|早上|上午|中午|下午|晚上|傍晚|凌晨/g, ' ')
         .replace(/\bs*个?(?:小时|钟头|分钟|分|秒)\s*(?:之|以)?后/g, ' ')
         .replace(/[点時时]\s*(?:半|\d{1,2})?\s*分?/g, ' ')
         .replace(/(?:一个|两个|三个|\d+\s*个)\s*(?=收|看|吃|喝|去|做|开|关|拿|洗|买)/g, ' ');
     task = clipTask(task);
-    if (!task)
-        return null;
+    // 正文空也建（见头上注释）：不做 return null。空正文由客户端在到点时兜底「时间到了」。
     return {
         task,
         at: new Date(targetMs).toISOString(),
