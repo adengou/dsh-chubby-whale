@@ -85,54 +85,63 @@
     </section>
 
     <!-- ============================================================ -->
-    <!-- 2. 说书                                                       -->
     <!-- ============================================================ -->
-    <section class="panel" id="panel-story" role="tabpanel" aria-labelledby="tab-story" hidden>
-      <h2 class="sr-only">说书</h2>
+    <!-- 2. 文化（说书 / 念诗 / 典故 / 成语 / 民故 / 对联 / 今日）        -->
+    <!-- ============================================================ -->
+    <section class="panel" id="panel-culture" role="tabpanel" aria-labelledby="tab-culture" hidden>
+      <h2 class="sr-only">文化</h2>
 
-      <form class="card stack" id="storyForm">
-        <label class="field-label" for="storyTopic">
-          故事主题<span class="field-hint">（可空，空着本鱼自己编）</span>
-        </label>
-        <input class="input" id="storyTopic" type="text" maxlength="80" enterkeyhint="go"
-               placeholder="比如：一条鱼偷吃 token 被抓" />
-
-        <div class="field-label" id="storyWordsLabel">字数</div>
-        <div class="seg" id="storyWords" role="radiogroup" aria-labelledby="storyWordsLabel">
-          <button class="seg__btn" type="button" role="radio" aria-checked="false" data-words="500">500 字</button>
-          <button class="seg__btn" type="button" role="radio" aria-checked="true" data-words="800">800 字</button>
-          <button class="seg__btn" type="button" role="radio" aria-checked="false" data-words="1200">1200 字</button>
-        </div>
-
-        <button class="btn btn--primary btn--block" id="storyGo" type="submit" aria-label="让大肥鱼讲一个故事">讲一个</button>
-      </form>
-
-      <div class="card loading" id="storyLoading" role="status" aria-live="polite" hidden>
-        <span class="spinner" aria-hidden="true"></span>
-        <span class="loading__text">本鱼正在憋故事…</span>
+      <div class="chips" id="cultureChips" role="tablist" aria-label="文化分类">
+        <button class="chip" type="button" role="tab" data-kind="book" aria-selected="true">📖 说书</button>
+        <button class="chip" type="button" role="tab" data-kind="poem" aria-selected="false">📜 念诗</button>
+        <button class="chip" type="button" role="tab" data-kind="chengyu" aria-selected="false">🏛 典故</button>
+        <button class="chip" type="button" role="tab" data-kind="idiom" aria-selected="false">🧩 成语</button>
+        <button class="chip" type="button" role="tab" data-kind="minsu" aria-selected="false">🪭 民故</button>
+        <button class="chip" type="button" role="tab" data-kind="couplet" aria-selected="false">🖌 对联</button>
+        <button class="chip" type="button" role="tab" data-kind="daily" aria-selected="false">☀️ 今日</button>
       </div>
 
-      <article class="card story" id="storyResult" aria-live="polite" hidden>
-        <h3 class="story__title" id="storyTitle"></h3>
-        <p class="story__meta" id="storyMeta"></p>
-        <div class="story__body" id="storyBody" tabindex="0" role="region" aria-label="故事正文"></div>
+      <!-- 说书：古籍连载 -->
+      <section class="card stack culture-pane" id="pane-book">
+        <label class="field-label" for="bookSelect">选一本 <span class="field-hint">（17 本古籍）</span></label>
+        <select class="input" id="bookSelect"></select>
+        <div class="row">
+          <button class="btn btn--primary" id="bookStart" type="button">开始讲</button>
+          <button class="btn btn--ghost" id="bookNext" type="button" disabled>下一段</button>
+        </div>
+        <p class="story__meta" id="bookMeta"></p>
+        <div class="story__body" id="bookText"></div>
         <div class="story__actions">
-          <button class="btn btn--ghost" id="storySpeak" type="button" aria-label="朗读这个故事">🔊 朗读</button>
-          <button class="btn btn--ghost" id="storyStop" type="button" aria-label="停止朗读">⏹ 停</button>
+          <button class="btn btn--ghost" id="bookSpeak" type="button">🔊 朗读</button>
+          <button class="btn btn--ghost" id="bookStop" type="button">⏹ 停</button>
         </div>
-      </article>
+      </section>
 
-      <section class="card" aria-labelledby="storyHistHeading">
-        <div class="card__head">
-          <h3 class="card__title" id="storyHistHeading">历史故事</h3>
-          <button class="btn btn--ghost" id="storyReload" type="button" aria-label="刷新历史故事列表">刷新</button>
+      <!-- 其它类别共用 -->
+      <section class="card stack culture-pane" id="pane-item" hidden>
+        <h3 class="story__title" id="itemTitle"></h3>
+        <p class="story__meta" id="itemMeta"></p>
+        <div class="story__body" id="itemText"></div>
+        <div class="story__actions">
+          <button class="btn btn--ghost" id="itemSpeak" type="button">🔊 朗读</button>
+          <button class="btn btn--ghost" id="itemStop" type="button">⏹ 停</button>
+          <button class="btn btn--primary" id="itemAgain" type="button">再来一个</button>
         </div>
-        <ul class="list" id="storyList"></ul>
-        <p class="empty" id="storyEmpty">还没有历史故事。先让本鱼讲一个？</p>
+      </section>
+
+      <!-- 今日 -->
+      <section class="card stack culture-pane" id="pane-daily" hidden>
+        <h3 class="story__title">今日</h3>
+        <p class="story__meta" id="dailyMeta"></p>
+        <div class="story__body" id="dailyText"></div>
+        <div class="story__body" id="briefingText"></div>
+        <div class="story__actions">
+          <button class="btn btn--ghost" id="dailySpeak" type="button">🔊 朗读</button>
+          <button class="btn btn--ghost" id="dailyStop" type="button">⏹ 停</button>
+          <button class="btn btn--ghost" id="dailyReload" type="button">刷新</button>
+        </div>
       </section>
     </section>
-
-    <!-- ============================================================ -->
     <!-- 3. 提醒                                                       -->
     <!-- ============================================================ -->
     <section class="panel" id="panel-remind" role="tabpanel" aria-labelledby="tab-remind" hidden>
@@ -178,10 +187,10 @@
       <span class="tab__icon" aria-hidden="true">💬</span>
       <span class="tab__label">聊天</span>
     </button>
-    <button class="tab" id="tab-story" type="button" role="tab" aria-selected="false"
-            aria-controls="panel-story" data-tab="story" tabindex="-1">
+    <button class="tab" id="tab-culture" type="button" role="tab" aria-selected="false"
+            aria-controls="panel-culture" data-tab="culture" tabindex="-1">
       <span class="tab__icon" aria-hidden="true">📖</span>
-      <span class="tab__label">说书</span>
+      <span class="tab__label">文化</span>
     </button>
     <button class="tab" id="tab-remind" type="button" role="tab" aria-selected="false"
             aria-controls="panel-remind" data-tab="remind" tabindex="-1">
@@ -191,6 +200,6 @@
   </nav>
 
   <!-- 原生 ES module，无框架、无外部依赖 -->
-  <script type="module" src="app.js?v=0.1.5"></script>
+  <script type="module" src="app.js?v=0.2.1"></script>
 </body>
 </html>

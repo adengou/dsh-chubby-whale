@@ -31,7 +31,7 @@ const TOKEN_KEY = 'whale.token';
 const VOICE_KEY = 'whale.voice.on';
 const WELCOME_KEY = 'whale.welcome.open';
 const TAB_KEY = 'whale.tab';
-const TABS = ['chat', 'story', 'remind'];
+const TABS = ['chat', 'culture', 'remind'];
 const DEFAULT_QUICK_SEC = 600; // 提醒默认选中「10 分钟后」
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -289,8 +289,8 @@ async function startRecording() {
   // 关键：浏览器只在「安全上下文」里给麦克风。手机用 http://192.168.x.x 打开时
   // navigator.mediaDevices 直接不存在——这不是手机不支持，是浏览器规定。
   if (typeof window !== 'undefined' && window.isSecureContext === false) {
-    toast('录音需要 HTTPS：现在用 http:// 局域网地址打开，浏览器禁用了麦克风。' +
-      '可以先用输入法的语音输入；要页面录音得配 HTTPS（本鱼可以帮你配）', 'error', 8000);
+    // http 页面：网页开不了麦，改用系统录音器（capture 输入不受安全上下文限制）
+    pickAudioFile();
     return;
   }
   if (!navigator.mediaDevices || typeof MediaRecorder === 'undefined') {
@@ -329,7 +329,7 @@ function stopRecording() {
   micState = null;
 }
 
-async function transcribeAndSend(blob) {
+async function transcribeAndSend(blob, format = 'webm') {
   const btn = $('#micBtn');
   if (btn) { btn.textContent = '…'; btn.disabled = true; }
   try {
@@ -337,7 +337,7 @@ async function transcribeAndSend(blob) {
     const res = await fetch('/api/chubby-whale/asr', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ audio, format: 'webm' }),
+      body: JSON.stringify({ audio, format }),
     });
     if (!res.ok) {
       toast(res.status === 501 ? '电脑端没配语音识别 Key（硅基流动）' : `识别失败（${res.status}）`, 'error');
@@ -359,16 +359,104 @@ async function transcribeAndSend(blob) {
   }
 }
 
+// http 页面（非安全上下文）时：浏览器不给网页开麦，
+// 改用「系统录音器 / 选音频文件」——<input capture> 不受安全上下文限制。
+function pickAudioFile() {
+  const input = $('#micFile');
+  if (!input) {
+    toast('这个浏览器连录音器都不给用，换 Chrome 试试', 'error');
+    return;
+  }
+  toast('当前是 http，网页开不了麦：用系统录音器录一段，录完自动识别', 'info', 6000);
+  input.click();
+}
+
+/** 任意音频文件 → 16k 单声道 WAV（ASR 只收 webm/wav/mp3） */
+function encodeWavFromAudioBuffer(buffer, targetRate = 16000) {
+  const channels = buffer.numberOfChannels;
+  const srcRate = buffer.sampleRate;
+  const srcLen = buffer.length;
+  const ratio = srcRate / targetRate;
+  const outLen = Math.max(1, Math.floor(srcLen / ratio));
+  const data = [];
+  for (let c = 0; c < channels; c++) data.push(buffer.getChannelData(c));
+
+  const samples = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const pos = i * ratio;
+    const i0 = Math.floor(pos);
+    const i1 = Math.min(srcLen - 1, i0 + 1);
+    const frac = pos - i0;
+    let sum = 0;
+    for (let c = 0; c < channels; c++) {
+      sum += data[c][i0] * (1 - frac) + data[c][i1] * frac;
+    }
+    samples[i] = sum / channels;
+  }
+
+  const bytes = new ArrayBuffer(44 + outLen * 2);
+  const view = new DataView(bytes);
+  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + outLen * 2, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetRate, true);
+  view.setUint32(28, targetRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, outLen * 2, true);
+  let off = 44;
+  for (let i = 0; i < outLen; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    off += 2;
+  }
+  return new Blob([bytes], { type: 'audio/wav' });
+}
+
+async function audioFileToWav(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) throw new Error('这个浏览器不支持音频解码');
+  const ctx = new AC();
+  try {
+    const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+    return encodeWavFromAudioBuffer(decoded, 16000);
+  } finally {
+    try { await ctx.close(); } catch { /* 忽略 */ }
+  }
+}
+
 function setupMic() {
   const btn = $('#micBtn');
   if (!btn) return;
   if (typeof window !== 'undefined' && window.isSecureContext === false) {
-    btn.title = '需要 HTTPS 才能录音（当前是 http:// 局域网地址）';
+    btn.title = '当前是 http：点一下会用系统录音器（网页开不了麦）';
   }
   btn.addEventListener('click', () => {
     if (micState) stopRecording();
     else startRecording();
   });
+
+  const fileInput = $('#micFile');
+  if (fileInput) {
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+      try {
+        const wav = await audioFileToWav(file);
+        await transcribeAndSend(wav, 'wav');
+      } catch (err) {
+        toast(`音频处理失败：${err && err.message ? err.message : '未知错误'}`, 'error');
+      }
+    });
+  }
 }
 
 /* ========================================================================== *
@@ -1054,6 +1142,217 @@ async function loadStories({ silent = false } = {}) {
   }
 }
 
+/* ========================================================================== *
+ * 文化：说书 / 念诗 / 典故 / 成语 / 民间故事 / 对联 / 今日
+ * 数据全部来自插件自身的 HTTP 接口（与桌面端同一套）
+ * ========================================================================== */
+
+async function cw(path) {
+  const res = await fetch('/api/chubby-whale' + path, { headers: { accept: 'application/json' } });
+  if (!res.ok) throw new Error(String(res.status));
+  return res.json();
+}
+const cultureState = { kind: 'book', lastCouplet: '' };
+let duilianCache = null;
+
+function showCulturePane(kind) {
+  const panes = { book: '#pane-book', daily: '#pane-daily' };
+  const itemPane = $('#pane-item');
+  if (kind === 'book') {
+    $('#pane-book').hidden = false;
+    itemPane.hidden = true;
+    $('#pane-daily').hidden = true;
+    return;
+  }
+  if (kind === 'daily') {
+    $('#pane-book').hidden = true;
+    itemPane.hidden = true;
+    $('#pane-daily').hidden = false;
+    return;
+  }
+  $('#pane-book').hidden = true;
+  $('#pane-daily').hidden = true;
+  itemPane.hidden = false;
+}
+
+function setCultureChip(kind) {
+  $$('#cultureChips .chip').forEach((c) => {
+    c.setAttribute('aria-selected', c.dataset.kind === kind ? 'true' : 'false');
+  });
+  cultureState.kind = kind;
+  showCulturePane(kind);
+}
+
+async function loadBooks() {
+  const sel = $('#bookSelect');
+  if (!sel || sel.options.length > 0) return;
+  try {
+    const d = await cw('/story/books');
+    const books = (d && d.books) || [];
+    sel.replaceChildren();
+    for (const b of books) {
+      const o = document.createElement('option');
+      o.value = b;
+      o.textContent = b;
+      sel.append(o);
+    }
+  } catch (err) {
+    toast('书单加载失败：' + (err && err.message ? err.message : '网络错误'), 'error');
+  }
+}
+
+function renderBookPiece(d) {
+  if (!d || !d.ok) {
+    toast('这一段没讲出来：' + ((d && d.error) || '未知错误'), 'error');
+    return;
+  }
+  $('#bookText').textContent = d.text || '';
+  $('#bookMeta').textContent = `${d.book || ''} · ${d.title || ''} · 第 ${d.piece || 1}/${d.total || '?'} 段`;
+  $('#bookNext').disabled = !!d.isLast;
+  if (voiceOn) speak(d.text || '');
+}
+
+async function bookStart() {
+  const book = $('#bookSelect') && $('#bookSelect').value;
+  if (!book) return;
+  const btn = $('#bookStart');
+  btn.disabled = true;
+  btn.textContent = '讲着呢…';
+  try {
+    renderBookPiece(await cw(`/story/start?book=${encodeURIComponent(book)}`));
+  } catch (err) {
+    toast('说书失败：' + (err && err.message ? err.message : '网络错误'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '开始讲';
+  }
+}
+
+async function bookNext() {
+  const btn = $('#bookNext');
+  btn.disabled = true;
+  try {
+    renderBookPiece(await cw('/story/next'));
+  } catch (err) {
+    toast('下一段失败：' + (err && err.message ? err.message : '网络错误'), 'error');
+  }
+}
+
+function renderItem(title, meta, text) {
+  $('#itemTitle').textContent = title || '无题';
+  $('#itemMeta').textContent = meta || '';
+  $('#itemText').textContent = text || '';
+  if (voiceOn) speak(text || '');
+}
+
+async function loadDuilian() {
+  if (duilianCache) return duilianCache;
+  try {
+    const res = await fetch('duilian.json', { cache: 'force-cache' });
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json();
+    duilianCache = Array.isArray(data && data.items) ? data.items : [];
+  } catch {
+    duilianCache = [];
+  }
+  return duilianCache;
+}
+
+async function pickCouplet() {
+  const items = await loadDuilian();
+  if (!items.length) {
+    renderItem('对联', '', '对联库没加载出来……');
+    return;
+  }
+  let pick = items[Math.floor(Math.random() * items.length)];
+  for (let i = 0; i < 5 && items.length > 1 && pick.upper === cultureState.lastCouplet; i++) {
+    pick = items[Math.floor(Math.random() * items.length)];
+  }
+  cultureState.lastCouplet = pick.upper;
+  const meta = [pick.cat, pick.source].filter(Boolean).join(' · ');
+  renderItem('对联', meta, `${pick.upper}\n${pick.lower}`);
+}
+
+async function loadCultureItem(kind) {
+  try {
+    if (kind === 'poem') {
+      const d = await cw('/poem');
+      const it = (d && d.item) || {};
+      renderItem(`${it.title || '无题'}${it.author ? ' · ' + it.author : ''}`, it.dynasty || '', it.text || '');
+      return;
+    }
+    if (kind === 'couplet') {
+      await pickCouplet();
+      return;
+    }
+    const d = await cw(`/culture?type=${encodeURIComponent(kind)}`);
+    const it = (d && d.item) || {};
+    if (!d || !d.ok || !it.title) {
+      renderItem('没有内容', '', '这一类暂时没取到，换个类别试试。');
+      return;
+    }
+    renderItem(it.title, it.src || '', it.text || '');
+  } catch (err) {
+    toast('加载失败：' + (err && err.message ? err.message : '网络错误'), 'error');
+  }
+}
+
+async function loadDaily() {
+  try {
+    const d = await cw('/daily');
+    const mk = d && d.ok ? `${d.date || ''}${d.source ? ' · ' + d.source : ''}` : '';
+    $('#dailyMeta').textContent = mk;
+    $('#dailyText').textContent = (d && d.text) || '今日一句没取到';
+  } catch {
+    $('#dailyText').textContent = '今日一句没取到';
+  }
+  try {
+    const b = await cw('/briefing');
+    $('#briefingText').textContent = (b && b.text) || '';
+  } catch {
+    $('#briefingText').textContent = '';
+  }
+}
+
+function setupCulture() {
+  const chips = $('#cultureChips');
+  if (!chips) return;
+  chips.addEventListener('click', (ev) => {
+    const chip = ev.target.closest('.chip');
+    if (!chip) return;
+    const kind = chip.dataset.kind;
+    setCultureChip(kind);
+    if (kind === 'book') loadBooks();
+    else if (kind === 'daily') loadDaily();
+    else loadCultureItem(kind);
+  });
+
+  $('#bookStart')?.addEventListener('click', bookStart);
+  $('#bookNext')?.addEventListener('click', bookNext);
+  $('#bookSpeak')?.addEventListener('click', () => speak($('#bookText')?.textContent || ''));
+  $('#bookStop')?.addEventListener('click', () => stopSpeak());
+
+  $('#itemAgain')?.addEventListener('click', () => {
+    const kind = cultureState.kind;
+    if (kind === 'book' || kind === 'daily') return;
+    loadCultureItem(kind);
+  });
+  $('#itemSpeak')?.addEventListener('click', () => {
+    const t = `${$('#itemTitle')?.textContent || ''}。${$('#itemText')?.textContent || ''}`;
+    speak(t);
+  });
+  $('#itemStop')?.addEventListener('click', () => stopSpeak());
+
+  $('#dailySpeak')?.addEventListener('click', () => {
+    const t = `${$('#dailyText')?.textContent || ''}。${$('#briefingText')?.textContent || ''}`;
+    speak(t);
+  });
+  $('#dailyStop')?.addEventListener('click', () => stopSpeak());
+  $('#dailyReload')?.addEventListener('click', loadDaily);
+
+  setCultureChip('book');
+  loadBooks();
+}
 function setupStory() {
   const form = $('#storyForm');
   form.addEventListener('submit', (ev) => {
@@ -1606,7 +1905,7 @@ function init() {
   setupChat();
   setupVoice();      // 语音朗读开关（调电脑端 edge-tts）
   setupMic();        // 语音输入（调电脑端 ASR）
-  setupStory();      // 内含历史故事首屏加载
+  setupCulture();    // 文化：说书/念诗/典故/成语/民故/对联/今日
   setupReminders();  // 内含提醒列表首屏加载 + 倒计时
   setupConnectivity();
   startEvents();

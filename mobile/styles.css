@@ -1043,6 +1043,53 @@ body {
 }
 
 /* ==========================================================================
+   文化：分类 chips + 行内按钮
+   ========================================================================== */
+.chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chip {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text-dim);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.chip[aria-selected="true"] {
+  background: rgba(77, 107, 254, 0.22);
+  border-color: var(--accent, #4d6bfe);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.select,
+select.input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(15, 23, 42, 0.6);
+  color: var(--text);
+  font-size: 15px;
+}
+/* ==========================================================================
    动效减弱
    ========================================================================== */
 @media (prefers-reduced-motion: reduce) {
