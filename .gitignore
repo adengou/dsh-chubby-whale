@@ -16,3 +16,8 @@ dist/data/
 data/pet_state.json
 # 校对备份（本地保留，不入库）
 data/*.bak-*
+
+# 主代理的本地产物：临时补丁脚本/探针一律不进仓库（2026-11-07 误提交过一次）
+.tmp-*
+*.tmp.mjs
+browser-screenshots/
