@@ -96,3 +96,38 @@ npx tsc -p tsconfig.json
 curl http://127.0.0.1:<port>/whale-mobile/api/health
 curl http://127.0.0.1:<port>/api/chubby-whale/story/books
 ```
+
+## 9. 手机访问与语音（通用做法）
+
+浏览器只在**安全上下文**里给麦克风：`http://localhost` 和真实证书的 HTTPS 可以，`http://<局域网IP>` 不行。
+这决定了三种部署方式，按需要选：
+
+### 9.1 只求手机能看（不要求手机录音）
+
+- 手机与电脑同一局域网
+- `dsh web --host <电脑IP>`，手机打开 `http://<电脑IP>:<端口>/whale-mobile/`
+- **代价**：电脑上的页面也变成非安全上下文，桌宠的「语音待命 / 喊名字」会失效（浏览器禁麦克风）
+
+### 9.2 双入口（推荐：电脑语音正常 + 手机能看）
+
+```powershell
+# 1) dsh 只绑回环（电脑用 127.0.0.1，麦克风可用）
+dsh web
+# 2) 另开一个窗口，把回环端口映射到局域网
+node scripts/lan-proxy.mjs
+```
+
+- 脚本自动取本机第一块非回环 IPv4，也可用环境变量指定：
+  `LAN_PROXY_LISTEN_HOST=192.168.1.6 LAN_PROXY_LISTEN_PORT=3080 node scripts/lan-proxy.mjs`
+- 电脑：`http://127.0.0.1:<端口>/whale-mobile/`（麦克风正常）
+- 手机：`http://<电脑IP>:<端口>/whale-mobile/`（可看可听，录音仍被 http 限制）
+- 只在可信网络里运行；需要鉴权就给插件配 `token`
+
+### 9.3 手机也要录音
+
+必须让手机页面落在安全上下文里，二选一：
+
+- **HTTPS**：给 dsh 配 `--tls-cert` / `--tls-key`（证书由使用者自己准备；插件不内置任何域名或证书）
+- **adb reverse**：USB 连接后 `adb reverse tcp:<端口> tcp:<端口>`，手机打开 `http://localhost:<端口>/whale-mobile/`
+
+> 插件本身**不依赖任何私有域名、证书或固定 IP**；以上都由部署者按自己的环境决定。

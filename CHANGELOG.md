@@ -11,6 +11,7 @@
 - **桌宠形象**：直接复用 `/api/chubby-whale/asset` 的 whale.png，带浮动/说话动效
 - **加桌面**：PWA manifest（192/512 PNG + maskable）、顶栏 📲 引导（分浏览器步骤）
 - **配置**：`config.mobile`（`basePath` / `token` / `dataDir` / `model`）；`mobile: false` 可整体关闭
+- **手机访问**：`scripts/lan-proxy.mjs`（回环 + 局域网透传的双入口通用脚本，不依赖任何私有域名）
 - **文档**：[docs/MOBILE.md](docs/MOBILE.md)
 - **长文朗读**：说书/长回复按句切块（每块 ≤110 字）逐段合成播放，不再念到 300 字就停；「停」清空整条队列
 - **提醒**：桌面端轮询 20s → 2s；一次性提醒响过即删（重复提醒保留并推进下次）
