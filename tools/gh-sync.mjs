@@ -21,7 +21,7 @@ const REPO = (process.env.GH_REPO || 'dsh-chubby-whale')
 const API = 'https://api.github.com'
 
 function token() {
-  const out = execSync("printf 'protocol=https\\nhost=github.com\\n\\n' | git credential fill", { encoding: 'utf8', shell: 'bash' })
+  const out = execFileSync('git', ['credential', 'fill'], { input: 'protocol=https\nhost=github.com\n\n', encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })
   const m = out.match(/password=(.+)/)
   if (!m) throw new Error('取不到 GitHub 凭据：请先 git 登录一次或设置 GH_TOKEN')
   return m[1].trim()
