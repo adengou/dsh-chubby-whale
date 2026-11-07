@@ -6,7 +6,7 @@
  * 它直接用自己 config.json 里的 Key 调 https://api.deepseek.com/chat/completions。
  * 手机简版既然是它的附属，就复用它同一套 Key / 模型配置，口径一致、少一处配置。
  */
-import { CHAT_URL } from '../../host/chat-core.js'
+import { DEEPSEEK_CHAT_URL as CHAT_URL } from '../../shared/deepseek.js'
 
 const DEFAULT_TIMEOUT_MS = 60000
 
