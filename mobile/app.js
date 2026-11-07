@@ -206,6 +206,19 @@ async function speak(text) {
   }
 }
 
+/** 正在朗读的 BufferSource（供「停」按钮用） */
+let currentSpeech = null;
+
+/** 停掉当前朗读 */
+function stopSpeak() {
+  try { currentSpeech?.stop(); } catch { /* 已结束 */ }
+  currentSpeech = null;
+  if (ttsAudio) {
+    try { ttsAudio.pause(); ttsAudio.currentTime = 0; } catch { /* 忽略 */ }
+  }
+  setPetSpeaking(false);
+}
+
 /**
  * 播放音频字节。
  * 优先走已经解锁的 AudioContext（手机浏览器只在用户手势里允许出声，
@@ -213,6 +226,7 @@ async function speak(text) {
  * AudioContext 用不了再退回 <audio>。
  */
 async function playAudioBuffer(buf) {
+  stopSpeak();
   if (audioCtx && audioCtx.state === 'running' && typeof audioCtx.decodeAudioData === 'function') {
     try {
       const data = await audioCtx.decodeAudioData(buf.slice(0));
@@ -220,7 +234,11 @@ async function playAudioBuffer(buf) {
       src.buffer = data;
       src.connect(audioCtx.destination);
       setPetSpeaking(true);
-      src.onended = () => setPetSpeaking(false);
+      currentSpeech = src;
+      src.onended = () => {
+        if (currentSpeech === src) currentSpeech = null;
+        setPetSpeaking(false);
+      };
       src.start(0);
       return;
     } catch {
@@ -229,9 +247,6 @@ async function playAudioBuffer(buf) {
   }
 
   // 退化路径：<audio>（桌面浏览器通常没问题）
-  if (ttsAudio) {
-    try { ttsAudio.pause(); } catch { /* 忽略 */ }
-  }
   ttsAudio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' })));
   ttsAudio.addEventListener('playing', () => setPetSpeaking(true));
   ttsAudio.addEventListener('ended', () => setPetSpeaking(false));
@@ -242,6 +257,108 @@ async function playAudioBuffer(buf) {
     setPetSpeaking(false);
     toast('手机拦了自动播放：先点一下页面任意位置，再发消息', 'error');
   }
+}
+
+/* ========================================================================== *
+ * 语音输入：录音 → 电脑端 /api/chubby-whale/asr（硅基流动）→ 文字 → 发送
+ * ========================================================================== */
+
+let micState = null; // { recorder, stream, chunks }
+
+function setMicRecording(on) {
+  const btn = $('#micBtn');
+  if (!btn) return;
+  btn.classList.toggle('is-recording', !!on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.textContent = on ? '⏺' : '🎤';
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const s = String(reader.result || '');
+      resolve(s.slice(s.indexOf(',') + 1));
+    };
+    reader.onerror = () => reject(new Error('音频读取失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function startRecording() {
+  if (!navigator.mediaDevices || typeof MediaRecorder === 'undefined') {
+    toast('这个浏览器不支持录音', 'error');
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const chunks = [];
+    const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    recorder.addEventListener('dataavailable', (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); });
+    recorder.addEventListener('stop', async () => {
+      try { stream.getTracks().forEach((t) => t.stop()); } catch { /* 忽略 */ }
+      setMicRecording(false);
+      const blob = new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' });
+      if (blob.size < 800) {
+        toast('太短了，本鱼没听清');
+        return;
+      }
+      await transcribeAndSend(blob);
+    });
+    recorder.start();
+    micState = { recorder, stream, chunks };
+    setMicRecording(true);
+    toast('说吧，说完再点一下');
+  } catch (err) {
+    setMicRecording(false);
+    toast(err && err.name === 'NotAllowedError' ? '没有麦克风权限：请在浏览器设置里允许' : `录音失败：${err.message}`, 'error');
+  }
+}
+
+function stopRecording() {
+  if (!micState) return;
+  try { micState.recorder.stop(); } catch { /* 忽略 */ }
+  micState = null;
+}
+
+async function transcribeAndSend(blob) {
+  const btn = $('#micBtn');
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+  try {
+    const audio = await blobToBase64(blob);
+    const res = await fetch('/api/chubby-whale/asr', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ audio, format: 'webm' }),
+    });
+    if (!res.ok) {
+      toast(res.status === 501 ? '电脑端没配语音识别 Key（硅基流动）' : `识别失败（${res.status}）`, 'error');
+      return;
+    }
+    const data = await res.json();
+    const text = String(data && data.text ? data.text : '').trim();
+    if (!text) {
+      toast('没听清，再说一遍？');
+      return;
+    }
+    const input = $('#chatInput');
+    input.value = text;
+    sendChat();
+  } catch (err) {
+    toast(`识别失败：${err && err.message ? err.message : '网络错误'}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🎤'; }
+  }
+}
+
+function setupMic() {
+  const btn = $('#micBtn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    if (micState) stopRecording();
+    else startRecording();
+  });
 }
 
 /* ========================================================================== *
@@ -768,6 +885,8 @@ function renderStory(story) {
   $('#storyBody').textContent = story.content;
   $('#storyResult').hidden = false;
   $('#storyResult').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  // 说书也念：先念开头 300 字，想听全文点「朗读」
+  if (voiceOn) speak(story.content);
 }
 
 async function createStory() {
@@ -943,6 +1062,16 @@ function setupStory() {
   });
 
   $('#storyReload').addEventListener('click', () => loadStories());
+  $('#storySpeak')?.addEventListener('click', () => {
+    const text = $('#storyBody')?.textContent || '';
+    if (!text.trim()) return;
+    if (!voiceOn) {
+      toast('语音开关是关的，先点上面的 🔊 语音开');
+      return;
+    }
+    speak(text);
+  });
+  $('#storyStop')?.addEventListener('click', () => stopSpeak());
   loadStories({ silent: true });
 }
 
@@ -1466,6 +1595,7 @@ function init() {
   loadDependencies();  // 依赖自述：电脑端 dsh web + 伴生桌宠
   setupChat();
   setupVoice();      // 语音朗读开关（调电脑端 edge-tts）
+  setupMic();        // 语音输入（调电脑端 ASR）
   setupStory();      // 内含历史故事首屏加载
   setupReminders();  // 内含提醒列表首屏加载 + 倒计时
   setupConnectivity();

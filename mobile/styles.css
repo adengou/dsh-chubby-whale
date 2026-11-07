@@ -1016,6 +1016,32 @@ body {
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
 }
 
+/* 说书：朗读 / 停止 */
+.story__actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px 14px;
+}
+
+/* 聊天：语音输入（点一下录音，再点一下发送） */
+.chat__mic {
+  min-width: 52px;
+  padding: 0 12px;
+  font-size: 18px;
+}
+
+.chat__mic.is-recording {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 /* ==========================================================================
    动效减弱
    ========================================================================== */
