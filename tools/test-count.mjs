@@ -67,6 +67,7 @@ const bad = results.filter((r) => r.status !== 0 || (r.matched && r.fail > 0))
 const CHECK_ONLY = new Set([
   'scripts/gen-module-index.mjs',
   'scripts/check-imports.mjs',
+  'scripts/check-no-shell.mjs',
   'scripts/check-boundaries.mjs',
   'scripts/check-diag-keys.mjs',
   'scripts/check-text.mjs',
