@@ -25,7 +25,7 @@
   }
 
   // src/client/version.ts
-  var VERSION = "1.1.72";
+  var VERSION = "1.1.73";
 
   // src/client/styles.ts
   var W = 240;

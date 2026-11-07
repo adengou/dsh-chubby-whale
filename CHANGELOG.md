@@ -4,6 +4,28 @@
 
 ## [未发布]
 
+## [1.1.73] - 2026-11-07
+
+### 安全（API Key 曾会进日志，B100 分身取证）
+- **坏 config.json 会把 Key 片段写进日志**：Node 的 JSON 报错原文带源片段（实测 "...pseekKey":sk-live-SE"... is not valid JSON）；非对象形状还会回显文件前 60 字符（实测整个 Key 外泄）。三处通路（config 2 条 + prefs 同类 1 条）全部改为只报「位置 / 形状」，**任何 console 输出都不含 Key 值**（测试做源码级扫描防回归）
+- **日志注入**：非法 dataSource 无界拼接，单行日志实测 102432 字符且含换行；改为截断 40 字单行（model 同类处理）
+- **prefs 坏文件被静默覆盖**：坏 prefs.json 直接用默认值覆盖、原文无备份；改为「写前先隔离成 .bad-* 再重写」，与 atomic/store 的既有口径一致
+- Key 字段类型写错（number/boolean/object）此前静默当未配置，现在告警一次，只报字段名 + 类型、不回显值
+
+### 修复（提醒与简报，B100 分身）
+- **提醒文本按 UTF-16 截断**：200 字上限会把 emoji 切成孤立代理项（落库 "...\ud83d"），300 个 emoji 只剩 100 个；改为按码点截断
+- **提醒时间原样落盘**：带时区的 at（+08:00）、Date.toString() 42 字都原样存，换宿主时区/备份恢复后绝对时刻漂移，且备份导入有 40 字上限而路由没有；改为统一落 UTC ISO（≤40 字）
+- **天气段污染简报**：wttr.in 的错误页/多行文本原样拼进简报，客户端按「待办/提醒」分行会凭空造出待办段，5000 字错误页整份进气泡；现在清洗成单行 ≤40 码点
+- 简报的日期此前直连 new Date()，注入时钟被忽略（跨天/跨年不可测）；改为可注入 now（坏值回落真实时钟）
+- 提醒路由的 405 文案统一成 METHOD_NOT_ALLOWED（此前是全仓唯一小写 prose）
+
+### 工具
+- **发版一致性自检 tools/check-release.mjs**：核对 package.json / 客户端 VERSION / dist/client.js / CHANGELOG / tag 内 package.json 五处；`npm run check-release` 与 `--require-tag` 两种模式，发布规范写明「推之前必跑」（针对此前坏 tag 事故）
+
+### 测试
+- 新增 test-config-migrate.mjs(79)、test-briefing-reminders.mjs(75) 接入 npm test
+- 全链 **4724 项 0 失败**（node tools/test-count.mjs：64 个套件，失败 0，未识别 0）
+
 ## [1.1.72] - 2026-11-07
 
 ### 修复（备份导入会静默丢数据，B99 分身取证）
