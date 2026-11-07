@@ -12,11 +12,12 @@ import { shortHash, hashKey } from '../shared/hash.js'
 import { estimateCostCny, readUsageSplit } from '../shared/pricing.js'
 import { clipCodePoints } from '../shared/text.js'
 import { fetchJson } from './http.js'
+import { DEEPSEEK_CHAT_URL } from '../shared/deepseek.js'
 
 /** DeepSeek 对话接口地址（聊天与摘要共用） */
 import { parseReminderIntent } from '../shared/remind-nl.js'
 
-export const CHAT_URL = 'https://api.deepseek.com/chat/completions'
+export const CHAT_URL = DEEPSEEK_CHAT_URL
 /** 只把最近 8 条历史喂给模型（4 轮）；更早的靠长期记忆摘要，省 token */
 export const HISTORY_IN_PROMPT = 8
 /** 聊天回复缓存 7 天 */

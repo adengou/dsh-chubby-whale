@@ -1278,7 +1278,9 @@ function renderItem(title, meta, text) {
   $('#itemTitle').textContent = title || '无题';
   $('#itemMeta').textContent = meta || '';
   $('#itemText').textContent = text || '';
-  if (voiceOn) speak(text || '');
+  // 朗读要带上题目（诗名/典故名/对联出处），不能只念正文
+  const spoken = [title, meta, text].filter(Boolean).join('。');
+  if (voiceOn) speak(spoken);
 }
 
 async function loadDuilian() {
