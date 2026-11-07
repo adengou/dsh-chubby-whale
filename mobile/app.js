@@ -1752,6 +1752,9 @@ async function runEvents(signal) {
           toast(`⏰ ${text}`, 'info', 6000);
           playBeep();
           try { navigator.vibrate?.(200); } catch { /* 不支持震动就算了 */ }
+          // 提醒也要念出来（之前只有提示音，2026-11-07 补）
+          showPetBubble(`⏰ ${text}`);
+          speak(`提醒你：${text}`);
           loadReminders({ silent: true }); // 到点后列表可能变化，顺手刷新
           return;
         }
