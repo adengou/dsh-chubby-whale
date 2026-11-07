@@ -18,6 +18,18 @@ import type { Persona } from './persona.js'
 import type { StoryController, StoryRefs } from './story.js'
 import { beginOnce, recitePoem } from './actions/culture.js'
 
+/**
+ * 点播取数的显式预算（B105）。
+ *
+ * 为什么在 route 层再写一遍：http.ts 的默认 15s 是兜底，不是每个接口合适的节奏。
+ *   · 典故/成语：宿主数据接口自己 10s，再留一次文件读取与回传的余量 → 20s；
+ *   · 念诗：单文件小数据，15s 与 http 默认一致，显式写出来便于审查。
+ * 超时后走**既有**失败文案（'诗册没读到' / '这个没读到'），不新造提示。
+ * 不导出：模块接口清单受控，B105 只改三个文件，不新增对外符号。
+ */
+const CULTURE_TIMEOUT_MS = 20000
+const POEM_TIMEOUT_MS = 15000
+
 export type LocalRouteHost = {
   persona: Persona
   narrationRate: () => string
@@ -56,7 +68,8 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
   }
 
   function fetchPoem(query: string, onItem: (p: any) => void): void {
-    getJson('/poem' + query).then((d: any) => {
+    // 显式 15s：宿主不回包时到点走下面的既有「诗册没读到」，不再无限等（B105）
+    getJson('/poem' + query, { timeout: POEM_TIMEOUT_MS }).then((d: any) => {
       const p = (d && d.ok && d.item) ? d.item : null
       if (!p) { host.bubble('诗册没读到', 4000); return }
       onItem(p)
@@ -136,7 +149,7 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
        */
       const saidIdiom = /成语/.test(t0)
       host.bubble(saidIdiom ? '（点播）讲个成语' : '（点播）讲个典故', 3000)
-      getJson('/culture?type=' + type).then((d: any) => {
+      getJson('/culture?type=' + type, { timeout: CULTURE_TIMEOUT_MS }).then((d: any) => {
         const it = (d && d.ok && d.item) ? d.item : null
         if (!it) { host.bubble('这个没读到', 4000); return }
         const body = collapseText(String(it.text || ''))
