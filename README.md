@@ -95,6 +95,18 @@ dsh plugin --profile web remove dsh-chubby-whale
 
 同一个插件里自带一个**手机端简版页面**：聊天 / 文化 / 提醒，安卓优先，纯静态无构建。
 
+```powershell
+# 装好后打开（本机）
+http://127.0.0.1:<端口>/whale-mobile/
+# 手机（同一局域网，dsh web 用 --host <电脑IP> 启动）
+http://<电脑IP>:<端口>/whale-mobile/
+```
+
+<p>
+  <img src="docs/screenshots/mobile-chat.png" width="45%" alt="手机端聊天：立绘与语音开关" />
+  <img src="docs/screenshots/mobile-culture.png" width="45%" alt="手机端文化：说书/念诗/典故/成语/民故/对联/今日" />
+</p>
+
 - 装了本插件、电脑端 dsh web 开着，手机浏览器打开 `http://<电脑IP>:<端口>/whale-mobile/` 即可
 - **文化**：说书（17 本古籍连载，逐段推进）、念诗（737 首）、典故、成语、民间故事、对联、今日一句 + 今日简报——与桌面端同一套数据与接口- 模型与 Key **复用本插件自己的**（`config.json` 的 `deepseekKey`，逐级回退到环境变量）
 - 数据落在 `$DSH_HOME/whale-mobile/state.json`（与桌宠的 `data/` 分开）

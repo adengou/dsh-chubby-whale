@@ -2,6 +2,17 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [未发布]
+
+### 新增（手机简版 `/whale-mobile`）
+- 一个插件自带手机端：**聊天 / 文化 / 提醒**，安卓优先，纯静态无构建，复用插件自身的 Key 与接口
+- **文化 1:1 复刻**：说书（17 本古籍连载，可续段）、念诗、典故、成语、民间故事、对联、今日一句 + 今日简报
+- **语音**：edge-tts 朗读（可停、说书自动念）、录音转文字（硅基流动 ASR）；`http://` 页面下自动退回系统录音器
+- **桌宠形象**：直接复用 `/api/chubby-whale/asset` 的 whale.png，带浮动/说话动效
+- **加桌面**：PWA manifest（192/512 PNG + maskable）、顶栏 📲 引导（分浏览器步骤）
+- **配置**：`config.mobile`（`basePath` / `token` / `dataDir` / `model`）；`mobile: false` 可整体关闭
+- **文档**：[docs/MOBILE.md](docs/MOBILE.md)
+- 注意：录音需要**安全上下文**（HTTPS 或 `http://localhost`）
 ## [1.1.83] - 2026-11-07
 
 ### 修复（语音识别：静音/噪声会"编"出外语）
