@@ -148,6 +148,11 @@ export interface ChatRouteDeps {
   model?: string
   /** 模型真实成功回复后回调（L2 可变人格计数用）；不 await、不阻塞回复 */
   onReply?: () => void
+  /**
+   * 建提醒（2026-11-07 B106）：主人说「十分钟后提醒我吃早餐」这类话时，
+   * 聊天路由会把解析出的任务写进提醒仓储。缺省（老调用方/离线测试）＝不建，行为与以前一致。
+   */
+  addReminder?: (text: string, at: string, repeat?: number) => any
 }
 
 /** 流式 /chat-stream 的依赖（与普通 /chat 同口径：亲密度/成长/长期摘要都记） */
@@ -163,6 +168,8 @@ export interface ChatStreamRouteDeps {
   cacheEnabled?: () => boolean
   /** 聊天模型名：与普通 /chat 共用同一个装配值（缓存 key 也带它） */
   model?: string
+  /** 建提醒：与 /chat 同口径（见 ChatRouteDeps.addReminder 注释） */
+  addReminder?: (text: string, at: string, repeat?: number) => any
   /** 模型真实成功回复后回调（L2 可变人格计数用）；不 await、不阻塞流 */
   onReply?: () => void
   /** 亲密度/成长/长期摘要：与普通 /chat 同口径（2026-11-06 补齐，客户端优先走流式） */

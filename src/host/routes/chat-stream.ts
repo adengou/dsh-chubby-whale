@@ -47,7 +47,7 @@ import { DEFAULT_CHAT_MODEL } from '../config.js'
 import {
   CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS,
   chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages,
-  summarizeMemory,
+  summarizeMemory, maybeCreateReminder,
 } from '../chat-core.js'
 import { parseSseBuffer } from '../../shared/sse.js'
 
@@ -145,6 +145,11 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
         console.error('[chat-stream] IMAGE-TOO-LARGE b64=' + image.b64.length)
         sendJson(res, { ok: false, error: 'image too large', reply: IMAGE_TOO_LARGE_FALLBACK }, 413)
         return
+      }
+
+      // 与 /chat 同口径：流式路径也要把「提醒我」落成提醒（B106）
+      try { maybeCreateReminder(opts.addReminder, message, Date.now()) } catch (err: any) {
+        console.error('[chat-stream] REMINDER-CREATE-FAIL ' + String((err && err.message) || err))
       }
 
       sendSseHeaders(res)

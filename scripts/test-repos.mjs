@@ -521,6 +521,23 @@ try {
   ok('[G] reminders 断言执行', false, String((err && err.stack) || err))
 }
 
+
+// 成长值读入封顶（B105）：脏文件 / 导入的 1e308 不能原样落盘
+{
+  const dir = mkdtempSync(join(tmpdir(), 'growth-cap-'))
+  try {
+    writeFileSync(join(dir, 'growth.json'), JSON.stringify({ exp: 1e308, dayExp: 1e308 }))
+    const { createGrowthRepo } = await imp('src/host/repos/growth.ts')
+    const repo = createGrowthRepo(dir)
+    const r = repo.addExp(1, 'chat')
+    ok('成长值读入封顶（1e308 不当真值）', Number.isFinite(r.exp) && r.exp <= Number.MAX_SAFE_INTEGER, String(r.exp))
+    const disk = JSON.parse(readFileSync(join(dir, 'growth.json'), 'utf8'))
+    ok('落盘经验也是安全整数', Number.isFinite(disk.exp) && disk.exp <= Number.MAX_SAFE_INTEGER, String(disk.exp))
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }) } catch { }
+  }
+}
+
 console.log('\n' + '='.repeat(56))
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exitCode = 1

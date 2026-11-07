@@ -17,7 +17,7 @@ import { readJsonBody } from '../body.js';
 import { sendJson, sendError } from '../respond.js';
 import { estimateCostCny, readUsageSplit } from '../../shared/pricing.js';
 import { DEFAULT_CHAT_MODEL } from '../config.js';
-import { CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, summarizeMemory, } from '../chat-core.js';
+import { CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, summarizeMemory, maybeCreateReminder, } from '../chat-core.js';
 // 兼容旧导入方（scripts/selftest.mjs、chat-stream 历史版本）：纯函数仍从本模块可导出
 export { HISTORY_IN_PROMPT, normalizeChatText, detectLang, recentHistory, chatCacheKey } from '../chat-core.js';
 const CHAT_TIMEOUT = 30 * 1000; // 主聊天：30 秒（记忆摘要的超时在 chat-core.summarizeMemory 里）
@@ -70,6 +70,14 @@ export function createChatHandler(opts) {
                 console.error('[chat] IMAGE-TOO-LARGE b64=' + imageB64.length);
                 sendJson(res, { ok: false, error: 'image too large', reply: IMAGE_TOO_LARGE_FALLBACK }, 413);
                 return;
+            }
+            // 主人说「十分钟后提醒我吃早餐」这类话：解析并写进提醒仓储（B106）。
+            // 放在缓存查找之前：同样的消息重发/缓存命中也要保证提醒存在；去重在 maybeCreateReminder 里做。
+            try {
+                maybeCreateReminder(opts.addReminder, message, Date.now());
+            }
+            catch (err) {
+                console.error('[chat] REMINDER-CREATE-FAIL ' + String((err && err.message) || err));
             }
             // 读一份历史快照 + 长期记忆：只用来拼 prompt / 算缓存 key，不再拿它整份写回
             let history = [];

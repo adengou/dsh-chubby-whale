@@ -42,7 +42,7 @@ import { readJsonBody } from '../body.js';
 import { sendJson, sendSseHeaders } from '../respond.js';
 import { estimateCostCny, readUsageSplit } from '../../shared/pricing.js';
 import { DEFAULT_CHAT_MODEL } from '../config.js';
-import { CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, summarizeMemory, } from '../chat-core.js';
+import { CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, summarizeMemory, maybeCreateReminder, } from '../chat-core.js';
 import { parseSseBuffer } from '../../shared/sse.js';
 const CHAT_IDLE_TIMEOUT = 30 * 1000; // 空闲超时：连续这么久没有上游数据才中止
 const CHAT_MAX_DURATION = 120 * 1000; // 总时长硬上限：不论有没有数据，到点就断
@@ -177,6 +177,13 @@ export function createChatStreamHandler(opts) {
                 console.error('[chat-stream] IMAGE-TOO-LARGE b64=' + image.b64.length);
                 sendJson(res, { ok: false, error: 'image too large', reply: IMAGE_TOO_LARGE_FALLBACK }, 413);
                 return;
+            }
+            // 与 /chat 同口径：流式路径也要把「提醒我」落成提醒（B106）
+            try {
+                maybeCreateReminder(opts.addReminder, message, Date.now());
+            }
+            catch (err) {
+                console.error('[chat-stream] REMINDER-CREATE-FAIL ' + String((err && err.message) || err));
             }
             sendSseHeaders(res);
             // 立刻把 SSE 头刷出去，客户端不必等首帧（断连监听已由上面的 watchClientGone 挂好）

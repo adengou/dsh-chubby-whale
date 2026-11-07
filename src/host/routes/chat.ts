@@ -20,7 +20,7 @@ import type { ChatRouteDeps } from '../ports.js'
 import { DEFAULT_CHAT_MODEL } from '../config.js'
 import {
   CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS,
-  chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, summarizeMemory,
+  chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, summarizeMemory, maybeCreateReminder,
 } from '../chat-core.js'
 
 // 兼容旧导入方（scripts/selftest.mjs、chat-stream 历史版本）：纯函数仍从本模块可导出
@@ -80,6 +80,12 @@ export function createChatHandler(opts: ChatRouteDeps) {
         sendJson(res, { ok: false, error: 'image too large', reply: IMAGE_TOO_LARGE_FALLBACK }, 413)
         return
       }
+      // 主人说「十分钟后提醒我吃早餐」这类话：解析并写进提醒仓储（B106）。
+      // 放在缓存查找之前：同样的消息重发/缓存命中也要保证提醒存在；去重在 maybeCreateReminder 里做。
+      try { maybeCreateReminder(opts.addReminder, message, Date.now()) } catch (err: any) {
+        console.error('[chat] REMINDER-CREATE-FAIL ' + String((err && err.message) || err))
+      }
+
       // 读一份历史快照 + 长期记忆：只用来拼 prompt / 算缓存 key，不再拿它整份写回
       let history: any[] = []
       try { history = opts.loadHistory() || [] } catch { history = [] }
