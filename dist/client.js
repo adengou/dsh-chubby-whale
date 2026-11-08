@@ -3401,11 +3401,11 @@
   }
 
   // src/client/anim.ts
-  var EYE_L = { x: 195, y: 134, r: 20 };
+  var EYE_L = { x: 212, y: 111, r: 15 };
   deepFreeze(EYE_L);
-  var EYE_R = { x: 260, y: 132, r: 20 };
+  var EYE_R = { x: 256, y: 111, r: 15 };
   deepFreeze(EYE_R);
-  var MOUTH = { x: 235, y: 152, rw: 12, rh: 9 };
+  var MOUTH = { x: 236, y: 126, rw: 5, rh: 4 };
   deepFreeze(MOUTH);
   var FIN_DOTS = [
     { x: 308, y: 115 },
@@ -3415,7 +3415,7 @@
     { x: 343, y: 125 },
     { x: 350, y: 131 }
   ];
-  var TAIL_TIP = { x: 353, y: 296 };
+  var TAIL_TIP = { x: 366, y: 310 };
   var WAG_MS = 900;
   var WAG_JITTER = 0.2;
   var HALO = { x: 240, y: 228, r0: 30, r1: 252 };

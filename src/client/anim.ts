@@ -11,12 +11,13 @@
 import { lookFor, type Look } from './look.js'
 import { deepFreeze } from '../shared/immutable.js'
 
-// 新立绘（鲸鱼娘 1344×1792）经 contain 缩放（scale≈0.238、dx≈80）换算的画布坐标
-export const EYE_L = { x: 195, y: 134, r: 20 }
+// 新立绘（鲸鱼娘 1344×1792）脸部实测 → contain 换算（scale≈0.238、dx=80、dy=0）
+// 原图坐标：左眼(555,465) 右眼(740,465) 嘴(655,530) → 画布 (80+src*0.238)
+export const EYE_L = { x: 212, y: 111, r: 15 }
 deepFreeze(EYE_L)
-export const EYE_R = { x: 260, y: 132, r: 20 }
+export const EYE_R = { x: 256, y: 111, r: 15 }
 deepFreeze(EYE_R)
-export const MOUTH = { x: 235, y: 152, rw: 12, rh: 9 }
+export const MOUTH = { x: 236, y: 126, rw: 5, rh: 4 }
 deepFreeze(MOUTH)
 
 export interface AnimState {
@@ -35,7 +36,7 @@ const FIN_DOTS = [
 ]
 
 /** 甩尾水花起点：尾巴尖附近（画布坐标） */
-const TAIL_TIP = { x: 353, y: 296 }
+const TAIL_TIP = { x: 366, y: 310 }
 /** 一次甩尾的时长（毫秒） */
 const WAG_MS = 900
 /** 甩尾间隔随机抖动 ±20%，免得像节拍器 */
