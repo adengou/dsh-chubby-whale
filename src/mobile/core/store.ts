@@ -20,7 +20,7 @@ export function createStore({ filePath, logger = console }) {
     loading = (async () => {
       try {
         const raw = await readFile(filePath, 'utf8')
-        const parsed = JSON.parse(raw)
+        const parsed = JSON.parse(String(raw).replace(/^\uFEFF/, ''))
         cache = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
       } catch (err) {
         if (err && err.code !== 'ENOENT') {

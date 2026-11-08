@@ -71,7 +71,7 @@ export const inject = ['webServer']
 /** 插件版本（导出包的 version 字段）；读不到 package.json 时给 0.0.0，不编版本号 */
 function readPluginVersion(pluginDir: string): string {
   try {
-    const pkg = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8'))
+    const pkg = JSON.parse(String(readFileSync(join(pluginDir, 'package.json'), 'utf8')).replace(/^\uFEFF/, ''))
     const v = String((pkg && pkg.version) || '').trim()
     return v || '0.0.0'
   } catch {
