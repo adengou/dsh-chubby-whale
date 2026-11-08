@@ -3573,15 +3573,22 @@
     function drawMouth(open) {
       if (!open) return;
       const p = { x: MOUTH.x, y: MOUTH.y };
-      const rw = MOUTH.rw;
-      const rh = MOUTH.rh;
-      ctx.fillStyle = "#E8566B";
+      const rw = MOUTH.rw * 1.6;
+      const rh = MOUTH.rh * 2;
       ctx.beginPath();
-      ctx.ellipse(p.x, p.y, rw * 1.1, rh * 1.45, 0, 0, Math.PI * 2);
+      ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2);
+      ctx.fillStyle = "#F07E96";
       ctx.fill();
-      ctx.fillStyle = "#7c1f2c";
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = "#8C3E4E";
+      ctx.stroke();
       ctx.beginPath();
-      ctx.ellipse(p.x, p.y + rh * 0.5, rw * 0.6, rh * 0.55, 0, 0, Math.PI * 2);
+      ctx.ellipse(p.x, p.y - rh * 0.55, rw * 0.85, rh * 0.42, 0, 0, Math.PI);
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y + rh * 0.42, rw * 0.55, rh * 0.34, 0, 0, Math.PI);
+      ctx.fillStyle = "#E85C74";
       ctx.fill();
     }
     const HEART_LIFE = 1.4;
