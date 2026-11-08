@@ -225,32 +225,26 @@ export function createAnimator(opts: {
   }
 
   /**
-   * 二次元张嘴（说话时开合）：粉色口腔 + 深红细描边 + 上排小白牙 + 舌尖，
-   * 比原来的两个纯色椭圆更像 Q 版立绘。
+   * 说话开合：立绘的嘴本身就是张开的，所以「张嘴帧」不画（露出立绘的嘴），
+   * 「闭嘴帧」用肤色盖住嘴并画一条短唇线 —— 闭↔开 才有肉眼可见的一开一合。
    */
   function drawMouth(open: boolean): void {
-    if (!open) return
+    if (open) return
     const p = { x: MOUTH.x, y: MOUTH.y }
-    const rw = MOUTH.rw
-    const rh = MOUTH.rh
-    // 口腔（椭圆）+ 细描边
+    const rw = MOUTH.rw * 1.9
+    const rh = MOUTH.rh * 2.2
+    // 肤色覆盖（贴立绘的浅粉白脸）
     ctx.beginPath()
     ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2)
-    ctx.fillStyle = '#F07E96'
+    ctx.fillStyle = '#FDF6F0'
     ctx.fill()
-    ctx.lineWidth = 1.2
-    ctx.strokeStyle = '#8C3E4E'
+    // 闭合唇线
+    ctx.beginPath()
+    ctx.moveTo(p.x - rw * 0.62, p.y + rh * 0.05)
+    ctx.quadraticCurveTo(p.x, p.y + rh * 0.55, p.x + rw * 0.62, p.y + rh * 0.05)
+    ctx.lineWidth = 1.5
+    ctx.strokeStyle = '#C56E6A'
     ctx.stroke()
-    // 上排小白牙（上缘一条弧）
-    ctx.beginPath()
-    ctx.ellipse(p.x, p.y - rh * 0.55, rw * 0.85, rh * 0.42, 0, 0, Math.PI)
-    ctx.fillStyle = '#FFFFFF'
-    ctx.fill()
-    // 舌头（下缘小粉弧）
-    ctx.beginPath()
-    ctx.ellipse(p.x, p.y + rh * 0.42, rw * 0.55, rh * 0.34, 0, 0, Math.PI)
-    ctx.fillStyle = '#E85C74'
-    ctx.fill()
   }
 
   /** 爱心寿命（秒）：与透明度归零、上飘终点统一，避免飞出画布被裁掉 */
