@@ -6,7 +6,7 @@
  * 写盘用「临时文件 + rename」，进程被杀也不会留下半个文件。
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, basename } from 'node:path';
 export function createStore({ filePath, logger = console }) {
     /** @type {{ [key: string]: unknown } | null} */
     let cache = null;
@@ -34,7 +34,7 @@ export function createStore({ filePath, logger = console }) {
         return loading;
     }
     async function persist(snapshot) {
-        const tmp = `${filePath}.${process.pid}.tmp`;
+        const tmp = join(dirname(filePath), basename(filePath) + '.' + process.pid + '.tmp');
         await mkdir(dirname(filePath), { recursive: true });
         await writeFile(tmp, JSON.stringify(snapshot, null, 2), 'utf8');
         await rename(tmp, filePath);
