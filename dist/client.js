@@ -3572,9 +3572,9 @@
     }
     function drawMouth(open) {
       if (!open) return;
-      const p = { x: MOUTH.x * sx, y: MOUTH.y * sy };
-      const rw = MOUTH.rw * sx;
-      const rh = MOUTH.rh * sy;
+      const p = { x: MOUTH.x, y: MOUTH.y };
+      const rw = MOUTH.rw;
+      const rh = MOUTH.rh;
       ctx.fillStyle = "#E8566B";
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, rw * 1.1, rh * 1.45, 0, 0, Math.PI * 2);
