@@ -3573,15 +3573,15 @@
     function drawMouth(open) {
       if (open) return;
       const p = { x: MOUTH.x, y: MOUTH.y };
-      const rw = MOUTH.rw * 3.2;
-      const rh = MOUTH.rh * 3.6;
+      const rw = MOUTH.rw * 2.1;
+      const rh = MOUTH.rh * 2.3;
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2);
       ctx.fillStyle = "#FDF6F0";
       ctx.fill();
       ctx.beginPath();
       ctx.moveTo(p.x - rw * 0.62, p.y + rh * 0.05);
-      ctx.quadraticCurveTo(p.x, p.y + rh * 0.55, p.x + rw * 0.62, p.y + rh * 0.05);
+      ctx.quadraticCurveTo(p.x, p.y + rh * 0.38, p.x + rw * 0.55, p.y + rh * 0.04);
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = "#C56E6A";
       ctx.stroke();
