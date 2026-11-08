@@ -3708,24 +3708,15 @@
         }
         drawHalo(t);
         if (img.complete && img.naturalWidth > 0) {
-          ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch);
+          const sw = img.naturalWidth || 1696;
+          const sh = img.naturalHeight || 1504;
+          const scale = Math.min(cw / sw, ch / sh);
+          const dw = sw * scale;
+          const dh = sh * scale;
+          const dx = (cw - dw) / 2;
+          const dy = (ch - dh) / 2;
+          ctx.drawImage(img, 0, 0, sw, sh, dx, dy, dw, dh);
         }
-        drawFinDots(t);
-        blinkT += dt;
-        if (!blinkClosed && blinkT > blinkGap) {
-          blinkClosed = true;
-          blinkT = 0;
-        }
-        if (blinkClosed && blinkT > 150) {
-          blinkClosed = false;
-          blinkT = 0;
-          blinkGap = 3200 + Math.random() * 1800;
-        }
-        if (blinkClosed) {
-          drawEye(EYE_L, true);
-          drawEye(EYE_R, true);
-        }
-        if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0);
         drawSplashes(dt);
       } finally {
         ctx.restore();
