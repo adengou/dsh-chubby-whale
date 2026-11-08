@@ -605,6 +605,8 @@
     let t = str(raw);
     t = t.replace(/[\*＊][^*＊\n]*[\*＊]/g, " ");
     t = t.replace(/[\*＊]/g, " ");
+    t = t.replace(/（(?![^（）\n]*\d)[^（）\n]{0,60}）/g, " ");
+    t = t.replace(/\((?![^()\n]*\d)[^()\n]{0,60}\)/g, " ");
     t = t.replace(/([，。！？；：、])\s+/g, "$1");
     return t.replace(/\s{2,}/g, " ").trim();
   }
