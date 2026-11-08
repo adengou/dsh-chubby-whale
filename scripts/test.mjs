@@ -3596,6 +3596,26 @@ try {
   const a = sim(120, 16.67)
   const b = sim(240, 16.67 / 2)
   ok('60Hz 与 120Hz 物理时长一致', Math.abs(a.x - b.x) < 2 && Math.abs(a.y - b.y) < 2, JSON.stringify({ a, b }))
+  // ⑦ 回归：落地不能形成"弹起一帧、落下一帧"的极限环（2026-11-09 主人实测落地不停颤动）
+  ok('落地反弹阈值高于停稳阈值', P.BOUNCE_MIN > P.STOP_SPEED * 2, 'BOUNCE_MIN=' + P.BOUNCE_MIN)
+  let unsettled = 0
+  for (const vx0 of [-14, -8, -3, -1, 0, 1, 3, 8, 14]) {
+    for (const vy0 of [-14, -8, -3, -1, 0, 3, 8, 14]) {
+      const ff = P.createFlight()
+      ff.resting = false
+      ff.vx = vx0
+      ff.vy = vy0
+      ff.squashAge = P.SQUASH_MS
+      let pp = { x: 120, y: 80 }
+      let settled2 = false
+      for (let i = 0; i < 400; i++) {
+        pp = P.stepFlight(ff, pp, bounds, 1, 16.67).pos
+        if (ff.resting) { settled2 = true; break }
+      }
+      if (!settled2) unsettled++
+    }
+  }
+  ok('9×8 组初速落地都能停稳（无颤动极限环）', unsettled === 0, '未停稳 ' + unsettled + ' 组')
 } catch (e) {
   ok('能加载物理用例', false, String(e.message))
 }

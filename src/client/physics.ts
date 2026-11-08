@@ -46,6 +46,12 @@ export const SQUASH_MS = 280
 export const SQUASH_MAX = 0.18
 /** 松手速度低于这个值就不甩（避免轻放也弹） */
 export const LAUNCH_MIN = 1.2
+/**
+ * 落地反弹的最低法向速度：低于它的落地一律"停住"。
+ * 这是修「落地不停颤动」的关键——重力每帧 +0.55，若落地速度刚好在
+ * 阈值附近，会形成"弹起 1 帧、落下 1 帧"的极限环，永远停不下来。
+ */
+export const BOUNCE_MIN = 2.2
 
 function finite(v: number, fallback = 0): number {
   return Number.isFinite(v) ? v : fallback
@@ -103,12 +109,13 @@ export function stepFlight(f: Flight, pos: Pos, b: Bounds, dtScale = 1, dtMs = 1
     bounce = 'top'
   } else if (y > b.maxY) {
     y = b.maxY
-    if (Math.abs(f.vy) > STOP_SPEED * 2) {
+    if (Math.abs(f.vy) > BOUNCE_MIN) {
       f.vy = -Math.abs(f.vy) * RESTITUTION
       f.vx *= FLOOR_FRICTION
       f.squashAge = 0
       bounce = 'bottom'
     } else {
+      // 小速度落地 = 停稳，不再弹（否则会和重力形成极限环，表现为落地后一直抖）
       f.vy = 0
       f.vx *= FLOOR_FRICTION
       if (Math.abs(f.vx) < STOP_SPEED) {

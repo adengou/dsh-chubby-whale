@@ -6974,6 +6974,7 @@
   var SQUASH_MS = 280;
   var SQUASH_MAX = 0.18;
   var LAUNCH_MIN = 1.2;
+  var BOUNCE_MIN = 2.2;
   function finite(v, fallback = 0) {
     return Number.isFinite(v) ? v : fallback;
   }
@@ -7016,7 +7017,7 @@
       bounce = "top";
     } else if (y > b.maxY) {
       y = b.maxY;
-      if (Math.abs(f.vy) > STOP_SPEED * 2) {
+      if (Math.abs(f.vy) > BOUNCE_MIN) {
         f.vy = -Math.abs(f.vy) * RESTITUTION;
         f.vx *= FLOOR_FRICTION;
         f.squashAge = 0;
