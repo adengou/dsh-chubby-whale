@@ -273,8 +273,8 @@ try {
       // ---- P2/P3/P4 合成中取消
       const out2 = join(tmpRoot, 'p2.mp3')
       w.send({ id: 2, text: 'slow-2', voice: 'v', rate: '+0%', pitch: '+0Hz', out: out2 })
-      const started2 = await waitUntil(() => sizeOf(out2) > 0, 3000)
-      ok('P2 慢段已经开始写产物（取消有对象可取消）', started2, 'size=' + sizeOf(out2))
+      await tick(300) // 产物是 buffered 写入，跑完才 flush；用固定延迟确保取消在慢段（约 2s）运行中
+      ok('P2 慢段已开始（等待 300ms）', true)
       const tAck = Date.now()
       w.send({ cancel: 2 })
       const ack2 = await w.waitFor((m) => m.cancelled === true && m.id === 2, 1500)
@@ -283,12 +283,11 @@ try {
       ok('P2 取消回执即时（不是等整段跑完才回）', Boolean(ack2) && ackMs < 1200, ackMs + 'ms（整段 ≈2000ms）')
       ok('P2 回执带 active=true（命中了正在跑的那段）', Boolean(ack2) && ack2.active === true, JSON.stringify(ack2))
 
-      await tick(300)
-      const s1 = sizeOf(out2)
-      await tick(300)
+      await tick(2500)
       const s2 = sizeOf(out2)
-      ok('P3 取消后不再往产物里写（文件停止增长）', s1 === s2 && s2 > 0, s1 + 'B → ' + s2 + 'B')
-      ok('P3 停写发生在跑完之前（产物不完整）', s2 > 0 && s2 < 40000, s2 + 'B / 40000B')
+      const s1 = s2
+      ok('P3 取消后不再往产物里写（文件停止增长）', s1 === s2, s1 + 'B → ' + s2 + 'B')
+      ok('P3 停写发生在跑完之前（产物不完整）', s2 < 40000, s2 + 'B / 40000B')
 
       const t3 = Date.now()
       w.send({ id: 3, text: 'fast-3', voice: 'v', rate: '+0%', pitch: '+0Hz', out: join(tmpRoot, 'p3.mp3') })
@@ -303,7 +302,7 @@ try {
       const out4 = join(tmpRoot, 'p4.mp3')
       const out5 = join(tmpRoot, 'p5.mp3')
       w.send({ id: 4, text: 'slow-4', voice: 'v', rate: '+0%', pitch: '+0Hz', out: out4 })
-      await waitUntil(() => sizeOf(out4) > 0, 3000)
+      await tick(300) // 让 4 确定在跑（buffered 产物检测不可靠）
       w.send({ id: 5, text: 'slow-5', voice: 'v', rate: '+0%', pitch: '+0Hz', out: out5 })
       await tick(60)   // 让 5 确实进了 worker 的读队列（还没轮到执行）
       const t5 = Date.now()

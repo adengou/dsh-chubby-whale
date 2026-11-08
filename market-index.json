@@ -1,0 +1,44 @@
+{
+  "format": 1,
+  "title": "肥鲸（dsh-chubby-whale）",
+  "description": "DSH 桌面宠物插件：1:1 复刻 dsh-fish-pet 的肥鲸——陪伴对话、语音待命、说书/念诗/文化/提醒/成长",
+  "metadata": {
+    "categories": {},
+    "labels": {},
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "dsh-chubby-whale",
+      "title": "肥鲸 · Chubby Whale",
+      "description": "桌面宠物：陪伴对话、语音待命、说书念诗、文化气、提醒、成长进化。",
+      "author": "adengou",
+      "homepage": "https://gitee.com/adengou/dsh-chubby-whale",
+      "repository": {
+        "url": "https://gitee.com/adengou/dsh-chubby-whale"
+      },
+      "metadata": {
+        "keywords": [
+          "pets",
+          "companion",
+          "voice",
+          "story",
+          "dsh-plugin"
+        ],
+        "labels": [],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "1.2.3",
+          "publishTimestamp": 1794125734,
+          "source": {
+            "type": "git",
+            "url": "https://gitee.com/adengou/dsh-chubby-whale.git",
+            "commit": "ef43ac4585fe4fe1a3f19ad8e99ce4dd775df072"
+          }
+        }
+      ]
+    }
+  ]
+}
