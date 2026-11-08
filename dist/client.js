@@ -3573,8 +3573,8 @@
     function drawMouth(open) {
       if (open) return;
       const p = { x: MOUTH.x, y: MOUTH.y };
-      const rw = MOUTH.rw * 1.9;
-      const rh = MOUTH.rh * 2.2;
+      const rw = MOUTH.rw * 3.2;
+      const rh = MOUTH.rh * 3.6;
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2);
       ctx.fillStyle = "#FDF6F0";
@@ -4802,8 +4802,8 @@
     } catch (e) {
     }
     host.bubble("念诗·" + poem.title + "（" + author + "）" + (totalLines > 1 ? "· 共 " + totalLines + " 句" : ""), 15e3);
-    host.talkFor(6e3);
     const speech = intro + collapsePoemBody(body);
+    host.talkFor(Math.max(6e3, estimateSpeakMs(speech)));
     const my = ++poemGen;
     host.narrate(estimateSpeakMs(speech));
     host.say(host.persona.line("poemStart"), 4e3);
@@ -4939,7 +4939,7 @@
         const tp = taleParts(d.item.title);
         const body = collapseText(d.item.text);
         host.bubble("讲民间故事·" + tp.title + (tp.book ? "（出自《" + tp.book + "》）" : ""), 9e3);
-        host.talkFor(5e3);
+        host.talkFor(Math.max(5e3, estimateSpeakMs(body) + 3e3));
         host.speak("讲个民间故事——" + tp.title + (tp.book ? "，出自《" + tp.book + "》" : "") + "。" + body, {
           rate: host.narrationRate(),
           onDone: () => finishSpeech(host, "故事讲完啦～")
@@ -4958,7 +4958,7 @@
         }
         const body = collapseText(d.item.text);
         host.bubble("讲典故·" + d.item.title + "（" + (d.item.src || "") + "）", 9e3);
-        host.talkFor(5e3);
+        host.talkFor(Math.max(5e3, estimateSpeakMs(body) + 3e3));
         host.speak("讲个典故——" + String(d.item.title || "") + "，出自" + String(d.item.src || "") + "。" + body, {
           rate: host.narrationRate(),
           onDone: () => finishSpeech(host, "典故讲完啦～")

@@ -64,8 +64,8 @@ export function recitePoem(host: ReciteHost, poem: any): void {
   // 进度：按诗句字数累计，气泡显示「第 x/N 句」；开场白要传进去，否则会被算成第 1 句
   try { startProgress('念诗·' + String(poem.title || ''), lines, intro) } catch (e) { }
   host.bubble('念诗·' + poem.title + '（' + author + '）' + (totalLines > 1 ? '· 共 ' + totalLines + ' 句' : ''), 15000)
-  host.talkFor(Math.max(6000, estimateSpeakMs(speech)))
   const speech = intro + collapsePoemBody(body)
+  host.talkFor(Math.max(6000, estimateSpeakMs(speech)))
   const my = ++poemGen
   host.narrate(estimateSpeakMs(speech))
   host.say(host.persona.line('poemStart'), 4000)
