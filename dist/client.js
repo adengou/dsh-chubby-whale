@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.2.3";
+  var VERSION = "1.2.4";
 
   // src/client/styles.ts
   var W = 240;
@@ -3573,8 +3573,8 @@
     function drawMouth(open) {
       if (open) return;
       const p = { x: MOUTH.x * sx, y: MOUTH.y * sy };
-      const rw = MOUTH.rw * sx * 1.7;
-      const rh = MOUTH.rh * sy * 1.9;
+      const rw = MOUTH.rw * sx * 2.4;
+      const rh = MOUTH.rh * sy * 2.6;
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2);
       ctx.fillStyle = "#FEF3F1";
