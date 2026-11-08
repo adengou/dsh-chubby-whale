@@ -7643,6 +7643,10 @@
             host.speak(seg, { rate: chatRate() });
           } catch (e) {
           }
+          try {
+            host.talkFor(Math.max(800, estimateSpeakMs(seg)));
+          } catch (e) {
+          }
         }
         if (segs.length) spokeAny = true;
       };

@@ -24,7 +24,7 @@
 
 import { postJson, postRaw, timeoutSignal } from './http.js'
 import { parseSseBuffer } from '../shared/sse.js'
-import { createSentenceBuffer } from './text.js'
+import { createSentenceBuffer, estimateSpeakMs } from './text.js'
 import type { Deduper } from './text.js'
 import { BUSY_STALE_MS } from './busy.js'
 import type { BusyLock, Epoch } from './busy.js'
@@ -163,7 +163,11 @@ export function createChatSender(host: ChatHost): ChatController {
     const sb = createSentenceBuffer(40)
 
     const speakSegs = (segs: string[]): void => {
-      for (const seg of segs) { try { host.speak(seg, { rate: chatRate() }) } catch (e) { } }
+      for (const seg of segs) {
+        try { host.speak(seg, { rate: chatRate() }) } catch (e) { }
+        // 流式朗读每段都让嘴动（原先只有整段结束后 talkFor 1.5s，流式期间嘴基本不动）
+        try { host.talkFor(Math.max(800, estimateSpeakMs(seg))) } catch (e) { }
+      }
       if (segs.length) spokeAny = true
     }
 
