@@ -6,9 +6,10 @@
  * 这里在构建期就把带 BOM 的文本文件揪出来，宁可构建失败也不让坏包出去。
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, extname } from 'node:path'
+import { join, extname, resolve } from 'node:path'
 
-const ROOT = process.cwd()
+// 用脚本自身位置推导插件根（不依赖调用时的 cwd，跨平台）
+const ROOT = resolve(import.meta.dirname, '..')
 const EXTS = new Set(['.json', '.yml', '.yaml', '.ts', '.js', '.mjs', '.md'])
 const SKIP_DIRS = new Set(['node_modules', '.git'])
 
