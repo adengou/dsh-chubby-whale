@@ -182,9 +182,21 @@ function showPetBubble(text) {
   showPetBubble.timer = setTimeout(() => { bubble.hidden = true; }, 3200);
 }
 
+/** 剥掉人设的动作描写：括号里的角色设定（（尾巴一甩）/（blows a bubble））和星号 *甩尾* 都不该念出来 */
+function stripStageDirectionsMobile(raw) {
+  let s = String(raw || '')
+  // 星号动作：*…* / ＊…＊（先成对再收孤星）
+  s = s.replace(/[\*＊][^*＊\n]*[\*＊]/g, ' ')
+  s = s.replace(/[\*＊]/g, ' ')
+  // 全角/半角括号：含数字的保留（如"第（3）章"）
+  s = s.replace(/（(?![^（）\n]*\d)[^（）\n]{0,60}）/g, ' ')
+  s = s.replace(/\((?![^()\n]*\d)[^()\n]{0,60}\)/g, ' ')
+  return s.replace(/([，。！？；：、])\s+/g, '$1').replace(/\s{2,}/g, ' ').trim()
+}
+
 /** 把长文切成适合逐段合成的句子块（每块 <= 110 字） */
 function splitSpeech(text, max = 110) {
-  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  const clean = stripStageDirectionsMobile(text).replace(/\s+/g, ' ').trim();
   if (!clean) return [];
   const sentences = clean.match(/[^。！？!?；;\n]+[。！？!?；;\n]?/g) || [clean];
   const chunks = [];
