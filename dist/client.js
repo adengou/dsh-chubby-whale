@@ -3405,7 +3405,7 @@
   deepFreeze(EYE_L);
   var EYE_R = { x: 256, y: 111, r: 15 };
   deepFreeze(EYE_R);
-  var MOUTH = { x: 232, y: 126, rw: 5, rh: 4 };
+  var MOUTH = { x: 232, y: 126, rw: 4.2, rh: 3.4 };
   deepFreeze(MOUTH);
   var FIN_DOTS = [
     { x: 308, y: 115 },
@@ -3573,8 +3573,8 @@
     function drawMouth(open) {
       if (!open) return;
       const p = { x: MOUTH.x, y: MOUTH.y };
-      const rw = MOUTH.rw * 1.6;
-      const rh = MOUTH.rh * 2;
+      const rw = MOUTH.rw;
+      const rh = MOUTH.rh;
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2);
       ctx.fillStyle = "#F07E96";

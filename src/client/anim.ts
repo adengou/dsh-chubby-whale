@@ -17,7 +17,7 @@ export const EYE_L = { x: 212, y: 111, r: 15 }
 deepFreeze(EYE_L)
 export const EYE_R = { x: 256, y: 111, r: 15 }
 deepFreeze(EYE_R)
-export const MOUTH = { x: 232, y: 126, rw: 5, rh: 4 }
+export const MOUTH = { x: 232, y: 126, rw: 4.2, rh: 3.4 }
 deepFreeze(MOUTH)
 
 export interface AnimState {
@@ -231,8 +231,8 @@ export function createAnimator(opts: {
   function drawMouth(open: boolean): void {
     if (!open) return
     const p = { x: MOUTH.x, y: MOUTH.y }
-    const rw = MOUTH.rw * 1.6
-    const rh = MOUTH.rh * 2.0
+    const rw = MOUTH.rw
+    const rh = MOUTH.rh
     // 口腔（椭圆）+ 细描边
     ctx.beginPath()
     ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2)
