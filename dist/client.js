@@ -9978,7 +9978,7 @@
         R.useEffect(() => {
           const canvas = canvasRef.current;
           if (!canvas) return;
-          animRef.current = createAnimator({ canvas, imgSrc: "/api/chubby-whale/asset", cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current });
+          animRef.current = createAnimator({ canvas, imgSrc: "/api/chubby-whale/asset?v=" + Date.now(), cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current });
           animRef.current.start();
           return () => animRef.current?.stop();
         }, []);
