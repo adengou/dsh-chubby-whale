@@ -231,8 +231,8 @@ export function createAnimator(opts: {
   function drawMouth(open: boolean): void {
     if (open) return
     const p = { x: MOUTH.x, y: MOUTH.y }
-    const rw = MOUTH.rw * 1.9
-    const rh = MOUTH.rh * 2.2
+    const rw = MOUTH.rw * 3.2
+    const rh = MOUTH.rh * 3.6
     // 肤色覆盖（贴立绘的浅粉白脸）
     ctx.beginPath()
     ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2)
