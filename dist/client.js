@@ -3571,20 +3571,18 @@
       ctx.stroke();
     }
     function drawMouth(open) {
-      if (open) return;
+      if (!open) return;
       const p = { x: MOUTH.x * sx, y: MOUTH.y * sy };
-      const rw = MOUTH.rw * sx * 2.4;
-      const rh = MOUTH.rh * sy * 2.6;
+      const rw = MOUTH.rw * sx;
+      const rh = MOUTH.rh * sy;
+      ctx.fillStyle = "#E8566B";
       ctx.beginPath();
-      ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2);
-      ctx.fillStyle = "#FEF3F1";
+      ctx.ellipse(p.x, p.y, rw * 1.1, rh * 1.45, 0, 0, Math.PI * 2);
       ctx.fill();
+      ctx.fillStyle = "#7c1f2c";
       ctx.beginPath();
-      ctx.moveTo(p.x - rw * 0.5, p.y + rh * 0.03);
-      ctx.quadraticCurveTo(p.x, p.y + rh * 0.3, p.x + rw * 0.5, p.y + rh * 0.03);
-      ctx.lineWidth = 1.4;
-      ctx.strokeStyle = "#C56E6A";
-      ctx.stroke();
+      ctx.ellipse(p.x, p.y + rh * 0.5, rw * 0.6, rh * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
     }
     const HEART_LIFE = 1.4;
     function drawHearts(dtSec) {
