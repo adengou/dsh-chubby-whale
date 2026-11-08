@@ -3643,6 +3643,28 @@ try {
   ok('能加载状态机用例', false, String(e.message))
 }
 
+
+// ---------- 68 语音聊天默认开（旧 off 不继承） ----------
+console.log('\n[68] 语音聊天默认开')
+try {
+  const { readLocalFlag } = await import('../src/client/hooks.ts')
+  const { readFileSync: rf8 } = await import('node:fs')
+  const realLs = globalThis.localStorage
+  try {
+    const mk = (map) => ({ getItem: (k) => (k in map ? map[k] : null), setItem() { }, removeItem() { } })
+    globalThis.localStorage = mk({})
+    ok('键不存在时默认开', readLocalFlag('chubby-voicechat2') === true)
+    globalThis.localStorage = mk({ 'chubby-voicechat2': 'off' })
+    ok('显式 off 仍然尊重', readLocalFlag('chubby-voicechat2') === false)
+    globalThis.localStorage = mk({ 'chubby-voicechat2': 'on' })
+    ok('显式 on 正常', readLocalFlag('chubby-voicechat2') === true)
+  } finally { globalThis.localStorage = realLs }
+  const src = rf8('src/client.ts', 'utf8')
+  ok('语音聊天键已升级为 chubby-voicechat2', src.indexOf("'chubby-voicechat2'") > 0 && src.indexOf("'chubby-voicechat'") < 0)
+} catch (e) {
+  ok('能加载语音聊天默认值用例', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

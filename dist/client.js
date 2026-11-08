@@ -9127,7 +9127,7 @@
         const earOnRef = earOnState.ref;
         const earOn = earOnState.value;
         const setEarOn = earOnState.set;
-        const voiceChatOnState = hookApi.usePersistentBool("chubby-voicechat");
+        const voiceChatOnState = hookApi.usePersistentBool("chubby-voicechat2");
         const voiceChatOnRef = voiceChatOnState.ref;
         const voiceChatOn = voiceChatOnState.value;
         const setVoiceChatOn = voiceChatOnState.set;

@@ -264,7 +264,9 @@ import { evPrevent, evStop } from './client/util.js'
       const earOnRef = earOnState.ref
       const earOn = earOnState.value
       const setEarOn = earOnState.set
-      const voiceChatOnState = hookApi.usePersistentBool('chubby-voicechat')
+      // 2026-11-09 主人要求「默认语音聊天开」：换到新键 chubby-voicechat2，
+      // 旧键里存过的 off 不再继承（老用户升级后也是开）；之后手动关仍会记住。
+      const voiceChatOnState = hookApi.usePersistentBool('chubby-voicechat2')
       const voiceChatOnRef = voiceChatOnState.ref
       const voiceChatOn = voiceChatOnState.value
       const setVoiceChatOn = voiceChatOnState.set
