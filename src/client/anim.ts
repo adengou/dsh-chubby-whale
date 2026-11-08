@@ -11,13 +11,11 @@
 import { lookFor, type Look } from './look.js'
 import { deepFreeze } from '../shared/immutable.js'
 
-// 新立绘（鲸鱼娘 1344×1792）脸部实测 → contain 换算（scale≈0.238、dx=80、dy=0）
-// 原图坐标：左眼(555,465) 右眼(740,465) 嘴(655,530) → 画布 (80+src*0.238)
-export const EYE_L = { x: 212, y: 111, r: 15 }
+export const EYE_L = { x: 679, y: 430, r: 68 }
 deepFreeze(EYE_L)
-export const EYE_R = { x: 256, y: 111, r: 15 }
+export const EYE_R = { x: 860, y: 435, r: 68 }
 deepFreeze(EYE_R)
-export const MOUTH = { x: 232, y: 126, rw: 4.2, rh: 3.4 }
+export const MOUTH = { x: 779, y: 525, rw: 26, rh: 18 }
 deepFreeze(MOUTH)
 
 export interface AnimState {
@@ -36,7 +34,7 @@ const FIN_DOTS = [
 ]
 
 /** 甩尾水花起点：尾巴尖附近（画布坐标） */
-const TAIL_TIP = { x: 366, y: 310 }
+const TAIL_TIP = { x: 391, y: 270 }
 /** 一次甩尾的时长（毫秒） */
 const WAG_MS = 900
 /** 甩尾间隔随机抖动 ±20%，免得像节拍器 */
@@ -211,8 +209,8 @@ export function createAnimator(opts: {
 
   function drawEye(c: { x: number; y: number; r: number }, closed: boolean): void {
     if (!closed) return
-    const p = { x: c.x, y: c.y }
-    const r = c.r
+    const p = { x: c.x * sx, y: c.y * sy }
+    const r = c.r * sx
     ctx.fillStyle = '#F9EDE7'
     ctx.beginPath()
     ctx.ellipse(p.x, p.y, r * 1.15, r * 0.9, 0, 0, Math.PI * 2)
@@ -224,27 +222,19 @@ export function createAnimator(opts: {
     ctx.stroke()
   }
 
-  /**
-   * 说话开合：立绘的嘴本身就是张开的，所以「张嘴帧」不画（露出立绘的嘴），
-   * 「闭嘴帧」用肤色盖住嘴并画一条短唇线 —— 闭↔开 才有肉眼可见的一开一合。
-   */
   function drawMouth(open: boolean): void {
-    if (open) return
-    const p = { x: MOUTH.x, y: MOUTH.y }
-    const rw = MOUTH.rw * 1.7
-    const rh = MOUTH.rh * 1.9
-    // 肤色覆盖（贴立绘的浅粉白脸）
+    if (!open) return
+    const p = { x: MOUTH.x * sx, y: MOUTH.y * sy }
+    const rw = MOUTH.rw * sx
+    const rh = MOUTH.rh * sy
+    ctx.fillStyle = '#E8566B'
     ctx.beginPath()
-    ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2)
-    ctx.fillStyle = '#FDF6F0'
+    ctx.ellipse(p.x, p.y, rw * 1.1, rh * 1.45, 0, 0, Math.PI * 2)
     ctx.fill()
-    // 闭合唇线
+    ctx.fillStyle = '#7c1f2c'
     ctx.beginPath()
-    ctx.moveTo(p.x - rw * 0.62, p.y + rh * 0.05)
-    ctx.quadraticCurveTo(p.x, p.y + rh * 0.3, p.x + rw * 0.5, p.y + rh * 0.03)
-    ctx.lineWidth = 1.5
-    ctx.strokeStyle = '#C56E6A'
-    ctx.stroke()
+    ctx.ellipse(p.x, p.y + rh * 0.5, rw * 0.6, rh * 0.55, 0, 0, Math.PI * 2)
+    ctx.fill()
   }
 
   /** 爱心寿命（秒）：与透明度归零、上飘终点统一，避免飞出画布被裁掉 */
@@ -400,20 +390,12 @@ export function createAnimator(opts: {
 
       drawHalo(t)
       if (img.complete && img.naturalWidth > 0) {
-        // 立绘尺寸不写死：按图片实际宽高等比 contain 到画布（换立绘不再变形/裁切）
-        const sw = img.naturalWidth || 1696
-        const sh = img.naturalHeight || 1504
-        const scale = Math.min(cw / sw, ch / sh)
-        const dw = sw * scale
-        const dh = sh * scale
-        const dx = (cw - dw) / 2
-        const dy = (ch - dh) / 2
-        ctx.drawImage(img, 0, 0, sw, sh, dx, dy, dw, dh)
+        ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch)
       }
-      // 眨眼与说话嘴：坐标按新立绘重测（见 EYE_L/EYE_R/MOUTH 注释）
+      drawFinDots(t)
       blinkT += dt
       if (!blinkClosed && blinkT > blinkGap) { blinkClosed = true; blinkT = 0 }
-      if (blinkClosed && blinkT > 260) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
+      if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
       if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
       if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0)
       drawSplashes(dt)

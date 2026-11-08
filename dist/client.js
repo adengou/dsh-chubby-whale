@@ -3401,11 +3401,11 @@
   }
 
   // src/client/anim.ts
-  var EYE_L = { x: 212, y: 111, r: 15 };
+  var EYE_L = { x: 679, y: 430, r: 68 };
   deepFreeze(EYE_L);
-  var EYE_R = { x: 256, y: 111, r: 15 };
+  var EYE_R = { x: 860, y: 435, r: 68 };
   deepFreeze(EYE_R);
-  var MOUTH = { x: 232, y: 126, rw: 4.2, rh: 3.4 };
+  var MOUTH = { x: 779, y: 525, rw: 26, rh: 18 };
   deepFreeze(MOUTH);
   var FIN_DOTS = [
     { x: 308, y: 115 },
@@ -3415,7 +3415,7 @@
     { x: 343, y: 125 },
     { x: 350, y: 131 }
   ];
-  var TAIL_TIP = { x: 366, y: 310 };
+  var TAIL_TIP = { x: 391, y: 270 };
   var WAG_MS = 900;
   var WAG_JITTER = 0.2;
   var HALO = { x: 240, y: 228, r0: 30, r1: 252 };
@@ -3558,8 +3558,8 @@
     applyLook(look);
     function drawEye(c, closed) {
       if (!closed) return;
-      const p = { x: c.x, y: c.y };
-      const r = c.r;
+      const p = { x: c.x * sx, y: c.y * sy };
+      const r = c.r * sx;
       ctx.fillStyle = "#F9EDE7";
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, r * 1.15, r * 0.9, 0, 0, Math.PI * 2);
@@ -3571,20 +3571,18 @@
       ctx.stroke();
     }
     function drawMouth(open) {
-      if (open) return;
-      const p = { x: MOUTH.x, y: MOUTH.y };
-      const rw = MOUTH.rw * 1.7;
-      const rh = MOUTH.rh * 1.9;
+      if (!open) return;
+      const p = { x: MOUTH.x * sx, y: MOUTH.y * sy };
+      const rw = MOUTH.rw * sx;
+      const rh = MOUTH.rh * sy;
+      ctx.fillStyle = "#E8566B";
       ctx.beginPath();
-      ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2);
-      ctx.fillStyle = "#FDF6F0";
+      ctx.ellipse(p.x, p.y, rw * 1.1, rh * 1.45, 0, 0, Math.PI * 2);
       ctx.fill();
+      ctx.fillStyle = "#7c1f2c";
       ctx.beginPath();
-      ctx.moveTo(p.x - rw * 0.62, p.y + rh * 0.05);
-      ctx.quadraticCurveTo(p.x, p.y + rh * 0.3, p.x + rw * 0.5, p.y + rh * 0.03);
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "#C56E6A";
-      ctx.stroke();
+      ctx.ellipse(p.x, p.y + rh * 0.5, rw * 0.6, rh * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
     }
     const HEART_LIFE = 1.4;
     function drawHearts(dtSec) {
@@ -3710,21 +3708,15 @@
         }
         drawHalo(t);
         if (img.complete && img.naturalWidth > 0) {
-          const sw = img.naturalWidth || 1696;
-          const sh = img.naturalHeight || 1504;
-          const scale = Math.min(cw / sw, ch / sh);
-          const dw = sw * scale;
-          const dh = sh * scale;
-          const dx = (cw - dw) / 2;
-          const dy = (ch - dh) / 2;
-          ctx.drawImage(img, 0, 0, sw, sh, dx, dy, dw, dh);
+          ctx.drawImage(img, 0, 0, 1696, 1504, 0, 0, cw, ch);
         }
+        drawFinDots(t);
         blinkT += dt;
         if (!blinkClosed && blinkT > blinkGap) {
           blinkClosed = true;
           blinkT = 0;
         }
-        if (blinkClosed && blinkT > 260) {
+        if (blinkClosed && blinkT > 150) {
           blinkClosed = false;
           blinkT = 0;
           blinkGap = 3200 + Math.random() * 1800;
