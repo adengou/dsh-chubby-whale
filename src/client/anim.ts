@@ -222,19 +222,27 @@ export function createAnimator(opts: {
     ctx.stroke()
   }
 
+  /**
+   * 说话开合（与竖版同款的含蓄画法）：立绘的嘴本身张开——
+   * 张嘴帧不画（露出立绘嘴），闭嘴帧用肤色盖住嘴 + 一条小唇线，形成小幅度上下噏合。
+   */
   function drawMouth(open: boolean): void {
-    if (!open) return
+    if (open) return
     const p = { x: MOUTH.x * sx, y: MOUTH.y * sy }
-    const rw = MOUTH.rw * sx
-    const rh = MOUTH.rh * sy
-    ctx.fillStyle = '#E8566B'
+    const rw = MOUTH.rw * sx * 1.7
+    const rh = MOUTH.rh * sy * 1.9
+    // 肤色覆盖（横版立绘肤色采样 #FEF3F1）
     ctx.beginPath()
-    ctx.ellipse(p.x, p.y, rw * 1.1, rh * 1.45, 0, 0, Math.PI * 2)
+    ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2)
+    ctx.fillStyle = '#FEF3F1'
     ctx.fill()
-    ctx.fillStyle = '#7c1f2c'
+    // 闭合唇线（小弧度）
     ctx.beginPath()
-    ctx.ellipse(p.x, p.y + rh * 0.5, rw * 0.6, rh * 0.55, 0, 0, Math.PI * 2)
-    ctx.fill()
+    ctx.moveTo(p.x - rw * 0.5, p.y + rh * 0.03)
+    ctx.quadraticCurveTo(p.x, p.y + rh * 0.3, p.x + rw * 0.5, p.y + rh * 0.03)
+    ctx.lineWidth = 1.4
+    ctx.strokeStyle = '#C56E6A'
+    ctx.stroke()
   }
 
   /** 爱心寿命（秒）：与透明度归零、上飘终点统一，避免飞出画布被裁掉 */
