@@ -3405,7 +3405,7 @@
   deepFreeze(EYE_L);
   var EYE_R = { x: 256, y: 111, r: 15 };
   deepFreeze(EYE_R);
-  var MOUTH = { x: 236, y: 126, rw: 5, rh: 4 };
+  var MOUTH = { x: 232, y: 126, rw: 5, rh: 4 };
   deepFreeze(MOUTH);
   var FIN_DOTS = [
     { x: 308, y: 115 },
@@ -3558,8 +3558,8 @@
     applyLook(look);
     function drawEye(c, closed) {
       if (!closed) return;
-      const p = { x: c.x * sx, y: c.y * sy };
-      const r = c.r * sx;
+      const p = { x: c.x, y: c.y };
+      const r = c.r;
       ctx.fillStyle = "#F9EDE7";
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, r * 1.15, r * 0.9, 0, 0, Math.PI * 2);
@@ -3722,7 +3722,7 @@
           blinkClosed = true;
           blinkT = 0;
         }
-        if (blinkClosed && blinkT > 150) {
+        if (blinkClosed && blinkT > 260) {
           blinkClosed = false;
           blinkT = 0;
           blinkGap = 3200 + Math.random() * 1800;

@@ -17,7 +17,7 @@ export const EYE_L = { x: 212, y: 111, r: 15 }
 deepFreeze(EYE_L)
 export const EYE_R = { x: 256, y: 111, r: 15 }
 deepFreeze(EYE_R)
-export const MOUTH = { x: 236, y: 126, rw: 5, rh: 4 }
+export const MOUTH = { x: 232, y: 126, rw: 5, rh: 4 }
 deepFreeze(MOUTH)
 
 export interface AnimState {
@@ -211,8 +211,8 @@ export function createAnimator(opts: {
 
   function drawEye(c: { x: number; y: number; r: number }, closed: boolean): void {
     if (!closed) return
-    const p = { x: c.x * sx, y: c.y * sy }
-    const r = c.r * sx
+    const p = { x: c.x, y: c.y }
+    const r = c.r
     ctx.fillStyle = '#F9EDE7'
     ctx.beginPath()
     ctx.ellipse(p.x, p.y, r * 1.15, r * 0.9, 0, 0, Math.PI * 2)
@@ -405,7 +405,7 @@ export function createAnimator(opts: {
       // 眨眼与说话嘴：坐标按新立绘重测（见 EYE_L/EYE_R/MOUTH 注释）
       blinkT += dt
       if (!blinkClosed && blinkT > blinkGap) { blinkClosed = true; blinkT = 0 }
-      if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
+      if (blinkClosed && blinkT > 260) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
       if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
       if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0)
       drawSplashes(dt)
