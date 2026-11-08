@@ -11,11 +11,12 @@
 import { lookFor, type Look } from './look.js'
 import { deepFreeze } from '../shared/immutable.js'
 
-export const EYE_L = { x: 679, y: 430, r: 68 }
+// 新立绘（鲸鱼娘 1344×1792）经 contain 缩放（scale≈0.238、dx≈80）换算的画布坐标
+export const EYE_L = { x: 195, y: 134, r: 20 }
 deepFreeze(EYE_L)
-export const EYE_R = { x: 860, y: 435, r: 68 }
+export const EYE_R = { x: 260, y: 132, r: 20 }
 deepFreeze(EYE_R)
-export const MOUTH = { x: 779, y: 525, rw: 26, rh: 18 }
+export const MOUTH = { x: 235, y: 152, rw: 12, rh: 9 }
 deepFreeze(MOUTH)
 
 export interface AnimState {
@@ -34,7 +35,7 @@ const FIN_DOTS = [
 ]
 
 /** 甩尾水花起点：尾巴尖附近（画布坐标） */
-const TAIL_TIP = { x: 391, y: 270 }
+const TAIL_TIP = { x: 353, y: 296 }
 /** 一次甩尾的时长（毫秒） */
 const WAG_MS = 900
 /** 甩尾间隔随机抖动 ±20%，免得像节拍器 */
@@ -400,8 +401,12 @@ export function createAnimator(opts: {
         const dy = (ch - dh) / 2
         ctx.drawImage(img, 0, 0, sw, sh, dx, dy, dw, dh)
       }
-      // 面部/背鳍/甩尾的坐标是按旧立绘（1696×1504）量的；换立绘后位置会错，先不画，
-      // 只保留光晕、呼吸浮动与爱心。以后按新立绘重测坐标再恢复。
+      // 眨眼与说话嘴：坐标按新立绘重测（见 EYE_L/EYE_R/MOUTH 注释）
+      blinkT += dt
+      if (!blinkClosed && blinkT > blinkGap) { blinkClosed = true; blinkT = 0 }
+      if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
+      if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
+      if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0)
       drawSplashes(dt)
     } finally {
       ctx.restore()

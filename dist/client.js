@@ -3401,11 +3401,11 @@
   }
 
   // src/client/anim.ts
-  var EYE_L = { x: 679, y: 430, r: 68 };
+  var EYE_L = { x: 195, y: 134, r: 20 };
   deepFreeze(EYE_L);
-  var EYE_R = { x: 860, y: 435, r: 68 };
+  var EYE_R = { x: 260, y: 132, r: 20 };
   deepFreeze(EYE_R);
-  var MOUTH = { x: 779, y: 525, rw: 26, rh: 18 };
+  var MOUTH = { x: 235, y: 152, rw: 12, rh: 9 };
   deepFreeze(MOUTH);
   var FIN_DOTS = [
     { x: 308, y: 115 },
@@ -3415,7 +3415,7 @@
     { x: 343, y: 125 },
     { x: 350, y: 131 }
   ];
-  var TAIL_TIP = { x: 391, y: 270 };
+  var TAIL_TIP = { x: 353, y: 296 };
   var WAG_MS = 900;
   var WAG_JITTER = 0.2;
   var HALO = { x: 240, y: 228, r0: 30, r1: 252 };
@@ -3717,6 +3717,21 @@
           const dy = (ch - dh) / 2;
           ctx.drawImage(img, 0, 0, sw, sh, dx, dy, dw, dh);
         }
+        blinkT += dt;
+        if (!blinkClosed && blinkT > blinkGap) {
+          blinkClosed = true;
+          blinkT = 0;
+        }
+        if (blinkClosed && blinkT > 150) {
+          blinkClosed = false;
+          blinkT = 0;
+          blinkGap = 3200 + Math.random() * 1800;
+        }
+        if (blinkClosed) {
+          drawEye(EYE_L, true);
+          drawEye(EYE_R, true);
+        }
+        if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0);
         drawSplashes(dt);
       } finally {
         ctx.restore();
