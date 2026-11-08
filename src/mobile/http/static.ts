@@ -56,8 +56,17 @@ export function createStatic({ root, logger = console }) {
     if (!info.isFile()) return false
 
     try {
-      const body = await readFile(target)
+      let body = await readFile(target)
       const type = MIME[extname(target).toLowerCase()] || 'application/octet-stream'
+      // HTML 里的 __ASSET_VERSION__ 动态替换成 app.js 的 mtime：改文件即换版本，浏览器自动重拉，不用手改版本号
+      if (type.startsWith('text/html')) {
+        let ver = '0'
+        try {
+          const asset = await stat(resolve(rootDir, 'app.js'))
+          ver = String(Math.floor(asset.mtimeMs))
+        } catch { }
+        body = Buffer.from(String(body).replace(/__ASSET_VERSION__/g, ver), 'utf8')
+      }
       res.writeHead(200, {
         'content-type': type,
         'content-length': String(body.length),
