@@ -24,7 +24,9 @@ import { createMelodyPlayer } from './client/melody.js'
 import { createBubble, clearBubbleTimer, ensureBubbleStyle } from './client/bubble.js'
 import { createNarrationLock } from './client/narration.js'
 import { createBusyLock, createEpoch } from './client/busy.js'
-import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag, endDrag, decayVelocity, bindDragInput } from './client/stage.js'
+import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag, endDrag, bindDragInput } from './client/stage.js'
+import { createFlight, launch, stepFlight, squashScale, SQUASH_MS } from './client/physics.js'
+import { createPhaseMachine } from './client/phase.js'
 import { createStoryController } from './client/story.js'
 import { createLocalRouter } from './client/chat-route.js'
 import { createChatSender } from './client/chat.js'
@@ -289,9 +291,30 @@ import { evPrevent, evStop } from './client/util.js'
       const scaleRef = R.useRef(1)
       // 惯性动画帧句柄：卸载时取消，避免组件销毁后还在写位置
       const inertiaRafRef = R.useRef(0)
+      // 挤压层：单独包住 canvas，避免和成长缩放（canvas.style.transform）互相覆盖
+      const squashRef = R.useRef(null)
+      const phaseRef = R.useRef(null as any)
+      if (!phaseRef.current) phaseRef.current = createPhaseMachine()
       const animRef = R.useRef(null as any)
       /** 动画口型：动画器还没建好时静默（宿主回调里多处共用这一份，别各写一遍 try/catch） */
       const talkFor = (ms: number): void => { try { animRef.current?.talkFor(ms) } catch (e) { } }
+      /** 挤压形变：把 scale 写在包裹层上，不动 canvas 自己的成长缩放 */
+      function applySquash(sx: number, sy: number): void {
+        try {
+          const el: any = squashRef.current
+          if (!el || !el.style) return
+          el.style.transform = (sx === 1 && sy === 1) ? '' : 'scale(' + sx + ',' + sy + ')'
+        } catch (e) { }
+      }
+      /** 工作状态：进状态机 + 交给动画器画头顶小图标 */
+      function setPhase(p: string): void {
+        try {
+          const m: any = phaseRef.current
+          if (!m) return
+          m.enter(p, Date.now())
+          animRef.current?.setPhase(m.current())
+        } catch (e) { }
+      }
       const storyBusyRef = R.useRef(false)
       // 最近一次说书的书名（「从头讲这本书」要按它重置进度）
       const storyBookRef = R.useRef('')
@@ -447,8 +470,19 @@ import { evPrevent, evStop } from './client/util.js'
         }
       }, [])
 
+      // 工作状态：一次性（成功/出错）到点自动回 waiting
+      R.useEffect(() => {
+        const t = setInterval(() => {
+          try {
+            const m: any = phaseRef.current
+            if (!m) return
+            animRef.current?.setPhase(m.tick(Date.now()))
+          } catch (e) { }
+        }, 250)
+        return () => { try { clearInterval(t) } catch (e) { } }
+      }, [])
       // 卸载：取消惯性动画帧（否则组件销毁后最多还会写位置 ~0.7 秒）
-      R.useEffect(() => () => { try { if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current) } catch (e) { } }, [])
+      R.useEffect(() => () => { try { if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current) } catch (e) { } try { applySquash(1, 1) } catch (e) { } }, [])
 
       // 卸载收尾：提醒链 / 朗读音频 / 琴声 AudioContext / 气泡定时器都别留着
       // （SpeechRecognition 当前没用到；VAD 的 MediaRecorder 由下面语音待命的 effect 自己 stopEar）
@@ -597,6 +631,10 @@ import { evPrevent, evStop } from './client/util.js'
 
       // 拖动
       function dragBeginAt(x: number, y: number): void {
+        // 抓住飞行中的鱼：立刻停掉抛物线/挤压，回到普通拖拽
+        try { if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current) } catch (e) { }
+        inertiaRafRef.current = 0
+        applySquash(1, 1)
         beginDrag(dragRef.current, x, y, posRef.current.x, posRef.current.y)
         try {
           const el = stageRef.current
@@ -618,18 +656,33 @@ import { evPrevent, evStop } from './client/util.js'
         try { const el = stageRef.current; if (el && el.style) { el.style.filter = ""; el.style.willChange = "" } } catch (e2) { }
         applyPos(posRef.current.x, posRef.current.y)
         savePos()
-        let vx = v.x
-        let vy = v.y
-        // 惯性按真实帧时长归一化（60Hz 基准）：高刷屏上物理时长与 60Hz 一致，不再短一半
+        const l = launch(v.x, v.y)
+        // 轻放（几乎没速度）不甩：直接停在落点
+        if (!l.moving) return
+        const f = createFlight()
+        f.resting = false
+        f.vx = l.vx
+        f.vy = l.vy
+        f.squashAge = SQUASH_MS
+        const bounds = () => {
+          const s = (scaleRef.current || 1) * 1.08
+          return { minX: 0, minY: 0, maxX: Math.max(0, window.innerWidth - W * s), maxY: Math.max(0, window.innerHeight - H * s) }
+        }
         let lastTs = 0
         const step = (ts: number) => {
           if (dragRef.current.dragging) return
-          const dtScale = lastTs ? Math.min(4, Math.max(0.25, (ts - lastTs) / 16.67)) : 1
+          const dtMs = lastTs ? Math.min(100, ts - lastTs) : 16.67
           lastTs = ts
-          const dv = decayVelocity(vx, vy, dtScale)
-          vx = dv.vx; vy = dv.vy
-          applyPos(posRef.current.x + vx, posRef.current.y + vy)
-          if (dv.done) { savePos(); return }
+          const r = stepFlight(f, posRef.current, bounds(), dtMs / 16.67, dtMs)
+          applyPos(r.pos.x, r.pos.y)
+          const q = squashScale(f.squashAge)
+          applySquash(q.sx, q.sy)
+          if (f.resting) {
+            applySquash(1, 1)
+            savePos()
+            inertiaRafRef.current = 0
+            return
+          }
           inertiaRafRef.current = requestAnimationFrame(step)
         }
         inertiaRafRef.current = requestAnimationFrame(step)
@@ -1033,6 +1086,7 @@ import { evPrevent, evStop } from './client/util.js'
         speakReply: (text) => speakReply(text),
         stopSpeak: () => stopTts(),
         talkFor,
+        onPhase: (p) => setPhase(p),
         heart: () => { try { animRef.current?.pushHeart() } catch (e) { } },
         // 语音回合不动输入框（主人可能正在打字）；打字/语音的来源由 sendText 填标记，用一次即复位
         setInput: (v) => {
@@ -1244,7 +1298,9 @@ import { evPrevent, evStop } from './client/util.js'
           },
           onClick: () => { if (dragRef.current.moved > 8) return; animRef.current?.talkFor(1200) },
         },
-          h('canvas', { ref: canvasRef, width: CW, height: CH, style: canvasStyle }),
+          h('div', { ref: squashRef, style: { width: '100%', height: '100%', transformOrigin: '50% 100%', willChange: 'transform' } },
+            h('canvas', { ref: canvasRef, width: CW, height: CH, style: canvasStyle }),
+          ),
         ),
         h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         recoverProps ? h('div', Object.assign({}, recoverProps, { style: recoverDotStyle }), '○') : null,

@@ -943,7 +943,7 @@
             realFinish();
           }
         };
-        const launch = () => {
+        const launch2 = () => {
           if (done) return;
           try {
             if (voiceTimer) {
@@ -980,18 +980,18 @@
             waiting = true;
             onVoices = () => {
               if (done) return;
-              launch();
+              launch2();
             };
             Synth.addEventListener("voiceschanged", onVoices);
             voiceTimer = setTimeout(() => {
               if (done) return;
-              launch();
+              launch2();
             }, VOICE_WAIT_MS);
           }
         } catch (e) {
           waiting = false;
         }
-        if (!waiting) launch();
+        if (!waiting) launch2();
       } catch (e) {
         realFinish();
       }
@@ -3684,6 +3684,67 @@
       }
       ctx.restore();
     }
+    let phase = "waiting";
+    function drawPhaseOverlay(t) {
+      if (phase === "waiting") return;
+      ctx.save();
+      try {
+        if (phase === "thinking") {
+          for (let i = 0; i < 3; i++) {
+            const a = 0.3 + 0.5 * Math.max(0, Math.sin(t / 380 - i * 0.9));
+            ctx.globalAlpha = a;
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(cw / 2 - 14 + i * 14, 42, 3.2, 0, TAU);
+            ctx.fill();
+          }
+        } else if (phase === "working") {
+          const cx = cw - 52;
+          const cy = 52;
+          ctx.globalAlpha = 0.85;
+          ctx.strokeStyle = "#9FD8FF";
+          ctx.lineWidth = 3;
+          const a0 = t / 260 % TAU;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 9, a0, a0 + Math.PI * 1.2);
+          ctx.stroke();
+          ctx.globalAlpha = 0.6;
+          ctx.fillStyle = "#9FD8FF";
+          ctx.beginPath();
+          ctx.arc(cx, cy, 3, 0, TAU);
+          ctx.fill();
+        } else if (phase === "success") {
+          const cx = cw / 2;
+          const cy = 96;
+          for (let i = 0; i < 6; i++) {
+            const a = (t / 520 + i / 6) * TAU;
+            const r = 20 + 10 * Math.sin(t / 220 + i);
+            ctx.globalAlpha = 0.55 + 0.35 * Math.sin(t / 180 + i);
+            ctx.fillStyle = i % 2 ? "#ffe08a" : "#ffb3c6";
+            ctx.beginPath();
+            ctx.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.6, 2.4, 0, TAU);
+            ctx.fill();
+          }
+        } else if (phase === "error") {
+          const x = cw * 0.72;
+          const y = 66;
+          ctx.globalAlpha = 0.9;
+          ctx.fillStyle = "#7fb7ff";
+          ctx.beginPath();
+          ctx.moveTo(x, y - 7);
+          ctx.quadraticCurveTo(x + 6, y + 3, x, y + 8);
+          ctx.quadraticCurveTo(x - 6, y + 3, x, y - 7);
+          ctx.fill();
+          ctx.globalAlpha = 0.7;
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          ctx.arc(x - 2, y + 1, 1.1, 0, TAU);
+          ctx.fill();
+        }
+      } finally {
+        ctx.restore();
+      }
+    }
     function drawFrame(t) {
       const dt = Math.max(0, Math.min(50, t - last));
       last = t;
@@ -3733,6 +3794,7 @@
         ctx.restore();
       }
       drawHearts(dt / 1e3);
+      drawPhaseOverlay(t);
     }
     const FRAME_ERROR_LIMIT = 300;
     let frameErrors = 0;
@@ -3784,13 +3846,16 @@
       if (state.hearts.length >= HEART_MAX) state.hearts.shift();
       state.hearts.push({ age: 0, dx: Math.random() - 0.5 });
     }
+    function setPhase(next) {
+      phase = next || "waiting";
+    }
     function setLook(next) {
       applyLook(next);
     }
     function getLook() {
       return look;
     }
-    return { start, stop, talkFor, pushHeart, setLook, getLook };
+    return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook };
   }
 
   // src/client/wake.ts
@@ -6700,19 +6765,10 @@
     return { x: clampVelocity(d.vx), y: clampVelocity(d.vy) };
   }
   var INERTIA_MAX = 14;
-  var INERTIA_DECAY = 0.9;
-  var INERTIA_STOP = 0.2;
   function clampVelocity(v) {
     const n = Number(v);
     if (!isFinite(n)) return n > 0 ? INERTIA_MAX : n < 0 ? -INERTIA_MAX : 0;
     return Math.max(-INERTIA_MAX, Math.min(INERTIA_MAX, n));
-  }
-  function decayVelocity(vx, vy, dtScale = 1) {
-    const k = Math.min(4, Math.max(0.25, Number.isFinite(dtScale) ? dtScale : 1));
-    const f = Math.pow(INERTIA_DECAY, k);
-    const nx = vx * f;
-    const ny = vy * f;
-    return { vx: nx, vy: ny, done: Math.abs(nx) < INERTIA_STOP && Math.abs(ny) < INERTIA_STOP };
   }
   function pickInputMode(hasPointerEvent) {
     return hasPointerEvent ? "pointer" : "touch";
@@ -6906,6 +6962,111 @@
       activeId = null;
     };
     return { mode, dispose };
+  }
+
+  // src/client/physics.ts
+  var GRAVITY = 0.55;
+  var RESTITUTION = 0.6;
+  var WALL_FRICTION = 0.85;
+  var FLOOR_FRICTION = 0.72;
+  var MAX_SPEED = 18;
+  var STOP_SPEED = 0.35;
+  var SQUASH_MS = 280;
+  var SQUASH_MAX = 0.18;
+  var LAUNCH_MIN = 1.2;
+  function finite(v, fallback = 0) {
+    return Number.isFinite(v) ? v : fallback;
+  }
+  function createFlight() {
+    return { vx: 0, vy: 0, resting: true, squashAge: SQUASH_MS };
+  }
+  function launch(vx, vy) {
+    const x = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, finite(vx)));
+    const y = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, finite(vy)));
+    return { vx: x, vy: y, moving: Math.hypot(x, y) >= LAUNCH_MIN };
+  }
+  function stepFlight(f, pos, b, dtScale = 1, dtMs = 16.67) {
+    const k = Math.min(4, Math.max(0.25, finite(dtScale, 1)));
+    const ms2 = Math.min(100, Math.max(0, finite(dtMs, 16.67)));
+    if (f.squashAge < SQUASH_MS) f.squashAge = Math.min(SQUASH_MS, f.squashAge + ms2);
+    if (f.resting) return { pos: { x: finite(pos.x), y: finite(pos.y) }, bounce: "none" };
+    f.vy += GRAVITY * k;
+    let x = finite(pos.x) + f.vx * k;
+    let y = finite(pos.y) + f.vy * k;
+    let bounce = "none";
+    if (x < b.minX) {
+      x = b.minX;
+      f.vx = Math.abs(f.vx) * RESTITUTION;
+      f.vy *= WALL_FRICTION;
+      f.squashAge = 0;
+      bounce = "left";
+    } else if (x > b.maxX) {
+      x = b.maxX;
+      f.vx = -Math.abs(f.vx) * RESTITUTION;
+      f.vy *= WALL_FRICTION;
+      f.squashAge = 0;
+      bounce = "right";
+    }
+    if (y < b.minY) {
+      y = b.minY;
+      f.vy = Math.abs(f.vy) * RESTITUTION;
+      f.vx *= WALL_FRICTION;
+      f.squashAge = 0;
+      bounce = "top";
+    } else if (y > b.maxY) {
+      y = b.maxY;
+      if (Math.abs(f.vy) > STOP_SPEED * 2) {
+        f.vy = -Math.abs(f.vy) * RESTITUTION;
+        f.vx *= FLOOR_FRICTION;
+        f.squashAge = 0;
+        bounce = "bottom";
+      } else {
+        f.vy = 0;
+        f.vx *= FLOOR_FRICTION;
+        if (Math.abs(f.vx) < STOP_SPEED) {
+          f.vx = 0;
+          f.resting = true;
+        }
+      }
+    }
+    x = finite(x, b.minX);
+    y = finite(y, b.minY);
+    return { pos: { x, y }, bounce };
+  }
+  function squashScale(ageMs) {
+    const a = Math.max(0, finite(ageMs, SQUASH_MS));
+    if (a >= SQUASH_MS) return { sx: 1, sy: 1 };
+    const q = a / SQUASH_MS;
+    const damp = Math.exp(-4.2 * q);
+    const wave = Math.cos(q * Math.PI * 2);
+    const sy = 1 - SQUASH_MAX * damp * wave;
+    const sx = 1 + (1 - sy) * 0.55;
+    return { sx: Math.max(0.8, Math.min(1.2, sx)), sy: Math.max(0.8, Math.min(1.2, sy)) };
+  }
+
+  // src/client/phase.ts
+  var PHASE_ONE_SHOT_MS = 900;
+  function isOneShot(p) {
+    return p === "success" || p === "error";
+  }
+  function createPhaseMachine(opts = {}) {
+    const oneShotMs = Math.max(100, Number(opts.oneShotMs) || PHASE_ONE_SHOT_MS);
+    let cur = "waiting";
+    let until = 0;
+    function enter(p, now) {
+      const t = Number.isFinite(now) ? now : 0;
+      if (isOneShot(cur) && t < until && !isOneShot(p)) return cur;
+      if (p === cur) return cur;
+      cur = p;
+      until = isOneShot(p) ? t + oneShotMs : 0;
+      return cur;
+    }
+    function tick(now) {
+      const t = Number.isFinite(now) ? now : 0;
+      if (isOneShot(cur) && t >= until) cur = "waiting";
+      return cur;
+    }
+    return { enter, tick, current: () => cur };
   }
 
   // src/shared/tts.ts
@@ -7626,6 +7787,7 @@
       const isCurrent = () => host.epoch.isCurrent(myEpoch);
       let spokeAny = false;
       let full = "";
+      let phaseWorking = false;
       const ctl = newAbortController();
       activeStream = { ctl };
       let gotHeaders = false;
@@ -7676,6 +7838,10 @@
           } catch (e) {
           }
           if (!tip) tip = "主人，本鲸这边没接上（HTTP " + status + "），等会儿再试一次？";
+          try {
+            if (host.onPhase) host.onPhase("error");
+          } catch (e) {
+          }
           if (isCurrent()) {
             try {
               host.setMessages((m) => [...m, { who: "fish", text: tip }]);
@@ -7712,6 +7878,13 @@
               throw new Error(String(obj.error));
             }
             if (typeof obj.delta === "string" && obj.delta) {
+              if (!phaseWorking) {
+                phaseWorking = true;
+                try {
+                  if (host.onPhase) host.onPhase("working");
+                } catch (e) {
+                }
+              }
               full += obj.delta;
               speakSegs(sb.push(obj.delta));
               const nowT = Date.now();
@@ -7728,6 +7901,10 @@
               speakSegs(sb.flush());
               host.busy.end();
               host.setBusy(false);
+              try {
+                if (host.onPhase) host.onPhase(reply ? "success" : "error");
+              } catch (e) {
+              }
               if (reply) {
                 const fresh = host.replyDeduper.allow(reply);
                 try {
@@ -7766,6 +7943,10 @@
         host.busy.end();
         host.setBusy(false);
         const tail = full.trim();
+        try {
+          if (host.onPhase) host.onPhase(tail ? "success" : "error");
+        } catch (e) {
+        }
         if (tail) {
           try {
             host.setMessages((m) => [...m, { who: "fish", text: tail }]);
@@ -7856,6 +8037,10 @@
       } catch (e) {
       }
       try {
+        if (host.onPhase) host.onPhase("thinking");
+      } catch (e) {
+      }
+      try {
         if (await tryStream(text, opts, myEpoch)) return;
       } catch (e) {
       }
@@ -7899,6 +8084,10 @@
         if (!host.epoch.isCurrent(myEpoch)) return;
         const reply = data && data.reply ? String(data.reply) : data && data.ok === false ? "主人，本鲸这边没接上（" + String(data.error || "接口没应") + "），等会儿再问一次？" : "主人……本鲸走神了。";
         if (d1) d1.lastChat = { stage: "fetched", reply: String(reply).slice(0, 40), at: Date.now() };
+        try {
+          if (host.onPhase) host.onPhase(data && data.ok === false ? "error" : "success");
+        } catch (e) {
+        }
         host.setMessages((m) => [...m, { who: "fish", text: reply }]);
         if (host.voiceMode.current) {
           host.bubble("（说）" + reply, 8e3);
@@ -7907,6 +8096,10 @@
       } catch (err) {
         if (!host.epoch.isCurrent(myEpoch)) return;
         const timedOut = !!err && (err.name === "AbortError" || err.name === "TimeoutError" || err.code === 20 || err.code === 2 || err.code === 23);
+        try {
+          if (host.onPhase) host.onPhase("error");
+        } catch (e) {
+        }
         const tip = timedOut ? "主人，本鲸等太久啦（网络慢），再问一次？" : host.persona.line("error");
         if (d1) d1.lastChat = { stage: timedOut ? "timeout" : "error", error: String(err && err.message || err).slice(0, 60), at: Date.now() };
         fishTip(host, tip, 5e3);
@@ -8955,6 +9148,9 @@
         const dragRef = R.useRef(createDragState());
         const scaleRef = R.useRef(1);
         const inertiaRafRef = R.useRef(0);
+        const squashRef = R.useRef(null);
+        const phaseRef = R.useRef(null);
+        if (!phaseRef.current) phaseRef.current = createPhaseMachine();
         const animRef = R.useRef(null);
         const talkFor = (ms2) => {
           try {
@@ -8962,6 +9158,23 @@
           } catch (e) {
           }
         };
+        function applySquash(sx, sy) {
+          try {
+            const el = squashRef.current;
+            if (!el || !el.style) return;
+            el.style.transform = sx === 1 && sy === 1 ? "" : "scale(" + sx + "," + sy + ")";
+          } catch (e) {
+          }
+        }
+        function setPhase(p) {
+          try {
+            const m = phaseRef.current;
+            if (!m) return;
+            m.enter(p, Date.now());
+            animRef.current?.setPhase(m.current());
+          } catch (e) {
+          }
+        }
         const storyBusyRef = R.useRef(false);
         const storyBookRef = R.useRef("");
         const storyNarration = hookApi.useLazyRef(() => makeNarrateHandle("story", () => !!storyBusyRef.current));
@@ -9118,9 +9331,29 @@
             saveTimer = null;
           };
         }, []);
+        R.useEffect(() => {
+          const t = setInterval(() => {
+            try {
+              const m = phaseRef.current;
+              if (!m) return;
+              animRef.current?.setPhase(m.tick(Date.now()));
+            } catch (e) {
+            }
+          }, 250);
+          return () => {
+            try {
+              clearInterval(t);
+            } catch (e) {
+            }
+          };
+        }, []);
         R.useEffect(() => () => {
           try {
             if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current);
+          } catch (e) {
+          }
+          try {
+            applySquash(1, 1);
           } catch (e) {
           }
         }, []);
@@ -9294,6 +9527,12 @@
           };
         }, []);
         function dragBeginAt(x, y) {
+          try {
+            if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current);
+          } catch (e) {
+          }
+          inertiaRafRef.current = 0;
+          applySquash(1, 1);
           beginDrag(dragRef.current, x, y, posRef.current.x, posRef.current.y);
           try {
             const el = stageRef.current;
@@ -9324,19 +9563,30 @@
           }
           applyPos(posRef.current.x, posRef.current.y);
           savePos();
-          let vx = v.x;
-          let vy = v.y;
+          const l = launch(v.x, v.y);
+          if (!l.moving) return;
+          const f = createFlight();
+          f.resting = false;
+          f.vx = l.vx;
+          f.vy = l.vy;
+          f.squashAge = SQUASH_MS;
+          const bounds = () => {
+            const s = (scaleRef.current || 1) * 1.08;
+            return { minX: 0, minY: 0, maxX: Math.max(0, window.innerWidth - W * s), maxY: Math.max(0, window.innerHeight - H * s) };
+          };
           let lastTs = 0;
           const step = (ts) => {
             if (dragRef.current.dragging) return;
-            const dtScale = lastTs ? Math.min(4, Math.max(0.25, (ts - lastTs) / 16.67)) : 1;
+            const dtMs = lastTs ? Math.min(100, ts - lastTs) : 16.67;
             lastTs = ts;
-            const dv = decayVelocity(vx, vy, dtScale);
-            vx = dv.vx;
-            vy = dv.vy;
-            applyPos(posRef.current.x + vx, posRef.current.y + vy);
-            if (dv.done) {
+            const r = stepFlight(f, posRef.current, bounds(), dtMs / 16.67, dtMs);
+            applyPos(r.pos.x, r.pos.y);
+            const q = squashScale(f.squashAge);
+            applySquash(q.sx, q.sy);
+            if (f.resting) {
+              applySquash(1, 1);
               savePos();
+              inertiaRafRef.current = 0;
               return;
             }
             inertiaRafRef.current = requestAnimationFrame(step);
@@ -9799,6 +10049,7 @@
           speakReply: (text) => speakReply(text),
           stopSpeak: () => stopTts(),
           talkFor,
+          onPhase: (p) => setPhase(p),
           heart: () => {
             try {
               animRef.current?.pushHeart();
@@ -10041,7 +10292,11 @@
                 animRef.current?.talkFor(1200);
               }
             },
-            h("canvas", { ref: canvasRef, width: CW, height: CH, style: canvasStyle })
+            h(
+              "div",
+              { ref: squashRef, style: { width: "100%", height: "100%", transformOrigin: "50% 100%", willChange: "transform" } },
+              h("canvas", { ref: canvasRef, width: CW, height: CH, style: canvasStyle })
+            )
           ),
           h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "○") : null,

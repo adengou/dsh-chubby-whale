@@ -3527,6 +3527,102 @@ try {
   ok('能加载 ASR 脚本闸门用例', false, String(e.message))
 }
 
+
+// ---------- 66 拖拽抛物物理（原创纯函数） ----------
+console.log('\n[66] 拖拽抛物物理：重力 / 反弹 / 挤压 / 停稳')
+try {
+  const P = await import('../src/client/physics.ts')
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 }
+
+  // ① 松手速度夹取
+  let l = P.launch(999, -999)
+  ok('松手速度夹到上限', l.vx === P.MAX_SPEED && l.vy === -P.MAX_SPEED)
+  l = P.launch(NaN, 0)
+  ok('NaN 速度归零、不甩', l.vx === 0 && l.moving === false)
+  l = P.launch(0.2, 0.1)
+  ok('轻放不触发抛物线', l.moving === false)
+
+  // ② 重力：静止起步会下落
+  const f = P.createFlight()
+  f.resting = false
+  f.vx = 0
+  f.vy = 0
+  const r1 = P.stepFlight(f, { x: 200, y: 100 }, bounds, 1, 16.67)
+  ok('重力让 vy 增大、y 下落', f.vy > 0 && r1.pos.y > 100, 'vy=' + f.vy + ' y=' + r1.pos.y)
+
+  // ③ 左墙反弹：法向反向、能量损失
+  const f2 = P.createFlight()
+  f2.resting = false
+  f2.vx = -6
+  f2.vy = 0
+  const r2 = P.stepFlight(f2, { x: 1, y: 100 }, bounds, 1, 16.67)
+  ok('左墙反弹：位置回界内、速度反向', r2.pos.x === 0 && f2.vx > 0 && Math.abs(f2.vx) < 6, 'vx=' + f2.vx)
+  ok('撞墙触发挤压', f2.squashAge < P.SQUASH_MS)
+
+  // ④ 挤压曲线：0 时压扁、结束后回 1
+  const q0 = P.squashScale(0)
+  const q1 = P.squashScale(P.SQUASH_MS)
+  ok('挤压起点纵向 < 1', q0.sy < 1 && q0.sx > 1, JSON.stringify(q0))
+  ok('挤压结束回到 1:1', q1.sx === 1 && q1.sy === 1)
+
+  // ⑤ 长时间模拟：不出界、不 NaN、最终停稳
+  const f3 = P.createFlight()
+  f3.resting = false
+  f3.vx = 12
+  f3.vy = -8
+  let pos = { x: 50, y: 50 }
+  let settled = false
+  for (let i = 0; i < 900; i++) {
+    const r = P.stepFlight(f3, pos, bounds, 1, 16.67)
+    pos = r.pos
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) break
+    if (pos.x < bounds.minX || pos.x > bounds.maxX || pos.y < bounds.minY || pos.y > bounds.maxY) break
+    if (f3.resting) { settled = true; break }
+  }
+  ok('长时间模拟不出界、不 NaN', Number.isFinite(pos.x) && Number.isFinite(pos.y) &&
+    pos.x >= bounds.minX && pos.x <= bounds.maxX && pos.y >= bounds.minY && pos.y <= bounds.maxY, JSON.stringify(pos))
+  ok('最终会停稳', settled, JSON.stringify(f3))
+
+  // ⑥ 高刷归一：同样 2 秒，60Hz 与 120Hz 落点接近
+  const sim = (steps, dtMs) => {
+    const fl = P.createFlight()
+    fl.resting = false
+    fl.vx = 6
+    fl.vy = -6
+    let p = { x: 200, y: 100 }
+    for (let i = 0; i < steps; i++) p = P.stepFlight(fl, p, { minX: -10000, minY: -10000, maxX: 10000, maxY: 10000 }, dtMs / 16.67, dtMs).pos
+    return p
+  }
+  const a = sim(120, 16.67)
+  const b = sim(240, 16.67 / 2)
+  ok('60Hz 与 120Hz 物理时长一致', Math.abs(a.x - b.x) < 2 && Math.abs(a.y - b.y) < 2, JSON.stringify({ a, b }))
+} catch (e) {
+  ok('能加载物理用例', false, String(e.message))
+}
+
+// ---------- 67 工作状态机（原创纯函数） ----------
+console.log('\n[67] 工作状态机：思考 / 工作 / 成功 / 出错')
+try {
+  const { createPhaseMachine, PHASE_ONE_SHOT_MS } = await import('../src/client/phase.ts')
+  const m = createPhaseMachine()
+  ok('初始是 waiting', m.current() === 'waiting')
+  ok('thinking 可进入', m.enter('thinking', 1000) === 'thinking')
+  ok('working 可接替 thinking', m.enter('working', 1100) === 'working')
+  const t0 = 2000
+  ok('success 可进入', m.enter('success', t0) === 'success')
+  ok('success 期间普通状态不能打断', m.enter('working', t0 + 100) === 'success')
+  ok('success 未到点仍在', m.tick(t0 + PHASE_ONE_SHOT_MS - 1) === 'success')
+  ok('success 到点回 waiting', m.tick(t0 + PHASE_ONE_SHOT_MS + 1) === 'waiting')
+  ok('error 可覆盖 success', m.enter('success', 5000) === 'success' && m.enter('error', 5100) === 'error')
+  ok('error 到点也回 waiting', m.tick(5100 + PHASE_ONE_SHOT_MS + 1) === 'waiting')
+  const m2 = createPhaseMachine({ oneShotMs: 200 })
+  m2.enter('error', 0)
+  ok('自定义一次性时长', m2.tick(201) === 'waiting')
+  ok('重复 enter 同一状态不变', m2.enter('thinking', 300) === 'thinking' && m2.enter('thinking', 400) === 'thinking')
+} catch (e) {
+  ok('能加载状态机用例', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)
