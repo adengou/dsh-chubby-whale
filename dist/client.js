@@ -6990,9 +6990,10 @@
     const ms2 = Math.min(100, Math.max(0, finite(dtMs, 16.67)));
     if (f.squashAge < SQUASH_MS) f.squashAge = Math.min(SQUASH_MS, f.squashAge + ms2);
     if (f.resting) return { pos: { x: finite(pos.x), y: finite(pos.y) }, bounce: "none" };
+    const vy0 = f.vy;
     f.vy += GRAVITY * k;
     let x = finite(pos.x) + f.vx * k;
-    let y = finite(pos.y) + f.vy * k;
+    let y = finite(pos.y) + (vy0 + f.vy) / 2 * k;
     let bounce = "none";
     if (x < b.minX) {
       x = b.minX;
