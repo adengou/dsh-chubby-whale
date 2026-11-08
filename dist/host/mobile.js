@@ -26,7 +26,7 @@ import { buildSystemPrompt } from './persona.js';
 const MOBILE_VERSION = '0.1.0';
 function readPackageVersion() {
     try {
-        const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+        const pkg = JSON.parse(String(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).replace(/^\uFEFF/, ''));
         return String(pkg.version || 'unknown');
     }
     catch {
@@ -50,7 +50,7 @@ function readUserLevelDeepSeekKey() {
     try {
         const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh');
         const file = join(dshHome, 'plugins', 'dsh-chubby-whale', 'config.json');
-        const cfg = JSON.parse(readFileSync(file, 'utf8'));
+        const cfg = JSON.parse(String(readFileSync(file, 'utf8')).replace(/^\uFEFF/, ''));
         const key = cfg && typeof cfg.deepseekKey === 'string' ? cfg.deepseekKey.trim() : '';
         return key;
     }

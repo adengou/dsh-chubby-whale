@@ -64,8 +64,8 @@ export function recitePoem(host: ReciteHost, poem: any): void {
   // 进度：按诗句字数累计，气泡显示「第 x/N 句」；开场白要传进去，否则会被算成第 1 句
   try { startProgress('念诗·' + String(poem.title || ''), lines, intro) } catch (e) { }
   host.bubble('念诗·' + poem.title + '（' + author + '）' + (totalLines > 1 ? '· 共 ' + totalLines + ' 句' : ''), 15000)
-  host.talkFor(6000)
   const speech = intro + collapsePoemBody(body)
+  host.talkFor(Math.max(6000, estimateSpeakMs(speech)))
   const my = ++poemGen
   host.narrate(estimateSpeakMs(speech))
   host.say(host.persona.line('poemStart'), 4000)
@@ -203,7 +203,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
       const tp = taleParts(d.item.title)
       const body = collapseText(d.item.text)
       host.bubble('讲民间故事·' + tp.title + (tp.book ? '（出自《' + tp.book + '》）' : ''), 9000)
-      host.talkFor(5000)
+      host.talkFor(Math.max(5000, estimateSpeakMs(body) + 3000))
       host.speak('讲个民间故事——' + tp.title + (tp.book ? '，出自《' + tp.book + '》' : '') + '。' + body, {
         rate: host.narrationRate(),
         onDone: () => finishSpeech(host, '故事讲完啦～'),
@@ -218,7 +218,7 @@ export function registerCultureActions(table: ActionTable<ActionHost>): void {
       if (!(d && d.ok && d.item)) { host.bubble('典故没讲成'); return }
       const body = collapseText(d.item.text)
       host.bubble('讲典故·' + d.item.title + '（' + (d.item.src || '') + '）', 9000)
-      host.talkFor(5000)
+      host.talkFor(Math.max(5000, estimateSpeakMs(body) + 3000))
       host.speak('讲个典故——' + String(d.item.title || '') + '，出自' + String(d.item.src || '') + '。' + body, {
         rate: host.narrationRate(),
         onDone: () => finishSpeech(host, '典故讲完啦～'),

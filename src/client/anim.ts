@@ -222,19 +222,27 @@ export function createAnimator(opts: {
     ctx.stroke()
   }
 
+  /**
+   * 说话开合（与竖版同款的含蓄画法）：立绘的嘴本身张开——
+   * 张嘴帧不画（露出立绘嘴），闭嘴帧用肤色盖住嘴 + 一条小唇线，形成小幅度上下噏合。
+   */
   function drawMouth(open: boolean): void {
-    if (!open) return
+    if (open) return
     const p = { x: MOUTH.x * sx, y: MOUTH.y * sy }
-    const rw = MOUTH.rw * sx
-    const rh = MOUTH.rh * sy
-    ctx.fillStyle = '#E8566B'
+    const rw = MOUTH.rw * sx * 1.7
+    const rh = MOUTH.rh * sy * 1.9
+    // 肤色覆盖（横版立绘肤色采样 #FEF3F1）
     ctx.beginPath()
-    ctx.ellipse(p.x, p.y, rw * 1.1, rh * 1.45, 0, 0, Math.PI * 2)
+    ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2)
+    ctx.fillStyle = '#FEF3F1'
     ctx.fill()
-    ctx.fillStyle = '#7c1f2c'
+    // 闭合唇线（小弧度）
     ctx.beginPath()
-    ctx.ellipse(p.x, p.y + rh * 0.5, rw * 0.6, rh * 0.55, 0, 0, Math.PI * 2)
-    ctx.fill()
+    ctx.moveTo(p.x - rw * 0.5, p.y + rh * 0.03)
+    ctx.quadraticCurveTo(p.x, p.y + rh * 0.3, p.x + rw * 0.5, p.y + rh * 0.03)
+    ctx.lineWidth = 1.4
+    ctx.strokeStyle = '#C56E6A'
+    ctx.stroke()
   }
 
   /** 爱心寿命（秒）：与透明度归零、上飘终点统一，避免飞出画布被裁掉 */
@@ -345,6 +353,74 @@ export function createAnimator(opts: {
     ctx.restore()
   }
 
+  /** 当前工作状态（waiting/thinking/working/success/error），由 setPhase 更新 */
+  let phase = 'waiting'
+
+  /**
+   * 头顶状态叠加：思考点 / 工作转圈 / 成功星星 / 出错汗滴。
+   * 纯 canvas 画的小图形，不依赖任何外部素材。
+   */
+  function drawPhaseOverlay(t: number): void {
+    if (phase === 'waiting') return
+    ctx.save()
+    try {
+      if (phase === 'thinking') {
+        for (let i = 0; i < 3; i++) {
+          const a = 0.3 + 0.5 * Math.max(0, Math.sin(t / 380 - i * 0.9))
+          ctx.globalAlpha = a
+          ctx.fillStyle = '#ffffff'
+          ctx.beginPath()
+          ctx.arc(cw / 2 - 14 + i * 14, 42, 3.2, 0, TAU)
+          ctx.fill()
+        }
+      } else if (phase === 'working') {
+        const cx = cw - 52
+        const cy = 52
+        ctx.globalAlpha = 0.85
+        ctx.strokeStyle = '#9FD8FF'
+        ctx.lineWidth = 3
+        const a0 = (t / 260) % TAU
+        ctx.beginPath()
+        ctx.arc(cx, cy, 9, a0, a0 + Math.PI * 1.2)
+        ctx.stroke()
+        ctx.globalAlpha = 0.6
+        ctx.fillStyle = '#9FD8FF'
+        ctx.beginPath()
+        ctx.arc(cx, cy, 3, 0, TAU)
+        ctx.fill()
+      } else if (phase === 'success') {
+        const cx = cw / 2
+        const cy = 96
+        for (let i = 0; i < 6; i++) {
+          const a = (t / 520 + i / 6) * TAU
+          const r = 20 + 10 * Math.sin(t / 220 + i)
+          ctx.globalAlpha = 0.55 + 0.35 * Math.sin(t / 180 + i)
+          ctx.fillStyle = i % 2 ? '#ffe08a' : '#ffb3c6'
+          ctx.beginPath()
+          ctx.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.6, 2.4, 0, TAU)
+          ctx.fill()
+        }
+      } else if (phase === 'error') {
+        const x = cw * 0.72
+        const y = 66
+        ctx.globalAlpha = 0.9
+        ctx.fillStyle = '#7fb7ff'
+        ctx.beginPath()
+        ctx.moveTo(x, y - 7)
+        ctx.quadraticCurveTo(x + 6, y + 3, x, y + 8)
+        ctx.quadraticCurveTo(x - 6, y + 3, x, y - 7)
+        ctx.fill()
+        ctx.globalAlpha = 0.7
+        ctx.fillStyle = '#ffffff'
+        ctx.beginPath()
+        ctx.arc(x - 2, y + 1, 1.1, 0, TAU)
+        ctx.fill()
+      }
+    } finally {
+      ctx.restore()
+    }
+  }
+
   /**
    * 单帧绘制（不含排帧）。抽出来是为了让 loop 能兜住异常：
    * 旧实现把 requestAnimationFrame(loop) 写在函数末尾，任何一次绘制抛错都会让
@@ -404,6 +480,7 @@ export function createAnimator(opts: {
     }
 
     drawHearts(dt / 1000)
+    drawPhaseOverlay(t)
   }
 
   /** 连续绘制异常上限（约 5 秒 / 60Hz）：到顶就停表，避免 60fps 无限重试白烧 CPU */
@@ -455,9 +532,10 @@ export function createAnimator(opts: {
     state.hearts.push({ age: 0, dx: Math.random() - 0.5 })
   }
   /** 成长变化时热更新外观（不重建动画器，不影响眨眼/说话/爱心） */
+  function setPhase(next: string): void { phase = next || 'waiting' }
   function setLook(next: Look): void { applyLook(next) }
   /** 当前外观参数（诊断/自测用） */
   function getLook(): Look { return look }
 
-  return { start, stop, talkFor, pushHeart, setLook, getLook }
+  return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook }
 }

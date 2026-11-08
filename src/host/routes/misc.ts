@@ -65,7 +65,7 @@ export function createMiscHandlers(opts: {
   async function handleAsset(_req: any, res: any): Promise<void> {
     try {
       const buf = await readFile(opts.assetPath)
-      sendBuffer(res, buf, 'image/png', { 'cache-control': 'public, max-age=86400' })
+      sendBuffer(res, buf, 'image/png', { 'cache-control': 'no-store' })
     } catch {
       sendText(res, 404, 'asset not found')
     }

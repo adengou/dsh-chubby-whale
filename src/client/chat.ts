@@ -24,7 +24,7 @@
 
 import { postJson, postRaw, timeoutSignal } from './http.js'
 import { parseSseBuffer } from '../shared/sse.js'
-import { createSentenceBuffer } from './text.js'
+import { createSentenceBuffer, estimateSpeakMs } from './text.js'
 import type { Deduper } from './text.js'
 import { BUSY_STALE_MS } from './busy.js'
 import type { BusyLock, Epoch } from './busy.js'
@@ -40,6 +40,8 @@ export type ChatHost = {
   speakReply: (text: string) => void
   stopSpeak: () => void
   talkFor: (ms: number) => void
+  /** 工作状态回调：thinking / working / success / error（可选） */
+  onPhase?: (phase: string) => void
   heart: () => void
   setInput: (v: string) => void
   setMessages: (updater: any) => void
@@ -149,6 +151,7 @@ export function createChatSender(host: ChatHost): ChatController {
     const isCurrent = (): boolean => host.epoch.isCurrent(myEpoch)
     let spokeAny = false
     let full = ''
+    let phaseWorking = false
     const ctl = newAbortController()
     // 一开始就登记：还在等响应头时被新提问/停止说话打断，也能 abort 掉连接
     activeStream = { ctl }
@@ -163,7 +166,11 @@ export function createChatSender(host: ChatHost): ChatController {
     const sb = createSentenceBuffer(40)
 
     const speakSegs = (segs: string[]): void => {
-      for (const seg of segs) { try { host.speak(seg, { rate: chatRate() }) } catch (e) { } }
+      for (const seg of segs) {
+        try { host.speak(seg, { rate: chatRate() }) } catch (e) { }
+        // 流式朗读每段都让嘴动（原先只有整段结束后 talkFor 1.5s，流式期间嘴基本不动）
+        try { host.talkFor(Math.max(800, estimateSpeakMs(seg))) } catch (e) { }
+      }
       if (segs.length) spokeAny = true
     }
 
@@ -194,6 +201,7 @@ export function createChatSender(host: ChatHost): ChatController {
           tip = String((j && j.reply) || '')
         } catch (e) { }
         if (!tip) tip = '主人，本鲸这边没接上（HTTP ' + status + '），等会儿再试一次？'
+        try { if (host.onPhase) host.onPhase('error') } catch (e) { }
         if (isCurrent()) {
           try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tip }]) } catch (e) { }
           try { host.bubble(tip, 6000) } catch (e) { }
@@ -220,6 +228,7 @@ export function createChatSender(host: ChatHost): ChatController {
           if (!isCurrent()) return dropStale()
           if (obj.error) { throw new Error(String(obj.error)) }
           if (typeof obj.delta === 'string' && obj.delta) {
+            if (!phaseWorking) { phaseWorking = true; try { if (host.onPhase) host.onPhase('working') } catch (e) { } }
             full += obj.delta
             speakSegs(sb.push(obj.delta))
             const nowT = Date.now()
@@ -235,6 +244,7 @@ export function createChatSender(host: ChatHost): ChatController {
             speakSegs(sb.flush())
             host.busy.end()
             host.setBusy(false)
+            try { if (host.onPhase) host.onPhase(reply ? 'success' : 'error') } catch (e) { }
             if (reply) {
               // 30 秒同句去重只压气泡：流式的正文在 done 之前已经念出去了，
               // 这里再吞掉整条回复，会让主人的提问孤零零挂着、看不到答案。
@@ -263,6 +273,7 @@ export function createChatSender(host: ChatHost): ChatController {
       host.busy.end()
       host.setBusy(false)
       const tail = full.trim()
+      try { if (host.onPhase) host.onPhase(tail ? 'success' : 'error') } catch (e) { }
       if (tail) {
         try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tail }]) } catch (e) { }
         try { host.bubble(tail, 6000) } catch (e) { }
@@ -336,6 +347,7 @@ export function createChatSender(host: ChatHost): ChatController {
     // 原来这行在 tryStream 之后，流式（默认开着）成功时永远走不到 —— 情绪状态机与气泡表情
     // 等于没接上，只有流式失败/被关掉时才偶尔生效。点播命中在上面已经 return，不会误触发。
     try { const hit = host.persona.reactTo(text); if (hit) { host.say(hit.text, 4000); if (hit.event === 'praise') host.heart() } } catch (e) { }
+    try { if (host.onPhase) host.onPhase('thinking') } catch (e) { }
     // 流式优先：边生成边念；失败会自动回退到下面的普通 /chat
     try { if (await tryStream(text, opts, myEpoch)) return } catch (e) { }
     // 每个 await 之后都要问一句「我还是当前那个请求吗」（docs/并发纪律.md 五-1）：
@@ -380,6 +392,7 @@ export function createChatSender(host: ChatHost): ChatController {
           ? '主人，本鲸这边没接上（' + String(data.error || '接口没应') + '），等会儿再问一次？'
           : '主人……本鲸走神了。'
       if (d1) d1.lastChat = { stage: 'fetched', reply: String(reply).slice(0, 40), at: Date.now() }
+      try { if (host.onPhase) host.onPhase(data && data.ok === false ? 'error' : 'success') } catch (e) { }
       host.setMessages((m: any[]) => [...m, { who: 'fish', text: reply }])
       if (host.voiceMode.current) { host.bubble('（说）' + reply, 8000) }
       if (data && data.upgraded) host.bubble('本鲸又长大一点啦！', 4000)
@@ -394,6 +407,7 @@ export function createChatSender(host: ChatHost): ChatController {
         err.code === 2 ||
         err.code === 23
       )
+      try { if (host.onPhase) host.onPhase('error') } catch (e) { }
       const tip = timedOut ? '主人，本鲸等太久啦（网络慢），再问一次？' : host.persona.line('error')
       if (d1) d1.lastChat = { stage: timedOut ? 'timeout' : 'error', error: String((err && err.message) || err).slice(0, 60), at: Date.now() }
       fishTip(host, tip, 5000)

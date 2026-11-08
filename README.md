@@ -38,6 +38,14 @@ dsh web
 ```
 
 
+### 通过插件市场索引（方式五）
+
+仓库根附一份符合 DSH 插件市场格式 1 的索引 `market-index.json`（已用官方 `parseMarketIndex` 校验通过）：
+
+1. 打开 DSH「设置 → 插件市场」；
+2. 添加索引 URL：`https://gitee.com/adengou/dsh-chubby-whale/raw/main/market-index.json`；
+3. 在市场里找到「肥鲸 · Chubby Whale」，点安装即可（安装源固定到 Git 提交，可复现）。
+
 装完刷新页面即可看到肥鲸。Key 不随包分发，需要自己配：
 
 ```jsonc

@@ -49,7 +49,7 @@ export function createCultureHandlers(opts) {
          * 以及本文件顶部 `readFile`（node:fs/promises）这个 import。
          * 注意 `join` 仍被 SEEN_FILE 使用，不能一起删。
          */
-        return JSON.parse(await readFile(join(opts.dataDir, 'melodies.json'), 'utf8'));
+        return JSON.parse(String(await readFile(join(opts.dataDir, 'melodies.json'), 'utf8')).replace(/^\uFEFF/, ''));
     }
     // 新格式字段 ← 内部前缀；民间故事写 tales + minsu 两份，让 C# 也能读
     function splitKey(k) {

@@ -34,7 +34,7 @@ import { createStoryHandlers } from './host/routes/story.js'
 import { createStoryRepo } from './host/story/repo.js'
 import { createStoryPlayer } from './host/story/player.js'
 import { createLocalDataPort } from './host/data/local.js'
-import { createCloudDataPort, CLOUD_DATA_BASE } from './host/data/cloud.js'
+import { createCloudDataPort } from './host/data/cloud.js'
 import { createStorySource } from './host/data/story-source.js'
 import { createMiscHandlers } from './host/routes/misc.js'
 import { createReminderHandlers } from './host/routes/reminders.js'
@@ -71,7 +71,7 @@ export const inject = ['webServer']
 /** 插件版本（导出包的 version 字段）；读不到 package.json 时给 0.0.0，不编版本号 */
 function readPluginVersion(pluginDir: string): string {
   try {
-    const pkg = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8'))
+    const pkg = JSON.parse(String(readFileSync(join(pluginDir, 'package.json'), 'utf8')).replace(/^\uFEFF/, ''))
     const v = String((pkg && pkg.version) || '').trim()
     return v || '0.0.0'
   } catch {
