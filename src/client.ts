@@ -631,8 +631,12 @@ import { evPrevent, evStop } from './client/util.js'
         return () => { try { window.removeEventListener('paste', onPaste, true) } catch (e) { } }
       }, [])
 
+      // 连点彩蛋：4 秒内点 10 下触发（不动文件、纯互动）
+      const clickBurstRef = R.useRef([] as number[])
       // 拖动
       function dragBeginAt(x: number, y: number): void {
+        try { lastActivityRef.current = Date.now() } catch (e3) { }
+        try { animRef.current?.setSleepy?.(false) } catch (e3) { }
         // 抓住飞行中的鱼：立刻停掉抛物线/挤压，回到普通拖拽
         try { if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current) } catch (e) { }
         inertiaRafRef.current = 0
@@ -649,14 +653,31 @@ import { evPrevent, evStop } from './client/util.js'
         if (!d.dragging) return
         const m = moveDrag(d, x, y)
         applyPos(posRef.current.x + m.x, posRef.current.y + m.y)
+        // Q 弹：拖起来时轻轻拉长，松手恢复
+        try { applySquash(1.12, 0.88) } catch (e2) { }
       }
       function dragFinish(): void {
         const d = dragRef.current
         if (!d.dragging) return
+        // 几乎没移动 = 点击：摸头互动（爱心 + 害羞台词）；连点 10 下触发彩蛋
+        if (d.moved <= 8) {
+          const now = Date.now()
+          clickBurstRef.current = clickBurstRef.current.filter((t) => now - t < 4000)
+          clickBurstRef.current.push(now)
+          if (clickBurstRef.current.length >= 10) {
+            clickBurstRef.current = []
+            try { animRef.current?.celebrate?.() } catch (e3) { }
+            try { showBubble('哼，点这么多下干嘛～水花都给你溅出来啦！', 3000) } catch (e3) { }
+          } else {
+            try { animRef.current?.pushHeart() } catch (e3) { }
+            try { showBubble('唔…主人轻一点啦～', 2200) } catch (e3) { }
+          }
+        }
         const v = endDrag(d)
         // 恢复滤镜，并把 transform 位移提交成 left/top（否则鱼停在原位）
         try { const el = stageRef.current; if (el && el.style) { el.style.filter = ""; el.style.willChange = "" } } catch (e2) { }
         applyPos(posRef.current.x, posRef.current.y)
+        try { applySquash(1, 1) } catch (e3) { }
         savePos()
         const l = launch(v.x, v.y)
         // 轻放（几乎没速度）不甩：直接停在落点
@@ -677,6 +698,9 @@ import { evPrevent, evStop } from './client/util.js'
           lastTs = ts
           const r = stepFlight(f, posRef.current, bounds(), dtMs / 16.67, dtMs)
           applyPos(r.pos.x, r.pos.y)
+          // 落地（bottom 反弹）时甩一圈水花
+          if (r.bounce === 'bottom') { try { animRef.current?.wakeSplash?.() } catch (e3) { } }
+          if (r.bounce === 'left' || r.bounce === 'right' || r.bounce === 'top') { try { animRef.current?.shake?.() } catch (e3) { } }
           const q = squashScale(f.squashAge)
           applySquash(q.sx, q.sy)
           if (f.resting) {
@@ -1264,8 +1288,46 @@ import { evPrevent, evStop } from './client/util.js'
         if (!canvas) return
         animRef.current = createAnimator({ canvas, imgSrc: '/api/chubby-whale/asset?v=' + Date.now(), cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current })
         animRef.current.start()
+
         return () => animRef.current?.stop()
       }, [])
+
+      // ===== 炫技：眼睛跟随鼠标 / 深夜打瞌睡 ===== 
+      const lastActivityRef = R.useRef(Date.now())
+      // 早安/晚安：挂载时按时间段打一次招呼（每天只打一次）
+      R.useEffect(() => {
+        try {
+          const h = new Date().getHours()
+          const day = new Date().toISOString().slice(0, 10)
+          const key = 'chubby-greet-' + day
+          if (localStorage.getItem(key)) return
+          if (h >= 22 || h < 5) {
+            showBubble('这么晚还不睡…本鲸要生气啦，快去睡～', 4200)
+          } else if (h < 10) {
+            showBubble('早呀主人～睡得好不好？', 3600)
+          } else {
+            return
+          }
+          localStorage.setItem(key, '1')
+        } catch (e2) { }
+      }, [])
+      // 深夜（22:00-06:00）且 10 分钟没动静 → 打瞌睡（💤）
+      R.useEffect(() => {
+        const timer = setInterval(() => {
+          try {
+            const h = new Date().getHours()
+            const deepNight = h >= 22 || h < 6
+            const idle = Date.now() - lastActivityRef.current
+            if (deepNight && idle > 10 * 60 * 1000) {
+              try { animRef.current?.setSleepy?.(true) } catch (e2) { }
+              try { applyServerMood('sleepy') } catch (e2) { }
+              try { showBubble('呼…本鲸先眯一会儿…💤', 4000) } catch (e2) { }
+            }
+          } catch (e2) { }
+        }, 60000)
+        return () => clearInterval(timer)
+      }, [])
+
 
       // ===== 渲染 =====
       // 隐藏时右下角留一个极小的「○」恢复点（点一下回来，不刷新页面）
@@ -1289,6 +1351,12 @@ import { evPrevent, evStop } from './client/util.js'
         h('div', {
           ref: stageRef, style: stageStyle(scale, hidden),
           onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp,
+          onDoubleClick: () => {
+            // 跳起来（画布上移 26px），落地时压一下再弹回
+            try { animRef.current?.jump?.() } catch (e3) { }
+            setTimeout(() => { try { applySquash(1.08, 0.92) } catch (e3) { } }, 320)
+            setTimeout(() => { try { applySquash(1, 1) } catch (e3) { } }, 470)
+          },
           onContextMenu,
           onDragOver: (e: any) => { e.preventDefault(); e.stopPropagation() },
           onDrop: (e: any) => {

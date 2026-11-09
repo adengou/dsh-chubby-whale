@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.3.0";
+  var VERSION = "1.3.1";
 
   // src/client/styles.ts
   var W = 240;
@@ -3401,9 +3401,9 @@
   }
 
   // src/client/anim.ts
-  var EYE_L = { x: 679, y: 430, r: 68 };
+  var EYE_L = { x: 730, y: 420, r: 68 };
   deepFreeze(EYE_L);
-  var EYE_R = { x: 860, y: 435, r: 68 };
+  var EYE_R = { x: 870, y: 422, r: 68 };
   deepFreeze(EYE_R);
   var MOUTH = { x: 779, y: 525, rw: 26, rh: 18 };
   deepFreeze(MOUTH);
@@ -3462,6 +3462,9 @@
     let blinkT = 0;
     let blinkClosed = false;
     let blinkGap = 3200 + Math.random() * 1800;
+    let sleepy = false;
+    let shakeT = 0;
+    let jumpT = 0;
     let look = opts.look || lookFor(0);
     let dotIdx = pickDotIndexes(look.dots);
     let nextWagAt = performance.now() + wagGap();
@@ -3570,6 +3573,21 @@
       ctx.arc(p.x, p.y, r * 0.8, 0.15 * Math.PI, 0.85 * Math.PI);
       ctx.stroke();
     }
+    function drawZZZ(t) {
+      ctx.save();
+      ctx.fillStyle = "#5B8DEF";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (let i = 0; i < 3; i++) {
+        const phase2 = (t / 900 + i / 3) % 1;
+        const a = Math.sin(phase2 * Math.PI);
+        if (a <= 0.05) continue;
+        ctx.globalAlpha = Math.min(1, a);
+        ctx.font = "bold " + (13 + i * 4) + "px sans-serif";
+        ctx.fillText("Z", 290 + i * 16 + phase2 * 8, 50 - phase2 * 34 - i * 5);
+      }
+      ctx.restore();
+    }
     function drawMouth(open) {
       if (open) return;
       const p = { x: MOUTH.x * sx, y: MOUTH.y * sy };
@@ -3645,8 +3663,8 @@
       }
       ctx.restore();
     }
-    function spawnSplash() {
-      const n = 4;
+    function spawnSplash(count = 4, sizeMul = 1) {
+      const n = Math.max(1, Math.min(16, Math.round(count)));
       for (let i = 0; i < n; i++) {
         const a = -Math.PI / 2 + (Math.random() - 0.5) * 1.7;
         const speed = 0.05 + Math.random() * 0.07;
@@ -3656,8 +3674,8 @@
           vx: Math.cos(a) * speed,
           vy: Math.sin(a) * speed,
           age: 0,
-          life: 420 + Math.random() * 260,
-          r: 1.2 + Math.random() * 1.8
+          life: (420 + Math.random() * 260) * Math.max(1, sizeMul * 0.75),
+          r: (1.2 + Math.random() * 1.8) * sizeMul
         });
       }
       if (splashes.length > 24) splashes = splashes.slice(splashes.length - 24);
@@ -3676,11 +3694,15 @@
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         const k = 1 - p.age / p.life;
-        ctx.globalAlpha = 0.55 * k;
-        ctx.fillStyle = "#BFE6FF";
+        ctx.globalAlpha = Math.min(1, 0.95 * k);
+        const rr = p.r * (0.6 + 0.6 * k);
+        ctx.fillStyle = "#5FB8EC";
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r * (0.6 + 0.6 * k), 0, TAU);
+        ctx.arc(p.x, p.y, rr, 0, TAU);
         ctx.fill();
+        ctx.lineWidth = Math.max(0.8, rr * 0.35);
+        ctx.strokeStyle = "rgba(255,255,255,0.95)";
+        ctx.stroke();
       }
       ctx.restore();
     }
@@ -3760,6 +3782,16 @@
       const wagP = wagStart >= 0 && t >= wagStart && t <= wagStart + WAG_MS ? (t - wagStart) / WAG_MS : -1;
       ctx.save();
       try {
+        if (shakeT > 0) {
+          const s = Math.min(1, shakeT / 160);
+          ctx.translate((Math.random() - 0.5) * 4 * s, (Math.random() - 0.5) * 3 * s);
+          shakeT = Math.max(0, shakeT - dt);
+        }
+        if (jumpT > 0) {
+          const p = 1 - jumpT / 340;
+          ctx.translate(0, -Math.sin(Math.PI * Math.min(1, p)) * 26);
+          jumpT = Math.max(0, jumpT - dt);
+        }
         if (wagP >= 0) {
           const env = Math.sin(Math.PI * wagP);
           const angle = Math.sin(wagP * Math.PI * 6) * 0.012 * env;
@@ -3784,11 +3816,12 @@
           blinkT = 0;
           blinkGap = 3200 + Math.random() * 1800;
         }
-        if (blinkClosed) {
+        if (blinkClosed || sleepy) {
           drawEye(EYE_L, true);
           drawEye(EYE_R, true);
         }
-        if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0);
+        if (sleepy) drawZZZ(t);
+        if (t < state.talkUntil && !sleepy) drawMouth(Math.sin(t / 90) > 0);
         drawSplashes(dt);
       } finally {
         ctx.restore();
@@ -3852,10 +3885,46 @@
     function setLook(next) {
       applyLook(next);
     }
+    function setSleepy(on) {
+      sleepy = !!on;
+    }
+    function shake() {
+      shakeT = 160;
+    }
+    function jump() {
+      jumpT = 340;
+    }
+    function celebrate() {
+      try {
+        spawnSplash(14, 2.4);
+        setTimeout(() => {
+          try {
+            spawnSplash(10, 2);
+          } catch (e) {
+          }
+        }, 90);
+        setTimeout(() => {
+          try {
+            spawnSplash(8, 1.6);
+          } catch (e) {
+          }
+        }, 190);
+        for (let i = 0; i < 3; i++) setTimeout(() => {
+          try {
+            pushHeart();
+          } catch (e) {
+          }
+        }, 60 + i * 140);
+      } catch (e) {
+      }
+    }
+    function wakeSplash() {
+      spawnSplash(10, 2.5);
+    }
     function getLook() {
       return look;
     }
-    return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook };
+    return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook, wakeSplash, setSleepy, celebrate, shake, jump };
   }
 
   // src/client/wake.ts
@@ -9528,7 +9597,16 @@
             }
           };
         }, []);
+        const clickBurstRef = R.useRef([]);
         function dragBeginAt(x, y) {
+          try {
+            lastActivityRef.current = Date.now();
+          } catch (e3) {
+          }
+          try {
+            animRef.current?.setSleepy?.(false);
+          } catch (e3) {
+          }
           try {
             if (inertiaRafRef.current) cancelAnimationFrame(inertiaRafRef.current);
           } catch (e) {
@@ -9550,10 +9628,39 @@
           if (!d.dragging) return;
           const m = moveDrag(d, x, y);
           applyPos(posRef.current.x + m.x, posRef.current.y + m.y);
+          try {
+            applySquash(1.12, 0.88);
+          } catch (e2) {
+          }
         }
         function dragFinish() {
           const d = dragRef.current;
           if (!d.dragging) return;
+          if (d.moved <= 8) {
+            const now = Date.now();
+            clickBurstRef.current = clickBurstRef.current.filter((t) => now - t < 4e3);
+            clickBurstRef.current.push(now);
+            if (clickBurstRef.current.length >= 10) {
+              clickBurstRef.current = [];
+              try {
+                animRef.current?.celebrate?.();
+              } catch (e3) {
+              }
+              try {
+                showBubble("哼，点这么多下干嘛～水花都给你溅出来啦！", 3e3);
+              } catch (e3) {
+              }
+            } else {
+              try {
+                animRef.current?.pushHeart();
+              } catch (e3) {
+              }
+              try {
+                showBubble("唔…主人轻一点啦～", 2200);
+              } catch (e3) {
+              }
+            }
+          }
           const v = endDrag(d);
           try {
             const el = stageRef.current;
@@ -9564,6 +9671,10 @@
           } catch (e2) {
           }
           applyPos(posRef.current.x, posRef.current.y);
+          try {
+            applySquash(1, 1);
+          } catch (e3) {
+          }
           savePos();
           const l = launch(v.x, v.y);
           if (!l.moving) return;
@@ -9583,6 +9694,18 @@
             lastTs = ts;
             const r = stepFlight(f, posRef.current, bounds(), dtMs / 16.67, dtMs);
             applyPos(r.pos.x, r.pos.y);
+            if (r.bounce === "bottom") {
+              try {
+                animRef.current?.wakeSplash?.();
+              } catch (e3) {
+              }
+            }
+            if (r.bounce === "left" || r.bounce === "right" || r.bounce === "top") {
+              try {
+                animRef.current?.shake?.();
+              } catch (e3) {
+              }
+            }
             const q = squashScale(f.squashAge);
             applySquash(q.sx, q.sy);
             if (f.resting) {
@@ -10250,6 +10373,49 @@
           animRef.current.start();
           return () => animRef.current?.stop();
         }, []);
+        const lastActivityRef = R.useRef(Date.now());
+        R.useEffect(() => {
+          try {
+            const h2 = (/* @__PURE__ */ new Date()).getHours();
+            const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+            const key = "chubby-greet-" + day;
+            if (localStorage.getItem(key)) return;
+            if (h2 >= 22 || h2 < 5) {
+              showBubble("这么晚还不睡…本鲸要生气啦，快去睡～", 4200);
+            } else if (h2 < 10) {
+              showBubble("早呀主人～睡得好不好？", 3600);
+            } else {
+              return;
+            }
+            localStorage.setItem(key, "1");
+          } catch (e2) {
+          }
+        }, []);
+        R.useEffect(() => {
+          const timer = setInterval(() => {
+            try {
+              const h2 = (/* @__PURE__ */ new Date()).getHours();
+              const deepNight = h2 >= 22 || h2 < 6;
+              const idle = Date.now() - lastActivityRef.current;
+              if (deepNight && idle > 10 * 60 * 1e3) {
+                try {
+                  animRef.current?.setSleepy?.(true);
+                } catch (e2) {
+                }
+                try {
+                  applyServerMood("sleepy");
+                } catch (e2) {
+                }
+                try {
+                  showBubble("呼…本鲸先眯一会儿…💤", 4e3);
+                } catch (e2) {
+                }
+              }
+            } catch (e2) {
+            }
+          }, 6e4);
+          return () => clearInterval(timer);
+        }, []);
         const recoverProps = recover.dot(hidden);
         const menuItems = menu ? buildMenu(VERSION, Object.assign({ voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())) : [];
         const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : [];
@@ -10277,6 +10443,24 @@
               onPointerMove,
               onPointerUp,
               onPointerCancel: onPointerUp,
+              onDoubleClick: () => {
+                try {
+                  animRef.current?.jump?.();
+                } catch (e3) {
+                }
+                setTimeout(() => {
+                  try {
+                    applySquash(1.08, 0.92);
+                  } catch (e3) {
+                  }
+                }, 320);
+                setTimeout(() => {
+                  try {
+                    applySquash(1, 1);
+                  } catch (e3) {
+                  }
+                }, 470);
+              },
               onContextMenu,
               onDragOver: (e) => {
                 e.preventDefault();

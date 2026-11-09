@@ -11,9 +11,9 @@
 import { lookFor, type Look } from './look.js'
 import { deepFreeze } from '../shared/immutable.js'
 
-export const EYE_L = { x: 679, y: 430, r: 68 }
+export const EYE_L = { x: 730, y: 420, r: 68 }
 deepFreeze(EYE_L)
-export const EYE_R = { x: 860, y: 435, r: 68 }
+export const EYE_R = { x: 870, y: 422, r: 68 }
 deepFreeze(EYE_R)
 export const MOUTH = { x: 779, y: 525, rw: 26, rh: 18 }
 deepFreeze(MOUTH)
@@ -98,6 +98,12 @@ export function createAnimator(opts: {
   let blinkClosed = false
   // 眨眼间隔：每次眨完才重新抽一次，不能每帧重算（否则随机到不可控）
   let blinkGap = 3200 + Math.random() * 1800
+  /** 打瞌睡：闭眼、不做说话嘴动（由 setSleepy 控制） */
+  let sleepy = false
+  /** 撞墙震屏：剩余抖动时间（毫秒），绘制时整幅画布轻微位移 */
+  let shakeT = 0
+  /** 双击跳：剩余跳起时间（毫秒），绘制时整幅画布上移再落 */
+  let jumpT = 0
 
   // ===== 成长外观状态（setLook 可随时替换，不需要重建动画器） =====
   let look: Look = opts.look || lookFor(0)
@@ -222,6 +228,24 @@ export function createAnimator(opts: {
     ctx.stroke()
   }
 
+  /** 打瞌睡时头顶冒三个 Z（渐显渐隐、向上飘） */
+  function drawZZZ(t: number): void {
+    ctx.save()
+    ctx.fillStyle = '#5B8DEF'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (let i = 0; i < 3; i++) {
+      const phase = ((t / 900) + i / 3) % 1
+      const a = Math.sin(phase * Math.PI)
+      if (a <= 0.05) continue
+      ctx.globalAlpha = Math.min(1, a)
+      ctx.font = 'bold ' + (13 + i * 4) + 'px sans-serif'
+      // 头的右侧、离头留空、上飘明显：x 从 290 起（向右斜），y 从 42 起飘 34
+      ctx.fillText('Z', 290 + i * 16 + phase * 8, 50 - phase * 34 - i * 5)
+    }
+    ctx.restore()
+  }
+
   /**
    * 说话开合（与竖版同款的含蓄画法）：立绘的嘴本身张开——
    * 张嘴帧不画（露出立绘嘴），闭嘴帧用肤色盖住嘴 + 一条小唇线，形成小幅度上下噏合。
@@ -314,8 +338,8 @@ export function createAnimator(opts: {
   }
 
   /** 甩尾时从尾巴尖甩出几颗水珠 */
-  function spawnSplash(): void {
-    const n = 4
+  function spawnSplash(count = 4, sizeMul = 1): void {
+    const n = Math.max(1, Math.min(16, Math.round(count)))
     for (let i = 0; i < n; i++) {
       const a = -Math.PI / 2 + (Math.random() - 0.5) * 1.7
       const speed = 0.05 + Math.random() * 0.07   // 像素/毫秒
@@ -325,8 +349,8 @@ export function createAnimator(opts: {
         vx: Math.cos(a) * speed,
         vy: Math.sin(a) * speed,
         age: 0,
-        life: 420 + Math.random() * 260,
-        r: 1.2 + Math.random() * 1.8,
+        life: (420 + Math.random() * 260) * Math.max(1, sizeMul * 0.75),
+        r: (1.2 + Math.random() * 1.8) * sizeMul,
       })
     }
     // 上限保护：异常情况下不会越积越多
@@ -344,11 +368,16 @@ export function createAnimator(opts: {
       p.x += p.vx * dt
       p.y += p.vy * dt
       const k = 1 - p.age / p.life
-      ctx.globalAlpha = 0.55 * k
-      ctx.fillStyle = '#BFE6FF'
+      ctx.globalAlpha = Math.min(1, 0.95 * k)
+      const rr = p.r * (0.6 + 0.6 * k)
+      // 深一点的蓝 + 白描边：透明背景下也看得见
+      ctx.fillStyle = '#5FB8EC'
       ctx.beginPath()
-      ctx.arc(p.x, p.y, p.r * (0.6 + 0.6 * k), 0, TAU)
+      ctx.arc(p.x, p.y, rr, 0, TAU)
       ctx.fill()
+      ctx.lineWidth = Math.max(0.8, rr * 0.35)
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)'
+      ctx.stroke()
     }
     ctx.restore()
   }
@@ -453,6 +482,18 @@ export function createAnimator(opts: {
     // 一直留在栈顶，下一帧 save 的又是被污染的状态，几次之后鱼就歪着画了。
     ctx.save()
     try {
+      // 撞墙震屏：阻尼抖动（整幅画布轻微位移），dt 走完自动归零
+      if (shakeT > 0) {
+        const s = Math.min(1, shakeT / 160)
+        ctx.translate((Math.random() - 0.5) * 4 * s, (Math.random() - 0.5) * 3 * s)
+        shakeT = Math.max(0, shakeT - dt)
+      }
+      if (jumpT > 0) {
+        // 0→1→0 的抛物线高度（最高 26px），落地瞬间归零
+        const p = 1 - jumpT / 340
+        ctx.translate(0, -Math.sin(Math.PI * Math.min(1, p)) * 26)
+        jumpT = Math.max(0, jumpT - dt)
+      }
       if (wagP >= 0) {
         // 包络 0→1→0，绕底部中心左右摆一小下 + 轻微上下浮动
         const env = Math.sin(Math.PI * wagP)
@@ -472,8 +513,9 @@ export function createAnimator(opts: {
       blinkT += dt
       if (!blinkClosed && blinkT > blinkGap) { blinkClosed = true; blinkT = 0 }
       if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
-      if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
-      if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0)
+      if (blinkClosed || sleepy) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
+      if (sleepy) drawZZZ(t)
+      if (t < state.talkUntil && !sleepy) drawMouth(Math.sin(t / 90) > 0)
       drawSplashes(dt)
     } finally {
       ctx.restore()
@@ -534,8 +576,30 @@ export function createAnimator(opts: {
   /** 成长变化时热更新外观（不重建动画器，不影响眨眼/说话/爱心） */
   function setPhase(next: string): void { phase = next || 'waiting' }
   function setLook(next: Look): void { applyLook(next) }
+  /** 打瞌睡：闭眼 + 停止说话嘴动（不影响其他动画） */
+  function setSleepy(on: boolean): void { sleepy = !!on }
+
+  /** 撞墙：触发一次 160ms 的屏幕（画布）抖动 */
+  function shake(): void { shakeT = 160 }
+
+  /** 双击：原地跳一下（画布整体上移 26px 再落，约 340ms） */
+  function jump(): void { jumpT = 340 }
+
+  /** 连点彩蛋：连喷几圈水花 + 蹦几个爱心（错开时间，像小小烟花） */
+  function celebrate(): void {
+    try {
+      spawnSplash(14, 2.4)
+      setTimeout(() => { try { spawnSplash(10, 2) } catch (e) { } }, 90)
+      setTimeout(() => { try { spawnSplash(8, 1.6) } catch (e) { } }, 190)
+      for (let i = 0; i < 3; i++) setTimeout(() => { try { pushHeart() } catch (e) { } }, 60 + i * 140)
+    } catch (e) { }
+  }
+
+  /** 落地/被摔时甩一圈水花（复用甩尾水珠） */
+  function wakeSplash(): void { spawnSplash(10, 2.5) }
+
   /** 当前外观参数（诊断/自测用） */
   function getLook(): Look { return look }
 
-  return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook }
+  return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook, wakeSplash, setSleepy, celebrate, shake, jump }
 }

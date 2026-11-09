@@ -400,6 +400,7 @@ export function apply(ctx: any, rawConfig?: any): void {
     model: () => chatModel,
     backup: () => autoBackupInfo(RUNTIME_DIR),
     tts: () => ttsStatOf(),
+    version: () => readPluginVersion(PLUGIN_DIR),
   })
 
   // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
