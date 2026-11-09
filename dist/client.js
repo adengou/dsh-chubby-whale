@@ -3462,6 +3462,8 @@
     let blinkT = 0;
     let blinkClosed = false;
     let blinkGap = 3200 + Math.random() * 1800;
+    let gazeX = 0;
+    let gazeY = 0;
     let look = opts.look || lookFor(0);
     let dotIdx = pickDotIndexes(look.dots);
     let nextWagAt = performance.now() + wagGap();
@@ -3569,6 +3571,18 @@
       ctx.beginPath();
       ctx.arc(p.x, p.y, r * 0.8, 0.15 * Math.PI, 0.85 * Math.PI);
       ctx.stroke();
+    }
+    function drawGaze() {
+      if (!gazeX && !gazeY) return;
+      const R = Math.max(1.5, 3.2 * (look.scale || 1));
+      for (const e of [EYE_L, EYE_R]) {
+        const x = e.x * sx + gazeX * 3.5;
+        const y = e.y * sy + gazeY * 3.5;
+        ctx.beginPath();
+        ctx.arc(x, y, R, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,255,255,0.92)";
+        ctx.fill();
+      }
     }
     function drawMouth(open) {
       if (open) return;
@@ -3788,6 +3802,7 @@
           drawEye(EYE_L, true);
           drawEye(EYE_R, true);
         }
+        drawGaze();
         if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0);
         drawSplashes(dt);
       } finally {
@@ -3852,10 +3867,17 @@
     function setLook(next) {
       applyLook(next);
     }
+    function setGaze(gx, gy) {
+      gazeX = Math.max(-1, Math.min(1, Number(gx) || 0));
+      gazeY = Math.max(-1, Math.min(1, Number(gy) || 0));
+    }
+    function wakeSplash() {
+      spawnSplash();
+    }
     function getLook() {
       return look;
     }
-    return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook };
+    return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook, setGaze, wakeSplash };
   }
 
   // src/client/wake.ts
@@ -9550,10 +9572,24 @@
           if (!d.dragging) return;
           const m = moveDrag(d, x, y);
           applyPos(posRef.current.x + m.x, posRef.current.y + m.y);
+          try {
+            applySquash(1.05, 0.95);
+          } catch (e2) {
+          }
         }
         function dragFinish() {
           const d = dragRef.current;
           if (!d.dragging) return;
+          if (d.moved <= 8) {
+            try {
+              animRef.current?.pushHeart();
+            } catch (e3) {
+            }
+            try {
+              showBubble("唔…主人轻一点啦～", 2200);
+            } catch (e3) {
+            }
+          }
           const v = endDrag(d);
           try {
             const el = stageRef.current;
@@ -9564,6 +9600,10 @@
           } catch (e2) {
           }
           applyPos(posRef.current.x, posRef.current.y);
+          try {
+            applySquash(1, 1);
+          } catch (e3) {
+          }
           savePos();
           const l = launch(v.x, v.y);
           if (!l.moving) return;
@@ -9583,6 +9623,12 @@
             lastTs = ts;
             const r = stepFlight(f, posRef.current, bounds(), dtMs / 16.67, dtMs);
             applyPos(r.pos.x, r.pos.y);
+            if (r.bounce === "bottom") {
+              try {
+                animRef.current?.wakeSplash?.();
+              } catch (e3) {
+              }
+            }
             const q = squashScale(f.squashAge);
             applySquash(q.sx, q.sy);
             if (f.resting) {
@@ -10248,6 +10294,50 @@
           if (!canvas) return;
           animRef.current = createAnimator({ canvas, imgSrc: "/api/chubby-whale/asset?v=" + Date.now(), cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current });
           animRef.current.start();
+          const lastActivityRef = R.useRef(Date.now());
+          R.useEffect(() => {
+            const win = typeof window !== "undefined" ? window : null;
+            if (!win) return;
+            const onMove = (e) => {
+              try {
+                lastActivityRef.current = Date.now();
+                const el = stageRef.current;
+                const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                if (!r || !r.width) return;
+                const cx = r.left + r.width / 2;
+                const cy = r.top + r.height * 0.3;
+                const gx = Math.max(-1, Math.min(1, (e.clientX - cx) / (r.width * 2)));
+                const gy = Math.max(-1, Math.min(1, (e.clientY - cy) / (r.height * 2)));
+                animRef.current?.setGaze?.(gx, gy);
+              } catch (e2) {
+              }
+            };
+            win.addEventListener("mousemove", onMove, { passive: true });
+            return () => {
+              try {
+                win.removeEventListener("mousemove", onMove);
+              } catch (e2) {
+              }
+            };
+          }, []);
+          R.useEffect(() => {
+            const timer = setInterval(() => {
+              try {
+                const h2 = (/* @__PURE__ */ new Date()).getHours();
+                const deepNight = h2 >= 22 || h2 < 6;
+                const idle = Date.now() - lastActivityRef.current;
+                if (deepNight && idle > 10 * 60 * 1e3) {
+                  applyServerMood("sleepy");
+                  try {
+                    showBubble("呼…本鲸先眯一会儿…", 3e3);
+                  } catch (e2) {
+                  }
+                }
+              } catch (e2) {
+              }
+            }, 6e4);
+            return () => clearInterval(timer);
+          }, []);
           return () => animRef.current?.stop();
         }, []);
         const recoverProps = recover.dot(hidden);

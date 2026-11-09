@@ -649,14 +649,22 @@ import { evPrevent, evStop } from './client/util.js'
         if (!d.dragging) return
         const m = moveDrag(d, x, y)
         applyPos(posRef.current.x + m.x, posRef.current.y + m.y)
+        // Q 弹：拖起来时轻轻拉长，松手恢复
+        try { applySquash(1.05, 0.95) } catch (e2) { }
       }
       function dragFinish(): void {
         const d = dragRef.current
         if (!d.dragging) return
+        // 几乎没移动 = 点击：摸头互动（爱心 + 害羞台词）
+        if (d.moved <= 8) {
+          try { animRef.current?.pushHeart() } catch (e3) { }
+          try { showBubble('唔…主人轻一点啦～', 2200) } catch (e3) { }
+        }
         const v = endDrag(d)
         // 恢复滤镜，并把 transform 位移提交成 left/top（否则鱼停在原位）
         try { const el = stageRef.current; if (el && el.style) { el.style.filter = ""; el.style.willChange = "" } } catch (e2) { }
         applyPos(posRef.current.x, posRef.current.y)
+        try { applySquash(1, 1) } catch (e3) { }
         savePos()
         const l = launch(v.x, v.y)
         // 轻放（几乎没速度）不甩：直接停在落点
@@ -677,6 +685,8 @@ import { evPrevent, evStop } from './client/util.js'
           lastTs = ts
           const r = stepFlight(f, posRef.current, bounds(), dtMs / 16.67, dtMs)
           applyPos(r.pos.x, r.pos.y)
+          // 落地（bottom 反弹）时甩一圈水花
+          if (r.bounce === 'bottom') { try { animRef.current?.wakeSplash?.() } catch (e3) { } }
           const q = squashScale(f.squashAge)
           applySquash(q.sx, q.sy)
           if (f.resting) {
@@ -1264,6 +1274,43 @@ import { evPrevent, evStop } from './client/util.js'
         if (!canvas) return
         animRef.current = createAnimator({ canvas, imgSrc: '/api/chubby-whale/asset?v=' + Date.now(), cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current })
         animRef.current.start()
+
+      // ===== 炫技：眼睛跟随鼠标 / 深夜打瞌睡 ===== 
+      const lastActivityRef = R.useRef(Date.now())
+      R.useEffect(() => {
+        const win: any = typeof window !== 'undefined' ? window : null
+        if (!win) return
+        const onMove = (e: any) => {
+          try {
+            lastActivityRef.current = Date.now()
+            const el: any = stageRef.current
+            const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null
+            if (!r || !r.width) return
+            const cx = r.left + r.width / 2
+            const cy = r.top + r.height * 0.3
+            const gx = Math.max(-1, Math.min(1, (e.clientX - cx) / (r.width * 2)))
+            const gy = Math.max(-1, Math.min(1, (e.clientY - cy) / (r.height * 2)))
+            animRef.current?.setGaze?.(gx, gy)
+          } catch (e2) { }
+        }
+        win.addEventListener('mousemove', onMove, { passive: true })
+        return () => { try { win.removeEventListener('mousemove', onMove) } catch (e2) { } }
+      }, [])
+      // 深夜（22:00-06:00）且 10 分钟没动静 → 打瞌睡（💤）
+      R.useEffect(() => {
+        const timer = setInterval(() => {
+          try {
+            const h = new Date().getHours()
+            const deepNight = h >= 22 || h < 6
+            const idle = Date.now() - lastActivityRef.current
+            if (deepNight && idle > 10 * 60 * 1000) {
+              applyServerMood('sleepy')
+              try { showBubble('呼…本鲸先眯一会儿…', 3000) } catch (e2) { }
+            }
+          } catch (e2) { }
+        }, 60000)
+        return () => clearInterval(timer)
+      }, [])
         return () => animRef.current?.stop()
       }, [])
 

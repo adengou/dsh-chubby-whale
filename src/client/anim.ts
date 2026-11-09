@@ -98,6 +98,9 @@ export function createAnimator(opts: {
   let blinkClosed = false
   // 眨眼间隔：每次眨完才重新抽一次，不能每帧重算（否则随机到不可控）
   let blinkGap = 3200 + Math.random() * 1800
+  // 眼睛跟随鼠标：归一化偏移（-1..1），绘制时把高光挪几像素
+  let gazeX = 0
+  let gazeY = 0
 
   // ===== 成长外观状态（setLook 可随时替换，不需要重建动画器） =====
   let look: Look = opts.look || lookFor(0)
@@ -226,6 +229,20 @@ export function createAnimator(opts: {
    * 说话开合（与竖版同款的含蓄画法）：立绘的嘴本身张开——
    * 张嘴帧不画（露出立绘嘴），闭嘴帧用肤色盖住嘴 + 一条小唇线，形成小幅度上下噏合。
    */
+  /** 眼睛注视：在立绘眼睛位置画一颗跟随鼠标的白色高光（眼睛看起来在看鼠标） */
+  function drawGaze(): void {
+    if (!gazeX && !gazeY) return
+    const R = Math.max(1.5, 3.2 * (look.scale || 1))
+    for (const e of [EYE_L, EYE_R]) {
+      const x = e.x * sx + gazeX * 3.5
+      const y = e.y * sy + gazeY * 3.5
+      ctx.beginPath()
+      ctx.arc(x, y, R, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(255,255,255,0.92)'
+      ctx.fill()
+    }
+  }
+
   function drawMouth(open: boolean): void {
     if (open) return
     const p = { x: MOUTH.x * sx, y: MOUTH.y * sy }
@@ -473,6 +490,7 @@ export function createAnimator(opts: {
       if (!blinkClosed && blinkT > blinkGap) { blinkClosed = true; blinkT = 0 }
       if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
       if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
+      drawGaze()
       if (t < state.talkUntil) drawMouth(Math.sin(t / 90) > 0)
       drawSplashes(dt)
     } finally {
@@ -534,8 +552,17 @@ export function createAnimator(opts: {
   /** 成长变化时热更新外观（不重建动画器，不影响眨眼/说话/爱心） */
   function setPhase(next: string): void { phase = next || 'waiting' }
   function setLook(next: Look): void { applyLook(next) }
+  /** 眼睛跟随鼠标（gx/gy 归一化 -1..1） */
+  function setGaze(gx: number, gy: number): void {
+    gazeX = Math.max(-1, Math.min(1, Number(gx) || 0))
+    gazeY = Math.max(-1, Math.min(1, Number(gy) || 0))
+  }
+
+  /** 落地/被摔时甩一圈水花（复用甩尾水珠） */
+  function wakeSplash(): void { spawnSplash() }
+
   /** 当前外观参数（诊断/自测用） */
   function getLook(): Look { return look }
 
-  return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook }
+  return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook, setGaze, wakeSplash }
 }
