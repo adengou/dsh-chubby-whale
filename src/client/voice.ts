@@ -178,6 +178,13 @@ function ttsSkipFailOn(): boolean {
 
 export function createVoice(opts: VoiceOptions): Voice {
   const apiBase = opts.apiBase || '/api/chubby-whale'
+  /** 当前聊天语言（auto/zh/en）：随 /asr 一起上传，宿主据此决定识别语言与脚本闸门 */
+  function chatLangForAsr(): string {
+    try {
+      const v = localStorage.getItem('chubby-chatlang')
+      return v === 'zh' || v === 'en' ? v : 'auto'
+    } catch (e) { return 'auto' }
+  }
   // 音色：显式传入优先，其次菜单里存的（chubby-tts-voice），最后默认晓伊
   let voiceName = normalizeVoiceName(opts.voiceName || readStoredVoiceName())
   // 端点检测模式：ape（自适应，默认）/ classic（经典绝对阈值，可一键切回）
@@ -450,7 +457,7 @@ export function createVoice(opts: VoiceOptions): Voice {
             headers: { 'content-type': 'application/json' },
             // format 必须带实际值：宿主按它决定 multipart 的 filename/Content-Type。
             // 白名单是 webm/wav/mp3（src/host/routes/asr.ts），mp4 不在其中 → hostAsrFormat 已回落成 webm。
-            body: JSON.stringify({ audio: wire.base64, format: wire.format }),
+            body: JSON.stringify({ audio: wire.base64, format: wire.format, lang: chatLangForAsr() }),
           }, ASR_TIMEOUT_MS, ctl ? ctl.signal : undefined)
         } finally {
           if (ctl) asrAborts.delete(ctl)

@@ -3473,12 +3473,14 @@ try {
   globalThis.fetch = async () => { fetchCount++; return { ok: true, status: 200, text: async () => JSON.stringify({ text: replyText }) } }
   const realSet = cache.setJson.bind(cache)
   cache.setJson = async (k, v, ttl) => { writes.push(v); return realSet(k, v, ttl) }
-  const run = async (text, lang, audioSeed = 'fake-audio') => {
+  const run = async (text, lang, audioSeed = 'fake-audio', chatLang) => {
     replyText = text
     const res = mkRes()
     const deps = { cache, getKey: () => 'k' }
     if (lang) deps.language = () => lang
-    await createAsrHandler(deps)(mkReq({ audio: Buffer.from(audioSeed).toString('base64') }), res)
+    const body = { audio: Buffer.from(audioSeed).toString('base64') }
+    if (chatLang) body.lang = chatLang
+    await createAsrHandler(deps)(mkReq(body), res)
     return res.json()
   }
 
@@ -3508,6 +3510,17 @@ try {
   // ④ auto 模式：保留旧行为（不拦）
   r = await run('มันเป็นปีหวาน', 'auto', 'audio-auto')
   ok('auto 模式不拦外语', r && r.text === 'มันเป็นปีหวาน' && !r.rejected)
+  // ⑥ 聊天语言=自动：英语要能进（主人实测"自动模式，说英语没一点反应"）；其它语种仍拒绝
+  r = await run('Hello, how are you?', null, 'auto-en', 'auto')
+  ok('自动模式英语放行', r && r.text === 'Hello, how are you?' && !r.rejected, JSON.stringify(r))
+  r = await run('主人今天吃什么', null, 'auto-zh', 'auto')
+  ok('自动模式中文放行', r && r.text === '主人今天吃什么' && !r.rejected, JSON.stringify(r))
+  r = await run('มันเป็นปีหวาน', null, 'auto-th', 'auto')
+  ok('自动模式泰文拒绝', r && r.text === '' && r.rejected === 'script', JSON.stringify(r))
+  r = await run('El nombre de la ciudad proviene del río', null, 'auto-es', 'auto')
+  ok('自动模式西语拒绝', r && r.text === '' && r.rejected === 'script', JSON.stringify(r))
+  r = await run('Hello there', null, 'zh-en', 'zh')
+  ok('聊天语言=中文时英语仍拒绝', r && r.text === '' && r.rejected === 'script', JSON.stringify(r))
 
   // ⑤ config.json 的 asrLanguage 真正可读（此前是死键）
   const { writeFileSync: wf, mkdirSync } = await import('node:fs')

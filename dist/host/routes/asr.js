@@ -16,17 +16,38 @@ const ENDPOINT = 'https://api.siliconflow.cn/v1/audio/transcriptions';
 const HAN_RE = /[\u3400-\u4DBF\u4E00-\u9FFF]/;
 /** 拉丁字母 */
 const LATIN_RE = /[A-Za-z]/;
+/** 明显不是英语的常见词（西/葡/法/意/越等），命中即判非英语 */
+const NON_EN_STOP = /(el|la|los|las|lo|los|una|uno|unos|unas|de|del|que|para|por|com|con|não|nao|voce|você|muito|isso|aqui|está|esta|más|pero|como|quando|onde|obrigado|gracias|hola|bonjour|merci|je|suis|vous|nous|le|les|des|du|et|est|dans|pour|avec|sur|pas|plus|tout|fait|être|avoir|il|che|di|per|sono|una|della|delle|degli|essere|avere|ou|seja|partir|momento|homem|ser|torna|gente|fazer|tem|que|é|os|as|um|uma|em|no|na|nos|nas|do|da|dos|das|se|ao|aos|à|às|pelo|pela)/i;
+/** 拉丁字母里的重音字符（英语基本不用） */
+const ACCENTED_LATIN = /[\u00C0-\u024F\u0300-\u036F]/;
+/** 英文启发式：拉丁字母、无重音、无常见非英语词，且像一句英语 */
+function looksEnglish(text) {
+    if (!LATIN_RE.test(text))
+        return false;
+    if (ACCENTED_LATIN.test(text))
+        return false;
+    const lower = text.toLowerCase();
+    if (NON_EN_STOP.test(lower))
+        return false;
+    const words = lower.match(/[a-z]{2,}/g) || [];
+    if (words.length >= 2)
+        return true;
+    return words.length >= 1 && /^(hello|hi|hey|thanks|thank|please|okay|ok|bye|goodbye|sorry|yes|stop|wait)$/.test(words[0]);
+}
 /**
  * 输出脚本是否符合识别语言：
- *   zh   → 必须含汉字（纯外语/纯数字/符号一律拒绝）
- *   en   → 必须含拉丁字母
- *   auto → 不拦（保留旧行为，给双语主人用）
+ *   zh    → 必须含汉字（纯外语/纯数字/符号一律拒绝）
+ *   en    → 必须含拉丁字母
+ *   zh-en → 中文或英语（聊天语言=自动时用这个，只放中英，不放其它语种）
+ *   auto  → 不拦（asrLanguage=auto 的旧行为）
  */
 function scriptAccepted(text, lang) {
     if (lang === 'auto')
         return true;
     if (lang === 'en')
         return LATIN_RE.test(text);
+    if (lang === 'zh-en')
+        return HAN_RE.test(text) || looksEnglish(text);
     return HAN_RE.test(text);
 }
 /** 识别结果的缓存有效期：7 天（音频字节内容 hash，同一个录音重放可直接命中） */
@@ -98,29 +119,39 @@ export function createAsrHandler(opts) {
             // 最多少几次命中，不会读出别人的文本）。
             // v3：识别语言也进 key——同一段音频换 language（zh/en/auto）会得到不同文本，
             // 不把 asrLang 写进 key 的话，切语言后仍命中旧语言的缓存（2026-11-07 严查发现）。
-            // 识别语言：默认 zh，可由 config.json 的 asrLanguage 覆盖（zh/en/auto，2026-11-07 起真正生效）
+            // 识别语言优先级：请求里的聊天语言（zh/en/auto）→ config.json 的 asrLanguage（zh/en/auto）→ zh。
+            // 为什么：聊天语言=自动时主人会说英语，但 asrLanguage 默认 zh 的脚本闸门会把纯英文全丢掉，
+            // 表现为"说英语没一点反应"。聊天语言=自动时上游也不锁 zh（自动检测），闸门只放中/英。
+            const rawChatLang = typeof body?.lang === 'string' ? String(body.lang).trim().toLowerCase() : '';
+            const chatLang = rawChatLang === 'zh' || rawChatLang === 'en' || rawChatLang === 'auto' ? rawChatLang : '';
             const rawLang = opts.language ? String(opts.language() || '').trim().toLowerCase() : '';
-            const asrLang = rawLang === 'en' || rawLang === 'auto' ? rawLang : 'zh';
-            const ck = hashBytes(Buffer.concat([Buffer.from('v3|' + ASR_MODEL + '|' + asrLang + '|' + format + '|'), buf]));
+            const configLang = rawLang === 'en' || rawLang === 'auto' ? rawLang : 'zh';
+            const upstreamLang = chatLang ? (chatLang === 'auto' ? 'auto' : chatLang) : configLang;
+            const gateLang = chatLang ? (chatLang === 'auto' ? 'zh-en' : chatLang) : (configLang === 'auto' ? 'auto' : configLang);
+            // v4：上游语言 + 闸门模式一起进 key（聊天语言从 zh 切 auto 时不能命中旧的中文缓存）
+            const ck = hashBytes(Buffer.concat([Buffer.from('v4|' + ASR_MODEL + '|' + upstreamLang + '|' + gateLang + '|' + format + '|'), buf]));
             if (opts.cache) {
                 const hit = await opts.cache.getJson(ck, 'json', ASR_CACHE_MAX_AGE);
                 if (hit && typeof hit.text === 'string') {
                     // 旧缓存里可能还躺着外语（v3 之前的条目 7 天内有效）：命中也要过闸门，
                     // 不合格就当作没命中，重新识别一次（识别结果同样会被闸门拦）。
-                    if (scriptAccepted(hit.text, asrLang)) {
+                    if (scriptAccepted(hit.text, gateLang)) {
                         sendJson(res, { ok: true, text: hit.text, cached: true });
                         return;
                     }
-                    console.error('[asr] CACHE-SCRIPT-SKIP lang=' + asrLang + ' text=' + JSON.stringify(String(hit.text).slice(0, 60)));
+                    console.error('[asr] CACHE-SCRIPT-SKIP lang=' + gateLang + ' text=' + JSON.stringify(String(hit.text).slice(0, 60)));
                 }
             }
             // 构造 multipart
             const boundary = '----chubbywhale' + Math.random().toString(36).slice(2, 10);
             const mime = format === 'wav' ? 'audio/wav' : format === 'mp3' ? 'audio/mpeg' : 'audio/webm';
+            const langPart = upstreamLang === 'auto'
+                ? ''
+                : '--' + boundary + '\r\n' +
+                    'Content-Disposition: form-data; name="language"\r\n\r\n' + upstreamLang + '\r\n';
             const head = Buffer.from('--' + boundary + '\r\n' +
                 'Content-Disposition: form-data; name="model"\r\n\r\n' + ASR_MODEL + '\r\n' +
-                '--' + boundary + '\r\n' +
-                'Content-Disposition: form-data; name="language"\r\n\r\n' + asrLang + '\r\n' +
+                langPart +
                 '--' + boundary + '\r\n' +
                 'Content-Disposition: form-data; name="file"; filename="audio.' + format + '"\r\n' +
                 'Content-Type: ' + mime + '\r\n\r\n');
@@ -172,8 +203,8 @@ export function createAsrHandler(opts) {
             // （实测纯静音 → "No."；缓存里还有西/葡/越/泰整句）。language=zh 并不会阻止它。
             // 中文模式下：一个汉字都没有的输出一律当噪声（不写缓存、不上行），
             // 否则会被当主人说的话写进记忆，模型还会跟着回英文。
-            if (recognized && !scriptAccepted(recognized, asrLang)) {
-                console.error('[asr] SCRIPT-REJECT lang=' + asrLang + ' text=' + JSON.stringify(recognized.slice(0, 60)));
+            if (recognized && !scriptAccepted(recognized, gateLang)) {
+                console.error('[asr] SCRIPT-REJECT lang=' + gateLang + ' text=' + JSON.stringify(recognized.slice(0, 60)));
                 sendJson(res, { ok: true, text: '', noise: true, rejected: 'script' });
                 return;
             }
