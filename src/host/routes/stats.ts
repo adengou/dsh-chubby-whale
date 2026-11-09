@@ -42,6 +42,8 @@ export interface StatsHandlerDeps {
    */
   dataSource?: Lazy<string>
   model?: Lazy<string>
+  /** 插件版本（package.json 的 version） */
+  version?: Lazy<string>
   tts?: Lazy<{ available: boolean; interpreter: string; cooling: boolean }>
   backup?: Lazy<{ lastAt: number; count: number }>
   now?: () => number
@@ -147,6 +149,7 @@ export function createStatsHandler(opts: StatsHandlerDeps) {
     const backupRaw: any = resolve(opts.backup, {} as any) || {}
     const dataSource = String(resolve(opts.dataSource, 'local') || 'local')
     const model = String(resolve(opts.model, '') || '')
+  const version = String(resolve(opts.version, '') || '')
 
     return {
       ok: true,

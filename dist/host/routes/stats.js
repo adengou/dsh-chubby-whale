@@ -111,6 +111,7 @@ export function createStatsHandler(opts) {
         const backupRaw = resolve(opts.backup, {}) || {};
         const dataSource = String(resolve(opts.dataSource, 'local') || 'local');
         const model = String(resolve(opts.model, '') || '');
+        const version = String(resolve(opts.version, '') || '');
         return {
             ok: true,
             cache: { tts: count(cache.tts), chat: count(cache.chat), asr: count(cache.asr) },
