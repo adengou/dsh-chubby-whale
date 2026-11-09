@@ -174,6 +174,8 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
   const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 }
   // 识别没配 Key 的提示只弹一次（每次重开语音待命可以再弹一次）
   let asrNoKeyNotified = false
+  // 麦克风启动失败也要说一声：旧实现只写 voiceDiag，菜单还显示「开」，主人只会觉得"又不灵了"
+  let startFailedAt = 0
   // 关页面时释放麦克风的监听（每桥只挂一个，dispose 摘掉）
   let unloadHandler: (() => void) | null = null
 
@@ -285,6 +287,13 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
       onStatus: (st: any) => { try { host.onSpeaking(st === 'speaking') } catch (e) { } },
       onDiag: (d: any) => {
         try { host.diag({ voiceDiag: d }) } catch (e) { }
+        // 麦克风没开成：30 秒最多提示一次，并告诉主人可以点一下鱼/菜单重试
+        try {
+          if (d && d.stage === 'start-failed' && Date.now() - startFailedAt > 30000) {
+            startFailedAt = Date.now()
+            host.bubble('麦克风没开成：' + String(d.err || '未知原因') + '（点一下本鲸或菜单「语音待命」重试）', 6000)
+          }
+        } catch (e) { }
         // 语音识别没配 Key：给一句人话，别让主人对着麦克风干等
         try {
           if (d && d.stage === 'asr-no-key' && !asrNoKeyNotified) {

@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.3.1";
+  var VERSION = "1.3.2";
 
   // src/client/styles.ts
   var W = 240;
@@ -1637,6 +1637,14 @@
   }
   function createVoice(opts) {
     const apiBase = opts.apiBase || "/api/chubby-whale";
+    function chatLangForAsr() {
+      try {
+        const v = localStorage.getItem("chubby-chatlang");
+        return v === "zh" || v === "en" ? v : "auto";
+      } catch (e) {
+        return "auto";
+      }
+    }
     let voiceName = normalizeVoiceName(opts.voiceName || readStoredVoiceName());
     let epMode = readEndpointMode();
     const ape = new Ape();
@@ -1939,7 +1947,7 @@
               headers: { "content-type": "application/json" },
               // format 必须带实际值：宿主按它决定 multipart 的 filename/Content-Type。
               // 白名单是 webm/wav/mp3（src/host/routes/asr.ts），mp4 不在其中 → hostAsrFormat 已回落成 webm。
-              body: JSON.stringify({ audio: wire.base64, format: wire.format })
+              body: JSON.stringify({ audio: wire.base64, format: wire.format, lang: chatLangForAsr() })
             }, ASR_TIMEOUT_MS, ctl ? ctl.signal : void 0);
           } finally {
             if (ctl) asrAborts.delete(ctl);
@@ -4094,6 +4102,7 @@
     }
     const wakeStats = { passed: 0, dropped: 0, hits: 0, lastHitAt: 0, dropNotifiedAt: 0 };
     let asrNoKeyNotified = false;
+    let startFailedAt = 0;
     let unloadHandler = null;
     function wakeInfo() {
       syncWakeWords();
@@ -4232,6 +4241,13 @@
         onDiag: (d) => {
           try {
             host.diag({ voiceDiag: d });
+          } catch (e) {
+          }
+          try {
+            if (d && d.stage === "start-failed" && Date.now() - startFailedAt > 3e4) {
+              startFailedAt = Date.now();
+              host.bubble("麦克风没开成：" + String(d.err || "未知原因") + "（点一下本鲸或菜单「语音待命」重试）", 6e3);
+            }
           } catch (e) {
           }
           try {
@@ -10290,6 +10306,47 @@
             return cleanup;
           }
           return cleanup;
+        }, []);
+        R.useEffect(() => {
+          let lastTry = 0;
+          const retry = () => {
+            try {
+              if (!earOnRef.current) return;
+              const v = bridge.get();
+              if (v && typeof v.status === "function" && v.status() !== "idle") return;
+              const now = Date.now();
+              if (now - lastTry < 6e4) return;
+              lastTry = now;
+              try {
+                dg({ voiceRetry: { at: now, reason: v ? "idle" : "no-instance" } });
+              } catch (e) {
+              }
+              void bridge.start();
+            } catch (e) {
+            }
+          };
+          const timer = setInterval(retry, 3e4);
+          const onVisible = () => {
+            try {
+              if (document.visibilityState === "visible") retry();
+            } catch (e) {
+            }
+          };
+          try {
+            document.addEventListener("visibilitychange", onVisible);
+          } catch (e) {
+          }
+          retry();
+          return () => {
+            try {
+              clearInterval(timer);
+            } catch (e) {
+            }
+            try {
+              document.removeEventListener("visibilitychange", onVisible);
+            } catch (e) {
+            }
+          };
         }, []);
         function speakText(text, o) {
           try {

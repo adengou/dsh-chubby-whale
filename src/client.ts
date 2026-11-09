@@ -1204,6 +1204,34 @@ import { evPrevent, evStop } from './client/util.js'
         return cleanup
       }, [])
 
+      // 语音自愈（2026-11-09）：麦克风被系统/浏览器临时收回、start() 失败后
+      // voice 的状态会停在 idle，但菜单仍显示「语音待命：开」，界面完全静默。
+      // 这里每 30 秒（以及切回页面时）检查一次：只要 earOn 开着且状态是 idle，就重试 start；
+      // 60 秒最多重试一次，避免权限被拒时反复弹麦克风授权框。
+      R.useEffect(() => {
+        let lastTry = 0
+        const retry = (): void => {
+          try {
+            if (!earOnRef.current) return
+            const v: any = bridge.get()
+            if (v && typeof v.status === 'function' && v.status() !== 'idle') return
+            const now = Date.now()
+            if (now - lastTry < 60000) return
+            lastTry = now
+            try { dg({ voiceRetry: { at: now, reason: v ? 'idle' : 'no-instance' } }) } catch (e) { }
+            void bridge.start()
+          } catch (e) { }
+        }
+        const timer = setInterval(retry, 30000)
+        const onVisible = (): void => { try { if (document.visibilityState === 'visible') retry() } catch (e) { } }
+        try { document.addEventListener('visibilitychange', onVisible) } catch (e) { }
+        retry()
+        return () => {
+          try { clearInterval(timer) } catch (e) { }
+          try { document.removeEventListener('visibilitychange', onVisible) } catch (e) { }
+        }
+      }, [])
+
       // ---- 旧调用点兼容层：全部转到新模块 ----
       function speakText(text: string, o?: { rate?: string; narration?: boolean; onDone?: () => void }): void {
         try {
