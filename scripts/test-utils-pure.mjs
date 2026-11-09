@@ -355,7 +355,7 @@ try {
   ok('poemRate 缺省 fallback = -25%', rates.poemRate() === '-25%')
 
   store.clear()
-  ok('setChatRate 只收菜单档位', rates.setChatRate('-25%') === true && store.get('chubby-chat-rate') === '-25%' && rates.setChatRate('-5%') === false)
+  ok('setChatRate 只收菜单档位', rates.setChatRate('-20%') === true && store.get('chubby-chat-rate') === '-20%' && rates.setChatRate('-5%') === false)
   ok('setChatRate 写入前 trim', rates.setChatRate(' -30% ') === true && store.get('chubby-chat-rate') === '-30%')
   ok('setNarrationRate 只收叙述档位', rates.setNarrationRate('-15%') === true && rates.setNarrationRate('-10%') === false)
   ok('chatRate 只认菜单档位（越界值回默认）', (store.set('chubby-chat-rate', '-15%'), rates.chatRate() === rates.DEFAULT_CHAT_RATE))
