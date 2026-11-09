@@ -86,10 +86,10 @@ export const EN_MAP: Record<string, string> = {
   '稍快 -25%': 'A bit faster -25%',
   '适中 -30%': 'Medium -30%',
   '偏慢 -35%（默认）': 'Slower -35% (default)',
-  '正常 -10%': 'Normal -10%',
-  '偏慢 -20%（默认）': 'Slow -20% (default)',
-  '很慢 -25%': 'Very slow -25%',
-  '更慢 -30%': 'Even slower -30%',
+  '更快 +10%': 'Faster +10%',
+  '稍快 +0%': 'A bit faster +0%',
+  '正常 -10%（默认）': 'Normal -10% (default)',
+  '偏慢 -20%': 'Slow -20%',
   '稍快 -15%': 'A bit faster -15%',
   '适中 -20%': 'Medium -20%',
   '偏慢 -25%（默认）': 'Slower -25% (default)',
@@ -204,7 +204,7 @@ const VOICE_ITEMS: Array<[string, string]> = [
 
 /** 语速档位：与 rates.ts 的 NARRATION_RATES / CHAT_RATES、story/poem 的合法值一致 */
 const STORY_RATE_ITEMS: Array<[string, string]> = [['-25%', '稍快 -25%'], ['-30%', '适中 -30%'], ['-35%', '偏慢 -35%（默认）'], ['-40%', '很慢 -40%']]
-const CHAT_RATE_ITEMS: Array<[string, string]> = [['-10%', '正常 -10%'], ['-20%', '偏慢 -20%（默认）'], ['-25%', '很慢 -25%'], ['-30%', '更慢 -30%']]
+const CHAT_RATE_ITEMS: Array<[string, string]> = [['+10%', '更快 +10%'], ['+0%', '稍快 +0%'], ['-10%', '正常 -10%（默认）'], ['-20%', '偏慢 -20%'], ['-30%', '很慢 -30%']]
 const NARRATION_RATE_ITEMS: Array<[string, string]> = [['-15%', '稍快 -15%'], ['-20%', '适中 -20%'], ['-25%', '偏慢 -25%（默认）'], ['-30%', '很慢 -30%']]
 
 /** 菜单状态：开关/语音/语言等字段只用于菜单文案与勾选，缺省值保持旧行为 */
@@ -232,7 +232,7 @@ export interface MenuState {
   poemRate?: string
   /** 叙述语速（缺省 -25%，典故/成语用） */
   narrationRate?: string
-  /** 聊天语速（缺省 -20%，聊天回复/喊名字应答用） */
+  /** 聊天语速（缺省 -10%，聊天回复/喊名字应答用） */
   chatRate?: string
   /** 流式回复开关（缺省视为开；关掉后等整段回复再开口） */
   streamOn?: boolean
@@ -323,7 +323,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
       item('接着说', 'culture-story-next'),
       item('从头讲这本书', 'story-reset'),
       item('念首诗', 'poem'),
-      rateSub('聊天语速：', 'chat-rate:', state.chatRate || '-20%', CHAT_RATE_ITEMS),
+      rateSub('聊天语速：', 'chat-rate:', state.chatRate || '-10%', CHAT_RATE_ITEMS),
       rateSub('叙述语速：', 'narration-rate:', state.narrationRate || '-25%', NARRATION_RATE_ITEMS),
       rateSub('念诗语速：', 'poem-rate:', state.poemRate || '-25%', NARRATION_RATE_ITEMS),
       item('讲个民间故事', 'culture-tale'),
