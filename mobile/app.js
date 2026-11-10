@@ -281,6 +281,7 @@ async function playAudioBuffer(buf, token) {
         src.buffer = data;
         src.connect(audioCtx.destination);
         setPetSpeaking(true);
+        try { petAnimator && petAnimator.talkFor(data.duration * 1000 + 300); } catch (e) { }
         currentSpeech = src;
         src.onended = () => {
           if (currentSpeech === src) currentSpeech = null;
@@ -297,7 +298,7 @@ async function playAudioBuffer(buf, token) {
   // 退化路径：<audio>
   await new Promise((resolve) => {
     ttsAudio = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' })));
-    ttsAudio.addEventListener('playing', () => setPetSpeaking(true));
+    ttsAudio.addEventListener('playing', () => { setPetSpeaking(true); try { petAnimator && petAnimator.talkFor((ttsAudio.duration || 3) * 1000 + 300); } catch (e) { } });
     ttsAudio.addEventListener('ended', () => { setPetSpeaking(false); resolve(); });
     ttsAudio.addEventListener('error', () => { setPetSpeaking(false); resolve(); });
     ttsAudio.play().catch(() => {
@@ -1984,8 +1985,15 @@ function setupInstall() {
 showInstallHelp();
   });
 }
+let petAnimator = null;
 function init() {
   markConn('idle');
+  try {
+    if (window.createWhaleAnimator) {
+      petAnimator = window.createWhaleAnimator($('#pet'), '/api/chubby-whale/asset');
+      petAnimator.start();
+    }
+  } catch (e) { /* 动画失败不影响功能 */ }
 
   setupTabs();
   setupWelcome();
