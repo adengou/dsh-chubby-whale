@@ -358,8 +358,8 @@ try {
       !!stat && stat.spoken.length === before + 1 && stat.spoken[stat.spoken.length - 1].text === '开场问候·测试',
       JSON.stringify(stat && stat.spoken))
     const lastSpoken = stat && stat.spoken[stat.spoken.length - 1]
-    ok('台词语速走聊天语速（默认 -10%）',
-      !!lastSpoken && !!lastSpoken.opts && lastSpoken.opts.rate === '-10%',
+    ok('台词语速走聊天语速（默认 -15%）',
+      !!lastSpoken && !!lastSpoken.opts && lastSpoken.opts.rate === '-15%',
       JSON.stringify(lastSpoken))
 
     // 「语音朗读」是真正的静音开关：关掉后 sayLine 一声不出、也不再建朗读对象

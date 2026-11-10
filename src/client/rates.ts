@@ -16,13 +16,13 @@ export const DEFAULT_NARRATION_RATE = '-25%'
 
 /**
  * 聊天语速可选档位（菜单用）。
- * 2026-11-10 主人要求「语速快一点」：默认从 -20% 提到 -10%，并补 +0% / +10% 两档；
+ * 2026-11-10 主人要求「语速快一点」：默认从 -20% 提到 -10%；11-10 再调到 -15%（更自然）；
  * 之前 -20 是主人说 +0/-10 太快时定的，现在按新反馈回调一档。
  */
-export const CHAT_RATES: string[] = ['+10%', '+0%', '-10%', '-20%', '-30%']
+export const CHAT_RATES: string[] = ['+10%', '+0%', '-10%', '-15%', '-20%', '-30%']
 deepFreeze(CHAT_RATES)
 
-export const DEFAULT_CHAT_RATE = '-10%'
+export const DEFAULT_CHAT_RATE = '-15%'
 
 /** 说书语速默认值（主人反馈 -30% 仍略快 → -35%；菜单与播放器共用一份） */
 export const DEFAULT_STORY_RATE = '-35%'

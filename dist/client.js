@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.3.3";
+  var VERSION = "1.3.4";
 
   // src/client/styles.ts
   var W = 240;
@@ -376,9 +376,9 @@
   var NARRATION_RATES = ["-15%", "-20%", "-25%", "-30%"];
   deepFreeze(NARRATION_RATES);
   var DEFAULT_NARRATION_RATE = "-25%";
-  var CHAT_RATES = ["+10%", "+0%", "-10%", "-20%", "-30%"];
+  var CHAT_RATES = ["+10%", "+0%", "-10%", "-15%", "-20%", "-30%"];
   deepFreeze(CHAT_RATES);
-  var DEFAULT_CHAT_RATE = "-10%";
+  var DEFAULT_CHAT_RATE = "-15%";
   var DEFAULT_STORY_RATE = "-35%";
   var DEFAULT_POEM_RATE = "-25%";
   function validPercent(v) {
@@ -2725,7 +2725,8 @@
     "偏慢 -35%（默认）": "Slower -35% (default)",
     "更快 +10%": "Faster +10%",
     "稍快 +0%": "A bit faster +0%",
-    "正常 -10%（默认）": "Normal -10% (default)",
+    "正常 -15%（默认）": "Normal -15% (default)",
+    "正常 -10%": "Normal -10%",
     "偏慢 -20%": "Slow -20%",
     "稍快 -15%": "A bit faster -15%",
     "适中 -20%": "Medium -20%",
@@ -2832,7 +2833,7 @@
     ["en-GB-SoniaNeural", "音色：Sonia（英·女·英式）"]
   ];
   var STORY_RATE_ITEMS = [["-25%", "稍快 -25%"], ["-30%", "适中 -30%"], ["-35%", "偏慢 -35%（默认）"], ["-40%", "很慢 -40%"]];
-  var CHAT_RATE_ITEMS = [["+10%", "更快 +10%"], ["+0%", "稍快 +0%"], ["-10%", "正常 -10%（默认）"], ["-20%", "偏慢 -20%"], ["-30%", "很慢 -30%"]];
+  var CHAT_RATE_ITEMS = [["+10%", "更快 +10%"], ["+0%", "稍快 +0%"], ["-15%", "正常 -15%（默认）"], ["-10%", "正常 -10%"], ["-20%", "偏慢 -20%"], ["-30%", "很慢 -30%"]];
   var NARRATION_RATE_ITEMS = [["-15%", "稍快 -15%"], ["-20%", "适中 -20%"], ["-25%", "偏慢 -25%（默认）"], ["-30%", "很慢 -30%"]];
   function buildMenu(version, state = {}) {
     const voiceOn = state.voiceOn ? true : false;
@@ -2909,7 +2910,7 @@
         item("接着说", "culture-story-next"),
         item("从头讲这本书", "story-reset"),
         item("念首诗", "poem"),
-        rateSub("聊天语速：", "chat-rate:", state.chatRate || "-10%", CHAT_RATE_ITEMS),
+        rateSub("聊天语速：", "chat-rate:", state.chatRate || "-15%", CHAT_RATE_ITEMS),
         rateSub("叙述语速：", "narration-rate:", state.narrationRate || "-25%", NARRATION_RATE_ITEMS),
         rateSub("念诗语速：", "poem-rate:", state.poemRate || "-25%", NARRATION_RATE_ITEMS),
         item("讲个民间故事", "culture-tale"),
