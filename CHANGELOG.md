@@ -2,6 +2,19 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [1.3.9] - 2026-11-12
+
+### 修复（启动告警：ui-skin-chubby-whale 未激活）
+- 插件 patch 里插入的 `@dsh-external/dsh-client-ui-skin-chubby-whale` 在 npm / npmmirror 均 404（从未发布），导致每次启动报：
+  `ui-skin-chubby-whale (...): failed to import: ERR_MODULE_NOT_FOUND` 和 `dsh: warning: 1 entry did not activate`。
+- 已把该 insert 注释停用（保留说明，等包正式发布再恢复）；皮肤功能由插件自身 `/skin` 资产与菜单开关提供，不受影响。
+
+### 说明（不是 bug）
+- 日志里的 `[asr] SCRIPT-REJECT lang=zh-en text="O que é que ele quer?"` 是**预期行为**：聊天语言=自动时只放行中文/英文，葡语等其它语种会被脚本闸门拒绝（多为电视/背景声被误拾）。
+
+### 测试
+- 全链 0 失败；build / check-bom 通过。
+
 ## [1.3.8] - 2026-11-11
 
 ### 修复（背诗没背完整、串入语音聊天）
