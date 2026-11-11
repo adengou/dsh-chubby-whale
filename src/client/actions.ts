@@ -159,3 +159,10 @@ export function createActionTable<C = any>(): ActionTable<C> {
     prefixes: () => prefixes.map((e) => e.prefix),
   }
 }
+
+/** 背景皮肤动作占位（实际处理在 client.ts 的 runAction 里先拦截） */
+export function registerSkinActions(table: any): void {
+  const noop = async (): Promise<void> => { }
+  table.define('skin-fixed', noop)
+  table.define('skin-bg-reset', noop)
+}

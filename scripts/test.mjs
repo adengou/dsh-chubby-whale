@@ -470,6 +470,7 @@ try {
     daily: { handleDaily: fn },
     backup: { handleExport: fn, handleImport: fn },
     stats: { handleStats: fn },
+    misc: { handleAsset: fn, handleSkin: fn, handleState: fn, handleBalance: fn, handleStatus: fn, handleGrowth: fn, handleFishfood: fn, handlePet: fn, handleClearMemory: fn, handleCache: fn },
     configView: { handleConfig: fn },
   }
   const table = createRouteTable(stub)

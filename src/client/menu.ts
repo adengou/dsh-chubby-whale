@@ -90,6 +90,9 @@ export const EN_MAP: Record<string, string> = {
   '稍快 +0%': 'A bit faster +0%',
   '正常 -15%（默认）': 'Normal -15% (default)',
   '正常 -10%': 'Normal -10%',
+  '固定背景：开': 'Fixed background: on',
+  '固定背景：关': 'Fixed background: off',
+  '恢复默认背景': 'Restore default background',
   '偏慢 -20%': 'Slow -20%',
   '稍快 -15%': 'A bit faster -15%',
   '适中 -20%': 'Medium -20%',
@@ -266,8 +269,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     ? books.map((b) => item(b, 'story-book:' + b))
     : [item(state.storyBooksTried ? '书单没取到，稍后再试' : '正在翻书单…', 'story-books')]
   return [
-    item('固定背景：' + (state.skinFixed ? '开' : '关'), 'skin-fixed'),
-    item('恢复默认背景', 'skin-bg-reset'),
+
     sep(),
     // ── 界面语言（主人定的位置：标题栏下方第一行）──
     sub('界面语言 ▸', [
@@ -275,6 +277,8 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
       item('English', 'lang:en'),
     ]),
     // ── 吃饭与看图 ──
+    item('固定背景：' + (state.skinFixed ? '开' : '关'), 'skin-fixed'),
+    item('恢复默认背景', 'skin-bg-reset'),
     item('成长：' + growthText, 'growth'),
     item('投喂一碗', 'feed'),
     item('看张图…', 'vision'),

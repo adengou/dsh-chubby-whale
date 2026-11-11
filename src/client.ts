@@ -12,7 +12,7 @@ import { handleFileDrop } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth } from './client/look.js'
 import { createVoiceBridge } from './client/voice-bridge.js'
-import { createActionTable, type ActionHost } from './client/actions.js'
+import { createActionTable, registerSkinActions, type ActionHost } from './client/actions.js'
 import { registerCultureActions } from './client/actions/culture.js'
 import { parseBookList, registerContentActions } from './client/actions/content.js'
 import { registerSystemActions } from './client/actions/system.js'
@@ -84,6 +84,7 @@ let autoSkinStarted = false
 
     // 动作表：菜单动作 → 处理器（新增动作只改 client/actions/*.ts 与菜单数据，不动本文件）
     const actions = createActionTable<ActionHost>()
+registerSkinActions(actions)
     registerCultureActions(actions)
     registerContentActions(actions)
     registerSystemActions(actions)
