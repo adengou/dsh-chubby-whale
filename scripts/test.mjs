@@ -668,7 +668,7 @@ try {
   const menu = await import('../src/client/menu.ts')
   const items = menu.buildMenu('9.9.9', {
     storyBooks: ['聊斋', '西游记'], ttsVoice: 'zh-CN-XiaoyiNeural', chatLang: 'zh',
-    storyAuto: true, streamOn: true, narrationRate: '-25%', poemRate: '-25%', storyRate: '-35%',
+    storyAuto: true, streamOn: true, narrationRate: '-25%', poemRate: '-25%', storyRate: '-35%', skinFixed: true,
   })
   const dead = []
   let actions = 0
