@@ -10,7 +10,7 @@ import { hasStoryAutoStorage, isStoryAutoOn, setStoryAuto } from '../story-auto.
 import type { ActionHost, ActionTable } from '../actions.js'
 import { getJson } from '../http.js'
 import { estimateMelodySeconds } from '../melody.js'
-import { collapsePoemBody, collapseText, taleParts, estimateSpeakMs } from '../text.js'
+import { collapsePoemBody, collapseText, taleParts, estimateSpeakMs, estimateSpeakMsAtRate } from '../text.js'
 import { startProgress, stopProgress } from '../narration-progress.js'
 import { setNarrationRate, setChatRate, poemRate } from '../rates.js'
 import { clearT } from '../util.js'
@@ -67,7 +67,9 @@ export function recitePoem(host: ReciteHost, poem: any): void {
   const speech = intro + collapsePoemBody(body)
   host.talkFor(Math.max(6000, estimateSpeakMs(speech)))
   const my = ++poemGen
-  host.narrate(estimateSpeakMs(speech))
+  const rate = poemRate(host.narrationRate())
+  // 叙述锁必须按实际语速估算（旧实现用 +0% 的 estimate，-25% 的长诗会提前 20% 解锁）
+  host.narrate(estimateSpeakMsAtRate(speech, rate))
   host.say(host.persona.line('poemStart'), 4000)
   // 直接开念：原来延迟 600ms 等气泡先亮，但那 600ms 里点「停止说话」拦不住这次开念
   // （TTS 队列还没这一段，stopSpeaking 无从取消）。气泡是同步写进 DOM 的，而 TTS 合成还要几秒，
@@ -86,7 +88,7 @@ export function recitePoem(host: ReciteHost, poem: any): void {
   }
   try {
     host.speak(speech, {
-      rate: poemRate(host.narrationRate()),
+      rate,
       onDone: release,
     })
   } catch (e) {

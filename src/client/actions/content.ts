@@ -8,7 +8,7 @@
 
 import type { ActionHost, ActionTable } from '../actions.js'
 import { getJson } from '../http.js'
-import { estimateSpeakMs } from '../text.js'
+import { estimateSpeakMs, estimateSpeakMsAtRate } from '../text.js'
 import { beginOnce } from './culture.js'
 
 /** 书单响应 → 书名数组（菜单打开时的书单与 story-books 重试共用同一份解析） */

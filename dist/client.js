@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.3.7";
+  var VERSION = "1.3.8";
 
   // src/client/styles.ts
   var W = 240;
@@ -530,6 +530,18 @@
     const base = cjkScript ? 3e3 : 600;
     const ms2 = base + (cjk + cjkPuncts) * 260 + words * 300 + digits * 200 + halfPuncts * 100;
     return Math.round(Math.min(ms2, Number.MAX_SAFE_INTEGER));
+  }
+  function estimateSpeakMsAtRate(text, rate) {
+    const base = estimateSpeakMs(text);
+    if (!base) return 0;
+    const s = String(rate == null ? "" : rate).trim();
+    const m = /^([+-])(\d{1,2})%$/.exec(s);
+    let factor = 1;
+    if (m) {
+      const p = Number(m[2]);
+      if (p > 0 && p < 100) factor = m[1] === "-" ? 100 / (100 - p) : 100 / (100 + p);
+    }
+    return Math.round(base * factor * 1.1) + 5e3;
   }
   function isSpeakWordLetter(c) {
     return c >= 65 && c <= 90 || c >= 97 && c <= 122 || c >= 192 && c <= 591;
@@ -4962,7 +4974,8 @@
     const speech = intro + collapsePoemBody(body);
     host.talkFor(Math.max(6e3, estimateSpeakMs(speech)));
     const my = ++poemGen;
-    host.narrate(estimateSpeakMs(speech));
+    const rate = poemRate(host.narrationRate());
+    host.narrate(estimateSpeakMsAtRate(speech, rate));
     host.say(host.persona.line("poemStart"), 4e3);
     let released = false;
     const release = () => {
@@ -4978,7 +4991,7 @@
     };
     try {
       host.speak(speech, {
-        rate: poemRate(host.narrationRate()),
+        rate,
         onDone: release
       });
     } catch (e) {
@@ -7355,7 +7368,8 @@
       clearGuard();
       const token = bumpGen();
       const text = String(d && d.text || "");
-      const speakMs = estimateSpeakMs(text);
+      const rate = normalizeRate(storyRate(), host.narrationRate());
+      const speakMs = estimateSpeakMsAtRate(text, rate);
       if (d && d.book) refs.book.current = String(d.book);
       host.bubble(titleOf(d), 12e3);
       host.talkFor(8e3);
@@ -7381,7 +7395,7 @@
         host.speak(text, {
           // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
           // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
-          rate: normalizeRate(storyRate(), host.narrationRate()),
+          rate,
           onDone: () => {
             if (token !== shared.gen) return;
             clearGuard();

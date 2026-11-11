@@ -113,6 +113,29 @@ export function estimateSpeakMs(text: any): number {
   return Math.round(Math.min(ms, Number.MAX_SAFE_INTEGER))
 }
 
+/**
+ * 按 TTS 语速修正的朗读时长估算（叙述锁专用）。
+ *
+ * 老问题：念诗/说书用的是 estimateSpeakMs（按 +0% 的 260ms/字估算），但实际朗读语速是
+ * 念诗 -25%、说书 -35%；长诗（《将进酒》176 字）估算 ~49 秒，实际要 ~65 秒——
+ * 叙述锁提前过期，麦克风重新开，鱼念诗的声音被当成主人说话，语音聊天插进来把诗打断。
+ * 这里按 rate 换算真实时长，再留 10% + 5 秒余量（锁由 onDone 提前解，估长不误事）。
+ * @param text - 朗读文本
+ * @param rate - TTS 语速（如 '-25%'、'+0%'；非法值按原速+余量）
+ */
+export function estimateSpeakMsAtRate(text: any, rate: any): number {
+  const base = estimateSpeakMs(text)
+  if (!base) return 0
+  const s = String(rate == null ? '' : rate).trim()
+  const m = /^([+-])(\d{1,2})%$/.exec(s)
+  let factor = 1
+  if (m) {
+    const p = Number(m[2])
+    if (p > 0 && p < 100) factor = m[1] === '-' ? 100 / (100 - p) : 100 / (100 + p)
+  }
+  return Math.round(base * factor * 1.1) + 5000
+}
+
 /** 朗读估算里的「字母」：ASCII + Latin-1 补充区（café、naïve 仍算作一个词） */
 function isSpeakWordLetter(c: number): boolean {
   return (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || (c >= 0xc0 && c <= 0x24f)
