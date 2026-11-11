@@ -225,6 +225,8 @@ export interface MenuState {
   storyBooks?: string[]
   /** 书单是否已经拉过：拉过但为空 → 菜单显示「书单没取到，稍后再试」 */
   storyBooksTried?: boolean
+  /** 固定背景开关（true = 不随机） */
+  skinFixed?: boolean
   /** 说书连播开关（缺省视为开：讲完一段自动接下一段） */
   storyAuto?: boolean
   /** 说书语速（缺省 -35%）：-25% / -30% / -35% / -40% */
@@ -264,6 +266,9 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     ? books.map((b) => item(b, 'story-book:' + b))
     : [item(state.storyBooksTried ? '书单没取到，稍后再试' : '正在翻书单…', 'story-books')]
   return [
+    item('固定背景：' + (state.skinFixed ? '开' : '关'), 'skin-fixed'),
+    item('恢复默认背景', 'skin-bg-reset'),
+    sep(),
     // ── 界面语言（主人定的位置：标题栏下方第一行）──
     sub('界面语言 ▸', [
       item('中文', 'lang:zh'),
