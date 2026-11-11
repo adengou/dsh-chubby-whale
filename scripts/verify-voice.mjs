@@ -368,6 +368,7 @@ console.log('\n[6] 接线静态断言')
     { chatLang: 'zh', ttsVoice: 'en-GB-SoniaNeural', chatCacheOn: false },
     // 书单拉过但为空 → 菜单显示兜底项「书单没取到，稍后再试」（menu.ts 的 bookItems 分支）
     { storyBooksTried: true },
+    { skinFixed: true },
   ]
   const labels = new Set()
   const walk = (items) => {
