@@ -663,6 +663,7 @@ try {
   mods[1].registerContentActions(table)
   mods[2].registerSystemActions(table)
   mods[3].registerVoiceActions(table)
+  ;(await import('../src/client/actions.ts')).registerSkinActions(table)
 
   const menu = await import('../src/client/menu.ts')
   const items = menu.buildMenu('9.9.9', {
