@@ -9006,6 +9006,7 @@
   }
 
   // src/client.ts
+  var autoSkinStarted = false;
   window.__ModuleLoader__.load({
     id: "dsh-chubby-whale",
     factory: (require2) => {
@@ -10542,8 +10543,8 @@
           animRef.current = createAnimator({ canvas, imgSrc: "/api/chubby-whale/asset?v=" + Date.now(), cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current });
           animRef.current.start();
           try {
-            if (!window.__chubbyAutoSkin) {
-              window.__chubbyAutoSkin = 1;
+            if (!autoSkinStarted) {
+              autoSkinStarted = true;
               startAutoSkin();
             }
           } catch (e) {

@@ -37,6 +37,9 @@ import { createHooks } from './client/hooks.js'
 import { bindFileDropCapture, bindOutsideClose, bindResize, bindChatFocus, bindMenuKeys, createUnmountCleanup, startGreeting, startWatchdog } from './client/effects.js'
 import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, listMenuEntries, menuRootProps } from './client/render.js'
 import { evPrevent, evStop } from './client/util.js'
+
+/** 定时随机背景只启动一次（模块级，不挂 window 防污染） */
+let autoSkinStarted = false
 ;(window as any).__ModuleLoader__.load({
   id: 'dsh-chubby-whale',
   factory: (require: any) => {
@@ -1410,7 +1413,7 @@ import { evPrevent, evStop } from './client/util.js'
         animRef.current = createAnimator({ canvas, imgSrc: '/api/chubby-whale/asset?v=' + Date.now(), cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current })
         animRef.current.start()
       // 后台定时随机换背景（每 5 分钟；固定开关打开时不换）
-      try { if (!(window as any).__chubbyAutoSkin) { (window as any).__chubbyAutoSkin = 1; startAutoSkin() } } catch (e) { }
+      try { if (!autoSkinStarted) { autoSkinStarted = true; startAutoSkin() } } catch (e) { }
 
         return () => animRef.current?.stop()
       }, [])
