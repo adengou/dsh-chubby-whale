@@ -79,7 +79,7 @@
         <h2 class="sr-only" id="chatHeading">聊天</h2>
 
         <div class="pet-wrap">
-          <img class="pet" id="pet" src="/api/chubby-whale/asset" alt="大肥鱼" draggable="false" />
+          <canvas class="pet" id="pet" width="480" height="426" aria-label="大肥鱼"></canvas>
           <span class="pet__bubble" id="petBubble" hidden></span>
         </div>
 
@@ -217,6 +217,7 @@
   </nav>
 
   <!-- 原生 ES module，无框架、无外部依赖 -->
+  <script src="anim.js"></script>
   <script type="module" src="app.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>

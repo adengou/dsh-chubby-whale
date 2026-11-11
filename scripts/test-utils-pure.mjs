@@ -174,6 +174,11 @@ try {
   ok('数字按位计（1324 → 600 + 4×200）', text.estimateSpeakMs('1324') === 1400, String(text.estimateSpeakMs('1324')))
   ok('撇号/连字符不拆词', text.estimateSpeakMs("don't") === text.estimateSpeakMs('dont') && text.estimateSpeakMs('hello-world') === text.estimateSpeakMs('helloworld'))
   ok('空文本估 0（叙述锁不上锁的前提）', text.estimateSpeakMs('') === 0 && text.estimateSpeakMs('   ') === 0)
+  ok('按语速修正：-25% 比原速长', text.estimateSpeakMsAtRate('你好世界', '-25%') > text.estimateSpeakMs('你好世界'))
+  ok('按语速修正：-25% 公式', text.estimateSpeakMsAtRate('你好世界', '-25%') === Math.round(4040 * (100 / 75) * 1.1) + 5000, String(text.estimateSpeakMsAtRate('你好世界', '-25%')))
+  ok('按语速修正：+0% 只加余量', text.estimateSpeakMsAtRate('你好世界', '+0%') === Math.round(4040 * 1.1) + 5000)
+  ok('按语速修正：非法语速按原速+余量', text.estimateSpeakMsAtRate('你好世界', '乱写') === Math.round(4040 * 1.1) + 5000)
+  ok('按语速修正：空文本仍为 0', text.estimateSpeakMsAtRate('', '-25%') === 0)
   ok('全角标点算中文单价（！→ 3000 + 260）', text.estimateSpeakMs('！') === 3260, String(text.estimateSpeakMs('！')))
   ok('半角句读按 100ms 计（.→600+100）', text.estimateSpeakMs('.') === 700, String(text.estimateSpeakMs('.')))
 

@@ -308,6 +308,8 @@ try {
   mods[1].registerContentActions(t)
   mods[2].registerSystemActions(t)
   mods[3].registerVoiceActions(t)
+  const actionsMod = await import('../src/client/actions.ts')
+  actionsMod.registerSkinActions(t)
 
   const items = buildMenu('9.9.9', { storyBooks: ['聊斋'], storyBooksTried: true })
   const all = flattenItems(items)

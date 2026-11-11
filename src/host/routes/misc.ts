@@ -6,6 +6,7 @@
  * 本身不合法时才用 4xx（/cache 的 action 校验是唯一一处）。
  */
 import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { growthStage } from '../../shared/growth.js'
 import { fetchJson, isTimeoutError } from '../http.js'
 import { sendJson, sendText, sendError, sendBuffer } from '../respond.js'
@@ -44,6 +45,8 @@ function readAction(req: any): string | null {
 
 export function createMiscHandlers(opts: {
   assetPath: string
+  /** 皮肤画廊目录（assets/gallery），缺省不启用 /skin */
+  skinsDir?: string
   getKey: () => string
   loadState: () => any
   loadGrowth: () => any
@@ -68,6 +71,21 @@ export function createMiscHandlers(opts: {
       sendBuffer(res, buf, 'image/png', { 'cache-control': 'no-store' })
     } catch {
       sendText(res, 404, 'asset not found')
+    }
+  }
+
+  /** 皮肤画廊：/skin/<n> → assets/gallery/bg-<n>.webp（n 0-48） */
+  async function handleSkin(req: any, res: any): Promise<void> {
+    try {
+      const url = String(req && req.url ? req.url : '')
+      const mm = url.match(/[?&]?n=(\d+)/) || url.match(/\/skin\/(\d+)/)
+      const n = mm ? parseInt(mm[1], 10) : 0
+      if (!Number.isFinite(n) || n < 0 || n > 48) { sendText(res, 404, 'bad skin index'); return }
+      const file = join(opts.skinsDir || '', 'bg-' + (n < 10 ? '0' : '') + n + '.webp')
+      const buf = await readFile(file)
+      sendBuffer(res, buf, 'image/webp', { 'cache-control': 'public, max-age=86400' })
+    } catch {
+      sendText(res, 404, 'skin not found')
     }
   }
 
@@ -297,5 +315,5 @@ export function createMiscHandlers(opts: {
     }
   }
 
-  return { handleAsset, handleState, handleBalance, handleStatus, handleGrowth, handleFishfood, handlePet, handleClearMemory, handleCache }
+  return { handleAsset, handleSkin, handleState, handleBalance, handleStatus, handleGrowth, handleFishfood, handlePet, handleClearMemory, handleCache }
 }

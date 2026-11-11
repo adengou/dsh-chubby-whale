@@ -1,6 +1,7 @@
 export function createRouteTable(h) {
     return [
         { path: '/api/chubby-whale/asset', handler: h.misc.handleAsset },
+        { path: '/api/chubby-whale/skin', handler: h.misc.handleSkin },
         { path: '/api/chubby-whale/chat', handler: h.chat },
         { path: '/api/chubby-whale/chat-stream', handler: h.chatStream },
         { path: '/api/chubby-whale/status', handler: h.misc.handleStatus },

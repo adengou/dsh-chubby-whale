@@ -36,7 +36,7 @@
 
 import { setStoryAuto } from './story-auto.js'
 import { getJson, postJson, clientHeaders, timeoutSignal } from './http.js'
-import { estimateSpeakMs } from './text.js'
+import { estimateSpeakMs, estimateSpeakMsAtRate } from './text.js'
 import { normalizeRate } from '../shared/tts.js'
 import { storyRate } from './rates.js'
 import type { Persona } from './persona.js'
@@ -325,7 +325,9 @@ export function createStoryController(host: StoryHost): StoryController {
     clearGuard()
     const token = bumpGen()
     const text = String((d && d.text) || '')
-    const speakMs = estimateSpeakMs(text)
+    const rate = normalizeRate(storyRate(), host.narrationRate())
+  // 叙述锁/看门狗按实际语速估算：-35% 的估算时长比实际短 1/0.65，旧值会提前解锁让语音插话
+  const speakMs = estimateSpeakMsAtRate(text, rate)
     if (d && d.book) refs.book.current = String(d.book)
     // 头顶只显示状态：不把整段古文糊上来
     host.bubble(titleOf(d), 12000)
@@ -350,7 +352,7 @@ export function createStoryController(host: StoryHost): StoryController {
       host.speak(text, {
         // 故事语速由前端常量决定（-35%：主人反馈 -30% 仍略快）。
         // 这样调语速只改这一处、只刷新页面即可生效，不必重启宿主。
-        rate: normalizeRate(storyRate(), host.narrationRate()),
+        rate,
         onDone: () => {
           // 旧段的 onDone（已重开/已停/已换段）：不许再动占线，也不许再接下一段
           if (token !== shared.gen) return

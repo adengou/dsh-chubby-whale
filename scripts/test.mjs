@@ -399,12 +399,12 @@ try {
   }
   const rates = await import('../src/client/rates.ts')
   ok('默认叙述语速 -25%', rates.narrationRate() === '-25%')
-  ok('聊天语速默认 -10%', rates.chatRate() === '-10%')
+  ok('聊天语速默认 -15%', rates.chatRate() === '-15%')
   ok('聊天语速支持 +0% / +10%', rates.setChatRate('+0%') === true && rates.chatRate() === '+0%' && rates.setChatRate('+10%') === true && rates.chatRate() === '+10%')
   ok('聊天语速可写可读', rates.setChatRate('-30%') === true && rates.chatRate() === '-30%')
   ok('非法聊天语速不写', rates.setChatRate('乱写') === false && rates.chatRate() === '-30%')
   ok('档位表被冻结', Object.isFrozen(rates.CHAT_RATES))
-  rates.setChatRate('-10%')
+  rates.setChatRate('-15%')
   ok('非法值不写入', rates.setNarrationRate('-99%') === false && rates.narrationRate() === '-25%')
   ok('合法值写入成功', rates.setNarrationRate('-15%') === true)
   ok('写入后读到新值', rates.narrationRate() === '-15%')
@@ -426,7 +426,7 @@ try {
   walk(items)
   ok('菜单含「流式回复：关」', labels.indexOf('流式回复：关') >= 0)
   ok('菜单含「叙述语速：-15% ▸」', labels.some((x) => x.indexOf('叙述语速：-15%') === 0))
-  ok('菜单含「聊天语速：-10% ▸」', labels.some((x) => x.indexOf('聊天语速：-10%') === 0))
+  ok('菜单含「聊天语速：-15% ▸」', labels.some((x) => x.indexOf('聊天语速：-15%') === 0))
   ok('菜单含「念诗语速：-20% ▸」', labels.some((x) => x.indexOf('念诗语速：-20%') === 0))
   ok('菜单含「说书语速：-30% ▸」', labels.some((x) => x.indexOf('说书语速：-30%') === 0))
   ok('EN 流式回复', menu.tr('流式回复：关', 'en') === 'Streaming replies: off')
@@ -470,6 +470,7 @@ try {
     daily: { handleDaily: fn },
     backup: { handleExport: fn, handleImport: fn },
     stats: { handleStats: fn },
+    misc: { handleAsset: fn, handleSkin: fn, handleState: fn, handleBalance: fn, handleStatus: fn, handleGrowth: fn, handleFishfood: fn, handlePet: fn, handleClearMemory: fn, handleCache: fn },
     configView: { handleConfig: fn },
   }
   const table = createRouteTable(stub)
@@ -662,11 +663,12 @@ try {
   mods[1].registerContentActions(table)
   mods[2].registerSystemActions(table)
   mods[3].registerVoiceActions(table)
+  ;(await import('../src/client/actions.ts')).registerSkinActions(table)
 
   const menu = await import('../src/client/menu.ts')
   const items = menu.buildMenu('9.9.9', {
     storyBooks: ['聊斋', '西游记'], ttsVoice: 'zh-CN-XiaoyiNeural', chatLang: 'zh',
-    storyAuto: true, streamOn: true, narrationRate: '-25%', poemRate: '-25%', storyRate: '-35%',
+    storyAuto: true, streamOn: true, narrationRate: '-25%', poemRate: '-25%', storyRate: '-35%', skinFixed: true,
   })
   const dead = []
   let actions = 0

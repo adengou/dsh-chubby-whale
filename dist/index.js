@@ -252,6 +252,7 @@ export function apply(ctx, rawConfig) {
         tts: await ttsCache.count(), chat: await chatCache.count(), asr: await asrCache.count(),
     });
     const misc = createMiscHandlers({
+        skinsDir: join(PLUGIN_DIR, 'assets', 'gallery'),
         assetPath: join(PLUGIN_DIR, 'assets', 'whale.png'),
         getKey,
         loadState: store.loadState,
