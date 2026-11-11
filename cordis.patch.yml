@@ -6,7 +6,13 @@
         # 插件总开关：false = 不注册任何 /api/chubby-whale/* 路由（见 README「插件开关」）
         enabled: true
 
-# 肥鲸鲸鱼娘皮肤（试验）：借桌宠 bundle 的 patch 合并通道，让皮肤客户端进入 Loader
-- insert:
-    - id: ui-skin-chubby-whale
-      name: '@dsh-external/dsh-client-ui-skin-chubby-whale'
+# 肥鲸鲸鱼娘皮肤（试验）——2026-11-12 停用：
+# 包 @dsh-external/dsh-client-ui-skin-chubby-whale 在 npm / npmmirror 均 404，未发布。
+# 保留该 insert 会让 dsh 启动时报
+#   ui-skin-chubby-whale (...): failed to import: ERR_MODULE_NOT_FOUND
+#   dsh: warning: 1 entry did not activate
+# 皮肤功能由插件自身的 /skin 资产与菜单开关提供，不依赖这个外部包；
+# 等该包正式发布后再决定是否恢复。
+# - insert:
+#     - id: ui-skin-chubby-whale
+#       name: '@dsh-external/dsh-client-ui-skin-chubby-whale'
