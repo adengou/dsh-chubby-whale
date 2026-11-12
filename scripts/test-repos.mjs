@@ -161,7 +161,7 @@ try {
   ok('追加对话不覆盖摘要', repo.loadMemorySummary() === '主人爱喝热水')
 
   const raw = JSON.parse(readFileSync(join(dir, 'memory.json'), 'utf8'))
-  ok('落盘带 savedAt 且 history 仍是 50', Array.isArray(raw.history) && raw.history.length === 50 && typeof raw.savedAt === 'string')
+  ok('落盘带 savedAt 且 history 为 52（50 + 新一对）', Array.isArray(raw.history) && raw.history.length === 52 && typeof raw.savedAt === 'string')
 
   repo.clearMemory()
   ok('clearMemory 连摘要一起清空', repo.loadHistory().length === 0 && repo.loadMemorySummary() === '')
