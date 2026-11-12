@@ -260,4 +260,15 @@ export function nervousEnergy(): number | null {
   try { return current.affect.read().arousal } catch (e) { return null }
 }
 
+/** 诊断快照：二维情绪 + 宿主事件源是否在跑（null = 未挂载） */
+export function nervousSnapshot(): { arousal: number; valence: number; sense: boolean } | null {
+  if (!current) return null
+  try {
+    const st = current.affect.read()
+    return { arousal: st.arousal, valence: st.valence, sense: Boolean(current.sense) }
+  } catch (e) {
+    return null
+  }
+}
+
 export type { Mood }

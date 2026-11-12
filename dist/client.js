@@ -2769,6 +2769,7 @@
     "数字": "Numerals",
     "把稿子念成音频…": "Narrate script to audio…",
     "公文校对…": "Proofread a document…",
+    "神经感知：看一眼状态": "Nervous system: status",
     "清除记忆…": "Clear memory…",
     "清空聊天缓存…": "Clear chat cache…",
     "让它游走（退出）": "Let it go (exit)",
@@ -2883,6 +2884,7 @@
       item("看张图…", "vision"),
       item("公文校对…", "proofread"),
       item("神经感知：" + (nervousOn ? "开" : "关"), "nervous"),
+      item("神经感知：看一眼状态", "nervous-status"),
       sep(),
       // ── 曲子 ──
       sub("弹首曲子 ▸", MELODIES.map((m) => item("弹《" + m + "》", "music:" + m))),
@@ -7015,6 +7017,15 @@
       return null;
     }
   }
+  function nervousSnapshot() {
+    if (!current) return null;
+    try {
+      const st = current.affect.read();
+      return { arousal: st.arousal, valence: st.valence, sense: Boolean(current.sense) };
+    } catch (e) {
+      return null;
+    }
+  }
 
   // src/client/actions/voice.ts
   function wakeWordsLive(host, want) {
@@ -7304,6 +7315,23 @@
       }
       const e = nervousEnergy();
       host.bubble("神经感知：开（本鲸能感觉到你在忙" + (e == null ? "" : "，精神 " + Math.round(e) + "%") + "）", 4e3);
+    });
+    table.define("nervous-status", async (host) => {
+      const snap = nervousSnapshot();
+      if (!snap) {
+        host.bubble("神经感知还没挂上（刷新页面试试）", 4e3);
+        return;
+      }
+      let hostLine = "宿主事件：没连上";
+      try {
+        const r = await getJson("/nervous?limit=1");
+        if (r && r.ok) {
+          const sub2 = Array.isArray(r.subscribed) ? r.subscribed.length : 0;
+          hostLine = "宿主事件：订阅 " + sub2 + " 类" + (sub2 > 0 ? "" : "（可能还没重启）");
+        }
+      } catch (e) {
+      }
+      host.bubble("精神 " + Math.round(snap.arousal) + " / 心情 " + Math.round(snap.valence) + "；" + hostLine, 8e3);
     });
   }
 
