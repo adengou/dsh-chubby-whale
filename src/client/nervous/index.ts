@@ -161,9 +161,17 @@ export function attachNervous(deps: NervousDeps): () => void {
   try {
     const sense = createHostSense()
     s.sense = sense
+    let focusSession = ''
     sense.start((e) => {
       try { s.log.log(e) } catch (err) { }
-      // 宿主事件目前只记账、不打分：affect.apply 只认 activity/back/work，避免别人的会话把情绪顶满
+      // 会话聚焦：只在同一个会话连续活动时给情绪打分；换会话（含子代理）的第一条只记账，
+      // 免得别人的会话把这只鲸的情绪带跑。affect 内部还有事件名冷却，双重限流。
+      const sess = String((e as any).data?.session || '')
+      if (sess && focusSession && sess !== focusSession) {
+        focusSession = sess
+        return
+      }
+      if (sess) focusSession = sess
       try { s.affect.apply(e as any) } catch (err) { }
     })
   } catch (e) {

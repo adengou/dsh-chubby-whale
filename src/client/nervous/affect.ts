@@ -65,6 +65,22 @@ const RULES = deepFreeze({
     shyValence: 80,
     shyArousal: 40,
   },
+  /**
+   * 宿主事件（第三层）的增量：按事件名前缀匹配。
+   * 权重刻意压得很小（0.2~0.6），因为一次工具调用不该让鲸「激动」；
+   * 只有明确的失败类事件才给大幅度的负 valence。
+   */
+  host: {
+    /** 同一事件名的冷却：连续工具调用在这段时间内只算一次 */
+    cooldownMs: 1500,
+    byPrefix: {
+      'tool/': { arousal: 0.6, valence: 0.2 },
+      'turn/': { arousal: 0.5, valence: 0.2 },
+      'job/': { arousal: 0.2, valence: 0 },
+    },
+    /** 失败/中断类：不论前缀，一律按这条算 */
+    failure: { arousal: 2, valence: -2 },
+  },
 })
 
 /** 把单轴夹到 [min, max]；非数字（NaN/Infinity/undefined）回落到 fallback */
@@ -91,11 +107,26 @@ function gainOf(type: string): Delta | null {
   return Object.prototype.hasOwnProperty.call(gains, type) ? gains[type] : null
 }
 
+/** 宿主事件名 → 增量；失败类优先，未知名字返回 null（不猜） */
+function hostDeltaOf(name: string): Delta | null {
+  if (!name) return null
+  const host = RULES.host as unknown as { byPrefix: Record<string, Delta>; failure: Delta }
+  if (/error|fail|abort|crash/i.test(name)) return host.failure
+  const keys = Object.keys(host.byPrefix)
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i]
+    if (name.indexOf(k) === 0) return host.byPrefix[k]
+  }
+  return null
+}
+
 export function createAffectModel(opts?: { initial?: AffectState }): AffectModel {
   const initial = normalize(opts && opts.initial)
   let state: AffectState = { arousal: initial.arousal, valence: initial.valence }
   /** 上一次心跳的时刻；当前规则不依赖时间差，留给以后按时间衰减/平滑用 */
   let lastTickAt = 0
+  /** 宿主事件名的冷却表：同名事件在 cooldownMs 内只算一次 */
+  const hostLastAt = new Map<string, number>()
 
   function applyDelta(d: Delta): void {
     // 整体替换而不是改字段：read() 返回的快照与内部状态互不影响
@@ -114,7 +145,19 @@ export function createAffectModel(opts?: { initial?: AffectState }): AffectModel
     apply(e: NervousEvent): void {
       if (!e || typeof e !== 'object') return
       const delta = gainOf(e.type)
-      if (delta) applyDelta(delta)
+      if (delta) { applyDelta(delta); return }
+      if (e.type !== 'host') return
+      const data = (e as any).data || {}
+      const name = String(data.name || data.event || '')
+      if (!name) return
+      const now = Number.isFinite(Number(e.at)) ? Number(e.at) : Date.now()
+      const last = hostLastAt.get(name)
+      // last 为 undefined 表示这个事件名从没见过：首条必须放行（不能拿 0 当时间戳比）
+      if (last !== undefined && now - last < RULES.host.cooldownMs) return
+      const hd = hostDeltaOf(name)
+      if (!hd) return
+      hostLastAt.set(name, now)
+      applyDelta(hd)
     },
 
     tick(now: number, away: boolean, night: boolean): void {

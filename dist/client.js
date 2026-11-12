@@ -6373,6 +6373,22 @@
       /** valence ≥80 且 arousal ≤40 → shy */
       shyValence: 80,
       shyArousal: 40
+    },
+    /**
+     * 宿主事件（第三层）的增量：按事件名前缀匹配。
+     * 权重刻意压得很小（0.2~0.6），因为一次工具调用不该让鲸「激动」；
+     * 只有明确的失败类事件才给大幅度的负 valence。
+     */
+    host: {
+      /** 同一事件名的冷却：连续工具调用在这段时间内只算一次 */
+      cooldownMs: 1500,
+      byPrefix: {
+        "tool/": { arousal: 0.6, valence: 0.2 },
+        "turn/": { arousal: 0.5, valence: 0.2 },
+        "job/": { arousal: 0.2, valence: 0 }
+      },
+      /** 失败/中断类：不论前缀，一律按这条算 */
+      failure: { arousal: 2, valence: -2 }
     }
   });
   function clampAxis(n, fallback) {
@@ -6393,10 +6409,22 @@
     const gains = RULES.gains;
     return Object.prototype.hasOwnProperty.call(gains, type) ? gains[type] : null;
   }
+  function hostDeltaOf(name) {
+    if (!name) return null;
+    const host = RULES.host;
+    if (/error|fail|abort|crash/i.test(name)) return host.failure;
+    const keys = Object.keys(host.byPrefix);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (name.indexOf(k) === 0) return host.byPrefix[k];
+    }
+    return null;
+  }
   function createAffectModel(opts) {
     const initial = normalize(opts && opts.initial);
     let state = { arousal: initial.arousal, valence: initial.valence };
     let lastTickAt = 0;
+    const hostLastAt = /* @__PURE__ */ new Map();
     function applyDelta(d) {
       state = {
         arousal: clampAxis(state.arousal + d.arousal, state.arousal),
@@ -6411,7 +6439,21 @@
       apply(e) {
         if (!e || typeof e !== "object") return;
         const delta = gainOf(e.type);
-        if (delta) applyDelta(delta);
+        if (delta) {
+          applyDelta(delta);
+          return;
+        }
+        if (e.type !== "host") return;
+        const data = e.data || {};
+        const name = String(data.name || data.event || "");
+        if (!name) return;
+        const now = Number.isFinite(Number(e.at)) ? Number(e.at) : Date.now();
+        const last = hostLastAt.get(name);
+        if (last !== void 0 && now - last < RULES.host.cooldownMs) return;
+        const hd = hostDeltaOf(name);
+        if (!hd) return;
+        hostLastAt.set(name, now);
+        applyDelta(hd);
       },
       tick(now, away, night) {
         lastTickAt = now;
@@ -6748,11 +6790,18 @@
     try {
       const sense = createHostSense();
       s.sense = sense;
+      let focusSession = "";
       sense.start((e) => {
         try {
           s.log.log(e);
         } catch (err) {
         }
+        const sess = String(e.data?.session || "");
+        if (sess && focusSession && sess !== focusSession) {
+          focusSession = sess;
+          return;
+        }
+        if (sess) focusSession = sess;
         try {
           s.affect.apply(e);
         } catch (err) {
