@@ -9,9 +9,9 @@ import { str } from '../util.js'
 import { readEndpointMode, writeEndpointMode } from '../endpoint.js'
 import type { ActionHost, ActionTable } from '../actions.js'
 import { normalizeVoiceName } from '../voice.js'
-import { postRaw } from '../http.js'
 import { readStoredVoiceName } from '../voice/voices.js'
 import { isSupportedDocName, pickDocument, readDocumentText } from '../doc-text.js'
+import { MAX_SCRIPT_CHARS, exportSpeechToAudio } from '../voice/export-audio.js'
 import { setCustomWakeWord, WAKE_WORDS } from '../wake.js'
 
 /**
@@ -49,6 +49,18 @@ function wakeHint(host: ActionHost, want: string[]): string {
     }
   } catch (e) { }
   return ''
+}
+
+/** 触发一次浏览器下载（对象 URL 用完即回收） */
+function saveBlob(blob: Blob, name: string): void {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => { try { URL.revokeObjectURL(url) } catch (e) { } }, 15000)
 }
 
 export function registerVoiceActions(table: ActionTable<ActionHost>): void {
@@ -127,7 +139,7 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
     } catch (e: any) { host.bubble('自检失败：' + String(e && e.message), 5000) }
   })
 
-  // —— 把稿子念成 mp3 下载：给短视频/口播配音用（走宿主 /tts，单次 6000 字上限）——
+  // —— 把稿子念成 mp3 + srt 字幕：分段合成，长材料也能一次出完 ——
   table.define('voice-export', async (host) => {
     // 文件框按 accept 自己过滤（txt/md/json/log/csv/docx），不另写说明
     const file = await pickDocument()
@@ -144,30 +156,33 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
       text = String(r.text || '').trim()
     } else {
       let raw: any = null
-      try { raw = typeof window !== 'undefined' && typeof (window as any).prompt === 'function' ? (window as any).prompt('也可以直接把稿子贴进来（6000 字以内）：', '') : null } catch (e) { }
+      try { raw = typeof window !== 'undefined' && typeof (window as any).prompt === 'function' ? (window as any).prompt('也可以直接把稿子贴进来（一次最多 ' + MAX_SCRIPT_CHARS + ' 字）：', '') : null } catch (e) { }
       text = str(raw).trim()
     }
     if (!text) return
-    if (text.length > 6000) { host.bubble('太长了（' + text.length + ' 字），一次只能念 6000 字以内', 6000); return }
-    host.bubble('本鲸去录音了，稍等…', 60000)
+    if (text.length > MAX_SCRIPT_CHARS) {
+      host.bubble('太长了（' + text.length + ' 字），一次最多 ' + MAX_SCRIPT_CHARS + ' 字', 7000)
+      return
+    }
+    host.bubble('本鲸开始分段录：' + text.length + ' 字…', 180000)
     try {
-      const res = await postRaw('/tts', { text, voice: readStoredVoiceName(), rate: '+0%', pitch: '' }, { timeout: 120000 })
-      if (!res || !res.ok) throw new Error('tts-http-' + (res ? res.status : '?'))
-      const buf = await res.arrayBuffer()
-      const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
+      const out = await exportSpeechToAudio({
+        text,
+        voice: readStoredVoiceName(),
+        rate: '+0%',
+        onProgress: (done, total) => { try { host.bubble('录音中 ' + done + '/' + total + ' 段…', 180000) } catch (e) { } },
+      })
       const d = new Date()
       const pad = (n: number): string => String(n).padStart(2, '0')
-      const name = '肥鲸朗读-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.mp3'
-      const a = document.createElement('a')
-      a.href = url
-      a.download = name
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => { try { URL.revokeObjectURL(url) } catch (e) { } }, 15000)
-      host.bubble('录好了：' + name, 8000)
+      const stem = '肥鲸朗读-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes())
+      saveBlob(out.audio, stem + '.mp3')
+      // 第二个下载晚一拍触发，免得被浏览器当成重复弹窗拦掉
+      setTimeout(() => {
+        try { saveBlob(new Blob([out.srt], { type: 'text/plain;charset=utf-8' }), stem + '.srt') } catch (e) { }
+      }, 200)
+      host.bubble('录好了：' + stem + '.mp3 + .srt（' + out.segments + ' 段' + (out.measured ? '' : '，字幕按字数估算') + '）', 10000)
     } catch (e: any) {
-      host.bubble('没念成：' + String((e && e.message) || e).slice(0, 80), 6000)
+      host.bubble('没念成：' + String((e && e.message) || e).slice(0, 90), 8000)
     }
   })
 

@@ -6204,6 +6204,142 @@
     }
   }
 
+  // src/client/voice/export-audio.ts
+  var MAX_SEG_CHARS = 80;
+  var MAX_SCRIPT_CHARS = 2e4;
+  var FALLBACK_CHARS_PER_SEC = 4.5;
+  var SENTENCE_END = "。！？!?；;…\n";
+  function pad2(n) {
+    return n < 10 ? "0" + n : String(n);
+  }
+  function srtTime(sec) {
+    const total = Math.max(0, Math.round(Number(sec) * 1e3) || 0);
+    const h = Math.floor(total / 36e5);
+    const m = Math.floor(total % 36e5 / 6e4);
+    const s = Math.floor(total % 6e4 / 1e3);
+    const ms2 = total % 1e3;
+    return pad2(h) + ":" + pad2(m) + ":" + pad2(s) + "," + String(ms2).padStart(3, "0");
+  }
+  function buildSrt(lines) {
+    return lines.map((l, i) => i + 1 + "\n" + srtTime(l.start) + " --> " + srtTime(l.end) + "\n" + l.text + "\n").join("\n");
+  }
+  function splitScript(text, max = MAX_SEG_CHARS) {
+    const src = String(text || "").replace(/\r\n/g, "\n").trim();
+    if (!src) return [];
+    const parts = [];
+    let buf = "";
+    for (const ch of src) {
+      buf += ch;
+      if (SENTENCE_END.indexOf(ch) >= 0) {
+        if (buf.trim()) parts.push(buf.trim());
+        buf = "";
+      }
+    }
+    if (buf.trim()) parts.push(buf.trim());
+    const out = [];
+    let cur = "";
+    for (const p of parts) {
+      if (p.length > max) {
+        if (cur) {
+          out.push(cur);
+          cur = "";
+        }
+        for (let i = 0; i < p.length; i += max) out.push(p.slice(i, i + max));
+        continue;
+      }
+      if ((cur + p).length > max) {
+        out.push(cur);
+        cur = p;
+      } else cur += p;
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+  function stripId3(buf) {
+    if (buf.length > 10 && buf[0] === 73 && buf[1] === 68 && buf[2] === 51) {
+      const size = (buf[6] & 127) << 21 | (buf[7] & 127) << 14 | (buf[8] & 127) << 7 | buf[9] & 127;
+      const footer = buf[5] & 16 ? 10 : 0;
+      const start = 10 + size + footer;
+      return start < buf.length ? buf.subarray(start) : buf;
+    }
+    return buf;
+  }
+  function decodeDuration(buf) {
+    return new Promise((resolve) => {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) {
+          resolve(null);
+          return;
+        }
+        const ctx = new AC();
+        let done = false;
+        const finish = (v) => {
+          if (done) return;
+          done = true;
+          try {
+            ctx.close();
+          } catch (e) {
+          }
+          resolve(v);
+        };
+        const copy = buf.slice(0);
+        const maybe = ctx.decodeAudioData(
+          copy,
+          (ab) => {
+            const d = Number(ab && ab.duration) || 0;
+            finish(d > 0 ? d : null);
+          },
+          () => finish(null)
+        );
+        if (maybe && typeof maybe.then === "function") {
+          maybe.then((ab) => {
+            const d = Number(ab && ab.duration) || 0;
+            finish(d > 0 ? d : null);
+          }).catch(() => finish(null));
+        }
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }
+  async function exportSpeechToAudio(opts) {
+    const segs = splitScript(opts.text);
+    if (!segs.length) throw new Error("稿子是空的");
+    const frames = [];
+    const cues = [];
+    let clock = 0;
+    let measured = true;
+    for (let i = 0; i < segs.length; i++) {
+      const res = await postRaw("/tts", {
+        text: segs[i],
+        voice: opts.voice,
+        rate: opts.rate || "+0%",
+        pitch: ""
+      }, { timeout: 12e4, signal: opts.signal });
+      if (!res || !res.ok) throw new Error("第 " + (i + 1) + " 段合成失败（HTTP " + (res ? res.status : "?") + "）");
+      const buf = await res.arrayBuffer();
+      frames.push(stripId3(new Uint8Array(buf)));
+      const dur = await decodeDuration(buf);
+      if (dur == null) measured = false;
+      const seconds = dur == null ? segs[i].length / FALLBACK_CHARS_PER_SEC : dur;
+      cues.push({ start: clock, end: clock + seconds, text: segs[i] });
+      clock += seconds;
+      if (opts.onProgress) {
+        try {
+          opts.onProgress(i + 1, segs.length);
+        } catch (e) {
+        }
+      }
+    }
+    return {
+      audio: new Blob(frames, { type: "audio/mpeg" }),
+      srt: buildSrt(cues),
+      segments: segs.length,
+      measured
+    };
+  }
+
   // src/client/actions/voice.ts
   function wakeWordsLive(host, want) {
     let info = null;
@@ -6231,6 +6367,21 @@
     } catch (e) {
     }
     return "";
+  }
+  function saveBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (e) {
+      }
+    }, 15e3);
   }
   function registerVoiceActions(table) {
     table.define("wake", (host) => {
@@ -6331,40 +6482,42 @@
       } else {
         let raw = null;
         try {
-          raw = typeof window !== "undefined" && typeof window.prompt === "function" ? window.prompt("也可以直接把稿子贴进来（6000 字以内）：", "") : null;
+          raw = typeof window !== "undefined" && typeof window.prompt === "function" ? window.prompt("也可以直接把稿子贴进来（一次最多 " + MAX_SCRIPT_CHARS + " 字）：", "") : null;
         } catch (e) {
         }
         text = str(raw).trim();
       }
       if (!text) return;
-      if (text.length > 6e3) {
-        host.bubble("太长了（" + text.length + " 字），一次只能念 6000 字以内", 6e3);
+      if (text.length > MAX_SCRIPT_CHARS) {
+        host.bubble("太长了（" + text.length + " 字），一次最多 " + MAX_SCRIPT_CHARS + " 字", 7e3);
         return;
       }
-      host.bubble("本鲸去录音了，稍等…", 6e4);
+      host.bubble("本鲸开始分段录：" + text.length + " 字…", 18e4);
       try {
-        const res = await postRaw("/tts", { text, voice: readStoredVoiceName(), rate: "+0%", pitch: "" }, { timeout: 12e4 });
-        if (!res || !res.ok) throw new Error("tts-http-" + (res ? res.status : "?"));
-        const buf = await res.arrayBuffer();
-        const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+        const out = await exportSpeechToAudio({
+          text,
+          voice: readStoredVoiceName(),
+          rate: "+0%",
+          onProgress: (done, total) => {
+            try {
+              host.bubble("录音中 " + done + "/" + total + " 段…", 18e4);
+            } catch (e) {
+            }
+          }
+        });
         const d = /* @__PURE__ */ new Date();
         const pad = (n) => String(n).padStart(2, "0");
-        const name = "肥鲸朗读-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + "-" + pad(d.getHours()) + pad(d.getMinutes()) + ".mp3";
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        const stem = "肥鲸朗读-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + "-" + pad(d.getHours()) + pad(d.getMinutes());
+        saveBlob(out.audio, stem + ".mp3");
         setTimeout(() => {
           try {
-            URL.revokeObjectURL(url);
+            saveBlob(new Blob([out.srt], { type: "text/plain;charset=utf-8" }), stem + ".srt");
           } catch (e) {
           }
-        }, 15e3);
-        host.bubble("录好了：" + name, 8e3);
+        }, 200);
+        host.bubble("录好了：" + stem + ".mp3 + .srt（" + out.segments + " 段" + (out.measured ? "" : "，字幕按字数估算") + "）", 1e4);
       } catch (e) {
-        host.bubble("没念成：" + String(e && e.message || e).slice(0, 80), 6e3);
+        host.bubble("没念成：" + String(e && e.message || e).slice(0, 90), 8e3);
       }
     });
     table.definePrefix("voice:", (host, v) => {
