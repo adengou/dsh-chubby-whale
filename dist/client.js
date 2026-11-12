@@ -1502,8 +1502,8 @@
     }
     return out;
   }
-  function isStaleToken(token, current) {
-    return typeof token === "number" && token !== current;
+  function isStaleToken(token, current2) {
+    return typeof token === "number" && token !== current2;
   }
   var TTS_QUEUE_MAX = 200;
   function capQueueDetailed(q, max = TTS_QUEUE_MAX) {
@@ -1827,13 +1827,13 @@
           clearTimeout(restartTimer);
           restartTimer = null;
         }
-        tick();
+        tick2();
       } catch (e) {
         stats.lastError = "beginWindow: " + String(e && e.name);
         scheduleNext(1e3);
       }
     }
-    function tick() {
+    function tick2() {
       if (!running || !rec || rec.state !== "recording") return;
       try {
         const db = level();
@@ -1870,7 +1870,7 @@
             }
             return;
           }
-          tickTimer = setTimeout(tick, TICK_MS);
+          tickTimer = setTimeout(tick2, TICK_MS);
           return;
         }
         const now = performance.now();
@@ -1888,10 +1888,10 @@
           }
           return;
         }
-        tickTimer = setTimeout(tick, TICK_MS);
+        tickTimer = setTimeout(tick2, TICK_MS);
       } catch (e) {
         stats.lastError = "tick: " + String(e && e.name);
-        tickTimer = setTimeout(tick, TICK_ERROR_MS);
+        tickTimer = setTimeout(tick2, TICK_ERROR_MS);
       }
     }
     async function onWindowDone(blob) {
@@ -2675,8 +2675,8 @@
   function sep() {
     return { type: "sep" };
   }
-  function rateSub(prefix, action, current, opts) {
-    return sub(prefix + current + " ▸", opts.map(([rate, text]) => item((rate === current ? "✓ " : "") + text, action + rate)));
+  function rateSub(prefix, action, current2, opts) {
+    return sub(prefix + current2 + " ▸", opts.map(([rate, text]) => item((rate === current2 ? "✓ " : "") + text, action + rate)));
   }
   var MELODIES = ["小星星", "两只老虎", "生日快乐", "欢乐颂", "铃儿响叮当", "伦敦大桥", "斯卡布罗集市", "思君黯然", "绿袖子", "致爱丽丝", "友谊天长地久"];
   deepFreeze(MELODIES);
@@ -2769,6 +2769,7 @@
     "数字": "Numerals",
     "把稿子念成音频…": "Narrate script to audio…",
     "公文校对…": "Proofread a document…",
+    "神经感知：切换": "Nervous system: toggle",
     "清除记忆…": "Clear memory…",
     "清空聊天缓存…": "Clear chat cache…",
     "让它游走（退出）": "Let it go (exit)",
@@ -2880,6 +2881,7 @@
       item("投喂一碗", "feed"),
       item("看张图…", "vision"),
       item("公文校对…", "proofread"),
+      item("神经感知：切换", "nervous"),
       sep(),
       // ── 曲子 ──
       sub("弹首曲子 ▸", MELODIES.map((m) => item("弹《" + m + "》", "music:" + m))),
@@ -2982,16 +2984,16 @@
 
   // src/client/narration-progress.ts
   function createProgress() {
-    let current = null;
+    let current2 = null;
     function index() {
-      if (!current) return 0;
-      const eff = current.spoken - current.introLen;
+      if (!current2) return 0;
+      const eff = current2.spoken - current2.introLen;
       if (eff < 0) return 0;
       let done = 0;
-      for (const c of current.cum) {
+      for (const c of current2.cum) {
         if (c <= eff) done++;
       }
-      const total = current.cum.length;
+      const total = current2.cum.length;
       return Math.min(total, done + 1);
     }
     return {
@@ -3003,7 +3005,7 @@
           sum += n;
           cum.push(sum);
         }
-        current = {
+        current2 = {
           label: String(label || ""),
           cum,
           introLen: String(intro || "").replace(/\s+/g, "").length,
@@ -3011,19 +3013,19 @@
         };
       },
       stop() {
-        current = null;
+        current2 = null;
       },
       active() {
-        return current !== null;
+        return current2 !== null;
       },
       index,
       bump(segment) {
-        if (!current) return "";
+        if (!current2) return "";
         const seg = String(segment || "");
         const idx = index();
-        current.spoken += seg.replace(/\s+/g, "").length;
-        const total = current.cum.length;
-        const head = total > 0 && idx > 0 ? current.label + "（第 " + idx + "/" + total + " 句）" : current.label;
+        current2.spoken += seg.replace(/\s+/g, "").length;
+        const total = current2.cum.length;
+        const head = total > 0 && idx > 0 ? current2.label + "（第 " + idx + "/" + total + " 句）" : current2.label;
         return head + (seg.trim() ? "：" + seg.trim() : "");
       }
     };
@@ -6615,6 +6617,154 @@
     });
   }
 
+  // src/client/nervous/index.ts
+  var LS_KEY = "chubby-nervous";
+  var AWAY_MS = 20 * 60 * 1e3;
+  var AWAY_LINE_GAP_MS = 40 * 60 * 1e3;
+  var BACK_LINE_GAP_MS = 20 * 60 * 1e3;
+  var ACTIVITY_THROTTLE_MS = 5e3;
+  var TICK_MS2 = 30 * 1e3;
+  var current = null;
+  function nervousEnabled() {
+    try {
+      return localStorage.getItem(LS_KEY) !== "off";
+    } catch (e) {
+      return true;
+    }
+  }
+  function setNervousEnabled(on) {
+    try {
+      localStorage.setItem(LS_KEY, on ? "on" : "off");
+    } catch (e) {
+    }
+  }
+  function clamp(n) {
+    return n < 0 ? 0 : n > 100 ? 100 : n;
+  }
+  function hourOf() {
+    return (/* @__PURE__ */ new Date()).getHours();
+  }
+  function isNight() {
+    const h = hourOf();
+    return h >= 23 || h < 5;
+  }
+  function tick(s) {
+    if (!nervousEnabled()) return;
+    const now = Date.now();
+    const away = now - s.lastActivityAt > AWAY_MS;
+    const night = isNight();
+    if (away) s.energy = clamp(s.energy - 3);
+    else s.energy = clamp(s.energy + 1);
+    if (night) s.energy = clamp(Math.min(s.energy, 40));
+    try {
+      const mood = s.deps.persona.state ? s.deps.persona.state.mood : null;
+      if (mood === "idle") {
+        if (night) s.deps.persona.setMood("sleepy", TICK_MS2 + 5e3);
+        else if (s.energy <= 20) s.deps.persona.setMood("sleepy", TICK_MS2 + 5e3);
+        else if (s.energy >= 85) s.deps.persona.setMood("excited", 15e3);
+      }
+    } catch (e) {
+    }
+    if (away && now - s.lastAwayLineAt > AWAY_LINE_GAP_MS) {
+      s.lastAwayLineAt = now;
+      try {
+        s.deps.bubble("主人…是不是把本鲸忘了", 4e3);
+      } catch (e) {
+      }
+    }
+    if (!away && s.lastBackLineAt && now - s.lastBackLineAt > BACK_LINE_GAP_MS) {
+      s.lastBackLineAt = 0;
+      try {
+        s.deps.bubble("本鲸在呢", 2600);
+      } catch (e) {
+      }
+    }
+    if (away && !s.lastBackLineAt) s.lastBackLineAt = now;
+  }
+  function attachNervous(deps) {
+    if (current) return detachNervous;
+    const s = {
+      deps,
+      timer: null,
+      lastActivityAt: Date.now(),
+      lastAwayLineAt: 0,
+      lastBackLineAt: 0,
+      energy: 65,
+      listeners: []
+    };
+    current = s;
+    let lastSample = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      s.lastActivityAt = now;
+      if (now - lastSample < ACTIVITY_THROTTLE_MS) return;
+      lastSample = now;
+      s.energy = clamp(s.energy + 2);
+    };
+    const onVisible = () => {
+      try {
+        if (document.visibilityState === "visible") onActivity();
+      } catch (e) {
+      }
+    };
+    const bind = (target, name, fn) => {
+      try {
+        target.addEventListener(name, fn, { passive: true });
+        s.listeners.push(() => {
+          try {
+            target.removeEventListener(name, fn);
+          } catch (e) {
+          }
+        });
+      } catch (e) {
+      }
+    };
+    bind(window, "mousemove", onActivity);
+    bind(window, "keydown", onActivity);
+    bind(window, "touchstart", onActivity);
+    bind(document, "visibilitychange", onVisible);
+    s.timer = setInterval(() => {
+      try {
+        tick(s);
+      } catch (e) {
+      }
+    }, TICK_MS2);
+    return detachNervous;
+  }
+  function detachNervous() {
+    const s = current;
+    current = null;
+    if (!s) return;
+    try {
+      clearInterval(s.timer);
+    } catch (e) {
+    }
+    for (const off of s.listeners) {
+      try {
+        off();
+      } catch (e) {
+      }
+    }
+    s.listeners.length = 0;
+  }
+  function nervousEnergy() {
+    return current ? current.energy : null;
+  }
+
+  // src/client/actions/nervous.ts
+  function registerNervousActions(table) {
+    table.define("nervous", (host) => {
+      const on = !nervousEnabled();
+      setNervousEnabled(on);
+      if (!on) {
+        host.bubble("神经感知：关（人家安静待着）", 3e3);
+        return;
+      }
+      const e = nervousEnergy();
+      host.bubble("神经感知：开（本鲸能感觉到你在忙" + (e == null ? "" : "，精神 " + Math.round(e) + "%") + "）", 4e3);
+    });
+  }
+
   // data/persona.json
   var persona_default = {
     name: "饭团",
@@ -7580,12 +7730,12 @@
       until = isOneShot(p) ? t + oneShotMs : 0;
       return cur;
     }
-    function tick(now) {
+    function tick2(now) {
       const t = Number.isFinite(now) ? now : 0;
       if (isOneShot(cur) && t >= until) cur = "waiting";
       return cur;
     }
-    return { enter, tick, current: () => cur };
+    return { enter, tick: tick2, current: () => cur };
   }
 
   // src/shared/tts.ts
@@ -9258,8 +9408,8 @@
       }
     };
   }
-  function startWatchdog(tick, intervalMs = 2e3) {
-    const t = setInterval(tick, intervalMs);
+  function startWatchdog(tick2, intervalMs = 2e3) {
+    const t = setInterval(tick2, intervalMs);
     return () => {
       clearI(t);
     };
@@ -9487,6 +9637,7 @@
       registerSystemActions(actions);
       registerVoiceActions(actions);
       registerProofreadActions(actions);
+      registerNervousActions(actions);
       const CLIENT_ID = (() => {
         try {
           const v2 = sessionStorage.getItem("chubby-client-id");
@@ -9910,6 +10061,15 @@
             }
           }).catch(() => {
           });
+        }, []);
+        R.useEffect(() => {
+          const detach = attachNervous({ persona, bubble: showBubble });
+          return () => {
+            try {
+              detach();
+            } catch (e) {
+            }
+          };
         }, []);
         function restoreIdleStatus() {
         }

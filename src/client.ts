@@ -18,7 +18,9 @@ import { parseBookList, registerContentActions } from './client/actions/content.
 import { registerSystemActions } from './client/actions/system.js'
 import { registerVoiceActions } from './client/actions/voice.js'
 import { registerProofreadActions } from './client/actions/proofread.js'
+import { registerNervousActions } from './client/actions/nervous.js'
 import { createPersona, applyServerMood } from './client/persona.js'
+import { attachNervous } from './client/nervous/index.js'
 import { createDeduper } from './client/text.js'
 import { getJson } from './client/http.js'
 import { createMelodyPlayer } from './client/melody.js'
@@ -91,6 +93,7 @@ registerSkinActions(actions)
     registerSystemActions(actions)
     registerVoiceActions(actions)
     registerProofreadActions(actions)
+    registerNervousActions(actions)
 
 
 
@@ -520,6 +523,11 @@ registerSkinActions(actions)
             showBubble('还没配 Key：聊天和语音要用 Key（deepseekKey / siliconflowKey），念诗、说书、典故、提醒照样能用～ 配置方法见 README', 9000)
           }
         }).catch(() => { })
+      }, [])
+      // 鲸的神经系统（独立模块）：只读感知主人活动与昼夜，映射成表情；关掉即空转
+      R.useEffect(() => {
+        const detach = attachNervous({ persona, bubble: showBubble })
+        return () => { try { detach() } catch (e) { } }
       }, [])
       // ===== 状态提示（已按主人要求去掉）=====
       // 原来闲时一直挂「在听…」，还出现过"讲着话却显示在听"的矛盾。
