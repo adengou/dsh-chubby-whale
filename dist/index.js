@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readApiKey, readSiliconFlowKey, readAsrLanguage, readDataSource, readCloudBase, readPersonalityLearning, readPersonalityWriting, readChatModel, sanitizePluginConfig, } from './host/config.js';
 import { createStore, growthStage } from './host/store.js';
+import { createMemoryModule } from './host/memory/index.js';
 import { createCache } from './host/cache.js';
 import { createPrefs, createCacheToggleHandler } from './host/prefs.js';
 import { createPersonalityRepo } from './host/personality.js';
@@ -117,6 +118,7 @@ export function apply(ctx, rawConfig) {
     // 偏好（目前只有聊天缓存开关）：独立模块 + 路由工厂
     const prefs = createPrefs(RUNTIME_DIR);
     const cacheToggle = createCacheToggleHandler(prefs);
+    const memoryModule = createMemoryModule(RUNTIME_DIR);
     const store = createStore(RUNTIME_DIR);
     const ttsCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'tts'), memBytes: 12 * 1024 * 1024 }); // 音频内存上限 12MB（磁盘不限）
     const chatCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'chat'), memBytes: 3 * 1024 * 1024 }); // 聊天回复很小
@@ -203,8 +205,8 @@ export function apply(ctx, rawConfig) {
     }
     const chat = createChatHandler({
         getKey,
-        loadHistory: store.loadHistory,
-        appendTurns: store.appendTurns,
+        loadHistory: (n) => memoryModule.loadRecent(n || 24),
+        appendTurns: (u, r) => memoryModule.remember(u, r),
         loadState: store.loadState,
         saveState: store.saveState,
         systemPrompt: systemPromptFor,
