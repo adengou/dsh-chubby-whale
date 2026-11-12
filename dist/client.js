@@ -6210,6 +6210,7 @@
   // src/client/voice/export-audio.ts
   var MAX_SEG_CHARS = 80;
   var MAX_SCRIPT_CHARS = 2e4;
+  var SUBTITLE_MAX_CHARS = 32;
   var FALLBACK_CHARS_PER_SEC = 4.5;
   var SENTENCE_END = "。！？!?；;…\n";
   function pad2(n) {
@@ -6326,7 +6327,14 @@
       const dur = await decodeDuration(buf);
       if (dur == null) measured = false;
       const seconds = dur == null ? segs[i].length / FALLBACK_CHARS_PER_SEC : dur;
-      cues.push({ start: clock, end: clock + seconds, text: segs[i] });
+      const subs = splitScript(segs[i], SUBTITLE_MAX_CHARS);
+      const totalChars = subs.reduce((n, s) => n + s.length, 0) || 1;
+      let t = clock;
+      for (const s of subs) {
+        const d = seconds * (s.length / totalChars);
+        cues.push({ start: t, end: t + d, text: s });
+        t += d;
+      }
       clock += seconds;
       if (opts.onProgress) {
         try {

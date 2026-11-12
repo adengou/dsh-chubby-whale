@@ -13,6 +13,11 @@ import { postRaw } from '../http.js'
 export const MAX_SEG_CHARS = 80
 /** 整篇上限：20000 字约等于半小时语音，再多就建议分文件 */
 export const MAX_SCRIPT_CHARS = 20000
+/**
+ * 字幕单条上限：合成按 80 字段走，字幕却要逐句——
+ * 播放器里一条塞 80 字会显示不全，看着就像「字幕不完整」。
+ */
+const SUBTITLE_MAX_CHARS = 32
 /** decodeAudioData 不可用时的兜底：中文 TTS 大约 4.5 字/秒 */
 const FALLBACK_CHARS_PER_SEC = 4.5
 /** 句末标点：中英文都算，换行也断句 */
@@ -152,7 +157,16 @@ export async function exportSpeechToAudio(opts: {
     const dur = await decodeDuration(buf)
     if (dur == null) measured = false
     const seconds = dur == null ? segs[i].length / FALLBACK_CHARS_PER_SEC : dur
-    cues.push({ start: clock, end: clock + seconds, text: segs[i] })
+    // 字幕按句切（≤SUBTITLE_MAX_CHARS 字一条），段内时间按字数比例分配：
+    // 合成仍按 80 字段走，字幕却是逐句的——播放器里一条塞不下 80 字。
+    const subs = splitScript(segs[i], SUBTITLE_MAX_CHARS)
+    const totalChars = subs.reduce((n, s) => n + s.length, 0) || 1
+    let t = clock
+    for (const s of subs) {
+      const d = seconds * (s.length / totalChars)
+      cues.push({ start: t, end: t + d, text: s })
+      t += d
+    }
     clock += seconds
     if (opts.onProgress) { try { opts.onProgress(i + 1, segs.length) } catch (e) { } }
   }
