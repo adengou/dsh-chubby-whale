@@ -152,8 +152,8 @@ try {
 
   for (let i = 0; i < 25; i++) repo.appendTurns('主人' + i, '在呢' + i)
   const h = repo.loadHistory()
-  ok('25 轮后只留最新 40 条', h.length === 40, 'len=' + h.length)
-  ok('最新一轮是最后一对', h[38].content === '主人24' && h[39].content === '在呢24')
+  ok('25 轮后只留最新 50 条（80 上限不截断）', h.length === 50, 'len=' + h.length)
+  ok('最新一轮是最后一对', h[48].content === '主人24' && h[49].content === '在呢24')
   ok('截断后仍从 user 开始、成对交替', h[0].role === 'user' && h[1].role === 'assistant' && h[39].role === 'assistant')
 
   repo.saveMemorySummary('主人爱喝热水')
@@ -161,7 +161,7 @@ try {
   ok('追加对话不覆盖摘要', repo.loadMemorySummary() === '主人爱喝热水')
 
   const raw = JSON.parse(readFileSync(join(dir, 'memory.json'), 'utf8'))
-  ok('落盘带 savedAt 且 history 仍是 40', Array.isArray(raw.history) && raw.history.length === 40 && typeof raw.savedAt === 'string')
+  ok('落盘带 savedAt 且 history 仍是 50', Array.isArray(raw.history) && raw.history.length === 50 && typeof raw.savedAt === 'string')
 
   repo.clearMemory()
   ok('clearMemory 连摘要一起清空', repo.loadHistory().length === 0 && repo.loadMemorySummary() === '')
