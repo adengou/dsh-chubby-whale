@@ -147,7 +147,7 @@ export function createChatSender(host: ChatHost): ChatController {
 
   /** 流式对话：边生成边开口；连接建不起来才回退普通 /chat */
   async function tryStream(text: string, opts: { voice?: boolean } | undefined, myEpoch: number): Promise<boolean> {
-    try { if (localStorage.getItem('chubby-stream') === 'off') return false } catch (e) { }
+    try { if (localStorage.getItem('chubby-stream') !== 'on') return false } catch (e) { }
     const isCurrent = (): boolean => host.epoch.isCurrent(myEpoch)
     let spokeAny = false
     let full = ''

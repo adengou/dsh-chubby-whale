@@ -227,6 +227,7 @@ const msgList = (st) => st.messages.map((m) => String(m.who) + ':' + String(m.te
 
 function resetCase() {
   lsMap.clear()
+  lsMap.set('chubby-stream', 'on')   // 默认关已改为生产默认；流式用例显式开
   timers.clear()
   clock = 0
   timerSeq = 0

@@ -5749,7 +5749,7 @@
     });
     table.define("stream-toggle", (host) => {
       try {
-        const off = localStorage.getItem("chubby-stream") === "off";
+        const off = localStorage.getItem("chubby-stream") !== "on";
         localStorage.setItem("chubby-stream", off ? "on" : "off");
         host.bubble(off ? "流式回复：开（边生成边说）" : "流式回复：关（等整段再开口）", 4e3);
       } catch (e) {
@@ -7895,7 +7895,7 @@
     }
     async function tryStream(text, opts, myEpoch) {
       try {
-        if (localStorage.getItem("chubby-stream") === "off") return false;
+        if (localStorage.getItem("chubby-stream") !== "on") return false;
       } catch (e) {
       }
       const isCurrent = () => host.epoch.isCurrent(myEpoch);
@@ -8968,7 +8968,7 @@
     let chatLang = "auto";
     try {
       storyAuto = isStoryAutoOn();
-      streamOn = localStorage.getItem("chubby-stream") !== "off";
+      streamOn = localStorage.getItem("chubby-stream") === "on";
       ttsVoice = localStorage.getItem("chubby-tts-voice") || "zh-CN-XiaoyiNeural";
       chatLang = localStorage.getItem("chubby-chatlang") || "auto";
     } catch (e) {

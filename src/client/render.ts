@@ -189,7 +189,7 @@ export function readMenuRuntime(): MenuRuntime {
   let chatLang = 'auto'
   try {
     storyAuto = isStoryAutoOn()
-    streamOn = localStorage.getItem('chubby-stream') !== 'off'
+    streamOn = localStorage.getItem('chubby-stream') === 'on'
     ttsVoice = localStorage.getItem('chubby-tts-voice') || 'zh-CN-XiaoyiNeural'
     chatLang = localStorage.getItem('chubby-chatlang') || 'auto'
   } catch (e) { }
