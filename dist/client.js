@@ -6111,7 +6111,7 @@
         window.addEventListener("focus", () => {
           setTimeout(() => {
             if (!input.files || !input.files.length) done(null);
-          }, 300);
+          }, 1500);
         }, { once: true });
         document.body.appendChild(input);
         input.click();
@@ -7140,7 +7140,7 @@
       }
       let text = "";
       if (file) {
-        host.bubble("本鲸先读一遍文档…", 3e4);
+        host.bubble("本鲸先读一遍文档：" + file.name, 3e4);
         const r = await readDocumentText(file);
         if (!r.ok) {
           host.bubble("读不了这个文档：" + String(r.error || "读取失败"), 8e3);
@@ -7184,7 +7184,7 @@
           } catch (e) {
           }
         }, 200);
-        host.bubble("录好了：" + stem + ".mp3 + .srt（" + out.segments + " 段" + (out.measured ? "" : "，字幕按字数估算") + "）", 1e4);
+        host.bubble("录好了：" + stem + ".mp3 + .srt（" + out.segments + " 段" + (out.measured ? "" : "，字幕按字数估算") + "）。去浏览器「下载」里找，默认是「下载」文件夹；没看到就点地址栏的下载图标，可能有文件被拦。", 15e3);
       } catch (e) {
         host.bubble("没念成：" + String(e && e.message || e).slice(0, 90), 8e3);
       }

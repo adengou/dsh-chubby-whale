@@ -151,7 +151,7 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
     }
     let text = ''
     if (file) {
-      host.bubble('本鲸先读一遍文档…', 30000)
+      host.bubble('本鲸先读一遍文档：' + file.name, 30000)
       const r: any = await readDocumentText(file)
       if (!r.ok) { host.bubble('读不了这个文档：' + String(r.error || '读取失败'), 8000); return }
       text = String(r.text || '').trim()
@@ -182,7 +182,7 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
       setTimeout(() => {
         try { saveBlob(new Blob([out.srt], { type: 'text/plain;charset=utf-8' }), stem + '.srt') } catch (e) { }
       }, 200)
-      host.bubble('录好了：' + stem + '.mp3 + .srt（' + out.segments + ' 段' + (out.measured ? '' : '，字幕按字数估算') + '）', 10000)
+      host.bubble('录好了：' + stem + '.mp3 + .srt（' + out.segments + ' 段' + (out.measured ? '' : '，字幕按字数估算') + '）。去浏览器「下载」里找，默认是「下载」文件夹；没看到就点地址栏的下载图标，可能有文件被拦。', 15000)
     } catch (e: any) {
       host.bubble('没念成：' + String((e && e.message) || e).slice(0, 90), 8000)
     }

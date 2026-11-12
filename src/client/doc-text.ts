@@ -51,11 +51,12 @@ export function pickDocument(): Promise<File | null> {
         const f = input.files && input.files[0] ? input.files[0] : null
         done(f)
       })
-      // 取消选择不会触发 change（部分浏览器），窗口重新聚焦时兜底
+      // 取消选择不会触发 change（部分浏览器），窗口重新聚焦时兜底。
+      // 留 1.5 秒余量：慢机器上 change 可能晚于 focus，300ms 会把「选了文件」误判成取消。
       window.addEventListener('focus', () => {
         setTimeout(() => {
           if (!input.files || !input.files.length) done(null)
-        }, 300)
+        }, 1500)
       }, { once: true })
       document.body.appendChild(input)
       input.click()
