@@ -41,6 +41,24 @@ function looksEnglish(text) {
  *   zh-en → 中文或英语（聊天语言=自动时用这个，只放中英，不放其它语种）
  *   auto  → 不拦（asrLanguage=auto 的旧行为）
  */
+/**
+ * 环境噪声误识别的典型形态：纯英文且只有 1-2 个词（"No, no" / "Okay" / "Thank you"）。
+ * Qwen3-ASR 在静音/噪声上会编这类短英文——它不该被当主人说的话上行。
+ * 真主人说英文一般更长（>=3 词）或带中文。
+ */
+function isShortEnglishNoise(text) {
+    const s = String(text || '').trim();
+    if (!s)
+        return false;
+    if (/[\u4e00-\u9fa5]/.test(s))
+        return false;
+    const words = s.split(/\s+/).filter(Boolean);
+    if (words.length > 2)
+        return false;
+    if (!/^[A-Za-z][A-Za-z,'.?!\- ]*$/.test(s))
+        return false;
+    return true;
+}
 function scriptAccepted(text, lang) {
     if (lang === 'auto')
         return true;
@@ -212,7 +230,9 @@ export function createAsrHandler(opts) {
             // ① 不写缓存（缓存里曾堆满 17 字节的噪声条目）② 当空文本返回，别让上层当真话
             // 打断词（停/别/不/闭嘴/打住）例外：它们和单字气口同形，但必须原样上行——
             // 否则客户端的「朗读时喊停」直通路径永远收不到指令（2026-11-06 分身取证）。
-            const noise = isNoiseText(recognized);
+            const noise = isNoiseText(recognized) || isShortEnglishNoise(recognized);
+            if (isShortEnglishNoise(recognized))
+                console.error('[asr] SHORT-EN-NOISE ' + JSON.stringify(recognized.slice(0, 40)));
             const interrupt = isInterruptWord(recognized);
             if (opts.cache && recognized && !noise && !interrupt) {
                 try {
