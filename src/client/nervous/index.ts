@@ -22,6 +22,7 @@ import { createEventLog } from './stream.js'
 import type { EventLog, NervousEvent } from './stream.js'
 import { createHostSense } from './host-sense.js'
 import type { SenseSource } from './host-sense.js'
+import { createDreamBook } from './dream.js'
 
 const LS_KEY = 'chubby-nervous'
 /** 闲置多久算「主人不在」 */
@@ -209,6 +210,18 @@ export function attachNervous(deps: NervousDeps): () => void {
   bind(document, 'visibilitychange', onVisible)
 
   s.timer = setInterval(() => { try { tick(s) } catch (e) { } }, TICK_MS)
+
+  // 夜潜：把「昨天」的事件流反刍成一句梦话。数据太少 / 已做过梦就跳过，绝不硬编。
+  try {
+    const dreams = createDreamBook()
+    const dream = dreams.maybeDream(s.log.recent(800))
+    if (dream && !dreams.spoken(dream.date)) {
+      dreams.markSpoken(dream.date)
+      // 晚两秒再说：别让页面一开就抢在「早呀」前面
+      setTimeout(() => { try { s.deps.bubble(dream.lines.join(' '), 7000) } catch (e) { } }, 2500)
+    }
+  } catch (e) { }
+
   return detachNervous
 }
 

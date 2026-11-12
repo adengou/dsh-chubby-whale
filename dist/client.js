@@ -6684,6 +6684,98 @@
     return { name: "host", start, stop };
   }
 
+  // src/client/nervous/dream.ts
+  var MAX_DREAMS = 7;
+  var MIN_EVENTS = 10;
+  var MAX_SPOKEN = 30;
+  var KEY_DREAMS = "chubby-nervous-dreams";
+  var KEY_SPOKEN = "chubby-nervous-dreams-spoken";
+  function pad22(n) {
+    return n < 10 ? "0" + n : String(n);
+  }
+  function dayKey(ts) {
+    const d = new Date(ts);
+    return d.getFullYear() + "-" + pad22(d.getMonth() + 1) + "-" + pad22(d.getDate());
+  }
+  function readJSON(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      const v = JSON.parse(raw);
+      return v == null ? fallback : v;
+    } catch (e) {
+      return fallback;
+    }
+  }
+  function writeJSON(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+    }
+  }
+  function compose(mine) {
+    let work = 0;
+    let tool = 0;
+    let err = 0;
+    let away = 0;
+    let night = 0;
+    for (const e of mine) {
+      if (e.type === "work") work++;
+      else if (e.type === "away") away++;
+      else if (e.type === "tick") {
+        if (e.data && e.data.night) night++;
+      } else if (e.type === "host") {
+        const name = String(e.data && (e.data.name || e.data.event) || "");
+        if (name.indexOf("tool/") === 0) tool++;
+        if (/error|fail|abort|crash/i.test(name)) err++;
+      }
+    }
+    const lines = [];
+    if (tool > 0) lines.push("昨晚梦见你在那边跑东西，人家在旁边数水花，数到 " + tool + " 次。");
+    if (work > 0) lines.push("还梦见你让人家念稿子、看材料，一共 " + work + " 回。");
+    if (err > 0) lines.push("中间有几回出了岔子，人家尾巴都绷紧了。");
+    if (night > 0) lines.push("你熬到很晚，人家困得直冒泡。");
+    if (away > 0 && lines.length < 2) lines.push("有几段时间你不在，人家对着墙角发了会儿呆。");
+    if (!lines.length) lines.push("昨晚你的动静不多，人家睡得模模糊糊。");
+    return lines.slice(0, 3);
+  }
+  function createDreamBook() {
+    return {
+      maybeDream(events, now = Date.now()) {
+        if (!Array.isArray(events)) return null;
+        const yesterday = dayKey(now - 24 * 3600 * 1e3);
+        const dreams = readJSON(KEY_DREAMS, []);
+        if (!Array.isArray(dreams)) return null;
+        for (const d of dreams) {
+          if (d && d.date === yesterday) return null;
+        }
+        const mine = events.filter((e) => Boolean(e) && Number.isFinite(e.at) && dayKey(e.at) === yesterday);
+        if (mine.length < MIN_EVENTS) return null;
+        const entry = { date: yesterday, at: now, lines: compose(mine) };
+        dreams.push(entry);
+        writeJSON(KEY_DREAMS, dreams.slice(-MAX_DREAMS));
+        return entry;
+      },
+      latest() {
+        const dreams = readJSON(KEY_DREAMS, []);
+        if (!Array.isArray(dreams) || !dreams.length) return null;
+        const last = dreams[dreams.length - 1];
+        return last && Array.isArray(last.lines) ? last : null;
+      },
+      markSpoken(date) {
+        const spoken = readJSON(KEY_SPOKEN, []);
+        if (!Array.isArray(spoken)) return;
+        if (spoken.indexOf(date) >= 0) return;
+        spoken.push(date);
+        writeJSON(KEY_SPOKEN, spoken.slice(-MAX_SPOKEN));
+      },
+      spoken(date) {
+        const spoken = readJSON(KEY_SPOKEN, []);
+        return Array.isArray(spoken) && spoken.indexOf(date) >= 0;
+      }
+    };
+  }
+
   // src/client/nervous/index.ts
   var LS_KEY = "chubby-nervous";
   var AWAY_MS = 20 * 60 * 1e3;
@@ -6853,6 +6945,20 @@
       } catch (e) {
       }
     }, TICK_MS2);
+    try {
+      const dreams = createDreamBook();
+      const dream = dreams.maybeDream(s.log.recent(800));
+      if (dream && !dreams.spoken(dream.date)) {
+        dreams.markSpoken(dream.date);
+        setTimeout(() => {
+          try {
+            s.deps.bubble(dream.lines.join(" "), 7e3);
+          } catch (e) {
+          }
+        }, 2500);
+      }
+    } catch (e) {
+    }
     return detachNervous;
   }
   function detachNervous() {
