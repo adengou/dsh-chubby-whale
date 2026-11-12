@@ -390,7 +390,7 @@ console.log('\n[J] store 门面（只组合仓储 / 不泄漏内部 json）')
 
   for (let i = 0; i < 25; i++) store.appendTurns('u' + i, 'a' + i)
   const h = store.loadHistory()
-  ok('appendTurns 成对追加并截到 40 条', h.length === 40 && h[0].content === 'u5' && h[39].content === 'a24',
+  ok('appendTurns 成对追加并截到 50 条（80 上限）', h.length === 50 && h[0].content === 'u0' && h[49].content === 'a24',
     h.length + ' 条，首条 ' + (h[0] && h[0].content))
 
   const arr = [{ role: 'user', content: 'x' }]
