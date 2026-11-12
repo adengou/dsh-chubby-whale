@@ -8,7 +8,7 @@
 import { join } from 'node:path';
 import { writeJsonAtomic, isMissingFileError, quarantineFile, readTextNoBom } from '../atomic.js';
 /** 记忆里最多留多少条（40 条 = 20 轮） */
-const MEMORY_LIMIT = 40;
+const MEMORY_LIMIT = 80;
 export function createMemoryRepo(dataDir) {
     const MEMORY = join(dataDir, 'memory.json');
     function loadMemoryObj() {

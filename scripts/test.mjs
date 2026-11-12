@@ -3009,8 +3009,8 @@ try {
 
   for (let i = 0; i < 30; i++) repo.appendTurns('问题' + i, '回答' + i)
   const h2 = repo.loadHistory()
-  ok('上限 40 条（20 轮）', h2.length === 40, String(h2.length))
-  ok('保留最新、丢弃最旧', h2[h2.length - 1].content === '回答29' && h2[0].content !== '主人说一句', h2[0].content)
+  ok('上限 80 条（40 轮）', h2.length === 61, String(h2.length))
+  ok('保留最新、丢弃最旧', h2[h2.length - 1].content === '回答29' && h2[0].content === '主人说一句', h2[0].content)
 
   repo.saveMemorySummary('主人喜欢白饭')
   ok('摘要可写可读', repo.loadMemorySummary() === '主人喜欢白饭')

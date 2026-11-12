@@ -19,7 +19,7 @@ import { parseReminderIntent } from '../shared/remind-nl.js'
 
 export const CHAT_URL = DEEPSEEK_CHAT_URL
 /** 只把最近 8 条历史喂给模型（4 轮）；更早的靠长期记忆摘要，省 token */
-export const HISTORY_IN_PROMPT = 8
+export const HISTORY_IN_PROMPT = 24
 /** 聊天回复缓存 7 天 */
 export const CHAT_CACHE_TTL = 7 * 24 * 3600 * 1000
 /** 单条用户消息最多带多少字（两条路径共用；此前流式没有截断） */
@@ -41,7 +41,7 @@ const CHAT_MAX_IMAGE_B64 = 4 * 1024 * 1024
  */
 export const CHAT_MAX_TOKENS = 800
 /** 后台摘要类调用（长期记忆压缩 / L2 学习 / L3 自写）的 max_tokens 预算（原 160~320 偏低） */
-export const SUMMARY_MAX_TOKENS = 400
+export const SUMMARY_MAX_TOKENS = 1600
 
 /**
  * 聊天缓存的规范化：语音闲聊要"同一句话就命中"，所以
