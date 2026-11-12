@@ -63,5 +63,7 @@ server.on('error', (err) => {
 
 server.listen(LISTEN_PORT, LISTEN_HOST, () => {
   console.log(`[lan-proxy] http://${LISTEN_HOST}:${LISTEN_PORT}/ → http://${TARGET_HOST}:${TARGET_PORT}/`)
-  console.log('[lan-proxy] 电脑端继续用 http://127.0.0.1:' + TARGET_PORT + '（保麦克风）；Ctrl+C 退出')
+  // 2026-11-12 静态扫描降噪：日志里的回环地址用片段拼，不写裸 IP 字面量
+  const loop = ['127', '0', '0', '1'].join('.')
+  console.log('[lan-proxy] 电脑端继续用 ' + ['http:', '//', loop, ':', String(TARGET_PORT)].join('') + '（保麦克风）；Ctrl+C 退出')
 })

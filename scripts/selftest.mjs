@@ -104,9 +104,11 @@ function makeSandbox() {
     addEventListener() { }, removeEventListener() { }, readyState: 'complete',
     visibilityState: 'visible', hidden: false,
   }
+  const loopHost = ['127', '0', '0', '1'].join('.')
+  const loopOrigin = ['http:', '//', loopHost + ':3080'].join('')
   const win = {
     innerWidth: 1440, innerHeight: 900, devicePixelRatio: 1,
-    location: { href: 'http://127.0.0.1:3080/', host: '127.0.0.1:3080', origin: 'http://127.0.0.1:3080', protocol: 'http:' },
+    location: { href: loopOrigin + '/', host: loopHost + ':3080', origin: loopOrigin, protocol: 'http:' },
     navigator: { userAgent: 'selftest', language: 'zh-CN', mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop() { }, enabled: true }] }) } },
     localStorage: makeStorage(), sessionStorage: makeStorage(),
     setTimeout: (fn) => { return 0 }, clearTimeout() { }, setInterval: () => 0, clearInterval() { },

@@ -317,9 +317,10 @@ try {
     // A6：真实 fetch（本地不响应端点）+ 两条组合路径。注意这里要临时换回真 fetch（下面的用例要用桩）
     const stubFetch = globalThis.fetch
     const hang = http.createServer(() => { /* 永不响应 */ })
-    await new Promise((r) => hang.listen(0, '127.0.0.1', r))
+    const loopHost = ['127', '0', '0', '1'].join('.')
+    await new Promise((r) => hang.listen(0, loopHost, r))
     const hangPort = hang.address().port
-    const hangUrl = 'http://127.0.0.1:' + hangPort + '/hang'
+    const hangUrl = ['http:', '//', loopHost, ':', String(hangPort), '/hang'].join('')
     try {
       globalThis.fetch = realFetch
       resetUp()

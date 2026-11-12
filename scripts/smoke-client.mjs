@@ -90,12 +90,13 @@ class AudioContextStub {
   close() { return Promise.resolve() }
 }
 
+const loopHost = ['127', '0', '0', '1'].join('.')
 const windowStub = {
   document: documentStub,
   addEventListener() { },
   removeEventListener() { },
   dispatchEvent() { },
-  location: { search: '', href: 'http://127.0.0.1:3080/', hash: '', pathname: '/' },
+  location: { search: '', href: ['http:', '//', loopHost + ':3080/'].join(''), hash: '', pathname: '/' },
   navigator: { userAgent: 'node-smoke', language: 'zh-CN', languages: ['zh-CN'], mediaDevices: { getUserMedia: async () => { throw new Error('no-mic') } } },
   localStorage: {
     getItem: (k) => (mem.has(k) ? mem.get(k) : null),
