@@ -120,7 +120,6 @@ export const EN_MAP: Record<string, string> = {
   '数字': 'Numerals',
   '把稿子念成音频…': 'Narrate script to audio…',
   '公文校对…': 'Proofread a document…',
-  '神经感知：切换': 'Nervous system: toggle',
   '清除记忆…': 'Clear memory…',
   '清空聊天缓存…': 'Clear chat cache…',
   '让它游走（退出）': 'Let it go (exit)',
@@ -155,6 +154,7 @@ const TOGGLE_EN: Record<string, [string, string]> = {
   '语音待命：': ['Voice standby: on', 'Voice standby: off'],
   '语音聊天：': ['Voice chat: on', 'Voice chat: off'],
   '流式回复：': ['Streaming replies: on', 'Streaming replies: off'],
+  '神经感知：': ['Nervous system: on', 'Nervous system: off'],
 }
 
 export function tr(label: string, lang: string): string {
@@ -245,12 +245,16 @@ export interface MenuState {
   chatRate?: string
   /** 流式回复开关（缺省视为开；关掉后等整段回复再开口） */
   streamOn?: boolean
+  /** 神经感知开关（缺省视为开） */
+  nervousOn?: boolean
 }
 
 export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
   const voiceOn = state.voiceOn ? true : false
   const earOn = state.earOn ? true : false
   const voiceChatOn = state.voiceChatOn ? true : false
+  /** 神经感知缺省开：只有显式 false 才算关 */
+  const nervousOn = !(state.nervousOn === false)
   // 脏值归一：菜单勾选必须和「运行时实际用的值」同口径，否则手改/旧版本留下的
   // 非法值会让三个选项都不打勾，而实际行为已经回落到默认。
   //   · 聊天语言：client/chat.ts 的 resolveChatLang 对非法值一律当 auto；
@@ -286,7 +290,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     item('投喂一碗', 'feed'),
     item('看张图…', 'vision'),
     item('公文校对…', 'proofread'),
-    item('神经感知：切换', 'nervous'),
+    item('神经感知：' + (nervousOn ? '开' : '关'), 'nervous'),
     sep(),
     // ── 曲子 ──
     sub('弹首曲子 ▸', MELODIES.map((m) => item('弹《' + m + '》', 'music:' + m))),

@@ -7,6 +7,7 @@
 import { postJson } from '../http.js'
 import { str } from '../util.js'
 import { isSupportedDocName, pickDocument, readDocumentText } from '../doc-text.js'
+import { noteWork } from '../nervous/index.js'
 import type { ActionHost, ActionTable } from '../actions.js'
 
 export function registerProofreadActions(table: ActionTable<ActionHost>): void {
@@ -38,6 +39,7 @@ export function registerProofreadActions(table: ActionTable<ActionHost>): void {
       host.bubble('太长了（' + text.length + ' 字），一次只能校对 8000 字以内', 6000)
       return
     }
+    noteWork('proofread')
     host.bubble('本鲸帮你看一遍，稍等…', 60000)
     try {
       const r = await postJson('/proofread', { text }, { timeout: 120000 })

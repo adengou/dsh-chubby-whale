@@ -20,7 +20,7 @@ import { registerVoiceActions } from './client/actions/voice.js'
 import { registerProofreadActions } from './client/actions/proofread.js'
 import { registerNervousActions } from './client/actions/nervous.js'
 import { createPersona, applyServerMood } from './client/persona.js'
-import { attachNervous } from './client/nervous/index.js'
+import { attachNervous, nervousEnabled } from './client/nervous/index.js'
 import { createDeduper } from './client/text.js'
 import { getJson } from './client/http.js'
 import { createMelodyPlayer } from './client/melody.js'
@@ -1486,7 +1486,7 @@ registerSkinActions(actions)
       // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去。
       // 可见项清单在渲染时同步算一次（键盘高亮与屏幕顺序共用这一份，不各算一套）。
       const menuItems = menu
-        ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
+        ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
         : []
       const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : []
       menuEntriesRef.current = menuEntries

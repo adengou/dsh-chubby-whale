@@ -2769,7 +2769,6 @@
     "数字": "Numerals",
     "把稿子念成音频…": "Narrate script to audio…",
     "公文校对…": "Proofread a document…",
-    "神经感知：切换": "Nervous system: toggle",
     "清除记忆…": "Clear memory…",
     "清空聊天缓存…": "Clear chat cache…",
     "让它游走（退出）": "Let it go (exit)",
@@ -2803,7 +2802,8 @@
     "语音朗读：": ["Voice output: on", "Voice output: off"],
     "语音待命：": ["Voice standby: on", "Voice standby: off"],
     "语音聊天：": ["Voice chat: on", "Voice chat: off"],
-    "流式回复：": ["Streaming replies: on", "Streaming replies: off"]
+    "流式回复：": ["Streaming replies: on", "Streaming replies: off"],
+    "神经感知：": ["Nervous system: on", "Nervous system: off"]
   };
   function tr(label, lang) {
     if (lang !== "en") return label;
@@ -2857,6 +2857,7 @@
     const voiceOn = state.voiceOn ? true : false;
     const earOn = state.earOn ? true : false;
     const voiceChatOn = state.voiceChatOn ? true : false;
+    const nervousOn = !(state.nervousOn === false);
     const chatLang = (() => {
       const v = state.chatLang ? String(state.chatLang) : "";
       return v === "zh" || v === "en" ? v : "auto";
@@ -2881,7 +2882,7 @@
       item("投喂一碗", "feed"),
       item("看张图…", "vision"),
       item("公文校对…", "proofread"),
-      item("神经感知：切换", "nervous"),
+      item("神经感知：" + (nervousOn ? "开" : "关"), "nervous"),
       sep(),
       // ── 曲子 ──
       sub("弹首曲子 ▸", MELODIES.map((m) => item("弹《" + m + "》", "music:" + m))),
@@ -6342,6 +6343,153 @@
     };
   }
 
+  // src/client/nervous/index.ts
+  var LS_KEY = "chubby-nervous";
+  var AWAY_MS = 20 * 60 * 1e3;
+  var AWAY_LINE_GAP_MS = 40 * 60 * 1e3;
+  var BACK_LINE_GAP_MS = 20 * 60 * 1e3;
+  var ACTIVITY_THROTTLE_MS = 5e3;
+  var TICK_MS2 = 30 * 1e3;
+  var current = null;
+  function nervousEnabled() {
+    try {
+      return localStorage.getItem(LS_KEY) !== "off";
+    } catch (e) {
+      return true;
+    }
+  }
+  function setNervousEnabled(on) {
+    try {
+      localStorage.setItem(LS_KEY, on ? "on" : "off");
+    } catch (e) {
+    }
+  }
+  function clamp(n) {
+    return n < 0 ? 0 : n > 100 ? 100 : n;
+  }
+  function hourOf() {
+    return (/* @__PURE__ */ new Date()).getHours();
+  }
+  function isNight() {
+    const h = hourOf();
+    return h >= 23 || h < 5;
+  }
+  function tick(s) {
+    if (!nervousEnabled()) return;
+    const now = Date.now();
+    const away = now - s.lastActivityAt > AWAY_MS;
+    const night = isNight();
+    if (away) s.energy = clamp(s.energy - 3);
+    else s.energy = clamp(s.energy + 1);
+    if (night) s.energy = clamp(Math.min(s.energy, 40));
+    try {
+      const mood = s.deps.persona.state ? s.deps.persona.state.mood : null;
+      if (mood === "idle") {
+        if (night) s.deps.persona.setMood("sleepy", TICK_MS2 + 5e3);
+        else if (s.energy <= 20) s.deps.persona.setMood("sleepy", TICK_MS2 + 5e3);
+        else if (s.energy >= 85) s.deps.persona.setMood("excited", 15e3);
+      }
+    } catch (e) {
+    }
+    if (away && now - s.lastAwayLineAt > AWAY_LINE_GAP_MS) {
+      s.lastAwayLineAt = now;
+      try {
+        s.deps.bubble("主人…是不是把本鲸忘了", 4e3);
+      } catch (e) {
+      }
+    }
+    if (!away && s.lastBackLineAt && now - s.lastBackLineAt > BACK_LINE_GAP_MS) {
+      s.lastBackLineAt = 0;
+      try {
+        s.deps.bubble("本鲸在呢", 2600);
+      } catch (e) {
+      }
+    }
+    if (away && !s.lastBackLineAt) s.lastBackLineAt = now;
+  }
+  function attachNervous(deps) {
+    if (current) return detachNervous;
+    const s = {
+      deps,
+      timer: null,
+      lastActivityAt: Date.now(),
+      lastAwayLineAt: 0,
+      lastBackLineAt: 0,
+      energy: 65,
+      listeners: []
+    };
+    current = s;
+    let lastSample = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      s.lastActivityAt = now;
+      if (now - lastSample < ACTIVITY_THROTTLE_MS) return;
+      lastSample = now;
+      s.energy = clamp(s.energy + 2);
+    };
+    const onVisible = () => {
+      try {
+        if (document.visibilityState === "visible") onActivity();
+      } catch (e) {
+      }
+    };
+    const bind = (target, name, fn) => {
+      try {
+        target.addEventListener(name, fn, { passive: true });
+        s.listeners.push(() => {
+          try {
+            target.removeEventListener(name, fn);
+          } catch (e) {
+          }
+        });
+      } catch (e) {
+      }
+    };
+    bind(window, "mousemove", onActivity);
+    bind(window, "keydown", onActivity);
+    bind(window, "touchstart", onActivity);
+    bind(document, "visibilitychange", onVisible);
+    s.timer = setInterval(() => {
+      try {
+        tick(s);
+      } catch (e) {
+      }
+    }, TICK_MS2);
+    return detachNervous;
+  }
+  function detachNervous() {
+    const s = current;
+    current = null;
+    if (!s) return;
+    try {
+      clearInterval(s.timer);
+    } catch (e) {
+    }
+    for (const off of s.listeners) {
+      try {
+        off();
+      } catch (e) {
+      }
+    }
+    s.listeners.length = 0;
+  }
+  function noteWork(kind) {
+    const s = current;
+    if (!s || !nervousEnabled()) return;
+    s.energy = clamp(s.energy + 1);
+    s.lastActivityAt = Date.now();
+    if (kind && kind.length > 0) {
+      try {
+        const mood = s.deps.persona.state ? s.deps.persona.state.mood : null;
+        if (mood === "idle") s.deps.persona.setMood("excited", 8e3);
+      } catch (e) {
+      }
+    }
+  }
+  function nervousEnergy() {
+    return current ? current.energy : null;
+  }
+
   // src/client/actions/voice.ts
   function wakeWordsLive(host, want) {
     let info = null;
@@ -6494,6 +6642,7 @@
         host.bubble("太长了（" + text.length + " 字），一次最多 " + MAX_SCRIPT_CHARS + " 字", 7e3);
         return;
       }
+      noteWork("narrate");
       host.bubble("本鲸开始分段录：" + text.length + " 字…", 18e4);
       try {
         const out = await exportSpeechToAudio({
@@ -6585,6 +6734,7 @@
         host.bubble("太长了（" + text.length + " 字），一次只能校对 8000 字以内", 6e3);
         return;
       }
+      noteWork("proofread");
       host.bubble("本鲸帮你看一遍，稍等…", 6e4);
       try {
         const r = await postJson("/proofread", { text }, { timeout: 12e4 });
@@ -6615,140 +6765,6 @@
         host.bubble("没校对成：" + String(e && e.message || e).slice(0, 80), 6e3);
       }
     });
-  }
-
-  // src/client/nervous/index.ts
-  var LS_KEY = "chubby-nervous";
-  var AWAY_MS = 20 * 60 * 1e3;
-  var AWAY_LINE_GAP_MS = 40 * 60 * 1e3;
-  var BACK_LINE_GAP_MS = 20 * 60 * 1e3;
-  var ACTIVITY_THROTTLE_MS = 5e3;
-  var TICK_MS2 = 30 * 1e3;
-  var current = null;
-  function nervousEnabled() {
-    try {
-      return localStorage.getItem(LS_KEY) !== "off";
-    } catch (e) {
-      return true;
-    }
-  }
-  function setNervousEnabled(on) {
-    try {
-      localStorage.setItem(LS_KEY, on ? "on" : "off");
-    } catch (e) {
-    }
-  }
-  function clamp(n) {
-    return n < 0 ? 0 : n > 100 ? 100 : n;
-  }
-  function hourOf() {
-    return (/* @__PURE__ */ new Date()).getHours();
-  }
-  function isNight() {
-    const h = hourOf();
-    return h >= 23 || h < 5;
-  }
-  function tick(s) {
-    if (!nervousEnabled()) return;
-    const now = Date.now();
-    const away = now - s.lastActivityAt > AWAY_MS;
-    const night = isNight();
-    if (away) s.energy = clamp(s.energy - 3);
-    else s.energy = clamp(s.energy + 1);
-    if (night) s.energy = clamp(Math.min(s.energy, 40));
-    try {
-      const mood = s.deps.persona.state ? s.deps.persona.state.mood : null;
-      if (mood === "idle") {
-        if (night) s.deps.persona.setMood("sleepy", TICK_MS2 + 5e3);
-        else if (s.energy <= 20) s.deps.persona.setMood("sleepy", TICK_MS2 + 5e3);
-        else if (s.energy >= 85) s.deps.persona.setMood("excited", 15e3);
-      }
-    } catch (e) {
-    }
-    if (away && now - s.lastAwayLineAt > AWAY_LINE_GAP_MS) {
-      s.lastAwayLineAt = now;
-      try {
-        s.deps.bubble("主人…是不是把本鲸忘了", 4e3);
-      } catch (e) {
-      }
-    }
-    if (!away && s.lastBackLineAt && now - s.lastBackLineAt > BACK_LINE_GAP_MS) {
-      s.lastBackLineAt = 0;
-      try {
-        s.deps.bubble("本鲸在呢", 2600);
-      } catch (e) {
-      }
-    }
-    if (away && !s.lastBackLineAt) s.lastBackLineAt = now;
-  }
-  function attachNervous(deps) {
-    if (current) return detachNervous;
-    const s = {
-      deps,
-      timer: null,
-      lastActivityAt: Date.now(),
-      lastAwayLineAt: 0,
-      lastBackLineAt: 0,
-      energy: 65,
-      listeners: []
-    };
-    current = s;
-    let lastSample = 0;
-    const onActivity = () => {
-      const now = Date.now();
-      s.lastActivityAt = now;
-      if (now - lastSample < ACTIVITY_THROTTLE_MS) return;
-      lastSample = now;
-      s.energy = clamp(s.energy + 2);
-    };
-    const onVisible = () => {
-      try {
-        if (document.visibilityState === "visible") onActivity();
-      } catch (e) {
-      }
-    };
-    const bind = (target, name, fn) => {
-      try {
-        target.addEventListener(name, fn, { passive: true });
-        s.listeners.push(() => {
-          try {
-            target.removeEventListener(name, fn);
-          } catch (e) {
-          }
-        });
-      } catch (e) {
-      }
-    };
-    bind(window, "mousemove", onActivity);
-    bind(window, "keydown", onActivity);
-    bind(window, "touchstart", onActivity);
-    bind(document, "visibilitychange", onVisible);
-    s.timer = setInterval(() => {
-      try {
-        tick(s);
-      } catch (e) {
-      }
-    }, TICK_MS2);
-    return detachNervous;
-  }
-  function detachNervous() {
-    const s = current;
-    current = null;
-    if (!s) return;
-    try {
-      clearInterval(s.timer);
-    } catch (e) {
-    }
-    for (const off of s.listeners) {
-      try {
-        off();
-      } catch (e) {
-      }
-    }
-    s.listeners.length = 0;
-  }
-  function nervousEnergy() {
-    return current ? current.energy : null;
   }
 
   // src/client/actions/nervous.ts
@@ -11201,7 +11217,7 @@
           return () => clearInterval(timer);
         }, []);
         const recoverProps = recover.dot(hidden);
-        const menuItems = menu ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())) : [];
+        const menuItems = menu ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())) : [];
         const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : [];
         menuEntriesRef.current = menuEntries;
         function renderItems(items) {

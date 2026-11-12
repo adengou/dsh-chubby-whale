@@ -7,7 +7,12 @@
  *   · 表达层：调 persona.setMood 换表情，低频气泡说两句话，不刷屏。
  *
  * 开关：localStorage `chubby-nervous`（默认 on）；关掉即摘监听与定时器。
- * 撤除：删掉本目录 + client.ts 的接入两行 + menu/actions 各一项即可，不留依赖。
+ * 撤除（五处，全部是加法，删掉即回到原样）：
+ *   1) src/client/nervous/ 整个目录
+ *   2) client.ts：import、attach 的 useEffect、buildMenu 里的 nervousOn 字段
+ *   3) client/menu.ts：MenuState.nervousOn、nervousOn 变量、菜单项、TOGGLE_EN 一行
+ *   4) client/actions/nervous.ts + client.ts 里的 registerNervousActions
+ *   5) actions/voice.ts 与 actions/proofread.ts 里的 noteWork 调用与 import
  */
 import type { Persona, Mood } from '../persona.js'
 

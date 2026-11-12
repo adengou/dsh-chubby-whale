@@ -12,6 +12,7 @@ import { normalizeVoiceName } from '../voice.js'
 import { readStoredVoiceName } from '../voice/voices.js'
 import { isSupportedDocName, pickDocument, readDocumentText } from '../doc-text.js'
 import { MAX_SCRIPT_CHARS, exportSpeechToAudio } from '../voice/export-audio.js'
+import { noteWork } from '../nervous/index.js'
 import { setCustomWakeWord, WAKE_WORDS } from '../wake.js'
 
 /**
@@ -164,6 +165,7 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
       host.bubble('太长了（' + text.length + ' 字），一次最多 ' + MAX_SCRIPT_CHARS + ' 字', 7000)
       return
     }
+    noteWork('narrate')
     host.bubble('本鲸开始分段录：' + text.length + ' 字…', 180000)
     try {
       const out = await exportSpeechToAudio({
