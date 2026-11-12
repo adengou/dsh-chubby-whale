@@ -2767,6 +2767,8 @@
     "中药": "Herbs",
     "叠字": "Repeated characters",
     "数字": "Numerals",
+    "把稿子念成音频…": "Narrate script to audio…",
+    "公文校对…": "Proofread a document…",
     "清除记忆…": "Clear memory…",
     "清空聊天缓存…": "Clear chat cache…",
     "让它游走（退出）": "Let it go (exit)",
@@ -2877,6 +2879,7 @@
       item("成长：" + growthText, "growth"),
       item("投喂一碗", "feed"),
       item("看张图…", "vision"),
+      item("公文校对…", "proofread"),
       sep(),
       // ── 曲子 ──
       sub("弹首曲子 ▸", MELODIES.map((m) => item("弹《" + m + "》", "music:" + m))),
@@ -2886,6 +2889,7 @@
       item("跟她说两句", "type"),
       item(voiceOn ? "语音朗读：开" : "语音朗读：关", "voice"),
       item("停止说话", "tts-stop"),
+      item("把稿子念成音频…", "voice-export"),
       sub("换个声音 ▸", [
         ...VOICE_ITEMS.map(([voice, label]) => item(voiceTick(voice) + label, "voice:" + voice)),
         item(voiceTick("auto") + "自动（按语言选音色）", "voice:auto")
@@ -6067,6 +6071,139 @@
     });
   }
 
+  // src/client/doc-text.ts
+  var PLAIN_EXTS = [".txt", ".md", ".json", ".log", ".csv"];
+  var ALLOWED_EXTS = [".txt", ".md", ".json", ".log", ".csv", ".docx"];
+  var MAX_DOC_BYTES = 20 * 1024 * 1024;
+  var DOC_ACCEPT = ".txt,.md,.json,.log,.csv,.docx";
+  function extOf(name) {
+    const n = String(name || "").toLowerCase();
+    const i = n.lastIndexOf(".");
+    return i >= 0 ? n.slice(i) : "";
+  }
+  function isSupportedDocName(name) {
+    return ALLOWED_EXTS.indexOf(extOf(name)) >= 0;
+  }
+  function pickDocument() {
+    return new Promise((resolve) => {
+      try {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = DOC_ACCEPT;
+        input.style.display = "none";
+        let settled = false;
+        const done = (f) => {
+          if (settled) return;
+          settled = true;
+          try {
+            input.remove();
+          } catch (e) {
+          }
+          resolve(f);
+        };
+        input.addEventListener("change", () => {
+          const f = input.files && input.files[0] ? input.files[0] : null;
+          done(f);
+        });
+        window.addEventListener("focus", () => {
+          setTimeout(() => {
+            if (!input.files || !input.files.length) done(null);
+          }, 300);
+        }, { once: true });
+        document.body.appendChild(input);
+        input.click();
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }
+  function u16(b, o) {
+    return (b[o] | b[o + 1] << 8) & 65535;
+  }
+  function u32(b, o) {
+    return (b[o] | b[o + 1] << 8 | b[o + 2] << 16 | b[o + 3] << 24) >>> 0;
+  }
+  function findEocd(b) {
+    const min = Math.max(0, b.length - 66e3);
+    for (let i = b.length - 22; i >= min; i--) {
+      if (b[i] === 80 && b[i + 1] === 75 && b[i + 2] === 5 && b[i + 3] === 6) return i;
+    }
+    return -1;
+  }
+  async function inflateRaw(data, method) {
+    if (method === 0) return data;
+    if (method !== 8) throw new Error("不支持的压缩方式：" + method);
+    const DS = globalThis.DecompressionStream;
+    if (!DS) throw new Error("当前浏览器不支持 DecompressionStream，读不了 docx");
+    const stream = new Blob([data]).stream().pipeThrough(new DS("deflate-raw"));
+    const out = await new Response(stream).arrayBuffer();
+    return new Uint8Array(out);
+  }
+  async function extractZipEntry(zip, want) {
+    const eocd = findEocd(zip);
+    if (eocd < 0) throw new Error("不是有效的 zip（找不到目录区）");
+    const total = u16(zip, eocd + 10);
+    let p = u32(zip, eocd + 16);
+    const decoder = new TextDecoder("utf-8");
+    for (let i = 0; i < total; i++) {
+      if (u32(zip, p) !== 33639248) break;
+      const method = u16(zip, p + 10);
+      const compSize = u32(zip, p + 20);
+      const nameLen = u16(zip, p + 28);
+      const extraLen = u16(zip, p + 30);
+      const commentLen = u16(zip, p + 32);
+      const localOff = u32(zip, p + 42);
+      const name = decoder.decode(zip.subarray(p + 46, p + 46 + nameLen));
+      if (name === want) {
+        const lNameLen = u16(zip, localOff + 26);
+        const lExtraLen = u16(zip, localOff + 28);
+        const start = localOff + 30 + lNameLen + lExtraLen;
+        return inflateRaw(zip.subarray(start, start + compSize), method);
+      }
+      p += 46 + nameLen + extraLen + commentLen;
+    }
+    return null;
+  }
+  function docxXmlToText(xml) {
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    const paras = doc.getElementsByTagNameNS("*", "p");
+    const lines = [];
+    for (let i = 0; i < paras.length; i++) {
+      const p = paras[i];
+      const ts = p.getElementsByTagNameNS("*", "t");
+      let s = "";
+      for (let j = 0; j < ts.length; j++) s += ts[j].textContent || "";
+      lines.push(s);
+    }
+    return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  async function readDocx(file) {
+    const zip = new Uint8Array(await file.arrayBuffer());
+    const xmlBuf = await extractZipEntry(zip, "word/document.xml");
+    if (!xmlBuf) throw new Error("docx 里没找到 word/document.xml");
+    return docxXmlToText(new TextDecoder("utf-8").decode(xmlBuf));
+  }
+  async function readDocumentText(file) {
+    try {
+      if (!file) return { ok: false, kind: "error", error: "没有文件" };
+      if (file.size > MAX_DOC_BYTES) return { ok: false, kind: "error", error: "文件太大（20MB 上限）" };
+      const ext = extOf(file.name);
+      if (PLAIN_EXTS.indexOf(ext) >= 0) {
+        const text = await file.text();
+        return { ok: true, kind: "plain", text };
+      }
+      if (ext === ".docx") {
+        const text = await readDocx(file);
+        if (!text) return { ok: false, kind: "error", error: "文档里没有文字" };
+        return { ok: true, kind: "docx", text };
+      }
+      if (ext === ".pdf") return { ok: false, kind: "unsupported", error: "PDF 读不了（要第三方解析库），先转成 docx 或 txt" };
+      return { ok: false, kind: "unsupported", error: "只支持 txt / md / json / log / csv / docx" };
+    } catch (e) {
+      return { ok: false, kind: "error", error: String(e && e.message || e) };
+    }
+  }
+
   // src/client/actions/voice.ts
   function wakeWordsLive(host, want) {
     let info = null;
@@ -6176,6 +6313,60 @@
         host.bubble("自检失败：" + String(e && e.message), 5e3);
       }
     });
+    table.define("voice-export", async (host) => {
+      const file = await pickDocument();
+      if (file && !isSupportedDocName(file.name)) {
+        host.bubble("这个格式读不了：只认 txt/md/json/log/csv/docx", 7e3);
+        return;
+      }
+      let text = "";
+      if (file) {
+        host.bubble("本鲸先读一遍文档…", 3e4);
+        const r = await readDocumentText(file);
+        if (!r.ok) {
+          host.bubble("读不了这个文档：" + String(r.error || "读取失败"), 8e3);
+          return;
+        }
+        text = String(r.text || "").trim();
+      } else {
+        let raw = null;
+        try {
+          raw = typeof window !== "undefined" && typeof window.prompt === "function" ? window.prompt("也可以直接把稿子贴进来（6000 字以内）：", "") : null;
+        } catch (e) {
+        }
+        text = str(raw).trim();
+      }
+      if (!text) return;
+      if (text.length > 6e3) {
+        host.bubble("太长了（" + text.length + " 字），一次只能念 6000 字以内", 6e3);
+        return;
+      }
+      host.bubble("本鲸去录音了，稍等…", 6e4);
+      try {
+        const res = await postRaw("/tts", { text, voice: readStoredVoiceName(), rate: "+0%", pitch: "" }, { timeout: 12e4 });
+        if (!res || !res.ok) throw new Error("tts-http-" + (res ? res.status : "?"));
+        const buf = await res.arrayBuffer();
+        const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+        const d = /* @__PURE__ */ new Date();
+        const pad = (n) => String(n).padStart(2, "0");
+        const name = "肥鲸朗读-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + "-" + pad(d.getHours()) + pad(d.getMinutes()) + ".mp3";
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(url);
+          } catch (e) {
+          }
+        }, 15e3);
+        host.bubble("录好了：" + name, 8e3);
+      } catch (e) {
+        host.bubble("没念成：" + String(e && e.message || e).slice(0, 80), 6e3);
+      }
+    });
     table.definePrefix("voice:", (host, v) => {
       const name = normalizeVoiceName(v);
       host.setTtsVoice(name);
@@ -6206,6 +6397,68 @@
       const on = setCustomWakeWord(word);
       const stored = word.slice(0, 12);
       host.bubble(on ? "唤醒词：" + stored + wakeHint(host, [stored]) : "唤醒词：默认（大肥鱼/肥鲸等）" + wakeHint(host, WAKE_WORDS));
+    });
+  }
+
+  // src/client/actions/proofread.ts
+  function registerProofreadActions(table) {
+    table.define("proofread", async (host) => {
+      const file = await pickDocument();
+      if (file && !isSupportedDocName(file.name)) {
+        host.bubble("这个格式读不了：只认 txt/md/json/log/csv/docx", 7e3);
+        return;
+      }
+      let text = "";
+      if (file) {
+        host.bubble("本鲸先读一遍文档…", 3e4);
+        const r = await readDocumentText(file);
+        if (!r.ok) {
+          host.bubble("读不了这个文档：" + String(r.error || "读取失败"), 8e3);
+          return;
+        }
+        text = String(r.text || "").trim();
+      } else {
+        let raw = null;
+        try {
+          raw = typeof window !== "undefined" && typeof window.prompt === "function" ? window.prompt("也可以直接把稿子贴进来（8000 字以内）：", "") : null;
+        } catch (e) {
+        }
+        text = str(raw).trim();
+      }
+      if (!text) return;
+      if (text.length > 8e3) {
+        host.bubble("太长了（" + text.length + " 字），一次只能校对 8000 字以内", 6e3);
+        return;
+      }
+      host.bubble("本鲸帮你看一遍，稍等…", 6e4);
+      try {
+        const r = await postJson("/proofread", { text }, { timeout: 12e4 });
+        const result = str(r?.result).trim();
+        if (!r || !r.ok || !result) {
+          host.bubble("没校对成：" + str(r?.error || "接口没回内容"), 6e3);
+          return;
+        }
+        const shown = result.length > 400 ? result.slice(0, 400) + "\n（完整清单已下载）" : result;
+        host.bubble(shown, 2e4);
+        const blob = new Blob([result], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const d = /* @__PURE__ */ new Date();
+        const pad = (n) => String(n).padStart(2, "0");
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "肥鲸校对-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + ".txt";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(url);
+          } catch (e) {
+          }
+        }, 15e3);
+      } catch (e) {
+        host.bubble("没校对成：" + String(e && e.message || e).slice(0, 80), 6e3);
+      }
     });
   }
 
@@ -9080,6 +9333,7 @@
       registerContentActions(actions);
       registerSystemActions(actions);
       registerVoiceActions(actions);
+      registerProofreadActions(actions);
       const CLIENT_ID = (() => {
         try {
           const v2 = sessionStorage.getItem("chubby-client-id");

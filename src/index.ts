@@ -30,6 +30,7 @@ import { estimateCostCny, readUsageSplit } from './shared/pricing.js'
 import { createSelfNarrativeWriter } from './host/personality-write.js'
 import { createPersonalityHandlers } from './host/routes/personality.js'
 import { createChatHandler } from './host/routes/chat.js'
+import { createProofreadHandler } from './host/routes/proofread.js'
 import { createChatStreamHandler } from './host/routes/chat-stream.js'
 import { createStoryHandlers } from './host/routes/story.js'
 import { createStoryRepo } from './host/story/repo.js'
@@ -406,10 +407,13 @@ export function apply(ctx: any, rawConfig?: any): void {
     version: () => readPluginVersion(PLUGIN_DIR),
   })
 
+  // 公文校对：只借聊天用的 Key/模型，独立外呼，不写聊天记忆、不记账
+  const proofread = createProofreadHandler({ key: getKey, model: chatModel })
+
   // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
   const routeTable = createRouteTable({
     misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles, briefing, tts, asr, personality: personalityRoutes,
-    daily, backup, stats, configView,
+    daily, backup, stats, configView, proofread,
   })
 
   // 所有路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，

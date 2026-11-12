@@ -38,5 +38,6 @@ export function createRouteTable(h) {
         // 可视化汇总（只读现有 store/cache）
         { path: '/api/chubby-whale/stats', handler: h.stats.handleStats },
         { path: '/api/chubby-whale/config', handler: h.configView.handleConfig },
+        { path: '/api/chubby-whale/proofread', handler: h.proofread },
     ];
 }

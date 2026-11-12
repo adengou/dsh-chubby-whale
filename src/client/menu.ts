@@ -118,6 +118,8 @@ export const EN_MAP: Record<string, string> = {
   '中药': 'Herbs',
   '叠字': 'Repeated characters',
   '数字': 'Numerals',
+  '把稿子念成音频…': 'Narrate script to audio…',
+  '公文校对…': 'Proofread a document…',
   '清除记忆…': 'Clear memory…',
   '清空聊天缓存…': 'Clear chat cache…',
   '让它游走（退出）': 'Let it go (exit)',
@@ -282,6 +284,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     item('成长：' + growthText, 'growth'),
     item('投喂一碗', 'feed'),
     item('看张图…', 'vision'),
+    item('公文校对…', 'proofread'),
     sep(),
     // ── 曲子 ──
     sub('弹首曲子 ▸', MELODIES.map((m) => item('弹《' + m + '》', 'music:' + m))),
@@ -291,6 +294,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     item('跟她说两句', 'type'),
     item(voiceOn ? '语音朗读：开' : '语音朗读：关', 'voice'),
     item('停止说话', 'tts-stop'),
+    item('把稿子念成音频…', 'voice-export'),
     sub('换个声音 ▸', [
       ...VOICE_ITEMS.map(([voice, label]) => item(voiceTick(voice) + label, 'voice:' + voice)),
       item(voiceTick('auto') + '自动（按语言选音色）', 'voice:auto'),

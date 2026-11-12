@@ -37,6 +37,7 @@ import type { createDailyHandler } from './routes/daily.js'
 import type { createBackupHandlers } from './routes/backup.js'
 import type { createStatsHandler } from './routes/stats.js'
 import type { createConfigViewHandler } from './routes/config.js'
+import type { createProofreadHandler } from './routes/proofread.js'
 
 /**
  * HTTP handler 的统一形状（req/res 由 dsh webserver 传入，与各路由工厂的产出兼容）。
@@ -74,6 +75,8 @@ export interface HandlerSet {
   stats: ReturnType<typeof createStatsHandler>
   /** 只读配置视图：{ handleConfig }（不含 Key 内容） */
   configView: ReturnType<typeof createConfigViewHandler>
+  /** 公文校对：一次性外呼，不写聊天记忆 */
+  proofread: ReturnType<typeof createProofreadHandler>
 }
 
 export function createRouteTable(h: HandlerSet): HttpRoute[] {
@@ -116,5 +119,6 @@ export function createRouteTable(h: HandlerSet): HttpRoute[] {
     // 可视化汇总（只读现有 store/cache）
     { path: '/api/chubby-whale/stats', handler: h.stats.handleStats },
     { path: '/api/chubby-whale/config', handler: h.configView.handleConfig },
+    { path: '/api/chubby-whale/proofread', handler: h.proofread },
   ]
 }

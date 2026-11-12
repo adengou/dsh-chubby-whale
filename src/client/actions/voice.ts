@@ -9,6 +9,9 @@ import { str } from '../util.js'
 import { readEndpointMode, writeEndpointMode } from '../endpoint.js'
 import type { ActionHost, ActionTable } from '../actions.js'
 import { normalizeVoiceName } from '../voice.js'
+import { postRaw } from '../http.js'
+import { readStoredVoiceName } from '../voice/voices.js'
+import { isSupportedDocName, pickDocument, readDocumentText } from '../doc-text.js'
 import { setCustomWakeWord, WAKE_WORDS } from '../wake.js'
 
 /**
@@ -122,6 +125,50 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
         if (clip && typeof clip.writeText === 'function') Promise.resolve(clip.writeText(JSON.stringify(st))).catch(() => { })
       } catch (e) { }
     } catch (e: any) { host.bubble('自检失败：' + String(e && e.message), 5000) }
+  })
+
+  // —— 把稿子念成 mp3 下载：给短视频/口播配音用（走宿主 /tts，单次 6000 字上限）——
+  table.define('voice-export', async (host) => {
+    // 文件框按 accept 自己过滤（txt/md/json/log/csv/docx），不另写说明
+    const file = await pickDocument()
+    // 「所有文件」绕过 accept 时先验扩展名：不认识就不读，连内容都不碰
+    if (file && !isSupportedDocName(file.name)) {
+      host.bubble('这个格式读不了：只认 txt/md/json/log/csv/docx', 7000)
+      return
+    }
+    let text = ''
+    if (file) {
+      host.bubble('本鲸先读一遍文档…', 30000)
+      const r: any = await readDocumentText(file)
+      if (!r.ok) { host.bubble('读不了这个文档：' + String(r.error || '读取失败'), 8000); return }
+      text = String(r.text || '').trim()
+    } else {
+      let raw: any = null
+      try { raw = typeof window !== 'undefined' && typeof (window as any).prompt === 'function' ? (window as any).prompt('也可以直接把稿子贴进来（6000 字以内）：', '') : null } catch (e) { }
+      text = str(raw).trim()
+    }
+    if (!text) return
+    if (text.length > 6000) { host.bubble('太长了（' + text.length + ' 字），一次只能念 6000 字以内', 6000); return }
+    host.bubble('本鲸去录音了，稍等…', 60000)
+    try {
+      const res = await postRaw('/tts', { text, voice: readStoredVoiceName(), rate: '+0%', pitch: '' }, { timeout: 120000 })
+      if (!res || !res.ok) throw new Error('tts-http-' + (res ? res.status : '?'))
+      const buf = await res.arrayBuffer()
+      const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }))
+      const d = new Date()
+      const pad = (n: number): string => String(n).padStart(2, '0')
+      const name = '肥鲸朗读-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.mp3'
+      const a = document.createElement('a')
+      a.href = url
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => { try { URL.revokeObjectURL(url) } catch (e) { } }, 15000)
+      host.bubble('录好了：' + name, 8000)
+    } catch (e: any) {
+      host.bubble('没念成：' + String((e && e.message) || e).slice(0, 80), 6000)
+    }
   })
 
   // —— 换个声音：存下来 + 立即改语音实例音色 + 用宿主 /tts 试听 ——

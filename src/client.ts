@@ -17,6 +17,7 @@ import { registerCultureActions } from './client/actions/culture.js'
 import { parseBookList, registerContentActions } from './client/actions/content.js'
 import { registerSystemActions } from './client/actions/system.js'
 import { registerVoiceActions } from './client/actions/voice.js'
+import { registerProofreadActions } from './client/actions/proofread.js'
 import { createPersona, applyServerMood } from './client/persona.js'
 import { createDeduper } from './client/text.js'
 import { getJson } from './client/http.js'
@@ -89,6 +90,7 @@ registerSkinActions(actions)
     registerContentActions(actions)
     registerSystemActions(actions)
     registerVoiceActions(actions)
+    registerProofreadActions(actions)
 
 
 

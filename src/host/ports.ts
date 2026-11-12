@@ -202,3 +202,12 @@ export interface AsrRouteDeps {
   /** 识别语言（zh/en/auto）；缺省 zh。配置键 asrLanguage，2026-11-07 起真正生效 */
   language?: () => string
 }
+
+/**
+ * /proofread 的依赖：只要求能拿到 DeepSeek Key，并与聊天共用模型名。
+ * 校对是一次性外呼，不写聊天记忆、不计鱼粮，因此不需要 history/memory 端口。
+ */
+export interface ProofreadRouteDeps {
+  key: KeyReader
+  model: string
+}
