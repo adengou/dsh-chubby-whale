@@ -1070,12 +1070,17 @@ registerSkinActions(actions)
       /** 定时随机换背景（固定开关关闭时才换） */
       function startAutoSkin(): void {
         try {
-          setInterval(() => {
+          const run = (): void => {
             try {
-              if (skinFixed()) return
-              applySkinBg(pickRandomBg())
-            } catch (e) { }
-          }, 5 * 60 * 1000)
+              if (skinFixed()) { console.log('[skin] auto 跳过：固定背景开着'); return }
+              const pick = pickRandomBg()
+              console.log('[skin] auto 换背景 n=' + pick)
+              applySkinBg(pick)
+            } catch (e) { console.log('[skin] auto 失败 ' + String(e)) }
+          }
+          setInterval(run, 5 * 60 * 1000)
+          // 启动后 20 秒先换一次（不用等满 5 分钟才看到效果）
+          setTimeout(run, 20000)
         } catch (e) { }
       }
       function pickRandomBg(): number {

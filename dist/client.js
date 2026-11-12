@@ -10183,13 +10183,21 @@
         }
         function startAutoSkin() {
           try {
-            setInterval(() => {
+            const run = () => {
               try {
-                if (skinFixed()) return;
-                applySkinBg(pickRandomBg());
+                if (skinFixed()) {
+                  console.log("[skin] auto 跳过：固定背景开着");
+                  return;
+                }
+                const pick = pickRandomBg();
+                console.log("[skin] auto 换背景 n=" + pick);
+                applySkinBg(pick);
               } catch (e) {
+                console.log("[skin] auto 失败 " + String(e));
               }
-            }, 5 * 60 * 1e3);
+            };
+            setInterval(run, 5 * 60 * 1e3);
+            setTimeout(run, 2e4);
           } catch (e) {
           }
         }
