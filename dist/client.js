@@ -6343,6 +6343,305 @@
     };
   }
 
+  // src/client/nervous/affect.ts
+  var RULES = deepFreeze({
+    /** 两轴统一取值范围 */
+    min: 0,
+    max: 100,
+    /** 初始情绪：略高于中位，开局是「有精神、心情不错」 */
+    initial: { arousal: 65, valence: 55 },
+    /** 一次性事件的增量：activity / back / work */
+    gains: {
+      activity: { arousal: 2, valence: 1 },
+      back: { arousal: 2, valence: 3 },
+      work: { arousal: 2, valence: 1 }
+    },
+    /** 主人不在时的心跳衰减（只由 tick(away=true) 扣，事件流里的 away 事件不重复扣） */
+    awayHeartbeat: { arousal: -1, valence: -1 },
+    /** 夜间心跳把 arousal 压到这个上限（契约：≤40） */
+    nightArousalCap: 40,
+    /** 九格表情阈值：命中顺序与契约一致，先到先判 */
+    face: {
+      /** 夜间或 arousal ≤20 → sleepy */
+      sleepyArousal: 20,
+      /** valence ≤20 且 arousal ≥60 → sulk */
+      sulkValence: 20,
+      sulkArousal: 60,
+      /** arousal ≥85 且 valence ≥60 → excited */
+      excitedArousal: 85,
+      excitedValence: 60,
+      /** valence ≥80 且 arousal ≤40 → shy */
+      shyValence: 80,
+      shyArousal: 40
+    }
+  });
+  function clampAxis(n, fallback) {
+    const v = Number.isFinite(n) ? n : fallback;
+    if (v < RULES.min) return RULES.min;
+    if (v > RULES.max) return RULES.max;
+    return v;
+  }
+  function normalize(src) {
+    const a = src && src.arousal !== void 0 ? src.arousal : RULES.initial.arousal;
+    const v = src && src.valence !== void 0 ? src.valence : RULES.initial.valence;
+    return {
+      arousal: clampAxis(a, RULES.initial.arousal),
+      valence: clampAxis(v, RULES.initial.valence)
+    };
+  }
+  function gainOf(type) {
+    const gains = RULES.gains;
+    return Object.prototype.hasOwnProperty.call(gains, type) ? gains[type] : null;
+  }
+  function createAffectModel(opts) {
+    const initial = normalize(opts && opts.initial);
+    let state = { arousal: initial.arousal, valence: initial.valence };
+    let lastTickAt = 0;
+    function applyDelta(d) {
+      state = {
+        arousal: clampAxis(state.arousal + d.arousal, state.arousal),
+        valence: clampAxis(state.valence + d.valence, state.valence)
+      };
+    }
+    return {
+      /** 读快照：返回新对象，调用方改不到模型内部 */
+      read() {
+        return { arousal: state.arousal, valence: state.valence };
+      },
+      apply(e) {
+        if (!e || typeof e !== "object") return;
+        const delta = gainOf(e.type);
+        if (delta) applyDelta(delta);
+      },
+      tick(now, away, night) {
+        lastTickAt = now;
+        if (away) applyDelta(RULES.awayHeartbeat);
+        if (night) {
+          state = {
+            arousal: clampAxis(Math.min(state.arousal, RULES.nightArousalCap), state.arousal),
+            valence: clampAxis(state.valence, state.valence)
+          };
+        }
+      },
+      reset() {
+        state = { arousal: initial.arousal, valence: initial.valence };
+      }
+    };
+  }
+  function faceOf(s, night) {
+    const src = s || {};
+    const a = clampAxis(src.arousal, RULES.initial.arousal);
+    const v = clampAxis(src.valence, RULES.initial.valence);
+    if (night || a <= RULES.face.sleepyArousal) return "sleepy";
+    if (v <= RULES.face.sulkValence && a >= RULES.face.sulkArousal) return "sulk";
+    if (a >= RULES.face.excitedArousal && v >= RULES.face.excitedValence) return "excited";
+    if (v >= RULES.face.shyValence && a <= RULES.face.shyArousal) return "shy";
+    return "idle";
+  }
+
+  // src/client/nervous/stream.ts
+  var DEFAULT_KEY = "chubby-nervous-log";
+  var DEFAULT_CAP = 500;
+  function normalize2(x) {
+    if (!x || typeof x !== "object") return null;
+    const at = typeof x.at === "number" ? x.at : NaN;
+    if (!Number.isFinite(at)) return null;
+    const type = typeof x.type === "string" ? x.type : "";
+    if (!type) return null;
+    const ev = { at, type };
+    if (x.data && typeof x.data === "object") ev.data = x.data;
+    return ev;
+  }
+  function readList(key) {
+    try {
+      if (typeof localStorage === "undefined" || !localStorage) return { list: [], ok: false };
+      const raw = localStorage.getItem(key);
+      if (!raw) return { list: [], ok: true };
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        return { list: [], ok: true };
+      }
+      if (!Array.isArray(parsed)) return { list: [], ok: true };
+      const list = [];
+      for (const x of parsed) {
+        const ev = normalize2(x);
+        if (ev) list.push(ev);
+      }
+      return { list, ok: true };
+    } catch (e) {
+      return { list: [], ok: false };
+    }
+  }
+  function writeList(key, list) {
+    try {
+      if (typeof localStorage === "undefined" || !localStorage) return;
+      localStorage.setItem(key, JSON.stringify(list));
+    } catch (e) {
+    }
+  }
+  function trim(list, cap) {
+    const extra = list.length - cap;
+    if (extra > 0) list.splice(0, extra);
+  }
+  function resolveKey(key) {
+    const k = typeof key === "string" ? key.trim() : "";
+    return k || DEFAULT_KEY;
+  }
+  function resolveCap(cap) {
+    const n = Math.floor(Number(cap));
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_CAP;
+  }
+  function createEventLog(opts) {
+    const o = opts || {};
+    const key = resolveKey(o.key);
+    const cap = resolveCap(o.cap);
+    function log(e) {
+      const ev = normalize2(e);
+      if (!ev) return;
+      const r = readList(key);
+      if (!r.ok) return;
+      r.list.push(ev);
+      trim(r.list, cap);
+      writeList(key, r.list);
+    }
+    function recent(n) {
+      const list = readList(key).list;
+      if (n === void 0 || n === null) return list.slice();
+      const k = Math.floor(Number(n));
+      if (!Number.isFinite(k) || k <= 0) return [];
+      return k >= list.length ? list.slice() : list.slice(list.length - k);
+    }
+    function stats() {
+      const list = readList(key).list;
+      let since = Infinity;
+      for (const e of list) {
+        if (e.at < since) since = e.at;
+      }
+      return { count: list.length, since: Number.isFinite(since) ? since : 0 };
+    }
+    return { log, recent, stats };
+  }
+
+  // src/client/nervous/host-sense.ts
+  var PATH = "/nervous";
+  var DEFAULT_INTERVAL_MS = 3e3;
+  var MIN_INTERVAL_MS = 500;
+  var MAX_INTERVAL_MS = 10 * 60 * 1e3;
+  function resolveInterval(v) {
+    const n = Math.floor(Number(v));
+    if (!Number.isFinite(n) || n < MIN_INTERVAL_MS) return DEFAULT_INTERVAL_MS;
+    return n > MAX_INTERVAL_MS ? MAX_INTERVAL_MS : n;
+  }
+  function normalize3(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const at = typeof raw.at === "number" ? raw.at : NaN;
+    if (!Number.isFinite(at)) return null;
+    const type = typeof raw.type === "string" && raw.type ? raw.type : "host";
+    const ev = { at, type };
+    if (raw.data && typeof raw.data === "object") ev.data = raw.data;
+    return ev;
+  }
+  function pageHidden() {
+    try {
+      return typeof document !== "undefined" && !!document && document.visibilityState === "hidden";
+    } catch (e) {
+      return false;
+    }
+  }
+  function createHostSense(opts) {
+    const interval = resolveInterval(opts && opts.intervalMs);
+    let timer = null;
+    let running = false;
+    let listener = null;
+    let cursor = 0;
+    let baselineSet = false;
+    let inflight2 = false;
+    let onVisible = null;
+    function deliver(events) {
+      if (!listener) return;
+      if (!baselineSet) {
+        baselineSet = true;
+        for (const e of events) {
+          if (e.at > cursor) cursor = e.at;
+        }
+        return;
+      }
+      for (const e of events) {
+        if (e.at <= cursor) continue;
+        cursor = e.at;
+        try {
+          listener(e);
+        } catch (err) {
+        }
+      }
+    }
+    function poll() {
+      if (!running || inflight2 || !listener || pageHidden()) return;
+      inflight2 = true;
+      let pending;
+      try {
+        pending = getJson(PATH, { cache: "no-store" });
+      } catch (e) {
+        inflight2 = false;
+        return;
+      }
+      pending.then((body) => {
+        inflight2 = false;
+        if (!running || pageHidden()) return;
+        const list = body && Array.isArray(body.events) ? body.events : [];
+        const fresh = [];
+        for (const raw of list) {
+          const ev = normalize3(raw);
+          if (ev) fresh.push(ev);
+        }
+        fresh.sort((a, b) => a.at - b.at);
+        deliver(fresh);
+      }).catch(() => {
+        inflight2 = false;
+      });
+    }
+    function start(onEvent) {
+      stop();
+      listener = typeof onEvent === "function" ? onEvent : null;
+      if (!listener) return;
+      running = true;
+      poll();
+      timer = setInterval(poll, interval);
+      try {
+        if (typeof document !== "undefined" && document && typeof document.addEventListener === "function") {
+          onVisible = () => {
+            if (!pageHidden()) poll();
+          };
+          document.addEventListener("visibilitychange", onVisible);
+        }
+      } catch (e) {
+        onVisible = null;
+      }
+    }
+    function stop() {
+      running = false;
+      listener = null;
+      inflight2 = false;
+      if (timer) {
+        try {
+          clearInterval(timer);
+        } catch (e) {
+        }
+        timer = null;
+      }
+      if (onVisible) {
+        try {
+          document.removeEventListener("visibilitychange", onVisible);
+        } catch (e) {
+        }
+        onVisible = null;
+      }
+    }
+    return { name: "host", start, stop };
+  }
+
   // src/client/nervous/index.ts
   var LS_KEY = "chubby-nervous";
   var AWAY_MS = 20 * 60 * 1e3;
@@ -6350,6 +6649,9 @@
   var BACK_LINE_GAP_MS = 20 * 60 * 1e3;
   var ACTIVITY_THROTTLE_MS = 5e3;
   var TICK_MS2 = 30 * 1e3;
+  var SLEEPY_HOLD_MS = TICK_MS2 + 5e3;
+  var TRANSIENT_HOLD_MS = 15e3;
+  var WORK_HOLD_MS = 8e3;
   var current = null;
   function nervousEnabled() {
     try {
@@ -6364,9 +6666,6 @@
     } catch (e) {
     }
   }
-  function clamp(n) {
-    return n < 0 ? 0 : n > 100 ? 100 : n;
-  }
   function hourOf() {
     return (/* @__PURE__ */ new Date()).getHours();
   }
@@ -6374,22 +6673,38 @@
     const h = hourOf();
     return h >= 23 || h < 5;
   }
+  function emit(s, type, data) {
+    try {
+      s.log.log({ at: Date.now(), type, data });
+    } catch (e) {
+    }
+  }
+  function moodOf(s) {
+    try {
+      return s.deps.persona.state ? s.deps.persona.state.mood : null;
+    } catch (e) {
+      return null;
+    }
+  }
   function tick(s) {
     if (!nervousEnabled()) return;
     const now = Date.now();
     const away = now - s.lastActivityAt > AWAY_MS;
     const night = isNight();
-    if (away) s.energy = clamp(s.energy - 3);
-    else s.energy = clamp(s.energy + 1);
-    if (night) s.energy = clamp(Math.min(s.energy, 40));
-    try {
-      const mood = s.deps.persona.state ? s.deps.persona.state.mood : null;
-      if (mood === "idle") {
-        if (night) s.deps.persona.setMood("sleepy", TICK_MS2 + 5e3);
-        else if (s.energy <= 20) s.deps.persona.setMood("sleepy", TICK_MS2 + 5e3);
-        else if (s.energy >= 85) s.deps.persona.setMood("excited", 15e3);
+    s.affect.tick(now, away, night);
+    const st = s.affect.read();
+    emit(s, "tick", { away, night, arousal: st.arousal, valence: st.valence });
+    if (away && !s.wasAway) emit(s, "away", { sinceMs: now - s.lastActivityAt });
+    s.wasAway = away;
+    if (moodOf(s) === "idle") {
+      const face = faceOf(st, night);
+      if (face !== "idle") {
+        try {
+          s.deps.persona.setMood(face, face === "sleepy" ? SLEEPY_HOLD_MS : TRANSIENT_HOLD_MS);
+        } catch (e) {
+        }
+        emit(s, "mood", { mood: face, arousal: st.arousal, valence: st.valence });
       }
-    } catch (e) {
     }
     if (away && now - s.lastAwayLineAt > AWAY_LINE_GAP_MS) {
       s.lastAwayLineAt = now;
@@ -6409,23 +6724,57 @@
   }
   function attachNervous(deps) {
     if (current) return detachNervous;
+    let log;
+    try {
+      log = deps.eventLog ? deps.eventLog : createEventLog();
+    } catch (e) {
+      log = { log: () => {
+      }, recent: () => [], stats: () => ({ count: 0, since: 0 }) };
+    }
     const s = {
       deps,
       timer: null,
       lastActivityAt: Date.now(),
       lastAwayLineAt: 0,
       lastBackLineAt: 0,
-      energy: 65,
-      listeners: []
+      affect: createAffectModel(),
+      wasAway: false,
+      listeners: [],
+      log,
+      sense: null
     };
     current = s;
+    emit(s, "host", { hook: "attach" });
+    try {
+      const sense = createHostSense();
+      s.sense = sense;
+      sense.start((e) => {
+        try {
+          s.log.log(e);
+        } catch (err) {
+        }
+        try {
+          s.affect.apply(e);
+        } catch (err) {
+        }
+      });
+    } catch (e) {
+      s.sense = null;
+    }
     let lastSample = 0;
     const onActivity = () => {
       const now = Date.now();
+      const prev = s.lastActivityAt;
+      const back = prev > 0 && now - prev > AWAY_MS;
       s.lastActivityAt = now;
+      if (back) {
+        s.affect.apply({ at: now, type: "back" });
+        emit(s, "back", { awayMs: now - prev });
+      }
       if (now - lastSample < ACTIVITY_THROTTLE_MS) return;
       lastSample = now;
-      s.energy = clamp(s.energy + 2);
+      s.affect.apply({ at: now, type: "activity" });
+      emit(s, "activity", {});
     };
     const onVisible = () => {
       try {
@@ -6461,6 +6810,11 @@
     const s = current;
     current = null;
     if (!s) return;
+    emit(s, "host", { hook: "detach" });
+    try {
+      if (s.sense) s.sense.stop();
+    } catch (e) {
+    }
     try {
       clearInterval(s.timer);
     } catch (e) {
@@ -6476,18 +6830,27 @@
   function noteWork(kind) {
     const s = current;
     if (!s || !nervousEnabled()) return;
-    s.energy = clamp(s.energy + 1);
-    s.lastActivityAt = Date.now();
+    const now = Date.now();
+    s.lastActivityAt = now;
+    s.affect.apply({ at: now, type: "work", data: kind ? { kind } : void 0 });
+    emit(s, "work", { kind });
     if (kind && kind.length > 0) {
-      try {
-        const mood = s.deps.persona.state ? s.deps.persona.state.mood : null;
-        if (mood === "idle") s.deps.persona.setMood("excited", 8e3);
-      } catch (e) {
+      if (moodOf(s) === "idle") {
+        try {
+          s.deps.persona.setMood("excited", WORK_HOLD_MS);
+        } catch (e) {
+        }
+        emit(s, "mood", { mood: "excited", cause: "work" });
       }
     }
   }
   function nervousEnergy() {
-    return current ? current.energy : null;
+    if (!current) return null;
+    try {
+      return current.affect.read().arousal;
+    } catch (e) {
+      return null;
+    }
   }
 
   // src/client/actions/voice.ts
@@ -8097,7 +8460,7 @@
   var attempts = 0;
   var nextTryAt = 0;
   var inflight = false;
-  function normalize(list) {
+  function normalize4(list) {
     const out = [];
     if (!Array.isArray(list)) return out;
     for (const item2 of list) {
@@ -8107,7 +8470,7 @@
     return out.sort((a, b) => b.length - a.length);
   }
   function apply(list, persist) {
-    const titles = normalize(list);
+    const titles = normalize4(list);
     if (titles.length === 0) return;
     cache = deepFreeze(titles);
     if (persist) writeCache(titles);

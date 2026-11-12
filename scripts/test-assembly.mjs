@@ -133,10 +133,19 @@ try {
     loadFishfood: () => ({}),
   })
   const configView = (await load('host/routes/config.ts')).createConfigViewHandler({})
+  const proofread = (await load('host/routes/proofread.ts')).createProofreadHandler({ key: () => '', model: 'stub' })
+  const nervous = (await load('host/routes/nervous.ts')).createNervousHandler({
+    collector: {
+      start: () => [],
+      stop: () => { },
+      recent: () => [],
+      status: () => ({ subscribed: [], count: 0, cap: 200, lastAt: 0 }),
+    },
+  })
 
   const sets = {
     misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles,
-    briefing, tts, asr, personality, daily, backup, stats, configView,
+    briefing, tts, asr, personality, daily, backup, stats, configView, proofread, nervous,
   }
 
   let produced = 0

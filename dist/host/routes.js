@@ -39,5 +39,7 @@ export function createRouteTable(h) {
         { path: '/api/chubby-whale/stats', handler: h.stats.handleStats },
         { path: '/api/chubby-whale/config', handler: h.configView.handleConfig },
         { path: '/api/chubby-whale/proofread', handler: h.proofread },
+        // 神经感知第三层：宿主事件只读快照（客户端按 at 去重后逐条喂给情绪模型）
+        { path: '/api/chubby-whale/nervous', handler: h.nervous },
     ];
 }

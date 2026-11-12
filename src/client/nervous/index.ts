@@ -3,7 +3,8 @@
  *
  * 三层，各自一条契约：
  *   · 感官层：只读监听主人活动（鼠标/键盘/可见性）与昼夜，不碰宿主、不阻塞任何请求；
- *   · 情绪层：把事件归约成一个 energy（0-100），再映射到现有 Mood，不凭空造状态；
+ *   · 情绪层：交给 affect.ts 的二维模型（arousal/valence）归约，再由 faceOf 映射到 Mood，
+ *     不凭空造状态；本文件只负责把「activity/back/work/away/night」喂进去；
  *   · 表达层：调 persona.setMood 换表情，低频气泡说两句话，不刷屏。
  *
  * 开关：localStorage `chubby-nervous`（默认 on）；关掉即摘监听与定时器。
@@ -15,6 +16,12 @@
  *   5) actions/voice.ts 与 actions/proofread.ts 里的 noteWork 调用与 import
  */
 import type { Persona, Mood } from '../persona.js'
+import { createAffectModel, faceOf } from './affect.js'
+import type { AffectModel } from './affect.js'
+import { createEventLog } from './stream.js'
+import type { EventLog, NervousEvent } from './stream.js'
+import { createHostSense } from './host-sense.js'
+import type { SenseSource } from './host-sense.js'
 
 const LS_KEY = 'chubby-nervous'
 /** 闲置多久算「主人不在」 */
@@ -26,10 +33,21 @@ const BACK_LINE_GAP_MS = 20 * 60 * 1000
 const ACTIVITY_THROTTLE_MS = 5000
 /** 心跳间隔：衰减与表情判断都在这里做 */
 const TICK_MS = 30 * 1000
+/** 困意跟着心跳走：下一次心跳时还有机会重新判定 */
+const SLEEPY_HOLD_MS = TICK_MS + 5000
+/** 其余由情绪算出的表情挂 15 秒，到点自动回落，别把一瞬间的低落挂太久 */
+const TRANSIENT_HOLD_MS = 15000
+/** 干活时临时活泼的挂起时长（沿用原实现） */
+const WORK_HOLD_MS = 8000
 
 export type NervousDeps = {
   persona: Persona
   bubble: (text: string, ms?: number) => void
+  /**
+   * 第一层事件流的可选注入点。只要求有 log(e)，不 import stream.ts，
+   * 缺省就只做情绪、不记账（没有第一层时主功能照常）。
+   */
+  eventLog?: { log(e: any): void }
 }
 
 type Session = {
@@ -38,7 +56,14 @@ type Session = {
   lastActivityAt: number
   lastAwayLineAt: number
   lastBackLineAt: number
-  energy: number
+  /** 二维情绪模型（取代原先的单 energy 轴） */
+  affect: AffectModel
+  /** 第一层事件流：缺省自动创建，注入优先 */
+  log: EventLog
+  /** 第三层宿主事件源：可空（宿主路由没起来时） */
+  sense: SenseSource | null
+  /** 上一次心跳是否处于「不在」，只在翻转时记一条 away 事件 */
+  wasAway: boolean
   listeners: Array<() => void>
 }
 
@@ -52,10 +77,6 @@ export function setNervousEnabled(on: boolean): void {
   try { localStorage.setItem(LS_KEY, on ? 'on' : 'off') } catch (e) { }
 }
 
-function clamp(n: number): number {
-  return n < 0 ? 0 : (n > 100 ? 100 : n)
-}
-
 function hourOf(): number {
   return new Date().getHours()
 }
@@ -66,28 +87,39 @@ function isNight(): boolean {
   return h >= 23 || h < 5
 }
 
+/** 往第一层记账；eventLog 自带静默失败，这里再兜一层，绝不影响主功能 */
+function emit(s: Session, type: NervousEvent['type'], data?: Record<string, any>): void {
+  try { s.log.log({ at: Date.now(), type, data }) } catch (e) { }
+}
+
+/** 当前 mood；persona.state 缺省时按 idle 处理，不让异常中断心跳 */
+function moodOf(s: Session): Mood | null {
+  try { return s.deps.persona.state ? s.deps.persona.state.mood : null } catch (e) { return null }
+}
+
 function tick(s: Session): void {
   if (!nervousEnabled()) return
   const now = Date.now()
   const away = now - s.lastActivityAt > AWAY_MS
   const night = isNight()
 
-  // 衰减：主人不在就慢慢没精神；深夜里压得更低
-  if (away) s.energy = clamp(s.energy - 3)
-  else s.energy = clamp(s.energy + 1)
-  if (night) s.energy = clamp(Math.min(s.energy, 40))
+  // 情绪：away 衰减与夜间压唤醒度都在模型里做，这里只把环境算好传进去
+  s.affect.tick(now, away, night)
+  const st = s.affect.read()
+  emit(s, 'tick', { away, night, arousal: st.arousal, valence: st.valence })
+  if (away && !s.wasAway) emit(s, 'away', { sinceMs: now - s.lastActivityAt })
+  s.wasAway = away
 
   // 表情：只在没有临时情绪时动手，避免盖掉聊天/喂食刚设的表情
-  try {
-    const mood = s.deps.persona.state ? s.deps.persona.state.mood : null
-    if (mood === 'idle') {
-      if (night) s.deps.persona.setMood('sleepy', TICK_MS + 5000)
-      else if (s.energy <= 20) s.deps.persona.setMood('sleepy', TICK_MS + 5000)
-      else if (s.energy >= 85) s.deps.persona.setMood('excited', 15000)
+  if (moodOf(s) === 'idle') {
+    const face = faceOf(st, night)
+    if (face !== 'idle') {
+      try { s.deps.persona.setMood(face, face === 'sleepy' ? SLEEPY_HOLD_MS : TRANSIENT_HOLD_MS) } catch (e) { }
+      emit(s, 'mood', { mood: face, arousal: st.arousal, valence: st.valence })
     }
-  } catch (e) { }
+  }
 
-  // 表达：低频两句话
+  // 表达：低频两句话（阈值与节奏保持原样）
   if (away && now - s.lastAwayLineAt > AWAY_LINE_GAP_MS) {
     s.lastAwayLineAt = now
     try { s.deps.bubble('主人…是不是把本鲸忘了', 4000) } catch (e) { }
@@ -103,24 +135,56 @@ function tick(s: Session): void {
 /** 挂上神经系统；重复调用是幂等的，返回 detach */
 export function attachNervous(deps: NervousDeps): () => void {
   if (current) return detachNervous
+  // 第一层：注入优先，缺省自建；建不出来用空实现兜底，主功能照常
+  let log: EventLog
+  try {
+    log = deps.eventLog ? (deps.eventLog as unknown as EventLog) : createEventLog()
+  } catch (e) {
+    log = { log: () => { }, recent: () => [], stats: () => ({ count: 0, since: 0 }) }
+  }
   const s: Session = {
     deps,
     timer: null,
     lastActivityAt: Date.now(),
     lastAwayLineAt: 0,
     lastBackLineAt: 0,
-    energy: 65,
+    affect: createAffectModel(),
+    wasAway: false,
     listeners: [],
+    log,
+    sense: null,
   }
   current = s
+  emit(s, 'host', { hook: 'attach' })
+
+  // 第三层：宿主事件源（轮询 /nervous）。失败静默，缺它只影响「感知宿主」这一路
+  try {
+    const sense = createHostSense()
+    s.sense = sense
+    sense.start((e) => {
+      try { s.log.log(e) } catch (err) { }
+      // 宿主事件目前只记账、不打分：affect.apply 只认 activity/back/work，避免别人的会话把情绪顶满
+      try { s.affect.apply(e as any) } catch (err) { }
+    })
+  } catch (e) {
+    s.sense = null
+  }
 
   let lastSample = 0
   const onActivity = (): void => {
     const now = Date.now()
+    const prev = s.lastActivityAt
+    const back = prev > 0 && now - prev > AWAY_MS
     s.lastActivityAt = now
+    // 从「不在」回来只发生一次，不受下面节流影响：先记 back，再按节流记 activity
+    if (back) {
+      s.affect.apply({ at: now, type: 'back' })
+      emit(s, 'back', { awayMs: now - prev })
+    }
     if (now - lastSample < ACTIVITY_THROTTLE_MS) return
     lastSample = now
-    s.energy = clamp(s.energy + 2)
+    s.affect.apply({ at: now, type: 'activity' })
+    emit(s, 'activity', {})
   }
   const onVisible = (): void => {
     try { if (document.visibilityState === 'visible') onActivity() } catch (e) { }
@@ -145,6 +209,8 @@ export function detachNervous(): void {
   const s = current
   current = null
   if (!s) return
+  emit(s, 'host', { hook: 'detach' })
+  try { if (s.sense) s.sense.stop() } catch (e) { }
   try { clearInterval(s.timer) } catch (e) { }
   for (const off of s.listeners) { try { off() } catch (e) { } }
   s.listeners.length = 0
@@ -154,20 +220,23 @@ export function detachNervous(): void {
 export function noteWork(kind?: string): void {
   const s = current
   if (!s || !nervousEnabled()) return
-  s.energy = clamp(s.energy + 1)
-  s.lastActivityAt = Date.now()
+  const now = Date.now()
+  s.lastActivityAt = now
+  s.affect.apply({ at: now, type: 'work', data: kind ? { kind } : undefined })
+  emit(s, 'work', { kind })
   if (kind && kind.length > 0) {
     // 干活时临时活泼一下；不覆盖当前非 idle 的情绪
-    try {
-      const mood = s.deps.persona.state ? s.deps.persona.state.mood : null
-      if (mood === 'idle') s.deps.persona.setMood('excited', 8000)
-    } catch (e) { }
+    if (moodOf(s) === 'idle') {
+      try { s.deps.persona.setMood('excited', WORK_HOLD_MS) } catch (e) { }
+      emit(s, 'mood', { mood: 'excited', cause: 'work' })
+    }
   }
 }
 
-/** 只暴露给测试/诊断：当前能量 */
+/** 只暴露给测试/诊断：当前唤醒度（arousal，0-100）；未挂载为 null */
 export function nervousEnergy(): number | null {
-  return current ? current.energy : null
+  if (!current) return null
+  try { return current.affect.read().arousal } catch (e) { return null }
 }
 
 export type { Mood }
