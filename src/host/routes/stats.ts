@@ -153,6 +153,8 @@ export function createStatsHandler(opts: StatsHandlerDeps) {
 
     return {
       ok: true,
+      // 2026-11-12：之前只算了 const version，却没放进返回体，/stats 永远没有 version 字段
+      version,
       cache: { tts: count(cache.tts), chat: count(cache.chat), asr: count(cache.asr) },
       fishfood: {
         chatTokens, storyTokens, total: chatTokens + storyTokens,

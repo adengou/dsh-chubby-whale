@@ -302,12 +302,16 @@ try {
     import('../src/client/actions/content.ts'),
     import('../src/client/actions/system.ts'),
     import('../src/client/actions/voice.ts'),
+    import('../src/client/actions/proofread.ts'),
+    import('../src/client/actions/nervous.ts'),
   ])
   const t = createActionTable()
   mods[0].registerCultureActions(t)
   mods[1].registerContentActions(t)
   mods[2].registerSystemActions(t)
   mods[3].registerVoiceActions(t)
+  mods[4].registerProofreadActions(t)
+  mods[5].registerNervousActions(t)
   const actionsMod = await import('../src/client/actions.ts')
   actionsMod.registerSkinActions(t)
 

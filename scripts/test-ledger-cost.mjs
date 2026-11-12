@@ -261,11 +261,12 @@ console.log('\n[5] 路由输出')
 
   // /stats：与 /fishfood 同口径的 byKind，既有鱼粮字段不动
   const statsMod = await import(pathToFileURL(join(ROOT, 'src/host/routes/stats.ts')).href)
-  const sh = statsMod.createStatsHandler({ loadState: () => ({}), loadGrowth: () => ({}), loadFishfood })
+  const sh = statsMod.createStatsHandler({ loadState: () => ({}), loadGrowth: () => ({}), loadFishfood, version: () => '9.9.9' })
   const sr = mkRes()
   await sh.handleStats({ method: 'GET' }, sr)
   const sb = sr.json()
   ok('/stats 200', sr.code === 200 && sb && sb.ok === true, 'code=' + sr.code)
+  ok('/stats 带 version 字段', sb && sb.version === '9.9.9', JSON.stringify(sb && sb.version))
   eq('/stats 分桶与 /fishfood 同口径', ['chat', 'story', 'summary', 'personality'].map((k) => bucketOf(sb && sb.fishfood, k).tokens), [100, 30, 15, 5])
   eq('/stats 既有鱼粮字段不变', [sb.fishfood.chatTokens, sb.fishfood.storyTokens, sb.fishfood.total, sb.fishfood.costCny], [120, 30, 150, 0.0042])
 
