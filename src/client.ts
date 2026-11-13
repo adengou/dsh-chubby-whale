@@ -1314,8 +1314,8 @@ registerCapsuleActions(actions)
             const maid = document.body.hasAttribute('data-dsh-maid-atelier')
             layer.style.display = maid ? 'none' : 'block'
             layer.style.backgroundImage = 'url("/api/chubby-whale/skin?n=' + index + '")'
-            // 主人反馈 0.18 字已清楚、还想再淡：降到 0.12
-            layer.style.opacity = '0.12'
+            // 主人拍板：0.12 太淡，回到 0.18 附近再淡一点点 → 0.16
+            layer.style.opacity = '0.16'
           } catch (e) { }
                     showBubble('背景 ' + (index + 1) + '/' + BG_GALLERY.length + ' ～', 2000)
         } catch (e) { }
