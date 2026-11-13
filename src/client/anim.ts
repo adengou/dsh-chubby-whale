@@ -248,24 +248,30 @@ export function createAnimator(opts: {
 
   /**
    * 说话开合（与竖版同款的含蓄画法）：立绘的嘴本身张开——
-   * 张嘴帧不画（露出立绘嘴），闭嘴帧用肤色盖住嘴 + 一条小唇线，形成小幅度上下噏合。
+   * 张嘴帧露出立绘嘴，闭嘴帧用肤色盖住嘴 + 一条小唇线。
+   *
+   * closeAmount 为 0..1 的连续量（不是二值）：0 = 完全张嘴，1 = 完全闭嘴。
+   * 原来按 sin 符号二值跳变，每 ~280ms 突然切换一次，看起来是抽搐而不是说话；
+   * 改成按正弦值插值覆盖椭圆的高度/唇线深浅，形成平滑的上下噏合。
    */
-  function drawMouth(open: boolean): void {
-    if (open) return
+  function drawMouth(closeAmount: number): void {
+    const a = Math.max(0, Math.min(1, closeAmount))
+    if (a <= 0.02) return
     const p = { x: MOUTH.x * sx, y: MOUTH.y * sy }
-    const rw = MOUTH.rw * sx * 1.7
-    const rh = MOUTH.rh * sy * 1.9
+    // 闭嘴越大：覆盖越宽、越高（横向略收，避免盖到脸颊）
+    const rw = MOUTH.rw * sx * (1.35 + 0.35 * a)
+    const rh = MOUTH.rh * sy * (0.7 + 1.2 * a)
     // 肤色覆盖（横版立绘肤色采样 #FEF3F1）
     ctx.beginPath()
     ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2)
     ctx.fillStyle = '#FEF3F1'
     ctx.fill()
-    // 闭合唇线（小弧度）
+    // 闭合唇线：随闭嘴程度由浅到深、由平到弯
     ctx.beginPath()
     ctx.moveTo(p.x - rw * 0.5, p.y + rh * 0.03)
-    ctx.quadraticCurveTo(p.x, p.y + rh * 0.3, p.x + rw * 0.5, p.y + rh * 0.03)
-    ctx.lineWidth = 1.4
-    ctx.strokeStyle = '#C56E6A'
+    ctx.quadraticCurveTo(p.x, p.y + rh * 0.3 * a, p.x + rw * 0.5, p.y + rh * 0.03)
+    ctx.lineWidth = 1.0 + 0.6 * a
+    ctx.strokeStyle = 'rgba(197,110,106,' + (0.35 + 0.6 * a).toFixed(2) + ')'
     ctx.stroke()
   }
 
@@ -515,7 +521,12 @@ export function createAnimator(opts: {
       if (blinkClosed && blinkT > 150) { blinkClosed = false; blinkT = 0; blinkGap = 3200 + Math.random() * 1800 }
       if (blinkClosed || sleepy) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
       if (sleepy) drawZZZ(t)
-      if (t < state.talkUntil && !sleepy) drawMouth(Math.sin(t / 90) > 0)
+      // 说话嘴动：正弦连续开合（周期约 1.2 秒），比原来的二值跳变更自然
+      if (t < state.talkUntil && !sleepy) {
+        const phase = Math.sin(t / 130)               // -1..1
+        const open = phase * 0.5 + 0.5                // 0..1，1 = 张到最大
+        drawMouth(1 - open)                           // 传「闭嘴程度」
+      }
       drawSplashes(dt)
     } finally {
       ctx.restore()

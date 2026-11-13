@@ -3624,20 +3624,21 @@
       }
       ctx.restore();
     }
-    function drawMouth(open) {
-      if (open) return;
+    function drawMouth(closeAmount) {
+      const a = Math.max(0, Math.min(1, closeAmount));
+      if (a <= 0.02) return;
       const p = { x: MOUTH.x * sx, y: MOUTH.y * sy };
-      const rw = MOUTH.rw * sx * 1.7;
-      const rh = MOUTH.rh * sy * 1.9;
+      const rw = MOUTH.rw * sx * (1.35 + 0.35 * a);
+      const rh = MOUTH.rh * sy * (0.7 + 1.2 * a);
       ctx.beginPath();
       ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2);
       ctx.fillStyle = "#FEF3F1";
       ctx.fill();
       ctx.beginPath();
       ctx.moveTo(p.x - rw * 0.5, p.y + rh * 0.03);
-      ctx.quadraticCurveTo(p.x, p.y + rh * 0.3, p.x + rw * 0.5, p.y + rh * 0.03);
-      ctx.lineWidth = 1.4;
-      ctx.strokeStyle = "#C56E6A";
+      ctx.quadraticCurveTo(p.x, p.y + rh * 0.3 * a, p.x + rw * 0.5, p.y + rh * 0.03);
+      ctx.lineWidth = 1 + 0.6 * a;
+      ctx.strokeStyle = "rgba(197,110,106," + (0.35 + 0.6 * a).toFixed(2) + ")";
       ctx.stroke();
     }
     const HEART_LIFE = 1.4;
@@ -3857,7 +3858,11 @@
           drawEye(EYE_R, true);
         }
         if (sleepy) drawZZZ(t);
-        if (t < state.talkUntil && !sleepy) drawMouth(Math.sin(t / 90) > 0);
+        if (t < state.talkUntil && !sleepy) {
+          const phase2 = Math.sin(t / 130);
+          const open = phase2 * 0.5 + 0.5;
+          drawMouth(1 - open);
+        }
         drawSplashes(dt);
       } finally {
         ctx.restore();
