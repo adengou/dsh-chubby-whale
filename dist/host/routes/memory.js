@@ -68,8 +68,13 @@ export function createMemoryHandlers(opts) {
             let historyText = '';
             try {
                 const h = opts.loadHistory ? opts.loadHistory() : [];
-                if (Array.isArray(h))
-                    historyText = h.map((x) => String((x && (x.content || x.text)) || '')).join('\n');
+                if (Array.isArray(h)) {
+                    // 只取用户说的话：助手回复（肥鲸自己的台词，如「尾巴甩水花」「歪头」）会把角色描写词顶成「话题」
+                    historyText = h
+                        .filter((x) => !x || !x.role || String(x.role) === 'user')
+                        .map((x) => String((x && (x.content || x.text)) || ''))
+                        .join('\n');
+                }
             }
             catch (e) { }
             sendJson(res, { ok: true, summary, topics: extractTopics(summary, historyText) });

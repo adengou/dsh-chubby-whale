@@ -38,7 +38,7 @@ const ACTIONS = new Set([
   'voice', 'ear', 'voice-chat', 'voice-export', 'proofread',
   'lang:zh', 'lang:en', 'chat-lang:zh', 'chat-lang:en',
   'skin-fixed', 'skin-bg-reset', 'story-books', 'story-auto',
-  'poem', 'daily-line', 'briefing-card', 'remind-add', 'test-tts', 'capsule-export', 'capsule-import',
+  'poem', 'daily-line', 'briefing-card', 'remind-add', 'test-tts',
   'fishfood', 'clear-memory', 'quit',
 ])
 

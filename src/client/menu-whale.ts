@@ -62,8 +62,6 @@ export function buildWhaleMenu(state: WhaleMenuState): WhaleMenuItem[] {
       act('把稿子念成音频（语音导出）', 'voice-export'),
       act('帮你挑挑错字（公文校对）', 'proofread'),
       act('记个钟点（加提醒）', 'remind-add'),
-      act('鲸落（导出记忆胶囊）', 'capsule-export'),
-      act('接住漂来的鲸（导入胶囊）', 'capsule-import'),
     ]),
     sep(),
     act('喂点数据（鱼粮账本）', 'fishfood'),

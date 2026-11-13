@@ -304,7 +304,6 @@ try {
     import('../src/client/actions/voice.ts'),
     import('../src/client/actions/proofread.ts'),
     import('../src/client/actions/nervous.ts'),
-    import('../src/client/actions/capsule.ts'),
   ])
   const t = createActionTable()
   mods[0].registerCultureActions(t)
@@ -313,7 +312,6 @@ try {
   mods[3].registerVoiceActions(t)
   mods[4].registerProofreadActions(t)
   mods[5].registerNervousActions(t)
-  mods[6].registerCapsuleActions(t)
   const actionsMod = await import('../src/client/actions.ts')
   actionsMod.registerSkinActions(t)
 

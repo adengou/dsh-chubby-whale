@@ -144,8 +144,6 @@ export const EN_MAP: Record<string, string> = {
   '音色：Ana（英·女）': 'Voice: Ana (EN F)',
   '音色：Jenny（英·女）': 'Voice: Jenny (EN F)',
   '音色：Sonia（英·女·英式）': 'Voice: Sonia (EN-GB F)',
-  '导出话题切片（不含聊天记录）': 'Export topic slices (no chat logs)',
-  '导入话题切片（只冒一句梦话）': 'Import topic slices (just a dream line)',
   '数据与统计 ▸': 'Data & Stats ▸',
 }
 deepFreeze(EN_MAP)
@@ -397,8 +395,6 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
       item('数据导出…', 'data-export'),
       item('数据导入…', 'data-import'),
       // 鲸落胶囊：只打包摘要里的抽象主题，不含对话原文
-      item('导出话题切片（不含聊天记录）', 'capsule-export'),
-      item('导入话题切片（只冒一句梦话）', 'capsule-import'),
       item('使用统计', 'stats'),
       sub('设置 ▸', [
         item('查看当前配置', 'config-view'),

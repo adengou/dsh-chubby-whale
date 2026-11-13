@@ -33,7 +33,6 @@ import { createChatHandler } from './host/routes/chat.js'
 import { createProofreadHandler } from './host/routes/proofread.js'
 import { createHostCollector } from './host/nervous/collector.js'
 import { createNervousHandler } from './host/routes/nervous.js'
-import { createMemoryHandlers } from './host/routes/memory.js'
 import { createChatStreamHandler } from './host/routes/chat-stream.js'
 import { createStoryHandlers } from './host/routes/story.js'
 import { createStoryRepo } from './host/story/repo.js'
@@ -414,7 +413,6 @@ export function apply(ctx: any, rawConfig?: any): void {
   const proofread = createProofreadHandler({ key: getKey, model: chatModel })
 
   // 记忆摘要只读视图：胶囊要用的是摘要与抽象主题词，绝不把 history 原文给出去
-  const memoryRoutes = createMemoryHandlers({ loadMemorySummary: store.loadMemorySummary, loadHistory: store.loadHistory })
 
   // 神经感知第三层（宿主侧）：只读收集器订阅 dsh 会话事件，环形缓冲 200 条。
   // 订阅放在 ctx.effect 里，卸载/热重载时先退订再重订（与 ttsEngine / 自动备份同一套托管方式）；
@@ -435,7 +433,7 @@ export function apply(ctx: any, rawConfig?: any): void {
   // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
   const routeTable = createRouteTable({
     misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles, briefing, tts, asr, personality: personalityRoutes,
-    daily, backup, stats, configView, proofread, nervous, memory: memoryRoutes,
+    daily, backup, stats, configView, proofread, nervous,
   })
 
   // 所有路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，

@@ -39,7 +39,6 @@ import type { createStatsHandler } from './routes/stats.js'
 import type { createConfigViewHandler } from './routes/config.js'
 import type { createProofreadHandler } from './routes/proofread.js'
 import type { createNervousHandler } from './routes/nervous.js'
-import type { createMemoryHandlers } from './routes/memory.js'
 
 /**
  * HTTP handler 的统一形状（req/res 由 dsh webserver 传入，与各路由工厂的产出兼容）。
@@ -81,8 +80,6 @@ export interface HandlerSet {
   proofread: ReturnType<typeof createProofreadHandler>
   /** 神经感知第三层：宿主事件只读快照（客户端 3s 轮询一次） */
   nervous: ReturnType<typeof createNervousHandler>
-  /** 记忆摘要只读视图（鲸落/记忆胶囊用；不返回 history 原文） */
-  memory: ReturnType<typeof createMemoryHandlers>
 }
 
 export function createRouteTable(h: HandlerSet): HttpRoute[] {
@@ -128,7 +125,5 @@ export function createRouteTable(h: HandlerSet): HttpRoute[] {
     { path: '/api/chubby-whale/proofread', handler: h.proofread },
     // 神经感知第三层：宿主事件只读快照（客户端按 at 去重后逐条喂给情绪模型）
     { path: '/api/chubby-whale/nervous', handler: h.nervous },
-    // 记忆摘要只读：摘要 + 抽象主题词（不返回原始对话）
-    { path: '/api/chubby-whale/memory', handler: h.memory.handleMemory },
   ]
 }
