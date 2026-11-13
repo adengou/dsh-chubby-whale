@@ -174,5 +174,7 @@ export function registerSkinActions(table: any): void {
   table.define('skin-fixed', noop)
   table.define('tool-narrator', noop)
   table.define('poem-echo', noop)
+  // 联网搜索开关：实际处理在 client.ts 的 runAction 里先拦截（同 skin-fixed / tool-narrator）
+  table.define('web-search', noop)
   table.define('skin-bg-reset', noop)
 }

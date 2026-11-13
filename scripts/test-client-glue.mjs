@@ -4,7 +4,8 @@
  * 覆盖 2026-11-07 B90 审计定下来的口径（全部是纯逻辑，不需要麦克风/浏览器/网络）：
  *
  *   bubble.ts       样式注入幂等 / 无 document 与无 window 降级 / 叠加只留最后一颗计时器 /
- *                   自动收起 / 纯状态字收起（含尾随空白）/ 情绪前缀
+ *                   自动收起 / 纯状态字收起（含尾随空白）/ 情绪前缀 /
+ *                   CSS 契约：本体 overflow:visible（::after 三角不被裁）+ 长文本滚动层在内层 div
  *   chat-route.ts   判定顺序与正则边界：追问只接「再来一首（诗）」「换一首」这类不点内容的说法，
  *                   「换个说法 / 换个故事 / 换个声音」交给模型（与 intent 的既有断言一致）；
  *                   句末句号/感叹号不影响整句指令；典故/成语的播报用词按主人原话、
@@ -22,12 +23,12 @@
  * 进程 cwd 会切到临时空目录：poem-titles 的 seedFromDisk 在 Node 下会从 cwd 找
  * data/poem-titles.json，只有 cwd 里没有才能测「未就绪 → 拉取」这条路径。
  *
- * 负向验证：--mutants 把 6 处修复逐一改回旧写法（复制一份 src 到临时目录，改完再跑同一套断言），
+ * 负向验证：--mutants 把 8 处修复逐一改回旧写法（复制一份 src 到临时目录，改完再跑同一套断言），
  * 要求对应断言必须变红 —— 证明这条断言真的咬住了这次修的边界。
  *
  * 用法：
  *   node scripts/test-client-glue.mjs                # 正向
- *   node scripts/test-client-glue.mjs --mutants      # 正向 + 5 个变异体（要求全部被抓出）
+ *   node scripts/test-client-glue.mjs --mutants      # 正向 + 8 个变异体（要求全部被抓出）
  *   node scripts/test-client-glue.mjs --src <dir>    # 指定 src 目录（手动做负向验证时用）
  *
  * 退出码：0=通过；1=有断言失败（或变异体没被抓出）。
@@ -216,6 +217,40 @@ async function runSuite(mod, ctx) {
     ok('bubble：样式注入幂等（连续 3 次只挂 1 个 <style>）', nodes.length === 1 && nodes[0].id === 'chubby-whale-style', '样式节点=' + nodes.length)
     ok('bubble：样式内容就是 BUBBLE_CSS', nodes.length === 1 && nodes[0].textContent === BUBBLE_CSS)
     ok('bubble：STATE 表冻结', Object.isFrozen(STATUS_TEXTS) && STATUS_TEXTS.indexOf('在想…') >= 0)
+
+    /**
+     * 2026-11-14 报障的回归（commit 15caf58 把 max-height + overflow-y:auto 加到了
+     * `.chubby-bubble` 本体上）：本体成为滚动容器后，`::after` 三角
+     * （bottom:-9px，整颗落在气泡下沿之外）被裁掉，五条线路的气泡全没了箭头。
+     * 约定：本体只做外壳（overflow:visible），滚动层下移到内层文字 div。
+     */
+    const cssRule = (selector) => {
+      const at = BUBBLE_CSS.indexOf(selector + '{')
+      if (at < 0) return ''
+      const end = BUBBLE_CSS.indexOf('}', at)
+      return end < 0 ? '' : BUBBLE_CSS.slice(at + selector.length + 1, end)
+    }
+    const bubbleRule = cssRule('.chubby-bubble')
+    const bubbleBodyRule = cssRule('.chubby-bubble>div')
+    const afterRule = cssRule('.chubby-bubble::after')
+    ok('bubble：本体是外壳（overflow:visible，不建立滚动容器）',
+      /(^|;)overflow:visible(;|$)/.test(bubbleRule) &&
+      !/(^|;)overflow(-[xy])?:(auto|scroll|hidden)/.test(bubbleRule),
+      bubbleRule.slice(0, 120))
+    ok('bubble：长文本滚动层在内层 div（max-height + overflow:auto 仍保留）',
+      /(^|;)max-height:calc\(100vh - 120px\)(;|$)/.test(bubbleBodyRule) &&
+      /(^|;)overflow:auto(;|$)/.test(bubbleBodyRule),
+      bubbleBodyRule)
+    ok('bubble：三角仍挂在气泡下沿之外（absolute / bottom:-9px）',
+      /(^|;)position:absolute(;|$)/.test(afterRule) && /(^|;)bottom:-9px(;|$)/.test(afterRule),
+      afterRule)
+    // `.chubby-bubble>div` 依赖「每个气泡恰好一个内层文字 div」（也就是 client.ts 的 textEl）
+    const bubbleRenderLines = readFileSync(join(SRC, 'client.ts'), 'utf8').split('\n')
+      .filter((l) => l.indexOf("className: 'chubby-bubble") >= 0)
+    ok('bubble：5 个气泡各有一个内层文字 div（>div 滚动层对得上）',
+      bubbleRenderLines.length === 5 &&
+      bubbleRenderLines.every((l) => (l.match(/h\('div', \{ ref: \w+, style: BUBBLE_TEXT_STYLE \}\)/g) || []).length === 1),
+      bubbleRenderLines.length + ' 行')
 
     // 无 document：不抛错、也不建节点（浏览器 bundle 之外的环境）
     ok('bubble：没有 document 时 ensureBubbleStyle 静默返回', (() => {
@@ -793,6 +828,20 @@ const MUTANTS = [
     from: 'if (STATUS_TEXTS.indexOf(txt.trim()) >= 0) {',
     to: 'if (STATUS_TEXTS.indexOf(txt) >= 0) {',
     expect: '带尾随空格',
+  },
+  {
+    id: 'bubble：本体又变回滚动容器（::after 三角被 overflow 裁掉）',
+    file: 'client/bubble.ts',
+    from: 'overflow:visible;white-space:pre-wrap;',
+    to: 'max-height:calc(100vh - 120px);overflow-y:auto;white-space:pre-wrap;',
+    expect: '本体是外壳',
+  },
+  {
+    id: 'bubble：长文本滚动层丢失（回到没有 max-height 的旧状）',
+    file: 'client/bubble.ts',
+    from: "  '.chubby-bubble>div{max-height:calc(100vh - 120px);overflow:auto;}' +\n",
+    to: '',
+    expect: '长文本滚动层在内层',
   },
   {
     id: 'hooks：useLazyRef 用真假值判断（工厂返回假值会每次重建）',

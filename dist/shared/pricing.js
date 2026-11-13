@@ -94,3 +94,46 @@ export function readUsageSplit(u) {
         return null;
     return { promptTokens, completionTokens, cacheHitTokens };
 }
+// ───────────── 联网工具（网页搜索 / 抓取）的计费 ─────────────
+//
+// 价格来源（2026-11-14 实读官方价格页）：
+//   https://api-docs.deepseek.com/zh-cn/quick_start/pricing#web-tools-pricing
+// 搜索（文字、图片）、网页抓取：**每 1,000 次成功请求 5 元**，与 token 分开计。
+// 用量在 `usage.server_tool_use.tool_search / tool_fetch / tool_image_search`
+// （Chat Completions 口径）。注意 `web_search_requests` / `web_fetch_requests`
+// 只是结果块数量（含错误块），官方明确「不是计费次数」，不能拿来算钱。
+/** 元 / 1000 次成功请求 */
+export const WEB_TOOL_PRICE_PER_1000_CNY = 5;
+/** 价格核对日期（调价后同步这里与测试断言） */
+export const WEB_TOOL_PRICING_CHECKED_AT = '2026-11-14';
+/**
+ * 从 usage 里取计费的搜索/抓取次数。
+ * `tool_search` 是文字搜索（按查询词条数计）、`tool_image_search` 是图片搜索、
+ * `tool_fetch` 是网页抓取；三者同价。`web_search_requests` 只是结果块数量，不计费。
+ * 三个计费字段都没有 → 返回 null（不知道就别算，避免把 0 当成「免费」写进账本）。
+ */
+export function readWebToolUses(u) {
+    if (!u || typeof u !== 'object')
+        return null;
+    const stu = u.server_tool_use;
+    if (!stu || typeof stu !== 'object')
+        return null;
+    const hasSearch = stu.tool_search !== undefined;
+    const hasFetch = stu.tool_fetch !== undefined;
+    const hasImageSearch = stu.tool_image_search !== undefined;
+    if (!hasSearch && !hasFetch && !hasImageSearch)
+        return null;
+    return {
+        search: toCount(stu.tool_search),
+        fetch: toCount(stu.tool_fetch),
+        imageSearch: toCount(stu.tool_image_search),
+    };
+}
+/** 联网工具费用（元）：次数 × 5 / 1000；拿不到次数返回 null */
+export function estimateWebToolCostCny(u) {
+    const n = readWebToolUses(u);
+    if (!n)
+        return null;
+    const cny = (n.search + n.fetch + n.imageSearch) * WEB_TOOL_PRICE_PER_1000_CNY / 1000;
+    return Math.round(cny * 1e6) / 1e6;
+}

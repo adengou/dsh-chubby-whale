@@ -263,6 +263,20 @@ export function buildChatMessages(opts: {
   return messages
 }
 
+/**
+ * 把官方 file 块插到本轮 user 消息最前面（2026-11-14，/chat 与 /chat-stream 共用）。
+ * 官方只认 file_id 引用，不支持直接传文件内容或 URL；有图时保留 text + image_url。
+ * 放在这里是为了两条路由同一形状，避免各写一份后漂移。
+ */
+export function attachFileBlock(messages: any[], fileId: string): void {
+  if (!fileId) return
+  const last: any = messages[messages.length - 1]
+  if (!last || last.role !== 'user') return
+  last.content = Array.isArray(last.content)
+    ? [{ type: 'file', file_id: fileId }, ...last.content]
+    : [{ type: 'file', file_id: fileId }, { type: 'text', text: String(last.content || '') }]
+}
+
 // ───────────── 内部模型调用的鱼账本记账（B97） ─────────────
 //
 // 口径**照抄** routes/chat.ts（唯一区别是把 kind 标成来源），三条内部链路各写一份：

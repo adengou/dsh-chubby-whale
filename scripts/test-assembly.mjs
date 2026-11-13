@@ -115,6 +115,8 @@ try {
   // 假引擎没有 warm()：createTtsHandler 不会去探测 python（测试必须离线、不起子进程）
   const tts = (await load('host/routes/tts.ts')).createTtsHandler({ engine: { synthesize: async () => Buffer.alloc(0) } })
   const asr = (await load('host/routes/asr.ts')).createAsrHandler({ getDeepseekKey: () => '' })
+  const ocr = (await load('host/routes/ocr.ts')).createOcrHandler({ getDeepseekKey: () => '' })
+  const parseDoc = (await load('host/routes/parse-doc.ts')).createParseDocHandler({ getDeepseekKey: () => '' })
   const personality = (await load('host/routes/personality.ts')).createPersonalityHandlers({
     repo: { load: () => ({}), revert: () => null },
   })
@@ -149,7 +151,7 @@ try {
 
   const sets = {
     misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles,
-    briefing, weather, tts, asr, personality, daily, backup, stats, configView, proofread, nervous,
+    briefing, weather, tts, asr, ocr, parseDoc, personality, daily, backup, stats, configView, proofread, nervous,
   }
 
   let produced = 0

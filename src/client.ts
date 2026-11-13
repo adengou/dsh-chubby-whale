@@ -1458,6 +1458,14 @@ registerSkinActions(actions)
           showBubble(next ? '固定背景：开（不再随机换）' : '固定背景：关（每 5 分钟随机换）', 2600)
           return
         }
+        // 联网搜索开关（默认关）：打开后她的聊天请求会带 web:true，答案末尾附来源。
+        // 搜索/抓取按官方价另计（5 元/1000 次），所以不默认开。
+        if (action === 'web-search') {
+          const on = (() => { try { return localStorage.getItem('chubby-web-search') === 'on' } catch (e) { return false } })()
+          try { localStorage.setItem('chubby-web-search', on ? 'off' : 'on') } catch (e) { }
+          showBubble(on ? '联网搜索：关（省着点，不查网页了）' : '联网搜索：开（问到实时的事会去查，并附来源）', 4200)
+          return
+        }
         let ok = false
         try { ok = await actions.run(action, actionHost) } catch (e) { ok = false }
         if (!ok) showBubble('这个功能还没接上')
@@ -1812,7 +1820,7 @@ registerSkinActions(actions)
       // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去。
       // 可见项清单在渲染时同步算一次（键盘高亮与屏幕顺序共用这一份，不各算一套）。
       const menuItems = menu
-        ? buildMenu(VERSION, Object.assign({ melodies, skinFixed: skinFixed(), toolNarratorOn: (() => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
+        ? buildMenu(VERSION, Object.assign({ melodies, skinFixed: skinFixed(), toolNarratorOn: (() => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried, webSearchOn: (() => { try { return localStorage.getItem('chubby-web-search') === 'on' } catch (e) { return false } })() }, readMenuRuntime()))
         : []
       const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : []
       menuEntriesRef.current = menuEntries

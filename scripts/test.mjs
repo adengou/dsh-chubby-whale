@@ -466,7 +466,7 @@ try {
     poemTitles: { handlePoemTitles: fn },
     briefing: { handleBriefing: fn },
     weather: { handleWeather: fn },
-    tts: fn, asr: fn,
+    tts: fn, asr: fn, ocr: fn, parseDoc: fn,
     personality: { handlePersonality: fn, handleRevert: fn },
     daily: { handleDaily: fn },
     backup: { handleExport: fn, handleImport: fn },
@@ -2528,7 +2528,7 @@ try {
   ok('没文件 → empty', (await dz.handleFileDrop(null, { showBubble: noop, fetchImpl: async () => ({}) })).kind === 'empty')
   ok('超 4MB → too-large', (await dz.handleFileDrop({ size: 5 * 1024 * 1024 }, { showBubble: noop, fetchImpl: async () => ({}) })).kind === 'too-large')
   ok('没有 fetch → error', (await dz.handleFileDrop({ size: 10, name: 'a.txt' }, { showBubble: noop, fetchImpl: null, fetch: null })).kind === 'error')
-  ok('不支持的格式 → unsupported', (await dz.handleFileDrop({ size: 10, name: 'a.pdf', type: 'application/pdf' }, { showBubble: noop, fetchImpl: async () => ({}) })).kind === 'unsupported')
+  ok('不支持的格式 → unsupported', (await dz.handleFileDrop({ size: 10, name: 'a.xyz', type: 'application/octet-stream' }, { showBubble: noop, fetchImpl: async () => ({}) })).kind === 'unsupported')
 
   // 文档路径
   const bubbles = []
@@ -3452,6 +3452,13 @@ try {
   const bubbleSrc = rf('src/client/bubble.ts', 'utf8')
   ok('气泡注入内置 @font-face', bubbleSrc.indexOf('THAI_FONT_FACE +') > 0)
   ok('气泡字体链优先内置泰文', bubbleSrc.indexOf("font:13px/1.6 ' + THAI_FONT_FAMILY") > 0)
+  // 长诗滚动回归（commit 15caf58）：三角是 .chubby-bubble::after（bottom:-9px，整颗在气泡下沿之外），
+  // 本体一旦 overflow:auto 成为滚动容器，三角就被裁掉。滚动层必须留在内层文字 div。
+  ok('气泡本体不建立滚动容器（overflow:visible，三角不被裁）',
+    /\.chubby-bubble\{[^}]*overflow:visible/.test(bubbleSrc) &&
+    !/\.chubby-bubble\{[^}]*overflow(-[xy])?:(auto|scroll|hidden)/.test(bubbleSrc))
+  ok('气泡长文本滚动层在内层 div（max-height + overflow:auto 仍保留）',
+    /\.chubby-bubble>div\{[^}]*max-height:calc\(100vh - 120px\)[^}]*overflow:auto/.test(bubbleSrc))
 
   // 菜单 / 聊天面板 / 恢复点字体链同样带上内置字体
   ok('菜单字体链含内置泰文', String(menuStyle(null).font || '').indexOf('ChubbyThai') >= 0)

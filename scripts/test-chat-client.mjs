@@ -640,7 +640,7 @@ function caseStaticBoundaries() {
   ok('chat.ts 不横向 import 宿主模块', !/from '\.\.\/host\//.test(chatSrc))
   ok('chat.ts 不碰 React/DOM 树', !/\bReact\b|useState|document\./.test(chatCode))
   const keys = [...chatCode.matchAll(/localStorage\.getItem\('([^']+)'\)/g)].map((m) => m[1])
-  ok('chat.ts 只读两个公开配置键', keys.every((k) => k === 'chubby-stream' || k === 'chubby-chatlang'), keys.join(','))
+  ok('chat.ts 只读公开配置键（流式 / 聊天语言 / 联网）', keys.every((k) => k === 'chubby-stream' || k === 'chubby-chatlang' || k === 'chubby-web-search'), keys.join(','))
   ok('chat.ts 只通过 host 公开 ref 契约做打断', /host\.narrating\.current/.test(chatCode)
     && /host\.storyBusy\.current/.test(chatCode) && !/narration\.lock|narration\.clear/.test(chatCode))
   const perImports = [...perSrc.matchAll(/from '([^']+)'/g)].map((m) => m[1])

@@ -211,6 +211,16 @@ export interface AsrRouteDeps {
   language?: () => string
 }
 
+/** /ocr 的依赖：官方 OCR 只用 DeepSeek Key，不落盘、不缓存 */
+export interface OcrRouteDeps {
+  getDeepseekKey: KeyReader
+}
+
+/** /parse-doc 的依赖：官方 Files API 上传解析，只用 DeepSeek Key */
+export interface ParseDocRouteDeps {
+  getDeepseekKey: KeyReader
+}
+
 /**
  * /proofread 的依赖：只要求能拿到 DeepSeek Key，并与聊天共用模型名。
  * 校对是一次性外呼，不写聊天记忆、不计鱼粮，因此不需要 history/memory 端口。

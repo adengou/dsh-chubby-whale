@@ -18,8 +18,15 @@ import { THAI_FONT_FACE, THAI_FONT_FAMILY } from './thai-font.js'
 export const BUBBLE_CSS =
   // 内置泰文字体（data URL）：不依赖用户系统是否安装泰文字体
   THAI_FONT_FACE +
-  '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;max-height:calc(100vh - 120px);overflow-y:auto;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 ' + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}' +
+  // 本体只做「外壳」：定位、底色、圆角、内边距与三角都归它。
+  // overflow 必须是 visible —— ::after 三角在 bottom:-9px（气泡下沿之外），
+  // 一旦本体成为滚动容器（overflow:auto），三角就落在裁剪区外被整颗切掉。
+  '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;overflow:visible;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 ' + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}' +
   '.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}' +
+  // 长文本的滚动层下移到内层文字块（client.ts 每个气泡里唯一的直接子 div，即 textEl）：
+  // 诗词/简报照样 max-height + 滚动，气泡本体不裁剪，三角始终可见。
+  // （2026-11-13 的长诗滚动需求把 max-height/overflow-y 加在本体上，导致全线路气泡三角消失。）
+  '.chubby-bubble>div{max-height:calc(100vh - 120px);overflow:auto;}' +
   '.chubby-bubble.show{opacity:1;}' +
   // 诗词线：字号略小、米色底，与主气泡区分
   '.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}' +

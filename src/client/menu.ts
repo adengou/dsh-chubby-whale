@@ -162,6 +162,7 @@ const TOGGLE_EN: Record<string, [string, string]> = {
   '流式回复：': ['Streaming replies: on', 'Streaming replies: off'],
   '神经感知：': ['Nervous system: on', 'Nervous system: off'],
   '鲸式解说：': ['Whale commentary: on', 'Whale commentary: off'],
+  '联网搜索：': ['Web search: on', 'Web search: off'],
   '诗词弹幕：': ['Poem commentary: on', 'Poem commentary: off'],
 }
 
@@ -264,6 +265,8 @@ export interface MenuState {
   streamOn?: boolean
   /** 神经感知开关（缺省视为开） */
   nervousOn?: boolean
+  /** 联网搜索开关（缺省关；打开后聊天可搜网页并附来源） */
+  webSearchOn?: boolean
 }
 
 export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
@@ -318,6 +321,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     sep(),
     // ── 说话与耳朵（语音类全放一起）──
     item('跟她说两句', 'type'),
+    item('联网搜索：' + (state.webSearchOn ? '开' : '关'), 'web-search'),
     item(voiceOn ? '语音朗读：开' : '语音朗读：关', 'voice'),
     item('停止说话', 'tts-stop'),
     item('把稿子念成音频…', 'voice-export'),

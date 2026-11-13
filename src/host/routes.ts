@@ -33,6 +33,8 @@ import type { createBriefingHandlers } from './routes/briefing.js'
 import type { createWeatherHandler } from './routes/weather.js'
 import type { createTtsHandler } from './routes/tts.js'
 import type { createAsrHandler } from './routes/asr.js'
+import type { createOcrHandler } from './routes/ocr.js'
+import type { createParseDocHandler } from './routes/parse-doc.js'
 import type { createPersonalityHandlers } from './routes/personality.js'
 import type { createDailyHandler } from './routes/daily.js'
 import type { createBackupHandlers } from './routes/backup.js'
@@ -69,6 +71,10 @@ export interface HandlerSet {
   weather: ReturnType<typeof createWeatherHandler>
   tts: ReturnType<typeof createTtsHandler>
   asr: ReturnType<typeof createAsrHandler>
+  /** 官方 OCR：图片/PDF/Office 取字（不交给模型） */
+  ocr: ReturnType<typeof createOcrHandler>
+  /** 官方文件解析：上传到 Files API，返回 file_id 供聊天引用 */
+  parseDoc: ReturnType<typeof createParseDocHandler>
   /** L2 可变人格：{ handlePersonality, handleRevert } */
   personality: ReturnType<typeof createPersonalityHandlers>
   /** 每日一句：{ handleDaily } */
@@ -116,6 +122,10 @@ export function createRouteTable(h: HandlerSet): HttpRoute[] {
     { path: '/api/chubby-whale/weather', handler: h.weather.handleWeather },
     { path: '/api/chubby-whale/tts', handler: h.tts },
     { path: '/api/chubby-whale/asr', handler: h.asr },
+    // 官方 OCR：截图/表格/PDF 取准确文字（不交给模型猜）
+    { path: '/api/chubby-whale/ocr', handler: h.ocr },
+    // 官方文件解析：PDF/Word/PPT 上传解析，拿 file_id 在聊天里引用
+    { path: '/api/chubby-whale/parse-doc', handler: h.parseDoc },
     // L2 可变人格：读当前 + 历史 / 回滚上一条变更
     { path: '/api/chubby-whale/personality', handler: h.personality.handlePersonality },
     { path: '/api/chubby-whale/personality/revert', handler: h.personality.handleRevert },

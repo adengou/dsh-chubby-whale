@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.12";
+  var VERSION = "1.4.13";
 
   // src/client/styles.ts
   var W = 240;
@@ -2811,6 +2811,7 @@
     "流式回复：": ["Streaming replies: on", "Streaming replies: off"],
     "神经感知：": ["Nervous system: on", "Nervous system: off"],
     "鲸式解说：": ["Whale commentary: on", "Whale commentary: off"],
+    "联网搜索：": ["Web search: on", "Web search: off"],
     "诗词弹幕：": ["Poem commentary: on", "Poem commentary: off"]
   };
   function tr(label, lang) {
@@ -2901,6 +2902,7 @@
       sep(),
       // ── 说话与耳朵（语音类全放一起）──
       item("跟她说两句", "type"),
+      item("联网搜索：" + (state.webSearchOn ? "开" : "关"), "web-search"),
       item(voiceOn ? "语音朗读：开" : "语音朗读：关", "voice"),
       item("停止说话", "tts-stop"),
       item("把稿子念成音频…", "voice-export"),
@@ -3915,6 +3917,11 @@
     const m = /^data:([^;,]+)/i.exec(String(dataUrl || ""));
     return m ? m[1].toLowerCase() : "";
   }
+  async function readFileAsBase64(file) {
+    const s = await readFileAsDataUrl(file);
+    const at = s.indexOf(",");
+    return at >= 0 ? s.slice(at + 1) : s;
+  }
   function decodeImage(file) {
     return new Promise((resolve) => {
       try {
@@ -4016,10 +4023,24 @@
 
   // src/client/dropzone.ts
   var MAX_DROP_BYTES = 4 * 1024 * 1024;
+  var MAX_DOC_BYTES = 20 * 1024 * 1024;
   var MAX_TEXT_CHARS = 4e3;
+  var MAX_OCR_CHARS = 2e3;
   var VISION_PROMPT = "看看这张图，说说你看到了什么";
   var MAX_IMAGE_B64_CHARS = 4 * 1024 * 1024;
   var TEXT_EXTS = [".txt", ".md", ".json", ".log", ".csv"];
+  var BINARY_DOC_EXTS = [".pdf", ".doc", ".docx", ".ppt", ".pptx"];
+  var BINARY_DOC_MIMES = Object.freeze([
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  ]);
+  var PARSE_DOC_BUDGET_MS = 260 * 1e3;
+  var OCR_BUDGET_MS = 200 * 1e3;
+  var CHAT_BUDGET_MS = 45 * 1e3;
+  var dropSeq = 0;
   function isImageFile(file) {
     return Boolean(file && typeof file.type === "string" && file.type.indexOf("image/") === 0);
   }
@@ -4030,8 +4051,40 @@
     }
     return false;
   }
+  function isBinaryDocFile(file) {
+    const name = String(file && file.name || "").toLowerCase();
+    for (const ext of BINARY_DOC_EXTS) {
+      if (name.slice(-ext.length) === ext) return true;
+    }
+    const mime = String(file && file.type || "").toLowerCase().split(";")[0].trim();
+    return BINARY_DOC_MIMES.indexOf(mime) >= 0;
+  }
   function buildTextPrompt(text) {
     return "总结一下这篇文档：\n" + clipCodePoints(text, MAX_TEXT_CHARS);
+  }
+  function buildDocPrompt(name) {
+    const n = String(name || "").trim() || "这份文档";
+    return "总结一下这篇文档《" + n + "》的要点。";
+  }
+  function buildVisionPrompt(ocrText) {
+    const t = String(ocrText || "").trim();
+    if (!t) return VISION_PROMPT;
+    return VISION_PROMPT + "\n\n图片里的文字（OCR 识别）：\n" + clipCodePoints(t, MAX_OCR_CHARS);
+  }
+  function requestErrorText(data, status) {
+    const hint = String(data && (data.hint || data.reply) || "").trim();
+    if (hint) return hint;
+    const code = String(data && data.error || "").trim();
+    if (code === "too large") return "文件太大啦，换小一点的再试";
+    if (code === "NO_KEY") return "没配 DeepSeek Key，文件解析用不了";
+    if (code) return code;
+    return "请求失败" + (status ? "（HTTP " + status + "）" : "");
+  }
+  function timeoutError2(ms2) {
+    const err = new Error("请求超时（" + ms2 + "ms）");
+    err.name = "TimeoutError";
+    err.reply = "等太久啦（网络可能卡住了），再试一次？";
+    return err;
   }
   function readTextFile(file) {
     try {
@@ -4066,57 +4119,110 @@
   }
   async function handleFileDrop(file, deps) {
     const d = deps || {};
-    const bubble = typeof d.showBubble === "function" ? d.showBubble : () => {
+    const show = typeof d.showBubble === "function" ? d.showBubble : null;
+    const bubbleKey = "drop:file:" + ++dropSeq;
+    const bubble = (text, ms2) => {
+      if (!show) return;
+      try {
+        show(text, ms2, { key: bubbleKey });
+      } catch (e) {
+      }
     };
     const speak = typeof d.speakText === "function" ? d.speakText : null;
     const doFetch = d.fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
+    const pickBudget = (v, fallback) => {
+      if (v === void 0 || v === null) return fallback;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0) return 0;
+      return n;
+    };
+    const budgetFor = (path) => {
+      const t = d.timeouts || {};
+      if (path === "/parse-doc") return pickBudget(t.parseDoc, PARSE_DOC_BUDGET_MS);
+      if (path === "/ocr") return pickBudget(t.ocr, OCR_BUDGET_MS);
+      return pickBudget(t.chat, CHAT_BUDGET_MS);
+    };
     if (!file) {
       bubble("没拿到文件，再拖一次试试", 4e3);
       return { ok: false, kind: "empty", error: "no file" };
     }
     const size = Number(file.size) || 0;
-    if (size > MAX_DROP_BYTES) {
-      bubble("文件太大啦（超过 4MB），本鱼一口吃不下", 5e3);
-      return { ok: false, kind: "too-large", error: "too large" };
-    }
     if (!doFetch) {
       bubble("本鱼连不上服务器", 4e3);
       return { ok: false, kind: "error", error: "no fetch" };
     }
-    const post = async (body) => {
-      const r = await doFetch("/api/chubby-whale/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body)
+    const image = isImageFile(file);
+    const binaryDoc = isBinaryDocFile(file);
+    const cap = binaryDoc ? MAX_DOC_BYTES : MAX_DROP_BYTES;
+    if (size > cap) {
+      bubble(binaryDoc ? "文件太大啦（超过 20MB），换小一点的" : "文件太大啦（超过 4MB），本鱼一口吃不下", 5e3);
+      return { ok: false, kind: "too-large", error: "too large" };
+    }
+    const post = async (path, body) => {
+      const budget = budgetFor(path);
+      const ctl = budget > 0 && typeof AbortController !== "undefined" ? new AbortController() : null;
+      const work = async () => {
+        const r = await doFetch("/api/chubby-whale" + path, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: ctl ? ctl.signal : void 0
+        });
+        let data = null;
+        try {
+          data = await r.json();
+        } catch (e) {
+          data = null;
+        }
+        const status = Number(r && r.status) || 0;
+        if (!data || r && r.ok === false || data.ok === false) {
+          const msg = requestErrorText(data, status);
+          const err = new Error(msg);
+          err.reply = msg;
+          err.status = status;
+          throw err;
+        }
+        return data;
+      };
+      if (!ctl || !budget) return work();
+      let timer = null;
+      const guard = new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          try {
+            ctl.abort();
+          } catch (e) {
+          }
+          reject(timeoutError2(budget));
+        }, budget);
       });
-      let data = null;
       try {
-        data = await r.json();
+        return await Promise.race([work(), guard]);
       } catch (e) {
-        data = null;
+        if (ctl.signal.aborted && !(e && e.reply)) throw timeoutError2(budget);
+        throw e;
+      } finally {
+        if (timer) {
+          try {
+            clearTimeout(timer);
+          } catch (e) {
+          }
+        }
       }
-      const status = Number(r && r.status) || 0;
-      if (!data || r && r.ok === false || data.ok === false) {
-        const msg = String(data && (data.reply || data.error) || "").trim() || "请求失败" + (status ? "（HTTP " + status + "）" : "");
-        const err = new Error(msg);
-        err.reply = msg;
-        err.status = status;
-        throw err;
-      }
-      return data;
     };
     const fail = (e, fallback) => {
-      const msg = String(e && (e.reply || e.message) || e || "").trim() || fallback;
+      const reply = String(e && e.reply || "").trim();
+      const raw = String(e && e.message || e || "").trim();
+      const msg = reply || fallback;
       bubble(msg, 5e3);
       const tooLarge = Number(e && e.status) === 413;
       return {
         ok: false,
         kind: tooLarge ? "too-large" : "error",
-        error: msg,
-        reply: e && e.reply ? String(e.reply) : void 0
+        error: raw || msg,
+        reply: reply || void 0
       };
     };
-    if (isImageFile(file)) {
+    if (image) {
       bubble("本鲸看看这张图…", 3e3);
       const img0 = await imageToB64(file);
       const b64 = img0 ? img0.b64 : "";
@@ -4129,8 +4235,15 @@
         bubble("这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～", 5e3);
         return { ok: false, kind: "too-large", error: "image too large" };
       }
+      let ocrText = "";
       try {
-        const reply0 = await post({ message: VISION_PROMPT, image: b64, imageMime: mime });
+        const o = await post("/ocr", { file: b64, name: String(file.name || "image.png"), purpose: "text_recognition" });
+        ocrText = String(o && o.text || "");
+      } catch (e) {
+      }
+      const prompt = buildVisionPrompt(ocrText);
+      try {
+        const reply0 = await post("/chat", { message: prompt, image: b64, imageMime: mime });
         const reply = String(reply0 && reply0.reply || "").trim() || "这条鱼看不懂这张图……";
         bubble("（看图）" + reply, 1e4);
         if (speak) {
@@ -4139,9 +4252,39 @@
           } catch (e2) {
           }
         }
-        return { ok: true, kind: "image", message: VISION_PROMPT, reply };
+        return { ok: true, kind: "image", message: prompt, reply };
       } catch (e) {
         return fail(e, "图片处理失败");
+      }
+    }
+    if (binaryDoc) {
+      bubble("本鲸先把这份文档读懂…（大文件可能要一两分钟）", 3e4);
+      try {
+        const b64 = await readFileAsBase64(file);
+        if (!b64) {
+          bubble("文件读不出来，再拖一次试试", 5e3);
+          return { ok: false, kind: "error", error: "empty file" };
+        }
+        const up = await post("/parse-doc", { file: b64, name: String(file.name || "document"), purpose: "text_recognition" });
+        const fileId = String(up && up.fileId || "");
+        if (!/^file-api-[A-Za-z0-9_-]{8,}$/.test(fileId)) {
+          const badId = new Error("官方没给出有效的 file_id");
+          badId.reply = "官方没返回文件编号，换一份再试";
+          throw badId;
+        }
+        const message = buildDocPrompt(String(file.name || ""));
+        const reply0 = await post("/chat", { message, fileId });
+        const reply = String(reply0 && reply0.reply || "").trim() || "这份文档本鲸没看懂……";
+        bubble("（文档）" + reply, 12e3);
+        if (speak) {
+          try {
+            speak(reply);
+          } catch (e2) {
+          }
+        }
+        return { ok: true, kind: "document", message, reply };
+      } catch (e) {
+        return fail(e, "文档处理失败");
       }
     }
     if (isTextFile(file)) {
@@ -4153,7 +4296,7 @@
       const message = buildTextPrompt(text);
       bubble("本鲸看看这份文档…", 3e3);
       try {
-        const reply0 = await post({ message });
+        const reply0 = await post("/chat", { message });
         const reply = String(reply0 && reply0.reply || "").trim() || "这份文档本鲸没看懂……";
         bubble("（文档）" + reply, 12e3);
         if (speak) {
@@ -5294,6 +5437,7 @@
     table.define("skin-fixed", noop);
     table.define("tool-narrator", noop);
     table.define("poem-echo", noop);
+    table.define("web-search", noop);
     table.define("skin-bg-reset", noop);
   }
 
@@ -6832,7 +6976,7 @@
   // src/client/doc-text.ts
   var PLAIN_EXTS = [".txt", ".md", ".json", ".log", ".csv"];
   var ALLOWED_EXTS = [".txt", ".md", ".json", ".log", ".csv", ".docx"];
-  var MAX_DOC_BYTES = 20 * 1024 * 1024;
+  var MAX_DOC_BYTES2 = 20 * 1024 * 1024;
   var DOC_ACCEPT = ".txt,.md,.json,.log,.csv,.docx";
   function extOf(name) {
     const n = String(name || "").toLowerCase();
@@ -6944,7 +7088,7 @@
   async function readDocumentText(file) {
     try {
       if (!file) return { ok: false, kind: "error", error: "没有文件" };
-      if (file.size > MAX_DOC_BYTES) return { ok: false, kind: "error", error: "文件太大（20MB 上限）" };
+      if (file.size > MAX_DOC_BYTES2) return { ok: false, kind: "error", error: "文件太大（20MB 上限）" };
       const ext = extOf(file.name);
       if (PLAIN_EXTS.indexOf(ext) >= 0) {
         const text = await file.text();
@@ -8601,7 +8745,10 @@
   // src/client/bubble.ts
   var BUBBLE_CSS = (
     // 内置泰文字体（data URL）：不依赖用户系统是否安装泰文字体
-    THAI_FONT_FACE + ".chubby-bubble{position:fixed;z-index:10002;max-width:320px;max-height:calc(100vh - 120px);overflow-y:auto;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 " + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}.chubby-bubble-persona{background:#fff8ee;}.chubby-bubble-voice{background:#eef7ff;color:#2b4a6f;font-size:12.5px;max-width:280px;}'
+    THAI_FONT_FACE + // 本体只做「外壳」：定位、底色、圆角、内边距与三角都归它。
+    // overflow 必须是 visible —— ::after 三角在 bottom:-9px（气泡下沿之外），
+    // 一旦本体成为滚动容器（overflow:auto），三角就落在裁剪区外被整颗切掉。
+    ".chubby-bubble{position:fixed;z-index:10002;max-width:320px;overflow:visible;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 " + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble>div{max-height:calc(100vh - 120px);overflow:auto;}.chubby-bubble.show{opacity:1;}.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}.chubby-bubble-persona{background:#fff8ee;}.chubby-bubble-voice{background:#eef7ff;color:#2b4a6f;font-size:12.5px;max-width:280px;}'
   );
   var STATUS_TEXTS = ["在听…", "在想…", "识别中…", "在说…"];
   deepFreeze(STATUS_TEXTS);
@@ -10175,6 +10322,13 @@
       return "auto";
     }
   }
+  function resolveWebSearchOn() {
+    try {
+      return localStorage.getItem("chubby-web-search") === "on";
+    } catch (e) {
+      return false;
+    }
+  }
   function streamPreview(text, voice) {
     const t = String(text || "").replace(/\s+/g, " ").trim();
     if (!t) return "";
@@ -10197,6 +10351,11 @@
     } catch (e) {
     }
   }
+  function speechBody(reply) {
+    const text = String(reply || "");
+    const m = /\n{2,}来源：\n[\s\S]*$/.exec(text);
+    return m ? text.slice(0, m.index).trim() : text;
+  }
   function diag() {
     try {
       const w = typeof window !== "undefined" ? window : null;
@@ -10207,6 +10366,7 @@
     }
   }
   var CHAT_TIMEOUT_MS = 3e4;
+  var WEB_CHAT_TIMEOUT_MS = 1e5;
   var STREAM_HEADER_TIMEOUT_MS = 4e3;
   var STREAM_RETRYABLE_STATUS = [404, 405, 408, 425, 429, 501, 502, 503, 504];
   function streamHttpRetryable(status) {
@@ -10519,9 +10679,12 @@
         if (host.onPhase) host.onPhase("thinking");
       } catch (e) {
       }
-      try {
-        if (await tryStream(text, opts, myEpoch)) return;
-      } catch (e) {
+      const web = resolveWebSearchOn();
+      if (!web) {
+        try {
+          if (await tryStream(text, opts, myEpoch)) return;
+        } catch (e) {
+        }
       }
       if (!host.epoch.isCurrent(myEpoch)) return;
       try {
@@ -10537,6 +10700,7 @@
       const ctl = newAbortController();
       activeChat = { ctl };
       let timeoutTimer = null;
+      const chatTimeoutMs = web ? WEB_CHAT_TIMEOUT_MS : CHAT_TIMEOUT_MS;
       try {
         if (ctl) {
           timeoutTimer = setTimeout(() => {
@@ -10544,7 +10708,7 @@
               ctl.abort();
             } catch (e) {
             }
-          }, CHAT_TIMEOUT_MS);
+          }, chatTimeoutMs);
         }
         const tChat = performance.now();
         data = await postJson("/chat", {
@@ -10552,9 +10716,10 @@
           // voice 表示「输入来自语音识别」（后端据此追加 ASR 纠错说明）。
           // 原来这里写死 true，打字也会被当成语音，且与流式的缓存键对不上。
           voice: !!(opts && opts.voice),
-          lang: resolveChatLang()
+          lang: resolveChatLang(),
+          web
         }, {
-          signal: ctl ? ctl.signal : timeoutSignal(CHAT_TIMEOUT_MS)
+          signal: ctl ? ctl.signal : timeoutSignal(chatTimeoutMs)
         });
         try {
           host.recordChatLatency(Math.round(performance.now() - tChat));
@@ -10563,13 +10728,21 @@
         if (!host.epoch.isCurrent(myEpoch)) return;
         const reply = data && data.reply ? String(data.reply) : data && data.ok === false ? "主人，本鲸这边没接上（" + String(data.error || "接口没应") + "），等会儿再问一次？" : "主人……本鲸走神了。";
         if (d1) d1.lastChat = { stage: "fetched", reply: String(reply).slice(0, 40), at: Date.now() };
+        if (data && data.ok !== false && data.web && data.web.requested && data.web.enabled === false) {
+          if (d1) d1.lastChat.webIgnored = true;
+          try {
+            host.bubble("当前模型不支持联网搜索，这轮按普通聊天回答～", 5e3, { staleAfter: 12e3 });
+          } catch (e) {
+          }
+        }
         try {
           if (host.onPhase) host.onPhase(data && data.ok === false ? "error" : "success");
         } catch (e) {
         }
         host.setMessages((m) => [...m, { who: "fish", text: reply }]);
-        if (host.voiceMode.current) {
-          host.bubble("（说）" + reply, 8e3, { key: "chat:stream", staleAfter: 2e4 });
+        const bubbleReply = data && Array.isArray(data.sources) && data.sources.length ? speechBody(reply) : reply;
+        if (host.voiceMode.current && bubbleReply) {
+          host.bubble("（说）" + bubbleReply, 8e3, { key: "chat:stream", staleAfter: 2e4 });
         }
         if (data && data.upgraded) host.bubble("本鲸又长大一点啦！", 4e3, { staleAfter: 15e3 });
       } catch (err) {
@@ -10593,8 +10766,9 @@
             if (data && data.reply) {
               const rp = String(data.reply);
               const d2 = diag();
-              if (d2) d2.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now() };
-              host.speakReply(rp);
+              if (d2) d2.lastChat = { stage: "speak", reply: rp.slice(0, 40), at: Date.now(), web: data.web };
+              const spoken = Array.isArray(data.sources) && data.sources.length ? speechBody(rp) : rp;
+              if (spoken) host.speakReply(spoken);
             }
           } catch (e) {
           }
@@ -12973,6 +13147,21 @@
             showBubble(next ? "固定背景：开（不再随机换）" : "固定背景：关（每 5 分钟随机换）", 2600);
             return;
           }
+          if (action === "web-search") {
+            const on = (() => {
+              try {
+                return localStorage.getItem("chubby-web-search") === "on";
+              } catch (e) {
+                return false;
+              }
+            })();
+            try {
+              localStorage.setItem("chubby-web-search", on ? "off" : "on");
+            } catch (e) {
+            }
+            showBubble(on ? "联网搜索：关（省着点，不查网页了）" : "联网搜索：开（问到实时的事会去查，并附来源）", 4200);
+            return;
+          }
           let ok = false;
           try {
             ok = await actions.run(action, actionHost);
@@ -13389,7 +13578,13 @@
           } catch (e) {
             return false;
           }
-        })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())) : [];
+        })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried, webSearchOn: (() => {
+          try {
+            return localStorage.getItem("chubby-web-search") === "on";
+          } catch (e) {
+            return false;
+          }
+        })() }, readMenuRuntime())) : [];
         const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : [];
         menuEntriesRef.current = menuEntries;
         function renderItems(items) {

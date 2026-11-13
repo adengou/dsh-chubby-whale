@@ -15,14 +15,25 @@
 import { fetchJson, isAbortError, isTimeoutError, isTimeoutOnly, sendTooLarge, watchClientGone } from '../http.js';
 import { readJsonBody } from '../body.js';
 import { sendJson, sendError } from '../respond.js';
-import { estimateCostCny, readUsageSplit } from '../../shared/pricing.js';
+import { estimateCostCny, readUsageSplit, estimateWebToolCostCny } from '../../shared/pricing.js';
+import { appendCitations, collectCitations } from '../../shared/citations.js';
 import { DEFAULT_CHAT_MODEL } from '../config.js';
-import { CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, summarizeMemory, maybeCreateReminder, } from '../chat-core.js';
+import { CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS, chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, attachFileBlock, summarizeMemory, maybeCreateReminder, } from '../chat-core.js';
 // 兼容旧导入方（scripts/selftest.mjs、chat-stream 历史版本）：纯函数仍从本模块可导出
 export { HISTORY_IN_PROMPT, normalizeChatText, detectLang, recentHistory, chatCacheKey } from '../chat-core.js';
 const CHAT_TIMEOUT = 30 * 1000; // 主聊天：30 秒（记忆摘要的超时在 chat-core.summarizeMemory 里）
+/**
+ * 联网回合的总超时（2026-11-14）：服务端要先搜索/抓取再生成，30 秒不够；
+ * 客户端对应预算比这里长 10 秒（client/chat.ts 的 WEB_CHAT_TIMEOUT_MS），
+ * 保证先由宿主回「超时」错误体，而不是客户端先断、连一句人话都收不到。
+ */
+const WEB_CHAT_TIMEOUT = 90 * 1000;
 const CHAT_MAX_BODY = 6 * 1024 * 1024; // 6MB（图片 base64 约 4MB * 1.34）
 const NET_FALLBACK = '主人，本鲸一时想不起来话（网络或接口有点问题）……';
+const API_FAIL_FALLBACK = '主人，本鲸这次没拿到回答（接口出了点问题），等会儿再问一次？';
+const CONTENT_FILTER_FALLBACK = '主人，这个话题本鲸没法回答，换一个问问吧。';
+const WEB_FAIL_FALLBACK = '主人，这次联网没能拿到结果（接口或网络有点问题），等会儿再问一次？';
+const WEB_EMPTY_FALLBACK = '主人，本鲸这次联网没查到能回答的内容，换个问法再试试？';
 /** 图片超限文案：与 host/routes/chat-stream.ts 的同一句保持一致（路由之间不横向 import，各持一份） */
 const IMAGE_TOO_LARGE_FALLBACK = '主人，这张图太大啦（原图超过约 3MB），本鲸一口吞不下，换张小一点的再发吧～';
 /**
@@ -56,7 +67,53 @@ export function createChatHandler(opts) {
             const image = reqInfo.image;
             const imageB64 = image.b64;
             const isVoice = reqInfo.isVoice;
-            const cacheable = reqInfo.cacheable;
+            // 文件解析（2026-11-14）：客户端先把文档传到 /parse-doc 拿到 file_id，再随消息带过来。
+            // 只认官方 file-api- 前缀，其它值当没传（不把任意字符串塞进请求体）。
+            const rawFileId = typeof body?.fileId === 'string' ? body.fileId.trim() : '';
+            const fileId = /^file-api-[A-Za-z0-9_-]{8,}$/.test(rawFileId) ? rawFileId : '';
+            // 官方文件问答只支持 deepseek-flash：其它模型明确拒绝，别让客户端看到笼统网络错误
+            if (fileId && model !== 'deepseek-flash') {
+                sendJson(res, { ok: false, error: 'FILE_MODEL_UNSUPPORTED', reply: '文档问答只支持 deepseek-flash；当前模型是 ' + model + '，换成 deepseek-flash 再看文档。' }, 400);
+                return;
+            }
+            // 联网工具（deepseek_web_search / deepseek_read_url）：显式开关，默认关；只支持 deepseek-flash
+            const wantWeb = body?.web === true;
+            const webEnabled = wantWeb && model === 'deepseek-flash';
+            if (wantWeb && !webEnabled)
+                console.error('[chat] WEB-IGNORED model=' + model + '（联网工具只支持 deepseek-flash）');
+            // 联网回合用更长的总超时；普通聊天保持 30 秒不变
+            const timeoutMs = webEnabled ? WEB_CHAT_TIMEOUT : CHAT_TIMEOUT;
+            /**
+             * 鱼粮记账（唯一定义点）：成功回复、以及官方「200 + error」的失败回包都要记。
+             * 官方失败回包里 usage 仍然有效（已发生的推理/搜索/抓取照常计费），所以不能只在成功分支记。
+             * 拿不到 total_tokens / server_tool_use 就不猜：宁可漏记，不虚记。
+             */
+            const recordUsage = (u) => {
+                try {
+                    if (!u || typeof u.total_tokens !== 'number' || !Number.isFinite(u.total_tokens) || !opts.addTokens)
+                        return;
+                    const split = readUsageSplit(u);
+                    const cost = split ? estimateCostCny(split, model) : null;
+                    // 联网工具另计（5 元/1000 次成功请求），与 token 费加在一起；拿不到次数就不加
+                    const toolCost = webEnabled ? estimateWebToolCostCny(u) : null;
+                    const hasCost = cost !== null || toolCost !== null;
+                    const detail = {};
+                    if (split) {
+                        detail.promptTokens = split.promptTokens;
+                        detail.completionTokens = split.completionTokens;
+                        detail.cacheHitTokens = split.cacheHitTokens;
+                    }
+                    if (hasCost) {
+                        // 只有拿到 token 拆分或工具次数时才写金额；工具次数为 0 是可信的 0 元
+                        detail.costCny = Math.round(((cost ? cost.cny : 0) + (toolCost || 0)) * 1e6) / 1e6;
+                    }
+                    opts.addTokens('chat', u.total_tokens, Object.keys(detail).length ? detail : undefined);
+                }
+                catch { }
+            };
+            // 带文件或联网的答案依赖外部内容/实时数据，不复用聊天缓存（也不同别人共享）。
+            // 注意用 wantWeb 而不是 webEnabled：模型不支持联网时也不能拿一条旧缓存冒充「查过了」。
+            const cacheable = reqInfo.cacheable && !fileId && !wantWeb;
             // 语言档位（auto 已按内容判定，与流式路径共用同一份 detectLang）
             const effLang = reqInfo.lang;
             // 用 trim 判空：只发空格/换行不该白调一次模型（图片消息走 VISION_PROMPT 自带文案）
@@ -138,19 +195,26 @@ export function createChatHandler(opts) {
                 message,
                 image,
             });
+            // 文件块：官方只认 file_id 引用（不支持直接传内容或 URL）。放在本轮用户消息最前面，
+            // 与官方示例 [file, text] 同形；有图时保留 text + image_url，把 file 插到最前。
+            attachFileBlock(messages, fileId);
             let data = null;
             try {
+                const reqBody = {
+                    model,
+                    messages,
+                    max_tokens: CHAT_MAX_TOKENS,
+                    temperature: 0.8,
+                    thinking: { type: 'disabled' },
+                };
+                // 联网工具：服务端自动搜索/抓取并拼上下文，客户端不需要执行任何工具
+                if (webEnabled)
+                    reqBody.tools = [{ type: 'deepseek_web_search' }, { type: 'deepseek_read_url' }];
                 const r = await fetchJson(CHAT_URL, {
                     method: 'POST',
                     headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-                    body: JSON.stringify({
-                        model,
-                        messages,
-                        max_tokens: CHAT_MAX_TOKENS,
-                        temperature: 0.8,
-                        thinking: { type: 'disabled' },
-                    }),
-                }, CHAT_TIMEOUT, client.signal);
+                    body: JSON.stringify(reqBody),
+                }, timeoutMs, client.signal);
                 if (!r.ok) {
                     console.error('[chat] CHAT-HTTP ' + r.status + ' ' + String(r.text || '').slice(0, 200));
                     sendJson(res, { ok: false, error: `HTTP ${r.status}`, reply: NET_FALLBACK });
@@ -168,7 +232,7 @@ export function createChatHandler(opts) {
                 }
                 // 分类口径（host/http.ts）：内部超时 = TimeoutError；调用方中止但没标 gone = AbortError；其余算网络错
                 if (isTimeoutOnly(err))
-                    console.error('[chat] CHAT-TIMEOUT ' + CHAT_TIMEOUT + 'ms 无响应，已中止');
+                    console.error('[chat] CHAT-TIMEOUT ' + timeoutMs + 'ms 无响应，已中止');
                 else if (isAbortError(err))
                     console.error('[chat] CHAT-ABORT 外呼被中止（无客户端断连标记）');
                 else
@@ -177,34 +241,53 @@ export function createChatHandler(opts) {
                 sendJson(res, { ok: false, error: isTimeoutError(err) ? 'timeout' : String(err?.message || err), reply: NET_FALLBACK });
                 return;
             }
-            // content 为空时回退取 reasoning_content（照 C#）；两者都空就是真的走神了
-            const content = String(data?.choices?.[0]?.message?.content || '').trim();
-            const reasoning = String(data?.choices?.[0]?.message?.reasoning_content || '').trim();
-            const blank = !content && !reasoning;
-            const reply = content || reasoning || '主人……本鲸刚刚走神了。';
-            // 鱼粮：token 统计（口径见 chat-stream.ts 同一段注释）
-            //   · 只记「本轮真拿到模型回复」的 usage.total_tokens：超时/网络/HTTP 非 2xx 都已在上面的
-            //     分支 return，那种时候没有可信 usage，硬估会虚记，宁可漏记；
-            //   · 上游没返回 usage（部分兼容服务不实现）时同样跳过，不猜；
-            //   · 空回复走兜底文案仍算一次正常回复，token 照记——这次请求确实消耗了。
-            try {
-                const u = data?.usage;
-                if (u && typeof u.total_tokens === 'number' && opts.addTokens) {
-                    // 鱼账本（2026-11-07）：把输入/输出拆分与人民币估算一起记进 fishfood.json。
-                    // 拿不到拆分就只记总量（不猜金额）；金额随「模型 × 高峰/空闲」变化，见 shared/pricing.ts
-                    const split = readUsageSplit(u);
-                    const cost = split ? estimateCostCny(split, opts.model) : null;
-                    opts.addTokens('chat', u.total_tokens, split
-                        ? { promptTokens: split.promptTokens, completionTokens: split.completionTokens, cacheHitTokens: split.cacheHitTokens, costCny: cost ? cost.cny : undefined }
-                        : undefined);
-                }
+            // 官方「生成失败」仍可能回 200 + {error, usage}（见联网工具文档「生成失败」）：
+            // 不能把它当「模型走神」写进记忆；usage 照记（已发生的推理/搜索会计费），但不写记忆、不加经验。
+            const choice = data?.choices?.[0];
+            const finishReason = String(choice?.finish_reason || '');
+            const apiError = data && data.error;
+            if (apiError || finishReason === 'content_filter' || !choice) {
+                recordUsage(data?.usage);
+                const code = apiError
+                    ? String(apiError.code || apiError.type || 'API_ERROR')
+                    : finishReason === 'content_filter' ? 'CONTENT_FILTER' : 'EMPTY_RESPONSE';
+                const detail = String(apiError ? (apiError.message || apiError) : finishReason || 'no choices').slice(0, 200);
+                console.error('[chat] CHAT-API-FAIL ' + code + ' ' + detail);
+                sendJson(res, {
+                    ok: false,
+                    error: code,
+                    reply: finishReason === 'content_filter'
+                        ? CONTENT_FILTER_FALLBACK
+                        : (webEnabled ? WEB_FAIL_FALLBACK : API_FAIL_FALLBACK),
+                    web: wantWeb ? { requested: true, enabled: webEnabled } : undefined,
+                });
+                return;
             }
-            catch { }
+            // content 为空时回退取 reasoning_content（照 C#）；两者都空就是真的走神了
+            const content = String(choice?.message?.content || '').trim();
+            const reasoning = String(choice?.message?.reasoning_content || '').trim();
+            // 联网回合只认正文：没有正文时宁可说「没查到」，也不把 reasoning 里的思考/网页片段写进记忆
+            if (webEnabled && !content) {
+                recordUsage(data?.usage);
+                console.error('[chat] WEB-EMPTY-REPLY finish=' + finishReason + ' reasoning=' + (reasoning ? 1 : 0));
+                sendJson(res, { ok: false, error: 'EMPTY_WEB_REPLY', reply: WEB_EMPTY_FALLBACK, web: { requested: true, enabled: true } });
+                return;
+            }
+            const blank = !content && !reasoning;
+            // 联网工具：把「读过的网页 / 搜到的结果」拼成纯文本来源（annotations 有时为空）。
+            // 只在有正文时收：空回复/兜底文案后面挂一串来源，会让人误以为那是答案的出处。
+            const cites = webEnabled && content ? collectCitations(choice.message) : [];
+            // 记忆里只存正文（来源是展示用的附录，不占历史上下文）；联网回合的 reasoning 也不进记忆。
+            const replyClean = content || reasoning || '主人……本鲸刚刚走神了。';
+            const reply = content ? appendCitations(content, cites) : replyClean;
+            // 鱼粮：口径见 recordUsage。成功/失败回包都记；超时/网络/HTTP 非 2xx 没有可信 usage，不猜。
+            recordUsage(data?.usage);
             // 记忆写回：单轮原子追加，不再「读整份 history → 覆盖写」（并发两路会互相覆盖，/clear-memory 也会被写回）
+            // 联网回合这里只拿到 replyClean（模型正文），annotations/server_tool_calls/sources 一概不写。
             try {
                 // 记忆写入的唯一入口：index 直接注入 store.appendTurns（不再借用 saveHistory 上的兼容属性）
                 if (typeof opts.appendTurns === 'function')
-                    opts.appendTurns(message, reply);
+                    opts.appendTurns(message, replyClean);
                 else
                     console.error('[chat] MEMORY-APPEND-MISSING 没有 appendTurns，跳过记忆写入');
             }
@@ -246,11 +329,15 @@ export function createChatHandler(opts) {
             if (wantSummary) {
                 const lines = history.slice(-14).map((m) => (m.role === 'user' ? '主人' : '肥鲸') + '：' + String(m.content || ''));
                 lines.push('主人：' + message);
-                lines.push('肥鲸：' + reply);
+                lines.push('肥鲸：' + replyClean);
                 convo = lines.join('\n');
             }
             const saveSummary = opts.saveMemorySummary;
-            sendJson(res, { ok: true, reply: reply || '主人……本鲸刚刚走神了。', intimacy, upgraded });
+            // web 元信息：客户端据此区分「查过但没来源」「模型不支持联网被忽略」，不把普通回答冒充成联网结果
+            const webInfo = wantWeb
+                ? { requested: true, enabled: webEnabled, sources: cites.length, reason: webEnabled ? undefined : 'model' }
+                : undefined;
+            sendJson(res, { ok: true, reply: reply || '主人……本鲸刚刚走神了。', intimacy, upgraded, sources: cites.length ? cites : undefined, web: webInfo });
             // 缓存落盘放在回包之后：cache.setJson 内部还要 await 磁盘写 + prune 目录扫描，
             // 放在回包前会把主人可见的延迟拖上几十~几百毫秒。缓存本身已在 setJson 开头同步进内存，
             // 并发请求照样能命中，不损失命中率。

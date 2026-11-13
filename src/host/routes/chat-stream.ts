@@ -46,7 +46,7 @@ import type { ChatStreamRouteDeps } from '../ports.js'
 import { DEFAULT_CHAT_MODEL } from '../config.js'
 import {
   CHAT_URL, CHAT_CACHE_TTL, CHAT_MAX_TOKENS,
-  chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages,
+  chatCacheKey, chatContextFingerprint, readChatRequest, buildChatMessages, attachFileBlock,
   summarizeMemory, maybeCreateReminder,
 } from '../chat-core.js'
 import { parseSseBuffer } from '../../shared/sse.js'
@@ -132,6 +132,13 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       const lang = reqInfo.lang
       const isVoice = reqInfo.isVoice
       const image = reqInfo.image
+      // 文件解析（2026-11-14）：与 /chat 同口径，客户端先 /parse-doc 拿 file_id 再带过来。
+      const rawFileId = typeof body?.fileId === 'string' ? body.fileId.trim() : ''
+      const fileId = /^file-api-[A-Za-z0-9_-]{8,}$/.test(rawFileId) ? rawFileId : ''
+      if (fileId && model !== 'deepseek-flash') {
+        sendJson(res, { ok: false, error: 'FILE_MODEL_UNSUPPORTED', reply: '文档问答只支持 deepseek-flash；当前模型是 ' + model + '，换成 deepseek-flash 再看文档。' }, 400)
+        return
+      }
       // 用 trim 判空：只发空格/换行不该白调一次模型
       if (!message.trim()) {
         res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive' })
@@ -179,7 +186,7 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       // 模型名进 key：换模型后旧缓存自动失效（与普通 /chat 一致）
       const cacheKey = chatCacheKey(lang, message, isVoice, chatContextFingerprint(memSummary, history), model)
       // 与普通 /chat 一致：太短的消息不缓存；带图的消息也不缓存（缓存 key 里没有图片内容）
-      const cacheUsable = reqInfo.cacheable && !image.b64
+      const cacheUsable = reqInfo.cacheable && !image.b64 && !fileId
 
       if (opts.cache && cacheOn && cacheUsable) {
         try {
@@ -226,6 +233,7 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
         message,
         image,
       })
+      attachFileBlock(messages, fileId)
 
       // 超时从「准备发上游请求」这一刻才开始：读请求体、查缓存慢，不该算进模型响应时间
       ctl = typeof AbortController !== 'undefined' ? new AbortController() : null

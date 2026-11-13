@@ -49,6 +49,8 @@ import { createTtsHandler } from './host/routes/tts.js';
 import { createCloudTts, readCloudVoice } from './host/voice/cloud-tts.js';
 import { createEdgeTtsEngine, getTtsEngineStats } from './host/tts-engine.js';
 import { createAsrHandler } from './host/routes/asr.js';
+import { createOcrHandler } from './host/routes/ocr.js';
+import { createParseDocHandler } from './host/routes/parse-doc.js';
 import { createDailyHandler } from './host/routes/daily.js';
 import { createBackupHandlers } from './host/routes/backup.js';
 import { createStatsHandler } from './host/routes/stats.js';
@@ -369,6 +371,9 @@ export function apply(ctx, rawConfig) {
     const tts = createTtsHandler({ cache: ttsCache, engine: ttsEngine, cloudTts });
     // /asr 只注入 DeepSeek Key：2026-11-14 起官方 ASR 是唯一引擎（SiliconFlow 已删，无兜底）
     const asr = createAsrHandler({ getDeepseekKey: getKey, cache: asrCache, language: () => readAsrLanguage(PLUGIN_DIR) });
+    // 官方全家桶：OCR（取字）与文件解析（Files API → file_id）
+    const ocr = createOcrHandler({ getDeepseekKey: getKey });
+    const parseDoc = createParseDocHandler({ getDeepseekKey: getKey });
     const personalityRoutes = createPersonalityHandlers({
         repo: personality,
         learningEnabled: () => personalityLearningEnabled,
@@ -497,7 +502,7 @@ export function apply(ctx, rawConfig) {
     const nervous = createNervousHandler({ collector: hostCollector });
     // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
     const routeTable = createRouteTable({
-        misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles, briefing, weather, tts, asr, personality: personalityRoutes,
+        misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles, briefing, weather, tts, asr, ocr, parseDoc, personality: personalityRoutes,
         daily, backup, stats, configView, proofread, nervous,
     });
     // 所有路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，

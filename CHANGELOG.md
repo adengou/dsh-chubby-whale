@@ -2,6 +2,34 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [1.4.13] - 2026-11-14
+
+### 修复（肥鲸头顶气泡的三角箭头不见了）
+- 根因：2026-11-13 给长诗加 `max-height + overflow-y:auto` 时把滚动层放在了 `.chubby-bubble` 本体上；`::after` 三角在 `bottom:-9px`，整颗落在滚动容器的 padding 盒外，被 overflow 裁掉（短句也一样）。
+- 修法：壳层 `overflow:visible`，滚动层下移到唯一的内层文字 div（`.chubby-bubble>div`）；三角规则原样保留。长文仍可滚，定位/宽度不变，调度器不动。
+- 测试：`test-client-glue` 加 4 条静态断言 + 2 个变异体；`test.mjs` 加 2 条源码契约。
+
+### 加固（官方 OCR / 文件解析 / 联网）
+- **OCR**：改用 `fetchWithTimeout` 自己读响应体，不再把「识别中途超时/断连」吞成 `ok:true` + 空文本；200 里的 error、空体、HTML、缺 pages 一律按失败处理；回包 text 限 200k 码点、pages 400k 预算；30MB 上限真正可达。
+- **文件解析**：`/chat-stream` 补上 fileId（与 /chat 同一 file 块、禁缓存、模型闸门）；官方超时收到 250s；请求体外壳留 64KiB 余量；file_id 门槛与 /chat 统一；客户端按接口预算超时（parse-doc 260s / OCR 200s / chat 45s），失败文案中文化，进度气泡不再压住结果。
+- **联网**：联网回合 90s 超时（原 30s 不够搜索/抓取）；web:true 不读不写缓存；200+error、content_filter、空回复不写记忆；来源按 URL 归一去重、标题补全、最多 5 条；`tool_image_search` 计入 5 元/1000 次；语音朗读不带来源 URL；非 flash 模型明确提示不支持联网。
+
+### 测试
+- 新增 `test-ocr.mjs`（80）、`test-file-parse.mjs`（62）、`test-web-search.mjs`（64）；均已接入 `npm test`。
+- 全链 5894 项 0 失败（86 套件，未识别 0）。
+
+
+### 新增（官方全家桶：OCR / 文件解析 / 联网搜索）
+- **OCR**：宿主 `POST /api/chubby-whale/ocr` → 官方 `POST /v1/tools/ocr`（multipart：purpose + file，180s 上限）；返回逐页文本并清洗 `<｜ref｜>/<｜box｜>` 定位标记。图片拖进来时**先 OCR 取字、再拼进视觉提问**——表格/截图里的数字与公文编号不再靠模型「猜」。官方 1.5 元/1000 页。
+- **文件解析**：宿主 `POST /api/chubby-whale/parse-doc` → 官方 Files API（`purpose` 必须写在 `file` 之前；文件 1 小时有效），返回 `file_id`。拖入 PDF/Word/PowerPoint 时上传解析，再在聊天里用 `{type:'file', file_id}` 引用，模型基于整份文档回答；txt/md/json/log/csv 仍本地读（离线、免费）。
+- **联网搜索 / 阅读链接**：`/chat` 接受 `web:true` → 声明 `deepseek_web_search` + `deepseek_read_url`（只支持 `deepseek-flash`）；回答末尾附来源（annotations 与 server_tool_calls 两处合并、按 URL 去重编号）。菜单「联网搜索」**默认关**；联网回合走非流式（来源在最终响应里）、不写聊天缓存；搜索/抓取 5 元/1000 次计入鱼粮账本。
+- 测试：新增 `scripts/test-official-tools.mjs`（55 项），覆盖 multipart 顺序、OCR 清洗、file_id 内容块、联网来源/计费、非 flash 忽略、非法输入降级。
+
+### 真实外呼验证（2026-11-14，部署前用官方接口直连）
+- OCR：生成的 PNG「发票金额：1280 元 / 2026-11-14 上海」→ 2.4s 原样识别，页数 1。
+- 文件解析：生成的 DOCX《关于十一月工作的汇报》→ 2.5s 得 `file-api-…`，聊天引用后正确答出标题与主题。
+- 联网：带 URL 的提问触发 `deepseek_read_url`（usage.tool_fetch=1），回答带出处。
+
 ## [1.4.12] - 2026-11-14
 
 ### 修复（工作区输入框不再冒诗词弹幕）

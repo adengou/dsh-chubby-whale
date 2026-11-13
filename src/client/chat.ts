@@ -84,6 +84,16 @@ export function resolveChatLang(): string {
 }
 
 /**
+ * 联网搜索开关（菜单「联网搜索」）：**默认关**。
+ * 打开后 /chat 请求带 web:true，宿主声明 deepseek_web_search / deepseek_read_url，
+ * 搜索与抓取由服务端完成（5 元/1000 次），回答末尾附来源。
+ * 联网回合不走流式：来源在最终响应里，流式拿不到完整引用，先保证「查了、附出处」。
+ */
+export function resolveWebSearchOn(): boolean {
+  try { return localStorage.getItem('chubby-web-search') === 'on' } catch (e) { return false }
+}
+
+/**
  * 流式预览：气泡里显示「从头开始、截在完整句子处」的片段，而不是每次取结尾 60 字。
  * 旧实现 full.slice(-60) 每 400ms 换一个窗口，屏幕上就是半句半句的碎片，
  * 主人看不出这段话从哪来；现在开头固定、只在句子边界截断并加省略号，读起来是连续的。
@@ -107,6 +117,17 @@ function fishTip(host: ChatHost, tip: string, ms = 6000): void {
   try { host.bubble(tip, ms, { staleAfter: 15000 }) } catch (e) { }
 }
 
+/**
+ * 朗读用的正文：去掉宿主 appendCitations 拼在末尾的「来源」附录。
+ * 消息列表/气泡仍保留完整来源（可点可读），但 TTS 不该把一串 URL 念出来。
+ * 只认 appendCitations 的固定格式「\n\n来源：\n…」；没有这个格式时原样返回。
+ */
+function speechBody(reply: string): string {
+  const text = String(reply || '')
+  const m = /\n{2,}来源：\n[\s\S]*$/.exec(text)
+  return m ? text.slice(0, m.index).trim() : text
+}
+
 /** 诊断对象：与旧实现一样直接写 window.__chubbyWhale */
 function diag(): any {
   try {
@@ -118,6 +139,11 @@ function diag(): any {
 
 /** 普通 /chat 的总超时（含网络与模型） */
 const CHAT_TIMEOUT_MS = 30000
+/**
+ * 联网回合的总超时：服务端要先搜索/抓取再生成，30 秒不够。
+ * 比宿主 routes/chat.ts 的 WEB_CHAT_TIMEOUT（90 秒）长 10 秒，保证先收到宿主的超时错误体。
+ */
+const WEB_CHAT_TIMEOUT_MS = 100000
 /** 流式在等响应头时的兜底（实测响应头 78ms；超过 4 秒基本是连接没建起来） */
 const STREAM_HEADER_TIMEOUT_MS = 4000
 /** 流式非 2xx 中，只有这些状态码值得回退普通 /chat（路由没挂/暂时不可用） */
@@ -367,7 +393,9 @@ export function createChatSender(host: ChatHost): ChatController {
     try { const hit = host.persona.reactTo(text); if (hit) { host.say(hit.text, 4000); if (hit.event === 'praise') host.heart() } } catch (e) { }
     try { if (host.onPhase) host.onPhase('thinking') } catch (e) { }
     // 流式优先：边生成边念；失败会自动回退到下面的普通 /chat
-    try { if (await tryStream(text, opts, myEpoch)) return } catch (e) { }
+    // 联网回合例外：来源与 server_tool_calls 只在最终响应里，走普通 /chat 拿完整引用
+    const web = resolveWebSearchOn()
+    if (!web) { try { if (await tryStream(text, opts, myEpoch)) return } catch (e) { } }
     // 每个 await 之后都要问一句「我还是当前那个请求吗」（docs/并发纪律.md 五-1）：
     // 流式没接上、正要回退普通 /chat 的这段间隙里，可能已经有更晚的提问顶掉了本纪元。
     // 这时再发一次 /chat 会白烧一轮 token，还会把 busy / activeChat 从新请求手里抢过来。
@@ -384,13 +412,15 @@ export function createChatSender(host: ChatHost): ChatController {
     const ctl = newAbortController()
     activeChat = { ctl }
     let timeoutTimer: any = null
+    // 联网回合要等服务端搜索/抓取，预算比普通聊天长；两条路径的计时器共用同一个变量收口
+    const chatTimeoutMs = web ? WEB_CHAT_TIMEOUT_MS : CHAT_TIMEOUT_MS
     try {
-      // 30 秒上限：请求卡住时别让状态永远停在「在想…」。
+      // 上限：请求卡住时别让状态永远停在「在想…」。
       // 用自己登记的 controller（而不是 AbortSignal.timeout），停止说话时才能一起中断。
       if (ctl) {
         timeoutTimer = setTimeout(() => {
           try { ctl.abort() } catch (e) { }
-        }, CHAT_TIMEOUT_MS)
+        }, chatTimeoutMs)
       }
       const tChat = performance.now()
       data = await postJson('/chat', {
@@ -399,8 +429,9 @@ export function createChatSender(host: ChatHost): ChatController {
         // 原来这里写死 true，打字也会被当成语音，且与流式的缓存键对不上。
         voice: !!(opts && opts.voice),
         lang: resolveChatLang(),
+        web,
       }, {
-        signal: ctl ? ctl.signal : timeoutSignal(CHAT_TIMEOUT_MS),
+        signal: ctl ? ctl.signal : timeoutSignal(chatTimeoutMs),
       })
       try { host.recordChatLatency(Math.round(performance.now() - tChat)) } catch (e) { }
       if (!host.epoch.isCurrent(myEpoch)) return   // 主人已经问了新问题：这条旧回复作废（防串线）
@@ -410,9 +441,16 @@ export function createChatSender(host: ChatHost): ChatController {
           ? '主人，本鲸这边没接上（' + String(data.error || '接口没应') + '），等会儿再问一次？'
           : '主人……本鲸走神了。'
       if (d1) d1.lastChat = { stage: 'fetched', reply: String(reply).slice(0, 40), at: Date.now() }
+      // 宿主明确回报「联网被忽略」（例如配置模型不是 deepseek-flash）：不能让主人以为这轮查过网页
+      if (data && data.ok !== false && data.web && data.web.requested && data.web.enabled === false) {
+        if (d1) d1.lastChat.webIgnored = true
+        try { host.bubble('当前模型不支持联网搜索，这轮按普通聊天回答～', 5000, { staleAfter: 12000 }) } catch (e) { }
+      }
       try { if (host.onPhase) host.onPhase(data && data.ok === false ? 'error' : 'success') } catch (e) { }
       host.setMessages((m: any[]) => [...m, { who: 'fish', text: reply }])
-      if (host.voiceMode.current) { host.bubble('（说）' + reply, 8000, { key: 'chat:stream', staleAfter: 20000 }) }
+      // 语音模式的气泡是「正在说什么」的临时字幕，同样不把来源 URL 塞进去（消息列表仍保留完整来源）
+      const bubbleReply = (data && Array.isArray(data.sources) && data.sources.length) ? speechBody(reply) : reply
+      if (host.voiceMode.current && bubbleReply) { host.bubble('（说）' + bubbleReply, 8000, { key: 'chat:stream', staleAfter: 20000 }) }
       if (data && data.upgraded) host.bubble('本鲸又长大一点啦！', 4000, { staleAfter: 15000 })
     } catch (err: any) {
       if (!host.epoch.isCurrent(myEpoch)) return   // 被停止说话/新提问作废：不弹错误、不念旧答案
@@ -442,8 +480,10 @@ export function createChatSender(host: ChatHost): ChatController {
           if (data && data.reply) {
             const rp = String(data.reply)
             const d2 = diag()
-            if (d2) d2.lastChat = { stage: 'speak', reply: rp.slice(0, 40), at: Date.now() }
-            host.speakReply(rp)
+            if (d2) d2.lastChat = { stage: 'speak', reply: rp.slice(0, 40), at: Date.now(), web: data.web }
+            // 联网回复的「来源」留在消息列表里给人看；朗读只念正文，不念一串 URL
+            const spoken = (Array.isArray(data.sources) && data.sources.length) ? speechBody(rp) : rp
+            if (spoken) host.speakReply(spoken)
           }
         } catch (e) { }
         host.scrollBody()

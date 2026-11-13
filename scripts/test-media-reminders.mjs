@@ -733,7 +733,7 @@ async function main() {
     ok('没文件 → empty', (await dropzone.handleFileDrop(null, { showBubble: noop, fetchImpl: stubFetch })).kind === 'empty')
     ok('超 4MB → too-large（先拦，不读文件）', (await dropzone.handleFileDrop({ size: 5 * 1024 * 1024 }, { showBubble: noop, fetchImpl: stubFetch })).kind === 'too-large')
     ok('没有 fetch → error', (await dropzone.handleFileDrop({ size: 10, name: 'a.txt' }, { showBubble: noop, fetchImpl: null })).kind === 'error')
-    ok('拖入非图片非文本 → unsupported', (await dropzone.handleFileDrop({ size: 10, name: 'a.pdf', type: 'application/pdf' }, { showBubble: noop, fetchImpl: stubFetch })).kind === 'unsupported')
+    ok('拖入非图片非文本 → unsupported', (await dropzone.handleFileDrop({ size: 10, name: 'a.xyz', type: 'application/octet-stream' }, { showBubble: noop, fetchImpl: stubFetch })).kind === 'unsupported')
 
     // 图片：base64 超上限在客户端就拦
     globalThis.FileReader = dataUrlReader('data:image/png;base64,' + 'D'.repeat(4 * 1024 * 1024 + 8))
@@ -744,10 +744,17 @@ async function main() {
     // 图片：正常路径
     globalThis.FileReader = dataUrlReader('data:image/png;base64,QUJD')
     const bodies = []
-    const okFetch = async (_url, init) => { bodies.push(JSON.parse(String(init.body))); return { ok: true, status: 200, json: async () => ({ ok: true, reply: '一碗白饭' }) } }
+    const okFetch = async (url, init) => {
+      const body = JSON.parse(String(init.body))
+      // 图片路径会先打 /ocr（2026-11-14 起），再打 /chat；只记录 /chat 的请求体
+      if (String(url).indexOf('/ocr') >= 0) return { ok: true, status: 200, json: async () => ({ ok: true, text: '图上写着白饭' }) }
+      bodies.push(body)
+      return { ok: true, status: 200, json: async () => ({ ok: true, reply: '一碗白饭' }) }
+    }
     const spoke = []
     const rImg = await dropzone.handleFileDrop({ size: 100, name: 'p.png', type: 'image/png' }, { showBubble: noop, speakText: (t) => spoke.push(t), fetchImpl: okFetch })
-    ok('图片：走视觉提问并朗读回复', rImg.ok === true && rImg.kind === 'image' && rImg.message === dropzone.VISION_PROMPT && spoke[0] === '一碗白饭')
+    ok('图片：走视觉提问并朗读回复', rImg.ok === true && rImg.kind === 'image' && String(rImg.message).indexOf(dropzone.VISION_PROMPT) === 0 && spoke[0] === '一碗白饭')
+    ok('图片：OCR 文字拼进提问（不再让模型猜字）', String(rImg.message).indexOf('图上写着白饭') > 0 && String(rImg.message).indexOf('图片里的文字') > 0, String(rImg.message))
     ok('图片：请求带 image 与 mime', bodies[0].image === 'QUJD' && bodies[0].imageMime === 'image/png')
 
     // 朗读回调抛错不能把成功变成失败
