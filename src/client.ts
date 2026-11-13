@@ -567,11 +567,12 @@ registerSkinActions(actions)
           if (v && v.speak && !v.speaking()) v.speak(text, { rate: chatRate(), pitch: '' })
         } catch (e) { }
       }
-      // 诗词线：位置比主气泡再高一点（y-44），独立元素独立计时
+      // 诗词线：调度器保证同一时间只有一条线活着，不再需要 y-44 错位；
+      // 2026-11-14 主人反馈「念诗时气泡离头太远」，与主气泡同高（gap 仍是 28px）。
       const poemBubble = createBubble({
         el: () => poemBubbleRef.current,
         textEl: () => poemBubbleTextRef.current,
-        pos: () => ({ x: posRef.current.x, y: posRef.current.y - 44 }),
+        pos: () => posRef.current,
         xOffset: W / 2,
       })
       // persona 线：主气泡略低（y+22），问候/饥饿/今日一句专用

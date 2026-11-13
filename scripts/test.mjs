@@ -3307,6 +3307,7 @@ try {
   const { readFileSync: rf5 } = await import('node:fs')
   const clientSrc = rf5('src/client.ts', 'utf8')
   ok('首次安装会给 Key 提示', clientSrc.indexOf('还没配 Key') >= 0 && clientSrc.indexOf("getJson('/status')") >= 0)
+  ok('诗词气泡与主气泡同高（不再 y-44 错位）', clientSrc.indexOf('const poemBubble') >= 0 && clientSrc.indexOf('posRef.current.y - 44') < 0)
   const voiceSrc = rf5('src/client/voice.ts', 'utf8')
   ok('无 Key 后不再反复上传识别', voiceSrc.indexOf('asrNoKey') >= 0 && voiceSrc.indexOf('if (asrNoKey)') >= 0)
   ok('重开语音会话会重新尝试', voiceSrc.indexOf('asrNoKey = false') >= 0)

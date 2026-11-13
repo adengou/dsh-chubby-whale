@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.17";
+  var VERSION = "1.4.18";
 
   // src/client/styles.ts
   var W = 240;
@@ -12087,7 +12087,7 @@
         const poemBubble = createBubble({
           el: () => poemBubbleRef.current,
           textEl: () => poemBubbleTextRef.current,
-          pos: () => ({ x: posRef.current.x, y: posRef.current.y - 44 }),
+          pos: () => posRef.current,
           xOffset: W / 2
         });
         const personaBubble = createBubble({
