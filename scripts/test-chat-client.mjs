@@ -263,6 +263,26 @@ async function caseStreamSuccess() {
   ok('诊断写入 stream-done', !!d.lastChat && d.lastChat.stage === 'stream-done')
 }
 
+
+async function caseStreamPreviewCoherent() {
+  console.log('\n[1b] 流式气泡：从头显示、按完整句截断（不再取结尾 60 字）')
+  resetCase()
+  const { host, st } = mkHost()
+  const chat = mod.createChatSender(host)
+  let s = null
+  enqueue((url, init) => { s = sseRes(init); return s.res })
+  const p = chat.send('你好')
+  await tick()
+  const long = '春江潮水连海平，海上明月共潮生。'.repeat(12)
+  s.ctl.push({ delta: long })
+  await tick()
+  s.ctl.push({ done: true, reply: long, cached: false, firstDeltaMs: 5, ms: 20 })
+  s.ctl.end()
+  await p
+  const preview = st.bubbles.find((b) => b.indexOf('春江潮水') >= 0)
+  ok('预览从第一句开头起（不再切片到半句）', !!preview && preview.indexOf('春江潮水连海平') === 0, String(preview).slice(0, 30))
+  ok('超长预览按完整句截断并加省略号', !!preview && preview.endsWith('…'), String(preview).slice(-6))
+}
 async function caseStreamPreempt() {
   console.log('\n[2] 新提问打断旧流：旧 delta 不再入列/朗读，占线归新请求')
   resetCase()
@@ -633,6 +653,7 @@ function caseStaticBoundaries() {
 // ================================================================ 跑
 try {
   await caseStreamSuccess()
+  await caseStreamPreviewCoherent()
   await caseStreamPreempt()
   await caseAbortNormalChat()
   await caseBusyGuard()

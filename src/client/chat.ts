@@ -83,6 +83,24 @@ export function resolveChatLang(): string {
   } catch (e) { return 'auto' }
 }
 
+/**
+ * 流式预览：气泡里显示「从头开始、截在完整句子处」的片段，而不是每次取结尾 60 字。
+ * 旧实现 full.slice(-60) 每 400ms 换一个窗口，屏幕上就是半句半句的碎片，
+ * 主人看不出这段话从哪来；现在开头固定、只在句子边界截断并加省略号，读起来是连续的。
+ */
+function streamPreview(text: string, voice: boolean): string {
+  const t = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!t) return ''
+  const MAX = 160
+  let body = t
+  if (t.length > MAX) {
+    const head = t.slice(0, MAX)
+    const m = /[。！？!?…]/.exec(head)
+    body = (m ? head.slice(0, m.index + 1) : head).trim() + '…'
+  }
+  return voice ? '（说）' + body : body
+}
+
 /** 兜底提示：消息列表留一条 + 气泡（两个动作各自失败都不影响主流程，原来三处各写两份） */
 function fishTip(host: ChatHost, tip: string, ms = 6000): void {
   try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tip }]) } catch (e) { }
@@ -232,7 +250,7 @@ export function createChatSender(host: ChatHost): ChatController {
             full += obj.delta
             speakSegs(sb.push(obj.delta))
             const nowT = Date.now()
-            if (nowT - bubbleAt > 400) { bubbleAt = nowT; host.bubble(full.slice(-60), 3000, { key: 'chat:stream' }) }
+            if (nowT - bubbleAt > 400) { bubbleAt = nowT; host.bubble(streamPreview(full, host.voiceMode.current), 3000, { key: 'chat:stream' }) }
           }
           if (obj.done) {
             // 收尾前再校验一次：旧流的 done 不能把气泡/消息列表/朗读补上

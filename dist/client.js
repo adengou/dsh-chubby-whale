@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.10";
+  var VERSION = "1.4.11";
 
   // src/client/styles.ts
   var W = 240;
@@ -10019,6 +10019,18 @@
       return "auto";
     }
   }
+  function streamPreview(text, voice) {
+    const t = String(text || "").replace(/\s+/g, " ").trim();
+    if (!t) return "";
+    const MAX = 160;
+    let body = t;
+    if (t.length > MAX) {
+      const head = t.slice(0, MAX);
+      const m = /[。！？!?…]/.exec(head);
+      body = (m ? head.slice(0, m.index + 1) : head).trim() + "…";
+    }
+    return voice ? "（说）" + body : body;
+  }
   function fishTip(host, tip, ms2 = 6e3) {
     try {
       host.setMessages((m) => [...m, { who: "fish", text: tip }]);
@@ -10201,7 +10213,7 @@
               const nowT = Date.now();
               if (nowT - bubbleAt > 400) {
                 bubbleAt = nowT;
-                host.bubble(full.slice(-60), 3e3, { key: "chat:stream" });
+                host.bubble(streamPreview(full, host.voiceMode.current), 3e3, { key: "chat:stream" });
               }
             }
             if (obj.done) {
