@@ -406,6 +406,9 @@ registerSkinActions(actions)
       const poemBubbleTextRef = R.useRef(null)
       const toolBubbleRef = R.useRef(null)
       const toolBubbleTextRef = R.useRef(null)
+      // persona 台词线：问候/饥饿/今日一句，与人设台词之外的对话分开
+      const personaBubbleRef = R.useRef(null)
+      const personaBubbleTextRef = R.useRef(null)
       const bubbleTextRef = R.useRef(null)
 
       // 语音桥：回调只在 voice-bridge 里建一份（待命 effect 与菜单「唤醒」共用）。
@@ -520,7 +523,7 @@ registerSkinActions(actions)
           reminderPoller: () => reminderPollerRef.current,
           stopTts: () => stopTts(),
           stopMelody: () => melody.stop(),
-          clearBubble: () => { clearBubbleTimer(bubbleRef.current); clearBubbleTimer(poemBubbleRef.current); clearBubbleTimer(toolBubbleRef.current) },
+          clearBubble: () => { clearBubbleTimer(bubbleRef.current); clearBubbleTimer(poemBubbleRef.current); clearBubbleTimer(personaBubbleRef.current); clearBubbleTimer(toolBubbleRef.current) },
         })
       }, [])
 
@@ -533,11 +536,28 @@ registerSkinActions(actions)
         onHide: () => { try { restoreIdleStatus() } catch (e) { } },
       })
       function showBubble(text: string, ms = 2400): void { bubble.show(text, ms) }
+      /** persona 台词（问候/饥饿/今日一句）：走独立线，不占对话主气泡 */
+      function sayPersonaLine(text: string, ms = 4000): void {
+        if (!text) return
+        try { personaBubble.show(text, ms) } catch (e) { }
+        try {
+          if (localStorage.getItem('chubby-voice') === 'off') return
+          const v: any = bridge.ensure()
+          if (v && v.speak && !v.speaking()) v.speak(text, { rate: chatRate(), pitch: '' })
+        } catch (e) { }
+      }
       // 诗词线：位置比主气泡再高一点（y-44），独立元素独立计时
       const poemBubble = createBubble({
         el: () => poemBubbleRef.current,
         textEl: () => poemBubbleTextRef.current,
         pos: () => ({ x: posRef.current.x, y: posRef.current.y - 44 }),
+        xOffset: W / 2,
+      })
+      // persona 线：主气泡略低（y+22），问候/饥饿/今日一句专用
+      const personaBubble = createBubble({
+        el: () => personaBubbleRef.current,
+        textEl: () => personaBubbleTextRef.current,
+        pos: () => ({ x: posRef.current.x, y: posRef.current.y + 22 }),
         xOffset: W / 2,
       })
       // 解说线：位置略低（y+10），与诗词/主气泡错开
@@ -866,7 +886,7 @@ registerSkinActions(actions)
       greetedOnce = true
       if (Date.now() < poemLockUntil) return // 诗词气泡正显示：问候让路
       const g = persona.greeting()
-      if (g) sayLine(g, 5000)
+      if (g) sayPersonaLine(g, 5000)
       // 今日一句：开场问候之后补一句当天的诗（/daily 失败静默；chubby-daily-greet=off 可关）
       try {
         // 默认不再自动念「今日一句」：每次开机都冒、诗又长（如《蜀道难》全篇），主人嫌吵。
@@ -878,7 +898,7 @@ registerSkinActions(actions)
               if (d && d.ok && d.text) {
                 // 只取前 30 字：全篇动辄几百字，气泡装不下、听着也累
                 const short = Array.from(String(d.text)).slice(0, 30).join('')
-                sayLine('今天这句——' + short + (Array.from(String(d.text)).length > 30 ? '…' : '') + (d.source ? '（' + String(d.source) + '）' : ''), 9000)
+                sayPersonaLine('今天这句——' + short + (Array.from(String(d.text)).length > 30 ? '…' : '') + (d.source ? '（' + String(d.source) + '）' : ''), 9000)
               }
             } catch (e) { }
           }).catch(() => { })
@@ -886,7 +906,7 @@ registerSkinActions(actions)
       } catch (e) { }
     } catch (e) { }
   },
-          hungry: () => { try { if (Date.now() < poemLockUntil) return; sayLine(persona.line('hungry'), 4000) } catch (e) { } },
+          hungry: () => { try { if (Date.now() < poemLockUntil) return; sayPersonaLine(persona.line('hungry'), 4000) } catch (e) { } },
           // 打了招呼再看是不是饿了：饿着就补一句（对应人设的 hungry 场景）
           hungryNow: (() => { try { const st: any = (persona as any).state; return !!(st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1000) } catch (e) { return false } })(),
         })
@@ -1781,6 +1801,7 @@ registerSkinActions(actions)
         ),
         h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         h('div', { ref: poemBubbleRef, className: 'chubby-bubble chubby-bubble-poem' }, h('div', { ref: poemBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+        h('div', { ref: personaBubbleRef, className: 'chubby-bubble chubby-bubble-persona' }, h('div', { ref: personaBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         h('div', { ref: toolBubbleRef, className: 'chubby-bubble chubby-bubble-tool' }, h('div', { ref: toolBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         recoverProps ? h('div', Object.assign({}, recoverProps, { style: recoverDotStyle }), '○') : null,
         menu ? h('div', menuRootProps({ menu, lang }),

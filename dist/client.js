@@ -8592,7 +8592,7 @@
   // src/client/bubble.ts
   var BUBBLE_CSS = (
     // 内置泰文字体（data URL）：不依赖用户系统是否安装泰文字体
-    THAI_FONT_FACE + ".chubby-bubble{position:fixed;z-index:10002;max-width:320px;max-height:calc(100vh - 120px);overflow-y:auto;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 " + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}'
+    THAI_FONT_FACE + ".chubby-bubble{position:fixed;z-index:10002;max-width:320px;max-height:calc(100vh - 120px);overflow-y:auto;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 " + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}.chubby-bubble-persona{background:#fff8ee;}'
   );
   var STATUS_TEXTS = ["在听…", "在想…", "识别中…", "在说…"];
   deepFreeze(STATUS_TEXTS);
@@ -11314,6 +11314,8 @@
         const poemBubbleTextRef = R.useRef(null);
         const toolBubbleRef = R.useRef(null);
         const toolBubbleTextRef = R.useRef(null);
+        const personaBubbleRef = R.useRef(null);
+        const personaBubbleTextRef = R.useRef(null);
         const bubbleTextRef = R.useRef(null);
         const bridgeRef = hookApi.useLazyRef(() => createVoiceBridge({
           narration,
@@ -11443,6 +11445,7 @@
             clearBubble: () => {
               clearBubbleTimer(bubbleRef.current);
               clearBubbleTimer(poemBubbleRef.current);
+              clearBubbleTimer(personaBubbleRef.current);
               clearBubbleTimer(toolBubbleRef.current);
             }
           });
@@ -11462,10 +11465,29 @@
         function showBubble(text, ms2 = 2400) {
           bubble.show(text, ms2);
         }
+        function sayPersonaLine(text, ms2 = 4e3) {
+          if (!text) return;
+          try {
+            personaBubble.show(text, ms2);
+          } catch (e) {
+          }
+          try {
+            if (localStorage.getItem("chubby-voice") === "off") return;
+            const v = bridge.ensure();
+            if (v && v.speak && !v.speaking()) v.speak(text, { rate: chatRate(), pitch: "" });
+          } catch (e) {
+          }
+        }
         const poemBubble = createBubble({
           el: () => poemBubbleRef.current,
           textEl: () => poemBubbleTextRef.current,
           pos: () => ({ x: posRef.current.x, y: posRef.current.y - 44 }),
+          xOffset: W / 2
+        });
+        const personaBubble = createBubble({
+          el: () => personaBubbleRef.current,
+          textEl: () => personaBubbleTextRef.current,
+          pos: () => ({ x: posRef.current.x, y: posRef.current.y + 22 }),
           xOffset: W / 2
         });
         const toolBubble = createBubble({
@@ -11878,7 +11900,7 @@
                 greetedOnce = true;
                 if (Date.now() < poemLockUntil) return;
                 const g = persona.greeting();
-                if (g) sayLine(g, 5e3);
+                if (g) sayPersonaLine(g, 5e3);
                 try {
                   const dailyOn = (() => {
                     try {
@@ -11892,7 +11914,7 @@
                       try {
                         if (d && d.ok && d.text) {
                           const short = Array.from(String(d.text)).slice(0, 30).join("");
-                          sayLine("今天这句——" + short + (Array.from(String(d.text)).length > 30 ? "…" : "") + (d.source ? "（" + String(d.source) + "）" : ""), 9e3);
+                          sayPersonaLine("今天这句——" + short + (Array.from(String(d.text)).length > 30 ? "…" : "") + (d.source ? "（" + String(d.source) + "）" : ""), 9e3);
                         }
                       } catch (e) {
                       }
@@ -11907,7 +11929,7 @@
             hungry: () => {
               try {
                 if (Date.now() < poemLockUntil) return;
-                sayLine(persona.line("hungry"), 4e3);
+                sayPersonaLine(persona.line("hungry"), 4e3);
               } catch (e) {
               }
             },
@@ -12987,6 +13009,7 @@
           ),
           h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           h("div", { ref: poemBubbleRef, className: "chubby-bubble chubby-bubble-poem" }, h("div", { ref: poemBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+          h("div", { ref: personaBubbleRef, className: "chubby-bubble chubby-bubble-persona" }, h("div", { ref: personaBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           h("div", { ref: toolBubbleRef, className: "chubby-bubble chubby-bubble-tool" }, h("div", { ref: toolBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "○") : null,
           menu ? h(

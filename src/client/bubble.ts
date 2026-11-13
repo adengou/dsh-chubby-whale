@@ -24,7 +24,9 @@ export const BUBBLE_CSS =
   // 诗词线：字号略小、米色底，与主气泡区分
   '.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}' +
   // 解说线：字号更小、灰蓝底
-  '.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}'
+  '.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}' +
+  // persona 线：暖白底、字号与主气泡一致
+  '.chubby-bubble-persona{background:#fff8ee;}'
 
 /** 这些是「纯状态字」：气泡里只剩它们时才允许静默收起 */
 export const STATUS_TEXTS = ['在听…', '在想…', '识别中…', '在说…']
