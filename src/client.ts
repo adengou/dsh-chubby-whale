@@ -1202,6 +1202,49 @@ registerCapsuleActions(actions)
           return pick
         } catch (e) { return Math.floor(Math.random() * BG_GALLERY.length) }
       }
+      /**
+       * 动态找「挡住背景的铺满视口容器」并透明化。
+       *
+       * 为什么不能写死类名：DSH 的皮肤/布局类名带 hash，换皮肤或升级就变；
+       * 用 elementFromPoint 采样页面几个点，沿祖先链找「宽高都接近视口」的不透明块——
+       * 那才是真挡住背景的层，透明它就有图了，不认皮肤名。
+       */
+      function clearOccluders(): void {
+        try {
+          const W = window.innerWidth, H = window.innerHeight
+          const pts: Array<[number, number]> = [
+            [Math.floor(W * 0.5), Math.floor(H * 0.5)],
+            [Math.floor(W * 0.5), Math.floor(H * 0.12)],
+            [Math.floor(W * 0.88), Math.floor(H * 0.5)],
+            [Math.floor(W * 0.12), Math.floor(H * 0.5)],
+          ]
+          const done = new Set<Element>()
+          for (const pt of pts) {
+            let el = document.elementFromPoint(pt[0], pt[1]) as HTMLElement | null
+            let depth = 0
+            while (el && el !== document.documentElement && depth < 14) {
+              if (el !== document.body && !done.has(el)) {
+                const cs = getComputedStyle(el)
+                const bg = String(cs.backgroundColor || "")
+                const bi = String(cs.backgroundImage || "none")
+                const opaque = bg !== "transparent" && !/rgba\(0,\s*0,\s*0,\s*0\)/.test(bg)
+                const r = el.getBoundingClientRect()
+                const full = r.width >= W * 0.8 && r.height >= H * 0.8
+                if (full && (opaque || bi !== "none")) {
+                  try {
+                    el.style.setProperty("background-color", "transparent", "important")
+                    el.style.setProperty("background-image", "none", "important")
+                  } catch (e) { }
+                  done.add(el)
+                }
+              }
+              el = el.parentElement
+              depth++
+            }
+          }
+        } catch (e) { }
+      }
+
       function applySkinBg(index: number): void {
         try {
           const pick = BG_GALLERY[((index % BG_GALLERY.length) + BG_GALLERY.length) % BG_GALLERY.length]
@@ -1261,6 +1304,8 @@ registerCapsuleActions(actions)
               } catch (e) { }
             }
           } catch (e) { }
+          // 等 DSH 布局稳定后再清遮挡层（皮肤/面板可能后渲染）
+          setTimeout(() => { try { clearOccluders() } catch (e) { } }, 600)
           showBubble('背景 ' + (index + 1) + '/' + BG_GALLERY.length + ' ～', 2000)
         } catch (e) { }
       }

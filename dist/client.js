@@ -12157,6 +12157,43 @@
             return Math.floor(Math.random() * BG_GALLERY.length);
           }
         }
+        function clearOccluders() {
+          try {
+            const W2 = window.innerWidth, H2 = window.innerHeight;
+            const pts = [
+              [Math.floor(W2 * 0.5), Math.floor(H2 * 0.5)],
+              [Math.floor(W2 * 0.5), Math.floor(H2 * 0.12)],
+              [Math.floor(W2 * 0.88), Math.floor(H2 * 0.5)],
+              [Math.floor(W2 * 0.12), Math.floor(H2 * 0.5)]
+            ];
+            const done = /* @__PURE__ */ new Set();
+            for (const pt of pts) {
+              let el = document.elementFromPoint(pt[0], pt[1]);
+              let depth = 0;
+              while (el && el !== document.documentElement && depth < 14) {
+                if (el !== document.body && !done.has(el)) {
+                  const cs = getComputedStyle(el);
+                  const bg = String(cs.backgroundColor || "");
+                  const bi = String(cs.backgroundImage || "none");
+                  const opaque = bg !== "transparent" && !/rgba\(0,\s*0,\s*0,\s*0\)/.test(bg);
+                  const r = el.getBoundingClientRect();
+                  const full = r.width >= W2 * 0.8 && r.height >= H2 * 0.8;
+                  if (full && (opaque || bi !== "none")) {
+                    try {
+                      el.style.setProperty("background-color", "transparent", "important");
+                      el.style.setProperty("background-image", "none", "important");
+                    } catch (e) {
+                    }
+                    done.add(el);
+                  }
+                }
+                el = el.parentElement;
+                depth++;
+              }
+            }
+          } catch (e) {
+          }
+        }
         function applySkinBg(index) {
           try {
             const pick = BG_GALLERY[(index % BG_GALLERY.length + BG_GALLERY.length) % BG_GALLERY.length];
@@ -12212,6 +12249,12 @@
               }
             } catch (e) {
             }
+            setTimeout(() => {
+              try {
+                clearOccluders();
+              } catch (e) {
+              }
+            }, 600);
             showBubble("背景 " + (index + 1) + "/" + BG_GALLERY.length + " ～", 2e3);
           } catch (e) {
           }
