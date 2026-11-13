@@ -32,15 +32,20 @@ function limitOf(req) {
 export function createNervousHandler(deps) {
     // deps 缺省/collector 缺失时按「没有收集器」处理：接口永不因装配问题 500
     const collector = deps && deps.collector;
+    // 诊断用：被轮询了多少次、最后一次什么时候——客户端在不在轮询，看这两个数就知道
+    let polls = 0;
+    let lastPollAt = 0;
     return function handleNervous(req, res) {
         try {
+            polls += 1;
+            lastPollAt = Date.now();
             const events = collector ? collector.recent(limitOf(req)) : [];
             const subscribed = collector ? collector.status().subscribed : [];
-            sendJson(res, { ok: true, events, subscribed });
+            sendJson(res, { ok: true, events, subscribed, polls, lastPollAt });
         }
         catch (e) {
             // 收集器自身出问题也只回空结果（只读接口不该把异常抛给客户端）
-            sendJson(res, { ok: true, events: [], subscribed: [] });
+            sendJson(res, { ok: true, events: [], subscribed: [], polls, lastPollAt });
         }
     };
 }
