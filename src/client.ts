@@ -1042,9 +1042,6 @@ registerCapsuleActions(actions)
             // 数值小就一点动静都没有，用户会以为功能坏了
             const hearts = plan.hearts > 0 ? plan.hearts : (tokens > 0 ? 1 : 0)
             for (let i = 0; i < hearts; i++) setTimeout(() => { try { animRef.current?.pushHeart() } catch (e) { } }, 90 * i)
-            // 鲸语短冒一句（1.2 秒后让位给账本文案，不抢主信息）
-            const word = pickWhaleWord({ trigger: 'feed' })
-            if (word) try { showBubble(word + '～', 1200) } catch (e) { }
           } catch (e) { }
         },
         say: sayLine,

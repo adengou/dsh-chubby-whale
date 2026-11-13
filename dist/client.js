@@ -12008,11 +12008,6 @@
                 } catch (e) {
                 }
               }, 90 * i);
-              const word = pickWhaleWord({ trigger: "feed" });
-              if (word) try {
-                showBubble(word + "～", 1200);
-              } catch (e) {
-              }
             } catch (e) {
             }
           },
