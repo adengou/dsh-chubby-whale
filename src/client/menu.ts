@@ -159,6 +159,7 @@ const TOGGLE_EN: Record<string, [string, string]> = {
   '语音聊天：': ['Voice chat: on', 'Voice chat: off'],
   '流式回复：': ['Streaming replies: on', 'Streaming replies: off'],
   '神经感知：': ['Nervous system: on', 'Nervous system: off'],
+  '鲸式解说：': ['Whale commentary: on', 'Whale commentary: off'],
 }
 
 export function tr(label: string, lang: string): string {
