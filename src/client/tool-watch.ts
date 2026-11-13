@@ -96,9 +96,14 @@ export function createToolWatch(opts: {
         if (poemOn) {
           const line = String(d.line)
           const tail = poemTail(String((d as any).theme || ''), Date.now())
-          const text = '咕噜……「' + line + '」' + tail
+          // 出处必须写明：作者《诗题》
+          const title = String((d as any).title || '').trim()
+          const author = String((d as any).author || '').trim()
+          const source = title ? (author ? author + '《' + title + '》' : '《' + title + '》') : ''
+          const cite = source ? '——' + source + '。' : ''
+          const text = '咕噜……「' + line + '」' + cite + tail
           try { opts.bubble(text, 18000) } catch (err) { }
-          try { if (opts.speak) opts.speak(line + tail) } catch (err) { }
+          try { if (opts.speak) opts.speak(line + (source ? '。' + source : '') + tail) } catch (err) { }
         }
         continue
       }

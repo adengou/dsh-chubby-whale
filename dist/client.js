@@ -3508,13 +3508,17 @@
           if (poemOn) {
             const line = String(d.line);
             const tail = poemTail(String(d.theme || ""), Date.now());
-            const text = "咕噜……「" + line + "」" + tail;
+            const title = String(d.title || "").trim();
+            const author = String(d.author || "").trim();
+            const source = title ? author ? author + "《" + title + "》" : "《" + title + "》" : "";
+            const cite = source ? "——" + source + "。" : "";
+            const text = "咕噜……「" + line + "」" + cite + tail;
             try {
               opts.bubble(text, 18e3);
             } catch (err) {
             }
             try {
-              if (opts.speak) opts.speak(line + tail);
+              if (opts.speak) opts.speak(line + (source ? "。" + source : "") + tail);
             } catch (err) {
             }
           }
