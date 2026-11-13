@@ -6355,12 +6355,12 @@
           cny > 0 ? "按官方价目（" + String(d.priceCheckedAt || "") + " 核对）估算" : ""
         ].filter(Boolean);
         const text = parts.join("，");
+        const buckets = kindBucketText(d.byKind);
+        host.bubble(buckets ? text + "\n分桶（本版起）：" + buckets : text, 6e3);
         try {
           host.feedBelly?.(Number(d.total) || 0);
         } catch (e) {
         }
-        const buckets = kindBucketText(d.byKind);
-        host.bubble(buckets ? text + "\n分桶（本版起）：" + buckets : text, 6e3);
       }).catch(() => host.bubble("鱼粮查不到"));
     });
     table.define("growth", (host) => {
@@ -12001,15 +12001,18 @@
                 animRef.current?.setBellyScale(plan.scale);
               } catch (e) {
               }
-              for (let i = 0; i < plan.hearts; i++) setTimeout(() => {
+              const hearts = plan.hearts > 0 ? plan.hearts : tokens > 0 ? 1 : 0;
+              for (let i = 0; i < hearts; i++) setTimeout(() => {
                 try {
                   animRef.current?.pushHeart();
                 } catch (e) {
                 }
               }, 90 * i);
               const word = pickWhaleWord({ trigger: "feed" });
-              const chews = bellyStateRef.current ? bellyStateRef.current.chewCount : 0;
-              showBubble((word ? word + "～" : "") + "吃到 " + chews + " 口啦（鱼粮 " + Math.round(tokens / 1e3) + "k）", 4e3);
+              if (word) try {
+                showBubble(word + "～", 1200);
+              } catch (e) {
+              }
             } catch (e) {
             }
           },

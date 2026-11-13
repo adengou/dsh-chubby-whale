@@ -1038,10 +1038,13 @@ registerCapsuleActions(actions)
             bellyStateRef.current = digestBelly(bellyStateRef.current, tokens)
             const plan = chewPlan(bellyStateRef.current)
             try { animRef.current?.setBellyScale(plan.scale) } catch (e) { }
-            for (let i = 0; i < plan.hearts; i++) setTimeout(() => { try { animRef.current?.pushHeart() } catch (e) { } }, 90 * i)
+            // 总量还不到一口（1 万 token）时，按「开饭」至少冒 1 颗心：
+            // 数值小就一点动静都没有，用户会以为功能坏了
+            const hearts = plan.hearts > 0 ? plan.hearts : (tokens > 0 ? 1 : 0)
+            for (let i = 0; i < hearts; i++) setTimeout(() => { try { animRef.current?.pushHeart() } catch (e) { } }, 90 * i)
+            // 鲸语短冒一句（1.2 秒后让位给账本文案，不抢主信息）
             const word = pickWhaleWord({ trigger: 'feed' })
-            const chews = bellyStateRef.current ? bellyStateRef.current.chewCount : 0
-            showBubble((word ? word + '～' : '') + '吃到 ' + chews + ' 口啦（鱼粮 ' + Math.round(tokens / 1000) + 'k）', 4000)
+            if (word) try { showBubble(word + '～', 1200) } catch (e) { }
           } catch (e) { }
         },
         say: sayLine,
