@@ -28,10 +28,10 @@
     var running = false
     var last = 0
 
-    // 眨眼
+    // 眨眼：间隔缩短、闭眼稍长，手机小尺寸下也能看见
     var blinkT = 0
     var blinkClosed = false
-    var blinkGap = 3200 + Math.random() * 1800
+    var blinkGap = 2400 + Math.random() * 1600
 
     // 说话嘴动
     var talkUntil = 0
@@ -79,21 +79,27 @@
         return
       }
 
-      // 呼吸浮动（和电脑端一致的轻松上下浮）
-      var bob = Math.sin(t / 1200) * 2.2
+      // 呼吸浮动 + 轻微摇摆（手机端 CSS 会把画布缩到 ~118px 宽，
+      // 原来的 ±2.2px 缩放后只剩 0.5px，肉眼以为静止；这里放大到缩放后约 2px）
+      var bob = Math.sin(t / 1200) * 7
+      var sway = Math.sin(t / 2100) * 0.012
+      var breathe = 1 + Math.sin(t / 1400) * 0.012
 
       ctx.save()
       try {
-        ctx.translate(0, bob)
+        ctx.translate(CW / 2, CH / 2 + bob)
+        ctx.rotate(sway)
+        ctx.scale(breathe, breathe)
+        ctx.translate(-CW / 2, -CH / 2)
         ctx.drawImage(img, 0, 0, SRC_W, SRC_H, 0, 0, CW, CH)
 
         // 眨眼：闭眼时画眼睑
         blinkT += dt
         if (!blinkClosed && blinkT > blinkGap) { blinkClosed = true; blinkT = 0 }
-        if (blinkClosed && blinkT > 150) {
+        if (blinkClosed && blinkT > 170) {
           blinkClosed = false
           blinkT = 0
-          blinkGap = 3200 + Math.random() * 1800
+          blinkGap = 2400 + Math.random() * 1600
         }
         if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
 
