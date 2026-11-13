@@ -834,6 +834,9 @@ registerSkinActions(actions)
         return () => { try { binding.dispose() } catch (e) { } }
       }, [])
 
+      // 诗词弹幕显示期间的气泡占用锁：开场问候/饥饿提示在这段时间里让路，
+      // 否则「这个点回来，饿了吧」会把刚冒出来的诗词字幕顶掉（2026-11-13 主人反馈「占线」）。
+      let poemLockUntil = 0
       // 余额/成长只在「菜单打开」时拉（见 refreshMenuStats），开机不预请求
       R.useEffect(() => {
         // 饭团：进门先打个招呼（按当前时段挑台词），3 秒后出现，不抢首屏
@@ -842,6 +845,7 @@ registerSkinActions(actions)
     try {
       if (greetedOnce) return
       greetedOnce = true
+      if (Date.now() < poemLockUntil) return // 诗词气泡正显示：问候让路
       const g = persona.greeting()
       if (g) sayLine(g, 5000)
       // 今日一句：开场问候之后补一句当天的诗（/daily 失败静默；chubby-daily-greet=off 可关）
@@ -863,7 +867,7 @@ registerSkinActions(actions)
       } catch (e) { }
     } catch (e) { }
   },
-          hungry: () => { try { sayLine(persona.line('hungry'), 4000) } catch (e) { } },
+          hungry: () => { try { if (Date.now() < poemLockUntil) return; sayLine(persona.line('hungry'), 4000) } catch (e) { } },
           // 打了招呼再看是不是饿了：饿着就补一句（对应人设的 hungry 场景）
           hungryNow: (() => { try { const st: any = (persona as any).state; return !!(st && st.lastFeedAt && Date.now() - st.lastFeedAt > 6 * 3600 * 1000) } catch (e) { return false } })(),
         })
@@ -1656,7 +1660,9 @@ registerSkinActions(actions)
       // 注意：必须是组件顶层的 hook，不能塞进别的 useEffect 回调里（嵌套 hook 会让组件直接崩）
       R.useEffect(() => {
         const watch = createToolWatch({
-          bubble: (text: string, ms?: number) => { try { showBubble(text, ms) } catch (e) { } },
+          bubble: (text: string, ms?: number) => {
+            try { poemLockUntil = Date.now() + (Number(ms) || 18000); showBubble(text, ms) } catch (e) { }
+          },
           enabled: () => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } },
           poemEnabled: () => { try { return localStorage.getItem('chubby-poem-echo') !== 'off' } catch (e) { return false } },
           speak: (t: string) => { try { speakText(t, { rate: narrationRate() }) } catch (e) { } },

@@ -11863,12 +11863,14 @@
             }
           };
         }, []);
+        let poemLockUntil = 0;
         R.useEffect(() => {
           const stopGreet = startGreeting({
             greet: () => {
               try {
                 if (greetedOnce) return;
                 greetedOnce = true;
+                if (Date.now() < poemLockUntil) return;
                 const g = persona.greeting();
                 if (g) sayLine(g, 5e3);
                 try {
@@ -11898,6 +11900,7 @@
             },
             hungry: () => {
               try {
+                if (Date.now() < poemLockUntil) return;
                 sayLine(persona.line("hungry"), 4e3);
               } catch (e) {
               }
@@ -12814,6 +12817,7 @@
           const watch = createToolWatch({
             bubble: (text, ms2) => {
               try {
+                poemLockUntil = Date.now() + (Number(ms2) || 18e3);
                 showBubble(text, ms2);
               } catch (e) {
               }
