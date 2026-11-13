@@ -2985,59 +2985,6 @@
     ];
   }
 
-  // src/client/menu-whale.ts
-  function act(label, action) {
-    return { label, action };
-  }
-  function group(title, items) {
-    return { sub: title, items };
-  }
-  function sep2() {
-    return { sep: true };
-  }
-  function toggle(on, whaleOn, whaleOff, func) {
-    return (on ? whaleOn : whaleOff) + "（" + func + "：" + (on ? "开" : "关") + "）";
-  }
-  function buildWhaleMenu(state) {
-    return [
-      group("说话 ▸", [
-        act(toggle(state.voiceOn, "鲸口已开", "鲸口闭着", "语音朗读"), "voice"),
-        act(toggle(state.earOn, "鲸耳竖着", "鲸耳耷拉", "语音待命"), "ear"),
-        act(toggle(state.voiceChatOn, "鲸言在线", "鲸言静默", "语音聊天"), "voice-chat"),
-        act("检查鱼鳃（语音自检）", "test-tts")
-      ]),
-      sep2(),
-      group("内容 ▸", [
-        act("让她念首诗（念诗）", "poem"),
-        act("翻翻书堆（选本书）", "story-books"),
-        act("接着往下讲（自动续讲）", "story-auto"),
-        act("听她说句好话（今日一句）", "daily-line"),
-        act("听听今天的动静（今日简报）", "briefing-card")
-      ]),
-      sep2(),
-      // 需求里的「工作」组：用「干活」保持鲸鱼娘口吻，功能名逐条写在括号里
-      group("干活 ▸", [
-        act("把稿子念成音频（语音导出）", "voice-export"),
-        act("帮你挑挑错字（公文校对）", "proofread"),
-        act("记个钟点（加提醒）", "remind-add"),
-        act("鲸落（导出记忆胶囊）", "capsule-export"),
-        act("接住漂来的鲸（导入胶囊）", "capsule-import")
-      ]),
-      sep2(),
-      act("喂点数据（鱼粮账本）", "fishfood"),
-      sep2(),
-      group("皮肤 ▸", [
-        act("鲸身定住（固定背景）", "skin-fixed"),
-        act("游回原来的水（恢复默认背景）", "skin-bg-reset")
-      ]),
-      sep2(),
-      group("系统 ▸", [
-        act("忘掉这些（清除记忆）", "clear-memory"),
-        act("哄睡（让它游走）", "quit")
-      ])
-    ];
-  }
-
   // src/client/belly.ts
   var TOKENS_PER_CHEW = 1e4;
   var FULL_TOKENS = 5e5;
@@ -3278,9 +3225,9 @@
     const hits2 = [];
     for (const clause of splitClauses(text)) {
       for (let g = 0; g < KEYWORD_GROUPS.length; g++) {
-        const group2 = KEYWORD_GROUPS[g];
+        const group = KEYWORD_GROUPS[g];
         let first = -1;
-        for (const key of group2.keys) {
+        for (const key of group.keys) {
           const at = clause.text.indexOf(key);
           if (at >= 0 && (first < 0 || at < first)) first = at;
         }
@@ -10988,15 +10935,6 @@
   }
 
   // src/client.ts
-  function adaptWhaleMenu(items) {
-    return (Array.isArray(items) ? items : []).map((it) => {
-      if (!it || typeof it !== "object") return { type: "sep" };
-      if (it.sep) return { type: "sep" };
-      if (typeof it.sub === "string") return { type: "sub", label: it.sub, items: adaptWhaleMenu(it.items || []) };
-      if (typeof it.label === "string") return { type: "item", label: it.label, action: String(it.action || "") };
-      return { type: "sep" };
-    });
-  }
   var autoSkinStarted = false;
   window.__ModuleLoader__.load({
     id: "dsh-chubby-whale",
@@ -12704,14 +12642,7 @@
           return () => clearInterval(timer);
         }, []);
         const recoverProps = recover.dot(hidden);
-        const menuItems = menu ? adaptWhaleMenu(buildWhaleMenu({ voiceOn, earOn, voiceChatOn })).concat([
-          { type: "sep" },
-          {
-            type: "sub",
-            label: "完整菜单 ▸",
-            items: buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
-          }
-        ]) : [];
+        const menuItems = menu ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())) : [];
         const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : [];
         menuEntriesRef.current = menuEntries;
         function renderItems(items) {
