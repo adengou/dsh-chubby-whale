@@ -12288,7 +12288,11 @@
               document.body.style.removeProperty("--chubby-veil");
             } catch (e) {
             }
-            showBubble("背景恢复默认～", 2e3);
+            try {
+              setSkinFixed(true);
+            } catch (e) {
+            }
+            showBubble("背景恢复默认，固定背景已开启（不再自动换）", 3e3);
           } catch (e) {
           }
         }

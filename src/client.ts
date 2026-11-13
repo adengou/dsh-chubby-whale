@@ -1333,7 +1333,9 @@ registerCapsuleActions(actions)
           }
           try { document.body.style.removeProperty('--chubby-fg') } catch (e) { }
           try { document.body.style.removeProperty('--chubby-veil') } catch (e) { }
-          showBubble('背景恢复默认～', 2000)
+          // 恢复默认后自动打开「固定背景」：否则定时器 5 分钟内又换走，恢复默认等于白做
+          try { setSkinFixed(true) } catch (e) { }
+          showBubble('背景恢复默认，固定背景已开启（不再自动换）', 3000)
         } catch (e) { }
       }
 
