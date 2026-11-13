@@ -19,7 +19,7 @@
  *
  * 跨平台：路径一律 join；读入容错 UTF-8 BOM（数据文件被 Windows 工具改写过也不至于整类失效）。
  */
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { stripBom } from '../atomic.js'
@@ -47,6 +47,8 @@ interface CacheEntry<T> {
 export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo }): DataPort {
   const CULTURE_DIR = join(opts.dataDir, 'culture')
   const POEMS_FILE = join(opts.dataDir, 'poems.json')
+  /** 分诗人归档目录：data/poets/*.json（如「李煜.json」），念诗时与主库合并 */
+  const POETS_DIR = join(opts.dataDir, 'poets')
   const DUILIAN_FILE = join(opts.dataDir, 'duilian.json')
   const DAILY_FILE = join(opts.dataDir, 'daily.json')
   /** 诗名索引 / 曲库：随包只读数据文件（路由经 DataPort 的同名可选方法取，见 ports.ts） */
@@ -163,6 +165,28 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     return cloneItems(out)
   }
 
+  /**
+   * 读 data/poets/*.json（分诗人归档）：每次现读不缓存——单个诗人文件很小，
+   * 换来的是「往目录里丢一个 json 就多一位诗人的作品」，不必改代码、不必重启。
+   */
+  async function readExtraPoets(): Promise<any[]> {
+    try {
+      const files = await readdir(POETS_DIR)
+      const out: any[] = []
+      for (const f of files) {
+        if (!/\.json$/i.test(f)) continue
+        try {
+          const raw = JSON.parse(stripBom(await readFile(join(POETS_DIR, f), 'utf8')))
+          const list = Array.isArray(raw) ? raw : (Array.isArray(raw && raw.poems) ? raw.poems : null)
+          if (list) out.push(...list)
+        } catch (e) { }
+      }
+      return out
+    } catch (e) {
+      return []
+    }
+  }
+
   async function readPoemsChunk(index: number): Promise<PoemChunk> {
     const i = Number(index) || 0
     // 本地只有一整册：只有第 0 片有内容，其余片返回空（云端回退时不会重复喂同一批诗）
@@ -173,6 +197,9 @@ export function createLocalDataPort(opts: { dataDir: string; story: StoryRepo })
     const raw = Array.isArray(loaded.raw) ? loaded.raw : (Array.isArray(loaded.raw?.poems) ? loaded.raw.poems : null)
     if (loaded.ok && !raw) console.error('POEM-LOAD-FAIL file=' + POEMS_FILE + ' err=bad structure')
     const items = normalizePoemItems(raw || [])
+    // 分诗人归档（data/poets/*.json）与主库合并：念诗、今日一句都能抽到
+    const extra = normalizePoemItems(await readExtraPoets())
+    if (extra.length) items.push(...extra)
     if (!loaded.cacheable) return { index: 0, total: 1, items }
     poemsCache = { value: items, mtimeMs: mt }
     return { index: 0, total: 1, items: cloneItems(items) }
