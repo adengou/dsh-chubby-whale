@@ -11728,10 +11728,10 @@
           try {
             if (!localStorage.getItem("chubby-credit-shown")) {
               localStorage.setItem("chubby-credit-shown", "1");
-              console.log("[chubby-whale] 版权与素材来源｜代码：MIT © 2026 adengou｜立绘与 49 张背景图：由 adengou 使用 seedream 2.0 模型（豆包）生成｜详见插件目录 NOTICE");
+              console.log("[chubby-whale] 版权与素材来源｜代码：MIT © 2026 adengou｜立绘与 49 张背景图：由 adengou 使用 seedream 5 系列模型（豆包）生成｜详见插件目录 NOTICE");
               setTimeout(() => {
                 try {
-                  showBubble("本鲸的立绘和背景是主人用 seedream 2.0 生成的，详见 NOTICE ～", 9e3);
+                  showBubble("本鲸的立绘和背景是主人用 seedream 5 系列生成的，详见 NOTICE ～", 9e3);
                 } catch (e) {
                 }
               }, 1200);
