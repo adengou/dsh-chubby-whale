@@ -14,6 +14,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import vm from 'node:vm'
 
 const BUNDLE = process.env.SMOKE_CLIENT_FILE || 'dist/client.js'
 const PKG = JSON.parse(readFileSync('package.json', 'utf8'))
@@ -139,8 +140,6 @@ if (!existsSync(BUNDLE)) {
   process.exit(0)
 }
 const code = readFileSync(BUNDLE, 'utf8')
-const params = ['window', 'document', 'navigator', 'localStorage', 'console', 'globalThis']
-const argValues = [windowStub, documentStub, windowStub.navigator, windowStub.localStorage, console, globalThis]
 
 let pass = 0
 let fail = 0
@@ -150,9 +149,23 @@ const ok = (name, cond, detail = '') => {
 }
 
 try {
-  // eslint-disable-next-line no-new-func
-  const run = new Function(...params, code)
-  run(...argValues)
+  // 用 node:vm 沙箱执行 bundle（node 官方沙箱 API，替代 Function 构造器）：
+  // window/document 等浏览器桩显式注入，Web API 从真实 globalThis 补进去（bundle 初始化可能用到）。
+  const sandbox = {
+    window: windowStub,
+    document: documentStub,
+    navigator: windowStub.navigator,
+    localStorage: windowStub.localStorage,
+    console,
+  }
+  for (const k of ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'queueMicrotask',
+    'fetch', 'AbortController', 'AbortSignal', 'URL', 'URLSearchParams', 'TextEncoder', 'TextDecoder',
+    'Blob', 'File', 'FormData', 'atob', 'btoa', 'crypto', 'performance', 'structuredClone',
+    'OffscreenCanvas', 'Image', 'Audio', 'MediaStream', 'AudioContext', 'webkitAudioContext']) {
+    if (k in globalThis) sandbox[k] = globalThis[k]
+  }
+  const ctx = vm.createContext(sandbox)
+  vm.runInContext(code, ctx, { filename: BUNDLE })
   ok('模块加载不抛异常', true)
 } catch (err) {
   ok('模块加载不抛异常', false, String(err && err.message || err))

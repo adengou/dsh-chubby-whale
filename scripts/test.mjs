@@ -82,7 +82,7 @@ try {
   if (end < 0) throw new Error('splitForTts 括号不闭合')
   let body = src.slice(start, end)
   body = body.replace(/\(text: string, maxLen = 56\): string\[\]/, '(text, maxLen = 56)').replace(/: string\[\]/g, '')
-  splitForTts = new Function(body + '; return splitForTts')()
+  splitForTts = (await import('node:vm')).runInNewContext(body + '; splitForTts', {})
   ok('能从源码抽出函数', typeof splitForTts === 'function')
 } catch (e) {
   ok('能从源码抽出函数', false, String(e.message))

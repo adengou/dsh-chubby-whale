@@ -40,6 +40,7 @@ import { join, dirname, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { EventEmitter } from 'node:events'
+import vm from 'node:vm'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const I = '  '
@@ -70,7 +71,7 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// 沙箱装载：transformSync 转 CJS 后在 new Function 里跑（process 可注入）
+// 沙箱装载：transformSync 转 CJS 后在 node:vm 里跑（process 可注入）
 // 只适用于没有 import.meta 的模块（atomic.ts）；worker.ts 走下面的 build 通道。
 // ---------------------------------------------------------------------------
 function loadTs(relFile, stubs, proc) {
@@ -81,8 +82,8 @@ function loadTs(relFile, stubs, proc) {
     if (Object.prototype.hasOwnProperty.call(stubs, id)) return stubs[id]
     throw new Error('未提供 stub 模块：' + id)
   }
-  const fn = new Function('require', 'module', 'exports', 'process', 'console', code)
-  fn(req, mod, mod.exports, proc, console)
+  const ctx = vm.createContext({ require: req, module: mod, exports: mod.exports, process: proc, console })
+  vm.runInContext(code, ctx, { filename: relFile })
   return mod.exports
 }
 

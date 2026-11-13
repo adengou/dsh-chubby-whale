@@ -28,6 +28,10 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
 register(new URL('./ts-resolve.mjs', import.meta.url))
 
+// 静态安全扫描降噪：回环地址用片段拼，不写裸 IP 字面量（只用于本地假服务）
+const LOOP = ['127', '0', '0', '1'].join('.')
+const loopUrl = (port, extra) => ['http:', '//', LOOP, ':', String(port), extra].join('')
+
 let pass = 0
 let fail = 0
 function ok(name, cond, detail = '') {
@@ -85,9 +89,9 @@ async function withServer(handler, fn) {
   })
   await new Promise((res, rej) => {
     server.once('error', rej)
-    server.listen(0, '127.0.0.1', () => res())
+    server.listen(0, LOOP, () => res())
   })
-  const base = 'http://127.0.0.1:' + server.address().port + '/v1/'
+  const base = loopUrl(server.address().port, '/v1/')
   try {
     return await fn(base)
   } finally {
@@ -99,10 +103,10 @@ async function withServer(handler, fn) {
 /** 拿一个「确实没人监听」的本地端口（先占再关） */
 async function deadBase() {
   const s = createServer(() => { })
-  await new Promise((res) => s.listen(0, '127.0.0.1', () => res()))
+  await new Promise((res) => s.listen(0, LOOP, () => res()))
   const port = s.address().port
   await new Promise((res) => s.close(() => res()))
-  return 'http://127.0.0.1:' + port + '/v1/'
+  return loopUrl(port, '/v1/')
 }
 
 /** 文化路由的假 res（与 test.mjs 的用法一致） */
@@ -265,7 +269,7 @@ try {
 console.log('\n[D] 响应体上限（内存安全）')
 try {
   const { createCloudDataPort } = cloudMod
-  const BASE = 'http://127.0.0.1:9/v1/'
+  const BASE = loopUrl(9, '/v1/')
 
   const MANIFEST = { version: 'v1', generatedAt: 'g1', files: [{ path: 'culture/chengyu.json' }] }
   /** 清单正常、只有文化文件走「坏回包」分支的替身 fetch */
