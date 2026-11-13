@@ -12244,16 +12244,19 @@
             while (tag.firstChild) tag.removeChild(tag.firstChild);
             tag.appendChild(document.createTextNode(css));
             try {
-              const oldLayer = document.getElementById("chubby-bg-layer");
-              if (oldLayer) oldLayer.remove();
+              let layer = document.getElementById("chubby-bg-layer");
+              if (!layer) {
+                layer = document.createElement("div");
+                layer.id = "chubby-bg-layer";
+                layer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:8999;background-size:cover;background-position:center center;background-repeat:no-repeat;";
+                document.documentElement.appendChild(layer);
+              }
+              const maid = document.body.hasAttribute("data-dsh-maid-atelier");
+              layer.style.display = maid ? "none" : "block";
+              layer.style.backgroundImage = 'url("/api/chubby-whale/skin?n=' + index + '")';
+              layer.style.opacity = "0.38";
             } catch (e) {
             }
-            setTimeout(() => {
-              try {
-                clearOpaqueAncestors();
-              } catch (e) {
-              }
-            }, 800);
             showBubble("背景 " + (index + 1) + "/" + BG_GALLERY.length + " ～", 2e3);
           } catch (e) {
           }

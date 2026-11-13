@@ -1302,12 +1302,20 @@ registerCapsuleActions(actions)
             // 顶层蒙层（主人方案）：不跟 DSH 皮肤/布局抢底层，直接把图铺在最上面，
             // z-index 8999 在鱼（9999）和气泡（10002）之下、DSH 内容之上；pointer-events:none 不挡点击。
             // 深海女仆皮肤自己会按 --maid-palace-art 画背景，不重复盖蒙层。
-            // 真背景方案：不再用蒙层（图直接铺 html/body），先清掉历史蒙层
-            const oldLayer = document.getElementById('chubby-bg-layer')
-            if (oldLayer) oldLayer.remove()
+            // 蒙层方案（主人拍板）：图以半透明蒙层铺在最上层——图能看见、字也清楚。
+            // 真背景方案（透明化大容器）试过，字看不清，回退。
+            let layer = document.getElementById('chubby-bg-layer') as HTMLDivElement | null
+            if (!layer) {
+              layer = document.createElement('div')
+              layer.id = 'chubby-bg-layer'
+              layer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:8999;background-size:cover;background-position:center center;background-repeat:no-repeat;'
+              document.documentElement.appendChild(layer)
+            }
+            const maid = document.body.hasAttribute('data-dsh-maid-atelier')
+            layer.style.display = maid ? 'none' : 'block'
+            layer.style.backgroundImage = 'url("/api/chubby-whale/skin?n=' + index + '")'
+            layer.style.opacity = '0.38'
           } catch (e) { }
-          // 等布局稳定后动态清掉不透明的根容器，让 html/body 的背景图真正露出来
-          setTimeout(() => { try { clearOpaqueAncestors() } catch (e) { } }, 800)
                     showBubble('背景 ' + (index + 1) + '/' + BG_GALLERY.length + ' ～', 2000)
         } catch (e) { }
       }
