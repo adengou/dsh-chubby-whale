@@ -3457,6 +3457,30 @@
   }
 
   // src/client/tool-watch.ts
+  var POEM_TAILS_COMMON = [
+    "——这句是不是有点像你？",
+    "。送你了。",
+    "。本鲸觉得今天该念这句。",
+    "——给你。",
+    "。像不像你？"
+  ];
+  var POEM_TAILS_BY_THEME = {
+    坚持: ["。撑住。"],
+    奋斗: ["。撑住。"],
+    孤独: ["。……本鲸也这么觉得。"],
+    思乡: ["。……本鲸也这么觉得。"],
+    快乐: ["。今天心情不错嘛。"],
+    离别: ["。别难过。"],
+    离别酒: ["。别难过。"]
+  };
+  function poemTail(theme, now) {
+    const day = Math.floor(now / 864e5);
+    let h = 0;
+    for (const ch of String(theme || "")) h = h * 31 + (ch.codePointAt(0) || 0) >>> 0;
+    const special = POEM_TAILS_BY_THEME[theme] || [];
+    const pool = special.concat(POEM_TAILS_COMMON);
+    return pool[(h + day) % pool.length];
+  }
   var PATH = "/nervous";
   var INTERVAL_MS = 3e3;
   function createToolWatch(opts) {
@@ -3487,13 +3511,14 @@
           const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true;
           if (poemOn) {
             const line = String(d.line);
-            const text = "咕噜……「" + line + "」——这句是不是有点像你？";
+            const tail = poemTail(String(d.theme || ""), Date.now());
+            const text = "咕噜……「" + line + "」" + tail;
             try {
               opts.bubble(text, 18e3);
             } catch (err) {
             }
             try {
-              if (opts.speak) opts.speak(line + "——这句是不是有点像你？");
+              if (opts.speak) opts.speak(line + tail);
             } catch (err) {
             }
           }

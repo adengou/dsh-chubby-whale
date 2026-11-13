@@ -11,6 +11,40 @@ import { getJson } from './http.js'
 import { narrateTool } from './tool-narrator.js'
 import type { NarratorState } from './tool-narrator.js'
 
+/** 诗词弹幕后缀（通用池） */
+const POEM_TAILS_COMMON = [
+  '——这句是不是有点像你？',
+  '。送你了。',
+  '。本鲸觉得今天该念这句。',
+  '——给你。',
+  '。像不像你？',
+]
+
+/** 主题专属后缀（命中这些主题时优先） */
+const POEM_TAILS_BY_THEME: Record<string, string[]> = {
+  坚持: ['。撑住。'],
+  奋斗: ['。撑住。'],
+  孤独: ['。……本鲸也这么觉得。'],
+  思乡: ['。……本鲸也这么觉得。'],
+  快乐: ['。今天心情不错嘛。'],
+  离别: ['。别难过。'],
+  离别酒: ['。别难过。'],
+}
+
+/**
+ * 选后缀：主题名哈希 + 当天日期取模——
+ * 同一主题同一天同一句，隔天自动换；不用随机，便于复现与排查。
+ */
+function poemTail(theme: string, now: number): string {
+  const day = Math.floor(now / 86400000)
+  let h = 0
+  for (const ch of String(theme || "")) h = (h * 31 + (ch.codePointAt(0) || 0)) >>> 0
+  const special = POEM_TAILS_BY_THEME[theme] || []
+  const pool = special.concat(POEM_TAILS_COMMON)
+  return pool[(h + day) % pool.length]
+}
+
+
 /** 轮询路径（getJson 会补 /api/chubby-whale 前缀） */
 const PATH = '/nervous'
 /** 轮询间隔：3 秒，与 nervous 同频；本地接口，压力可忽略 */
@@ -61,9 +95,10 @@ export function createToolWatch(opts: {
         const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true
         if (poemOn) {
           const line = String(d.line)
-          const text = '咕噜……「' + line + '」——这句是不是有点像你？'
+          const tail = poemTail(String((d as any).theme || ''), Date.now())
+          const text = '咕噜……「' + line + '」' + tail
           try { opts.bubble(text, 18000) } catch (err) { }
-          try { if (opts.speak) opts.speak(line + '——这句是不是有点像你？') } catch (err) { }
+          try { if (opts.speak) opts.speak(line + tail) } catch (err) { }
         }
         continue
       }
