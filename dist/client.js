@@ -8022,6 +8022,15 @@
   }
 
   // src/client/actions/feedback.ts
+  var GITEE_REPO = "https://gitee.com/adengou/dsh-chubby-whale";
+  var URL_BODY_MAX = 1500;
+  function buildIssueUrl(text) {
+    const body = Array.from(String(text || ""));
+    const clipped = body.slice(0, URL_BODY_MAX).join("");
+    const tail = body.length > URL_BODY_MAX ? "\n\n（内容较长，已截断；完整内容见本地反馈文件）" : "";
+    const title = "反馈：" + (Array.from(String(text || "").trim()).slice(0, 30).join("") || "使用问题");
+    return GITEE_REPO + "/issues/new?issue[title]=" + encodeURIComponent(title) + "&issue[description]=" + encodeURIComponent(clipped + tail);
+  }
   function registerFeedbackActions(table) {
     table.define("feedback", async (host) => {
       const raw = await promptText({
@@ -8033,14 +8042,28 @@
       });
       const text = String(raw || "").trim();
       if (!text) return;
-      host.bubble("本鲸把反馈送出去…", 2e4);
+      let sent = false;
       try {
         const r = await postJson("/feedback", { text }, { timeout: 3e4 });
-        if (r && r.ok && r.sent === "smtp") host.bubble("反馈已发送，谢谢主人！", 6e3);
-        else if (r && r.ok) host.bubble("反馈已记录（本机保存），谢谢主人！", 6e3);
-        else host.bubble("反馈没送成：" + String(r && r.error || "接口没回内容"), 6e3);
+        sent = !!(r && r.ok && r.sent === "smtp");
       } catch (e) {
-        host.bubble("反馈没送成：" + String(e && e.message || e).slice(0, 80), 6e3);
+      }
+      let opened = false;
+      try {
+        window.open(buildIssueUrl(text), "_blank");
+        opened = true;
+      } catch (e) {
+      }
+      if (opened) {
+        host.bubble(
+          (sent ? "反馈已发出，" : "") + "同时打开了 Gitee 反馈页：登录后点「创建」即可提交；本机也留了一份。",
+          9e3
+        );
+      } else {
+        host.bubble(
+          sent ? "反馈已发出，谢谢！" : "反馈已记录（本机保存）。打开 Gitee → 我的仓库 → Issues 也能提。",
+          8e3
+        );
       }
     });
   }
