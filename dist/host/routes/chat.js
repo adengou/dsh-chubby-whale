@@ -79,6 +79,13 @@ export function createChatHandler(opts) {
             catch (err) {
                 console.error('[chat] REMINDER-CREATE-FAIL ' + String((err && err.message) || err));
             }
+            // 诗词弹幕的唯一触发点（2026-11-14）：只认鲸鱼自己的聊天面板。
+            // 之前挂在宿主 user/message 上，工作区输入框里每打一句工作指令都可能冒诗。
+            try {
+                if (opts.noteUserChat)
+                    opts.noteUserChat(message);
+            }
+            catch (err) { }
             // 读一份历史快照 + 长期记忆：只用来拼 prompt / 算缓存 key，不再拿它整份写回
             let history = [];
             try {

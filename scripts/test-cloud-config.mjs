@@ -87,7 +87,7 @@ function captureConsole() {
 }
 
 /** Key 环境变量是读取器的第二来源：比对口径时必须清空，否则宿主侧会读到环境变量 */
-const ENV_KEYS = ['CHUBBY_WHALE_DEEPSEEK_KEY', 'DEEPSEEK_API_KEY', 'CHUBBY_WHALE_SILICONFLOW_KEY', 'SILICONFLOW_API_KEY']
+const ENV_KEYS = ['CHUBBY_WHALE_DEEPSEEK_KEY', 'DEEPSEEK_API_KEY']
 const savedEnv = {}
 function clearKeyEnv() {
   for (const k of ENV_KEYS) {
@@ -130,12 +130,11 @@ function probe(mods, dir) {
   const cap2 = captureConsole()
   const deepseek = host.readApiKey(dir)
   host.readApiKey(dir) // 第二次读：同上
-  const siliconflow = host.readSiliconFlowKey(dir)
   cap2.restore()
 
   return {
     cloud: { cfg: cv, logs: cap1.logs },
-    host: { deepseek, siliconflow, logs: cap2.logs },
+    host: { deepseek, logs: cap2.logs },
   }
 }
 

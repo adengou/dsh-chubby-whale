@@ -17,7 +17,7 @@ import { homedir } from 'node:os'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  readApiKey, readSiliconFlowKey, readAsrLanguage, readDataSource, readCloudBase, readPersonalityLearning, readPersonalityWriting,
+  readApiKey, readAsrLanguage, readDataSource, readCloudBase, readPersonalityLearning, readPersonalityWriting,
   readChatModel, sanitizePluginConfig,
 } from './host/config.js'
 import { createStore, growthStage } from './host/store.js'
@@ -48,6 +48,7 @@ import { createCultureHandlers } from './host/routes/culture.js'
 import { createPoemHandler } from './host/routes/poem.js'
 import { createPoemTitlesHandler } from './host/routes/poem-titles.js'
 import { createBriefingHandlers } from './host/routes/briefing.js'
+import { createWeatherHandler } from './host/routes/weather.js'
 import { createTtsHandler } from './host/routes/tts.js'
 import { createCloudTts, readCloudVoice } from './host/voice/cloud-tts.js'
 import { createEdgeTtsEngine, getTtsEngineStats } from './host/tts-engine.js'
@@ -143,8 +144,6 @@ export function apply(ctx: any, rawConfig?: any): void {
   const chatCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'chat'), memBytes: 3 * 1024 * 1024 })  // 聊天回复很小
   const asrCache = createCache({ dir: join(RUNTIME_DIR, 'cache', 'asr'), memBytes: 3 * 1024 * 1024 })     // 识别结果很小
   const getKey = (): string => readApiKey(PLUGIN_DIR)
-  /** 硅基流动 Key（ASR 用）：/asr 与配置视图共用这一个读取器，不再各处内联一份 */
-  const getSiliconflowKey = (): string => readSiliconFlowKey(PLUGIN_DIR)
 
   // L2 可变人格：核心设定仍锁在 SYSTEM_PROMPT 里（模型无从改写），
   // 这里只维护一小段可回滚的附加人格；学习默认开，config.json 的 personalityLearning:false 可关。
@@ -212,9 +211,37 @@ export function apply(ctx: any, rawConfig?: any): void {
     console.log('[chubby-whale] dataSource=cloud base=' + (cloudBase || '（未配置 cloudBase，直接回退本地）') + '（网络失败自动回退本地）')
   }
 
+  // 神经感知第三层（宿主侧）：只读收集器订阅 dsh 会话事件，环形缓冲 200 条。
+  // 收藏器必须先于聊天路由构造：聊天路由的 noteUserChat 要指向它（诗词弹幕只由聊天触发）。
+  // 订阅放在 ctx.effect 里，卸载/热重载时先退订再重订（与 ttsEngine / 自动备份同一套托管方式）；
+  // start 内部全 try/catch，订阅失败只打一条 warn，绝不把插件挡在加载之外。
+  // 诗句关键词索引：启动时从诗库构建（主库 + data/poets 目录），异步不挡加载
+  let poemIndex: PoemIndex | null = null
+  void (async () => {
+    try {
+      const chunk = await dataPort.readPoemsChunk(0)
+      poemIndex = buildPoemIndex(((chunk && chunk.items) || []) as PoemSource[])
+    } catch (e) { poemIndex = null }
+  })()
+  const hostCollector = createHostCollector({
+    keywordEcho: (text: string) => {
+      const hit = matchPoemKeyword(text, poemIndex)
+      return hit ? { theme: '关键词', line: hit.line, title: hit.title, author: hit.author } : null
+    },
+    // 诗词弹幕：按出处查整首（主库 + data/poets 目录合并后的诗库）
+    findPoem: async (title: string, author: string) => {
+      try {
+        const chunk = await dataPort.readPoemsChunk(0)
+        const hit = (chunk.items || []).find((p: any) => String(p.title || '') === title && (!author || String(p.author || '') === author))
+        return hit && Array.isArray(hit.lines) && hit.lines.length ? hit.lines.map((x: any) => String(x)) : null
+      } catch (e) { return null }
+    },
+  })
+  /** 诗词弹幕的唯一入口：鲸鱼聊天路由把主人原话递进来（DSH 输入框不经过这里） */
+  const noteUserChat = (text: string): void => { try { hostCollector.noteUserChat(text) } catch (e) { } }
+
   const chat = createChatHandler({
-    getKey,
-    loadHistory: (n?: number) => memoryModule.loadRecent(n || 24),
+    getKey,    loadHistory: (n?: number) => memoryModule.loadRecent(n || 24),
     appendTurns: (u: string, r: string) => memoryModule.remember(u, r),
     loadState: store.loadState,
     saveState: store.saveState,
@@ -229,6 +256,8 @@ export function apply(ctx: any, rawConfig?: any): void {
     onReply: onModelReply,
     // 「十分钟后提醒我吃早餐」这类话：聊天路由解析后写进提醒仓储（B106）
     addReminder: store.addReminder,
+    // 诗词弹幕：只在她自己的聊天面板里触发（工作区输入框不冒诗，2026-11-14）
+    noteUserChat,
   })
   const chatStream = createChatStreamHandler({
     getKey,
@@ -243,6 +272,8 @@ export function apply(ctx: any, rawConfig?: any): void {
     onReply: onModelReply,
     // 与 /chat 同口径：流式路径也建提醒（B106）
     addReminder: store.addReminder,
+    // 诗词弹幕：与 /chat 同一触发口径
+    noteUserChat,
     // 流式路径与普通 /chat 同口径：亲密度/成长/长期摘要（此前漏注入，导致客户端优先走流式时日常聊天不记账）
     loadState: store.loadState,
     saveState: store.saveState,
@@ -300,6 +331,8 @@ export function apply(ctx: any, rawConfig?: any): void {
     loadGrowth: store.loadGrowth,
     loadReminders: store.loadReminders,
   })
+  // 实时天气（/weather?city=）：与简报共用 host/weather.ts 的取数与清洗；同城 10 分钟内存缓存
+  const weather = createWeatherHandler({})
   // 云端 TTS（火山方舟豆包语音 2.0）：config.json 里配 cloudVoice.apiKey 才启用；失败回退 edge-tts
   const cloudTts = createCloudTts({ config: () => readCloudVoice(PLUGIN_DIR), runtimeDir: RUNTIME_DIR })
 
@@ -319,7 +352,8 @@ export function apply(ctx: any, rawConfig?: any): void {
   // 云端优先、edge-tts 兜底的「三层降级」要两条通路都接上：
   // cloudTts 此前只构造没注入 → /tts 的 opts.cloudTts 恒为 undefined，云端一直不可达（配置了也不生效）。
   const tts = createTtsHandler({ cache: ttsCache, engine: ttsEngine, cloudTts })
-  const asr = createAsrHandler({ getKey: getSiliconflowKey, cache: asrCache, language: () => readAsrLanguage(PLUGIN_DIR) })
+  // /asr 只注入 DeepSeek Key：2026-11-14 起官方 ASR 是唯一引擎（SiliconFlow 已删，无兜底）
+  const asr = createAsrHandler({ getDeepseekKey: getKey, cache: asrCache, language: () => readAsrLanguage(PLUGIN_DIR) })
   const personalityRoutes = createPersonalityHandlers({
     repo: personality,
     learningEnabled: () => personalityLearningEnabled,
@@ -380,7 +414,6 @@ export function apply(ctx: any, rawConfig?: any): void {
     personalityWriting: () => personalityWritingEnabled,
     cacheEnabled: () => { try { return prefs.chatCacheEnabled() } catch { return true } },
     hasDeepseekKey: () => { try { return Boolean(getKey()) } catch { return false } },
-    hasSiliconflowKey: () => { try { return Boolean(getSiliconflowKey()) } catch { return false } },
   })
 
   // TTS 自检映射：getTtsEngineStats() 的形状与路由声明的窄形状不同，这里显式转换，
@@ -416,31 +449,8 @@ export function apply(ctx: any, rawConfig?: any): void {
 
   // 记忆摘要只读视图：胶囊要用的是摘要与抽象主题词，绝不把 history 原文给出去
 
-  // 神经感知第三层（宿主侧）：只读收集器订阅 dsh 会话事件，环形缓冲 200 条。
-  // 订阅放在 ctx.effect 里，卸载/热重载时先退订再重订（与 ttsEngine / 自动备份同一套托管方式）；
-  // start 内部全 try/catch，订阅失败只打一条 warn，绝不把插件挡在加载之外。
-  // 诗句关键词索引：启动时从诗库构建（主库 + data/poets 目录），异步不挡加载
-  let poemIndex: PoemIndex | null = null
-  void (async () => {
-    try {
-      const chunk = await dataPort.readPoemsChunk(0)
-      poemIndex = buildPoemIndex(((chunk && chunk.items) || []) as PoemSource[])
-    } catch (e) { poemIndex = null }
-  })()
-  const hostCollector = createHostCollector({
-    keywordEcho: (text: string) => {
-      const hit = matchPoemKeyword(text, poemIndex)
-      return hit ? { theme: '关键词', line: hit.line, title: hit.title, author: hit.author } : null
-    },
-    // 诗词弹幕：按出处查整首（主库 + data/poets 目录合并后的诗库）
-    findPoem: async (title: string, author: string) => {
-      try {
-        const chunk = await dataPort.readPoemsChunk(0)
-        const hit = (chunk.items || []).find((p: any) => String(p.title || '') === title && (!author || String(p.author || '') === author))
-        return hit && Array.isArray(hit.lines) && hit.lines.length ? hit.lines.map((x: any) => String(x)) : null
-      } catch (e) { return null }
-    },
-  })
+  // 神经感知的订阅在插件装配早期就建好了（hostCollector 见 dataPort 之后那段），
+  // 这里只负责在 ctx.effect 里挂/摘订阅。
   const mountHostCollector = (): (() => void) => {
     try { hostCollector.start(ctx) } catch { }
     return () => { try { hostCollector.stop() } catch { } }
@@ -455,7 +465,7 @@ export function apply(ctx: any, rawConfig?: any): void {
 
   // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
   const routeTable = createRouteTable({
-    misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles, briefing, tts, asr, personality: personalityRoutes,
+    misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles, briefing, weather, tts, asr, personality: personalityRoutes,
     daily, backup, stats, configView, proofread, nervous,
   })
 

@@ -13,7 +13,8 @@
  *   C. /asr 请求体超 12MB（按 content-length 先拒）→ 413
  *   D. /tts 空文本 / 非字符串文本 → 400；非法音色（引号、CRLF、空格、shell 元字符）回落默认，绝不进引擎
  *   E. /tts 请求体超 64KB → 413
- *   F. 治理：两条路由不直连仓储/存储；装配层恒向 /tts 注入 engine、向 /asr 注入 getKey
+ *   F. 治理：两条路由不直连仓储/存储；装配层恒向 /tts 注入 engine、向 /asr 注入 getDeepseekKey；
+ *      src/ 里不得再出现 SiliconFlow（2026-11-14 决定：删干净、无兜底）
  *
  * 负向验证（本批实测记录）：
  *   · 修复前跑本文件，A 失败（code=200）、B 失败（fetch=1 且 cached=true）；修复后全过。
@@ -22,7 +23,7 @@
  * 用法：node scripts/test-voice-routes.mjs
  * 退出码：0 = 全过；1 = 有失败
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { register } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -109,7 +110,7 @@ try {
   group('[A] /asr 解码后音频上限（8MB）：超限必须 413，且不调上游')
   {
     const cache = createMemCache()
-    const handle = ASR.createAsrHandler({ cache, getKey: () => 'k' })
+    const handle = ASR.createAsrHandler({ cache, getDeepseekKey: () => 'k' })
     FETCH.calls.length = 0
     // 8MB + 1 字节：base64 约 11.18MB < 12MB 请求体上限，所以能走到「解码后再判」这一关
     const over = Buffer.alloc(8 * 1024 * 1024 + 1, 7).toString('base64')
@@ -129,35 +130,39 @@ try {
       'code=' + res2.code + ' fetch=' + FETCH.calls.length)
   }
 
-  // ---------- B 缓存键含 format ----------
-  group('[B] /asr 缓存键含 format：同字节换容器不许命中别人的识别结果')
+  // ---------- B 非 WAV 不再换供应商 ----------
+  group('[B] /asr 只走官方：非 WAV 直接报清楚，不偷偷换供应商')
   {
     const cache = createMemCache()
-    const handle = ASR.createAsrHandler({ cache, getKey: () => 'k' })
+    const handle = ASR.createAsrHandler({ cache, getDeepseekKey: () => 'k' })
     const audio = Buffer.from('same-bytes-different-container').toString('base64')
 
     FETCH.calls.length = 0
     FETCH.replies.length = 0
-    FETCH.replies.push('wav 的文本', 'webm 的文本')
-    const r1 = await asrRun(handle, mkReq({ audio, format: 'wav' }))
-    ok('第一次（wav）正常识别', r1.json() && r1.json().ok === true && r1.json().text === 'wav 的文本', JSON.stringify(r1.json()))
+    const r1 = await asrRun(handle, mkReq({ audio, format: 'webm' }))
+    const j1 = r1.json()
+    ok('webm（转码失败的原字节）→ ok:false unsupported format，且不调上游',
+      !!j1 && j1.ok === false && j1.error === 'unsupported format' && FETCH.calls.length === 0,
+      'fetch=' + FETCH.calls.length + ' body=' + JSON.stringify(j1))
+    ok('非 WAV 也给一句人话（不让主人对着麦克风干等）', !!j1 && /WAV/.test(String(j1.hint || '')), JSON.stringify(j1))
 
-    const r2 = await asrRun(handle, mkReq({ audio, format: 'webm' }))
-    ok('同字节换 format=webm → 必须重新识别（不许拿 wav 的文本顶包）',
-      FETCH.calls.length === 2 && r2.json() && r2.json().cached !== true && r2.json().text === 'webm 的文本',
-      'fetch=' + FETCH.calls.length + ' body=' + JSON.stringify(r2.json()))
-
-    const r3 = await asrRun(handle, mkReq({ audio, format: 'webm' }))
-    ok('同字节同 format 再问一次 → 正常命中缓存（缓存没被 format 改动弄坏）',
-      FETCH.calls.length === 2 && r3.json() && r3.json().cached === true,
+    const r2 = await asrRun(handle, mkReq({ audio, format: 'wav' }))
+    ok('同一份字节以 WAV 上传：正常识别', r2.json() && r2.json().ok === true && r2.json().text === '主人好', JSON.stringify(r2.json()))
+    const r3 = await asrRun(handle, mkReq({ audio, format: 'wav' }))
+    ok('同字节同 format 再问一次 → 正常命中缓存',
+      FETCH.calls.length === 1 && r3.json() && r3.json().cached === true,
       'fetch=' + FETCH.calls.length + ' body=' + JSON.stringify(r3.json()))
+
+    const asrSrc = readFileSync(path.join(ROOT, 'src/host/routes/asr.ts'), 'utf8')
+    ok('缓存键里仍带 format（同一字节换容器不会串结果）', /\+ format \+/.test(asrSrc))
+    ok('缓存键版本升到 v6（旧供应商的结果自然失效）', asrSrc.indexOf("'v6|official|official-asr|'") >= 0)
   }
 
   // ---------- C 请求体上限 ----------
   group('[C] /asr 请求体超 12MB：按 content-length 先拒 → 413')
   {
     FETCH.calls.length = 0
-    const handle = ASR.createAsrHandler({ cache: createMemCache(), getKey: () => 'k' })
+    const handle = ASR.createAsrHandler({ cache: createMemCache(), getDeepseekKey: () => 'k' })
     const res = await asrRun(handle, mkReq(Buffer.from('{}'), { 'content-length': String(13 * 1024 * 1024) }))
     ok('13MB 声明 → 413 too large', res.code === 413 && res.json() && res.json().error === 'too large',
       'code=' + res.code + ' body=' + res.text().slice(0, 60))
@@ -258,8 +263,25 @@ try {
       !/from\s+'\.\.\/tts-engine|from\s+'\.\.\/voice\/cloud-tts/.test(asrSrc))
     ok('/tts 装配层恒注入 engine（B93 起路由不自建，engine 必传）',
       /createTtsHandler\(\{[^)]*engine:\s*ttsEngine/.test(idxSrc))
-    ok('/asr 装配层恒注入 getKey（路由不自己读 config/环境变量）',
-      /createAsrHandler\(\{[^)]*getKey:/.test(idxSrc))
+    ok('/asr 装配层恒注入 getDeepseekKey（路由不自己读 config/环境变量）',
+      /createAsrHandler\(\{[^)]*getDeepseekKey:/.test(idxSrc))
+
+    // 2026-11-14 主人决定：SiliconFlow 依赖全部删除、无兜底。src/ 里再出现它的
+    // 读取器 / Key 名 / 接口地址就算回归（注释里写「已下线」的历史说明不算）。
+    const srcFiles = []
+    const walkSrc = (d) => {
+      for (const name of readdirSync(d)) {
+        const p = path.join(d, name)
+        const st = statSync(p)
+        if (st.isDirectory()) walkSrc(p)
+        else if (/\.ts$/.test(name)) srcFiles.push(p)
+      }
+    }
+    walkSrc(path.join(ROOT, 'src'))
+    const sfDepRe = /readSiliconFlowKey|SILICONFLOW_API_KEY|CHUBBY_WHALE_SILICONFLOW_KEY|api\.siliconflow\.cn|siliconflowKey/
+    const sfHits = srcFiles.filter((f) => sfDepRe.test(readFileSync(f, 'utf8')))
+    ok('src/ 里没有任何 SiliconFlow 依赖（删干净、无兜底的硬约束）',
+      sfHits.length === 0, sfHits.map((f) => path.relative(ROOT, f)).join(','))
   }
 } catch (e) {
   ok('用例未抛异常', false, String((e && e.stack) || e))

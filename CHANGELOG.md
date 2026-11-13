@@ -2,6 +2,34 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [1.4.12] - 2026-11-14
+
+### 修复（工作区输入框不再冒诗词弹幕）
+- 旧实现把诗词匹配挂在宿主 `session/event` 的 `user/message` 上：在 Harness 工作区输入框打工作指令，只要命中诗词关键词/意境就推一条 `poem-echo`，鲸鱼冒诗念整首，打扰干活。
+- 现在采集器只记一条摘要（不读正文、不匹配）；诗词弹幕改由鲸鱼自己的聊天路由 `/chat`、`/chat-stream`（菜单「跟她说两句」）触发，命中才推、带整首与出处。
+- 菜单「念首诗」「说书」本来就是手动触发，不受影响。
+- 测试：新增 `scripts/test-poem-echo-source.mjs`（23 项）：DSH 输入零触发、聊天命中整首/出处、查整首失败仍发一句、两条路由都接线。
+
+### 新增（天气 A 方案：能真答「上海今天天气怎么样」）
+- 宿主新增 `GET /api/chubby-whale/weather?city=<城市>`：调 `wttr.in/<city>?format=j1&lang=zh-cn`（6s 超时），取 `current_condition[0]` 的温度/体感/湿度/风速与中文天气描述，拼一行中文；失败一律 `{ok:false}`，**不编温度**。同城 10 分钟内存缓存（wttr.in 高频会限流回纯文本）。
+- 取数与清洗收进 `host/weather.ts`，`/briefing` 与 `/weather` 共用同一套规则（单行、去控制字符、剥「待办/提醒」、40 字上限）。
+- 客户端新增 `client/weather-ask.ts`（纯函数）：认「上海今天天气怎么样」「北京天气」「现在多少度」这类短问句；「天气晚来秋」「我喜欢这样的天气」「今天天气不错」不劫持；没提城市默认北海。
+- `chat-route` 在「问句交给模型」之前接住天气意图：气泡 + 朗读；按温度/描述给一句穿衣提醒（只基于查到的事实）。查不到就说「天气没查到」，不猜。
+- 测试：新增 `scripts/test-weather.mjs`（54 项）覆盖意图正/反例、取数失败口径、缓存与 405、chat-route 接线、简报共用清洗。
+
+### 变更（语音识别全面转官方，删除 SiliconFlow 全部依赖——无兜底）
+- ASR 只走 DeepSeek 官方 `/v1/tools/asr`：删除 SiliconFlow 的 endpoint / model / language 参数与「官方失败自动回退」分支；非 WAV 音频不再换供应商，直接回 `unsupported format` 并给一句人话（客户端录音后本就会转 WAV）。
+- `host/config.ts`：删 `readSiliconFlowKey`；`keyStatus` 只报 `deepseek`。
+- `host/ports.ts`：`AsrRouteDeps` 只留 `getDeepseekKey`（去掉 `getKey` / `engine`）。
+- `index.ts`：删 `getSiliconflowKey` 与 `readAsrEngine`（`CHUBBY_WHALE_ASR_ENGINE`、`config.json` 的 `asrEngine` 不再读取）。
+- 识别缓存 key 升 **v6**（固定 `official`）：旧缓存里可能躺着别家引擎的识别文本，升级后自然失效。
+- `/config` 去掉 `hasSiliconflowKey`；菜单「配置」文案改成「聊天和语音都用这一个」；首次安装提示改成「DeepSeek Key（deepseekKey）」。
+- 测试：ASR 用例 `getKey` → `getDeepseekKey`；新增「`src/` 无 SiliconFlow 依赖」硬断言、非 WAV 不换供应商、缺省 `format` 按 WAV 构造。
+
+### 兼容说明
+- 旧 `config.json` 里残留的硅基流动字段不再读取、不告警、不影响启动；`SILICONFLOW_API_KEY` / `CHUBBY_WHALE_SILICONFLOW_KEY` 环境变量同样被忽略。
+- README / `config.example.json` 已同步：现在一个 `deepseekKey` 同时供聊天与语音识别。
+
 ## [1.4.11] - 2026-11-13
 
 ### 修复（流式气泡「（说）」线路碎片化）

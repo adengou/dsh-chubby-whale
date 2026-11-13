@@ -110,9 +110,11 @@ try {
     loadGrowth: () => ({}),
     loadReminders: () => [],
   })
+  // 天气：注入假 fetch，装配测试绝不外呼
+  const weather = (await load('host/routes/weather.ts')).createWeatherHandler({ fetchImpl: async () => ({ ok: false, status: 503 }) })
   // 假引擎没有 warm()：createTtsHandler 不会去探测 python（测试必须离线、不起子进程）
   const tts = (await load('host/routes/tts.ts')).createTtsHandler({ engine: { synthesize: async () => Buffer.alloc(0) } })
-  const asr = (await load('host/routes/asr.ts')).createAsrHandler({ getKey: () => '' })
+  const asr = (await load('host/routes/asr.ts')).createAsrHandler({ getDeepseekKey: () => '' })
   const personality = (await load('host/routes/personality.ts')).createPersonalityHandlers({
     repo: { load: () => ({}), revert: () => null },
   })
@@ -147,7 +149,7 @@ try {
 
   const sets = {
     misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles,
-    briefing, tts, asr, personality, daily, backup, stats, configView, proofread, nervous,
+    briefing, weather, tts, asr, personality, daily, backup, stats, configView, proofread, nervous,
   }
 
   let produced = 0

@@ -151,6 +151,8 @@ export function createChatStreamHandler(opts: ChatStreamRouteDeps) {
       try { maybeCreateReminder(opts.addReminder, message, Date.now()) } catch (err: any) {
         console.error('[chat-stream] REMINDER-CREATE-FAIL ' + String((err && err.message) || err))
       }
+      // 诗词弹幕的唯一触发点（2026-11-14）：与 /chat 同口径，只在鲸鱼聊天面板里冒诗
+      try { if (opts.noteUserChat) opts.noteUserChat(message) } catch (err: any) { }
 
       sendSseHeaders(res)
       // 立刻把 SSE 头刷出去，客户端不必等首帧（断连监听已由上面的 watchClientGone 挂好）

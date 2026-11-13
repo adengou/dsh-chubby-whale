@@ -123,7 +123,6 @@ try {
     const bad = []
     if (src.indexOf('config.json') >= 0) bad.push('config.json')
     if (/readApiKey\s*\(/.test(src)) bad.push('readApiKey()')
-    if (/readSiliconFlowKey\s*\(/.test(src)) bad.push('readSiliconFlowKey()')
     if (/from 'node:fs'/.test(src) && rel.indexOf('routes/misc.ts') < 0) bad.push('node:fs')
     ok('不读内部配置/Key：' + rel.split('/').pop(), bad.length === 0, bad.join(',') || '无')
   }
@@ -154,12 +153,11 @@ try {
   {
     const h = createConfigViewHandler({
       hasDeepseekKey: () => 'sk-live-DS-SECRET-123456',
-      hasSiliconflowKey: () => 'sf-live-SF-SECRET-abcdef',
     })
     const r = await call(h.handleConfig)
-    ok('Key 读取器误返回原文 → 只出布尔', r.json && r.json.ok === true && r.json.hasDeepseekKey === true && r.json.hasSiliconflowKey === true, JSON.stringify(r.json))
-    ok('响应体不含任何 Key 内容', r.body.indexOf('sk-live') < 0 && r.body.indexOf('sf-live') < 0)
-    ok('布尔字段类型是 boolean', typeof r.json.hasDeepseekKey === 'boolean' && typeof r.json.hasSiliconflowKey === 'boolean')
+    ok('Key 读取器误返回原文 → 只出布尔', r.json && r.json.ok === true && r.json.hasDeepseekKey === true, JSON.stringify(r.json))
+    ok('响应体不含任何 Key 内容', r.body.indexOf('sk-live') < 0)
+    ok('布尔字段类型是 boolean', typeof r.json.hasDeepseekKey === 'boolean')
   }
 
   // B2：getter 全部抛错 → 不 500、逐字段兜底，ok 仍为 true
@@ -168,12 +166,12 @@ try {
     const h = createConfigViewHandler({
       enabled: boom, dataSource: boom, model: boom,
       personalityLearning: boom, personalityWriting: boom, cacheEnabled: boom,
-      hasDeepseekKey: boom, hasSiliconflowKey: boom,
+      hasDeepseekKey: boom,
     })
     const r = await capture(() => call(h.handleConfig))
     const j = r.value.json
     ok('getter 抛错 → 各字段兜底且 ok:true', j && j.ok === true && j.enabled === true && j.dataSource === 'local' && j.model === '', JSON.stringify(j))
-    ok('getter 抛错 → Key 字段回落 false（不是异常文本）', j.hasDeepseekKey === false && j.hasSiliconflowKey === false)
+    ok('getter 抛错 → Key 字段回落 false（不是异常文本）', j.hasDeepseekKey === false)
   }
 
   // B3：非 GET/HEAD → 405（与 stats/backup 的同口径）

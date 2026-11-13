@@ -12,39 +12,12 @@
  */
 import { growthStage } from '../../shared/growth.js'
 import { sendJson } from '../respond.js'
+import { cleanWeather, WEATHER_TIMEOUT_MS } from '../weather.js'
 
 /** 非负整数（经验展示与 /growth 同口径：NaN/负数/小数归零或取整） */
 function nonNegInt(value: any): number {
   const n = Number(value)
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
-}
-
-/** 天气外呼超时：wttr.in 偶发很慢，到点就放掉，简报其它段不能陪它等 */
-const WEATHER_TIMEOUT_MS = 6000
-
-/** 天气段上限（按「字」= Unicode 码点）：正常只回十来个字，超长几乎都是错误页/HTML */
-const WEATHER_MAX_CHARS = 40
-
-/**
- * 天气段清洗：压成单行 + 去控制字符 + 剥掉「待办/提醒」字样 + 按码点截断。
- *
- * 为什么必须做（客户端契约决定，不是美化）：
- *   · parseBriefing 按行切两段，**任何**含「待办/提醒」的行都会被归到第二段；
- *     wttr.in 出问题时会回多行错误页/HTML，原样拼进 text 就会凭空多出一个「待办」段、
- *     或者把日期/天气整行顶掉；
- *   · 正常回包也就十几个字，但错误页可能几百 KB——不截断会撑爆气泡与朗读（TTS 逐字念）。
- * 按码点截断，避免切出半个 emoji（与 host/personality/merge.ts 的 clampText 同一做法）。
- */
-function cleanWeather(raw: any): string {
-  const single = String(raw == null ? '' : raw)
-    // 控制字符（含 \r \n \t）、零宽字符、行/段分隔符统一当空白
-    .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029\ufeff]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  // 天气描述里出现这两个词没有正当理由，留着会污染两段切分
-  const safe = single.replace(/待办|提醒/g, ' ').replace(/\s+/g, ' ').trim()
-  const chars = Array.from(safe)
-  return chars.length > WEATHER_MAX_CHARS ? chars.slice(0, WEATHER_MAX_CHARS).join('') : safe
 }
 
 /**

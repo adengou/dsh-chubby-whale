@@ -465,6 +465,7 @@ try {
     poem: { handlePoem: fn },
     poemTitles: { handlePoemTitles: fn },
     briefing: { handleBriefing: fn },
+    weather: { handleWeather: fn },
     tts: fn, asr: fn,
     personality: { handlePersonality: fn, handleRevert: fn },
     daily: { handleDaily: fn },
@@ -891,21 +892,21 @@ try {
 
   // ① 空音频
   let res = mkRes()
-  await createAsrHandler({ cache, getKey: () => 'k' })(mkReq({ audio: '' }), res)
+  await createAsrHandler({ cache, getDeepseekKey: () => 'k' })(mkReq({ audio: '' }), res)
   ok('空音频 → 400', res.code === 400 && res.json().error === 'empty audio')
 
   // ② 非法 base64
   res = mkRes()
-  await createAsrHandler({ cache, getKey: () => 'k' })(mkReq({ audio: '!!!not-base64!!!' }), res)
+  await createAsrHandler({ cache, getDeepseekKey: () => 'k' })(mkReq({ audio: '!!!not-base64!!!' }), res)
   ok('非法 base64 → 400', res.code === 400 && res.json().error === 'bad base64')
 
   // ③ 没 key
   res = mkRes()
-  await createAsrHandler({ cache, getKey: () => '' })(mkReq({ audio }), res)
-  ok('没有密钥 → ok:false NO_KEY + 人话提示', res.json() && res.json().ok === false && res.json().error === 'NO_KEY' && String(res.json().hint || '').indexOf('siliconflowKey') >= 0, JSON.stringify(res.json()))
+  await createAsrHandler({ cache, getDeepseekKey: () => '' })(mkReq({ audio }), res)
+  ok('没有密钥 → ok:false NO_KEY + 人话提示', res.json() && res.json().ok === false && res.json().error === 'NO_KEY' && String(res.json().hint || '').indexOf('deepseekKey') >= 0, JSON.stringify(res.json()))
 
   // ④ 正常识别 + 缓存命中
-  const handle = createAsrHandler({ cache, getKey: () => 'k' })
+  const handle = createAsrHandler({ cache, getDeepseekKey: () => 'k' })
   fetchCalls.length = 0
   res = mkRes()
   await handle(mkReq({ audio }), res)
@@ -949,12 +950,27 @@ try {
   ok('超时 → error=timeout', res.json() && res.json().error === 'timeout', String(res.json() && res.json().error))
   rejectWith = null
 
-  // ⑧ format 白名单：非法值回落 webm（防 CRLF 注入）
+  // ⑧ format：非法值 400 拒收；合法但非 WAV（webm/mp3）也拒收——2026-11-14 起只走官方，不再换供应商
   fetchCalls.length = 0
   res = mkRes()
   await handle(mkReq({ audio: Buffer.from('fmt').toString('base64'), format: 'exe' }), res)
-  const bodyText = fetchCalls[0] && fetchCalls[0].body ? fetchCalls[0].body.toString('latin1') : ''
-  ok('非法 format 回落 webm', bodyText.indexOf('filename="audio.webm"') >= 0)
+  ok('非法 format → 400 bad format（防 CRLF 注入）', res.code === 400 && res.json() && res.json().error === 'bad format', JSON.stringify(res.json()))
+  ok('非法 format 不外呼', fetchCalls.length === 0, 'fetch=' + fetchCalls.length)
+
+  const beforeNonWav = fetchCalls.length
+  res = mkRes()
+  await handle(mkReq({ audio: Buffer.from('fmt-webm').toString('base64'), format: 'webm' }), res)
+  ok('webm → ok:false unsupported format（官方只收 WAV，不偷偷换供应商）',
+    res.json() && res.json().ok === false && res.json().error === 'unsupported format' && fetchCalls.length === beforeNonWav,
+    JSON.stringify(res.json()) + ' fetch=' + fetchCalls.length)
+
+  // 缺省 format 按 WAV 处理（客户端现在只会传 WAV）
+  const beforeDefault = fetchCalls.length
+  res = mkRes()
+  await handle(mkReq({ audio: Buffer.from('fmt-default').toString('base64') }), res)
+  const defaultBody = fetchCalls[beforeDefault] && fetchCalls[beforeDefault].body ? fetchCalls[beforeDefault].body.toString('latin1') : ''
+  ok('缺省 format 按 WAV 构造 multipart', fetchCalls.length === beforeDefault + 1 && defaultBody.indexOf('filename="audio.wav"') >= 0,
+    'fetch=' + fetchCalls.length)
 
   globalThis.fetch = realFetch
   rmSync(dir, { recursive: true, force: true })
@@ -3278,9 +3294,9 @@ try {
     makeVoice: (opts) => { captured = opts; return fakeVoice },
   })
   bridge.ensure()
-  captured.onDiag({ stage: 'asr-no-key', hint: '没配语音识别 Key（siliconflowKey），语音听不见；打字也能聊' })
+  captured.onDiag({ stage: 'asr-no-key', hint: '没配语音识别 Key（deepseekKey），语音听不见；打字也能聊' })
   captured.onDiag({ stage: 'asr-no-key' })
-  ok('无识别 Key：只提示一次', bubbles.length === 1 && bubbles[0].indexOf('siliconflowKey') >= 0, bubbles.join(' | '))
+  ok('无识别 Key：只提示一次', bubbles.length === 1 && bubbles[0].indexOf('deepseekKey') >= 0, bubbles.join(' | '))
   captured.onDiag({ stage: 'other' })
   ok('其它诊断不弹提示', bubbles.length === 1)
   await bridge.start()
@@ -3485,7 +3501,7 @@ try {
   const run = async (text, lang, audioSeed = 'fake-audio', chatLang) => {
     replyText = text
     const res = mkRes()
-    const deps = { cache, getKey: () => 'k' }
+    const deps = { cache, getDeepseekKey: () => 'k' }
     if (lang) deps.language = () => lang
     const body = { audio: Buffer.from(audioSeed).toString('base64') }
     if (chatLang) body.lang = chatLang

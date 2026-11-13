@@ -614,7 +614,7 @@ registerSkinActions(actions)
       R.useEffect(() => {
         getJson('/status').then((d: any) => {
           if (d && d.ok && d.key === false) {
-            showBubble('还没配 Key：聊天和语音要用 Key（deepseekKey / siliconflowKey），念诗、说书、典故、提醒照样能用～ 配置方法见 README', 9000)
+            showBubble('还没配 Key：聊天和语音都要 DeepSeek Key（deepseekKey），念诗、说书、典故、提醒照样能用～ 配置方法见 README', 9000)
           }
         }).catch(() => { })
       }, [])

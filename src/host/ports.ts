@@ -153,6 +153,12 @@ export interface ChatRouteDeps {
    * 聊天路由会把解析出的任务写进提醒仓储。缺省（老调用方/离线测试）＝不建，行为与以前一致。
    */
   addReminder?: (text: string, at: string, repeat?: number) => any
+  /**
+   * 诗词弹幕的唯一触发点（2026-11-14）：鲸鱼聊天面板里主人发来一句话后，
+   * 装配层把这个文本交给神经感知收集器做本地诗句匹配。
+   * **不能挂到 DSH 的 user/message 上**——那样在工作区打字也会冒诗。
+   */
+  noteUserChat?: (text: string) => void
 }
 
 /** 流式 /chat-stream 的依赖（与普通 /chat 同口径：亲密度/成长/长期摘要都记） */
@@ -177,6 +183,8 @@ export interface ChatStreamRouteDeps {
   saveState?: (s: any) => void
   addExp?: (n: number, kind: string) => any
   saveMemorySummary?: (s: string) => void
+  /** 诗词弹幕：与普通 /chat 同一触发口径（见 ChatRouteDeps.noteUserChat） */
+  noteUserChat?: (text: string) => void
 }
 
 /**
@@ -195,11 +203,11 @@ export interface TtsRouteDeps {
   cloudTts?: { synthesize: (text: string, signal?: AbortSignal) => Promise<Buffer>; enabled: () => boolean }
 }
 
-/** /asr 的依赖：只要求能拿到硅基流动 Key */
+/** /asr 的依赖：只要求能拿到 DeepSeek Key（官方 /v1/tools/asr，2026-11-14 起无第二供应商） */
 export interface AsrRouteDeps {
-  getKey: KeyReader
+  getDeepseekKey: KeyReader
   cache?: CachePort
-  /** 识别语言（zh/en/auto）；缺省 zh。配置键 asrLanguage，2026-11-07 起真正生效 */
+  /** 识别语言（zh/en/auto）；缺省 zh。配置键 asrLanguage，只用于脚本闸门，官方语种自动 */
   language?: () => string
 }
 

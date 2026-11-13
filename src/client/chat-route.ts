@@ -14,6 +14,7 @@ import { setStoryAuto } from './story-auto.js'
 import { getJson } from './http.js'
 import { detectIntent } from './intent.js'
 import { collapseText } from './text.js'
+import { parseWeatherAsk } from './weather-ask.js'
 import type { Persona } from './persona.js'
 import type { StoryController, StoryRefs } from './story.js'
 import { beginOnce, recitePoem } from './actions/culture.js'
@@ -29,6 +30,10 @@ import { beginOnce, recitePoem } from './actions/culture.js'
  */
 const CULTURE_TIMEOUT_MS = 20000
 const POEM_TIMEOUT_MS = 15000
+/** 天气查询预算：宿主自己 6s 超时 + 回包余量（wttr.in 慢时不至于把气泡一直挂着） */
+const WEATHER_TIMEOUT_MS = 8000
+/** 天气没查到的统一人话（不编一个温度糊弄主人） */
+const WEATHER_FAIL_TEXT = '天气没查到，可能是网断了；等会儿再问本鲸一次'
 
 export type LocalRouteHost = {
   persona: Persona
@@ -93,6 +98,40 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     }).catch(() => host.bubble('诗册没读到', 4000))
   }
 
+  /**
+   * 天气建议：只根据已查到的事实（描述/温度）给一句穿衣提醒，
+   * 不编「今天会下雨」这类没查到的结论。
+   */
+  function weatherTip(d: any): string {
+    try {
+      const desc = String(d && d.desc || '')
+      const temp = Number(d && d.tempC)
+      if (/雨|雪|雷/.test(desc)) return '出门带把伞'
+      if (Number.isFinite(temp) && temp <= 5) return '多穿点，别冻着'
+      if (Number.isFinite(temp) && temp >= 30) return '热，别在外面晒太久'
+      if (Number.isFinite(temp) && temp >= 20) return '穿件薄的就够了'
+      return '出门看天加件衣服'
+    } catch (e) { return '' }
+  }
+
+  /**
+   * 实时天气（本地查询，不交给模型猜）：命中即气泡 + 朗读。
+   * 宿主查不到就照实说「没查到」——宁可答不上，也不编一个温度。
+   */
+  function fetchWeather(city: string): void {
+    host.bubble('（查天气）本鲸看看天…', 3000, { transient: true })
+    getJson('/weather?city=' + encodeURIComponent(city), { cache: 'no-store', timeout: WEATHER_TIMEOUT_MS }).then((d: any) => {
+      if (!d || d.ok !== true || typeof d.text !== 'string' || !d.text) {
+        host.bubble(WEATHER_FAIL_TEXT, 6000)
+        return
+      }
+      const tip = weatherTip(d)
+      const said = d.text + (tip ? '，' + tip : '') + '～'
+      host.bubble(said, 9000)
+      host.say(said, 7000)
+    }).catch(() => host.bubble(WEATHER_FAIL_TEXT, 6000))
+  }
+
   function route(rawText: string): boolean {
     const t0 = String(rawText || '').trim()
     /**
@@ -138,6 +177,15 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
         if (!books.length) { host.bubble('书单没取到，稍后再试', 4000); return }
         host.bubble('书单有 ' + books.length + ' 本：' + books.join('、') + '（说个书名本鲸就开讲）', 12000)
       }).catch(() => host.bubble('书单没取到，稍后再试', 4000))
+      return true
+    }
+
+    // 实时天气：早于「问句交给模型」——模型看不到外面的天，本地查才有真数据。
+    // 诗句/闲聊（「天气晚来秋」「我喜欢这样的天气」）由 parseWeatherAsk 挡回去。
+    const weatherAsk = parseWeatherAsk(t0)
+    if (weatherAsk) {
+      takeOver()
+      fetchWeather(weatherAsk.city)
       return true
     }
 

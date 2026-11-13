@@ -3,8 +3,11 @@
  *
  * Key 来源（只认本插件）：
  *   1) 本插件 config.json 的对应字段（推荐）
- *   2) 本插件专属环境变量：CHUBBY_WHALE_DEEPSEEK_KEY / CHUBBY_WHALE_SILICONFLOW_KEY
- *   3) 兼容回退：DEEPSEEK_API_KEY / SILICONFLOW_API_KEY（通用名，仅兜底）
+ *   2) 本插件专属环境变量：CHUBBY_WHALE_DEEPSEEK_KEY
+ *   3) 兼容回退：DEEPSEEK_API_KEY（通用名，仅兜底）
+ *
+ * 2026-11-14：硅基流动依赖全部下线（聊天/语音都只用 DeepSeek Key），
+ * 旧配置里残留的旧 Key 字段不再读取，也不会告警。
  *
  * 刻意**不读** ~/.dsh/.credentials.yaml：那是 DSH 与其他插件共用的凭据库，
  * 读了就与其他插件耦合，别人换 Key 也会牵连本插件。
@@ -30,7 +33,7 @@ function clip(raw, max) {
 }
 /**
  * 值形状描述（只报类型/长度，**绝不回显内容**）。
- * config.json 里就放着 deepseekKey / siliconflowKey，任何“把原始值打进日志”的写法
+ * config.json 里就放着 deepseekKey，任何“把原始值打进日志”的写法
  * 都是一条 Key 外泄通路；形状信息足够定位“写错类型”，不需要看到值本身。
  */
 function shapeOf(raw) {
@@ -147,7 +150,10 @@ function fromEnv(own, legacy) {
     catch { }
     return '';
 }
-/** DeepSeek Key（聊天 / 文档总结 / 对联） */
+/**
+ * DeepSeek Key（聊天 / 语音识别 / 文档总结 / 对联）
+ * 2026-11-14 起是唯一的外呼 Key：硅基流动依赖已全部删除。
+ */
 export function readApiKey(pluginDir) {
     const cfg = readConfigJson(pluginDir);
     const fromFileKey = readKeyField(cfg, 'deepseekKey');
@@ -155,18 +161,10 @@ export function readApiKey(pluginDir) {
         return fromFileKey;
     return fromEnv('CHUBBY_WHALE_DEEPSEEK_KEY', 'DEEPSEEK_API_KEY');
 }
-/** 硅基流动 Key（语音识别） */
-export function readSiliconFlowKey(pluginDir) {
-    const cfg = readConfigJson(pluginDir);
-    const fromFileKey = readKeyField(cfg, 'siliconflowKey');
-    if (fromFileKey)
-        return fromFileKey;
-    return fromEnv('CHUBBY_WHALE_SILICONFLOW_KEY', 'SILICONFLOW_API_KEY');
-}
 /**
- * 语音识别语言（硅基流动 Qwen3-ASR 的 language 参数）：默认 zh。
- * 为什么默认 zh：不传该参数时模型自动检测，短句/带噪声的音频常被识别成英文（"No, no"），
- * 主人的语音几乎都是中文，显式指定能显著减少误识别。
+ * 语音识别语言：默认 zh。
+ * 为什么默认 zh：官方 ASR 语种自动，但短句/带噪声的音频常被识别成英文（"No, no"），
+ * 脚本闸门据此判断「这段输出像不像主人说的话」；主人的语音几乎都是中文。
  * config.json 可改：asrLanguage（zh / en / auto）；2026-11-07 起由入口注入，真正生效。
  */
 export function readAsrLanguage(pluginDir) {
@@ -180,7 +178,6 @@ export function readAsrLanguage(pluginDir) {
 export function keyStatus(pluginDir) {
     return {
         deepseek: Boolean(readApiKey(pluginDir)),
-        siliconflow: Boolean(readSiliconFlowKey(pluginDir)),
     };
 }
 const warnedSources = new Set();

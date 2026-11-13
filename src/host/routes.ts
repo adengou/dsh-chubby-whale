@@ -30,6 +30,7 @@ import type { createCultureHandlers } from './routes/culture.js'
 import type { createPoemHandler } from './routes/poem.js'
 import type { createPoemTitlesHandler } from './routes/poem-titles.js'
 import type { createBriefingHandlers } from './routes/briefing.js'
+import type { createWeatherHandler } from './routes/weather.js'
 import type { createTtsHandler } from './routes/tts.js'
 import type { createAsrHandler } from './routes/asr.js'
 import type { createPersonalityHandlers } from './routes/personality.js'
@@ -64,6 +65,8 @@ export interface HandlerSet {
   /** 诗名索引：{ handlePoemTitles }（客户端点诗识别按需拉取） */
   poemTitles: ReturnType<typeof createPoemTitlesHandler>
   briefing: ReturnType<typeof createBriefingHandlers>
+  /** 实时天气：{ handleWeather }（wttr.in，10 分钟内存缓存） */
+  weather: ReturnType<typeof createWeatherHandler>
   tts: ReturnType<typeof createTtsHandler>
   asr: ReturnType<typeof createAsrHandler>
   /** L2 可变人格：{ handlePersonality, handleRevert } */
@@ -109,6 +112,8 @@ export function createRouteTable(h: HandlerSet): HttpRoute[] {
     // 诗名索引：客户端点诗识别按需拉取（不再内联进 client bundle）
     { path: '/api/chubby-whale/poem-titles', handler: h.poemTitles.handlePoemTitles },
     { path: '/api/chubby-whale/briefing', handler: h.briefing.handleBriefing },
+    // 实时天气：客户端问「上海今天天气怎么样」时本地查询（不交给模型猜）
+    { path: '/api/chubby-whale/weather', handler: h.weather.handleWeather },
     { path: '/api/chubby-whale/tts', handler: h.tts },
     { path: '/api/chubby-whale/asr', handler: h.asr },
     // L2 可变人格：读当前 + 历史 / 回滚上一条变更

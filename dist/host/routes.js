@@ -25,6 +25,8 @@ export function createRouteTable(h) {
         // 诗名索引：客户端点诗识别按需拉取（不再内联进 client bundle）
         { path: '/api/chubby-whale/poem-titles', handler: h.poemTitles.handlePoemTitles },
         { path: '/api/chubby-whale/briefing', handler: h.briefing.handleBriefing },
+        // 实时天气：客户端问「上海今天天气怎么样」时本地查询（不交给模型猜）
+        { path: '/api/chubby-whale/weather', handler: h.weather.handleWeather },
         { path: '/api/chubby-whale/tts', handler: h.tts },
         { path: '/api/chubby-whale/asr', handler: h.asr },
         // L2 可变人格：读当前 + 历史 / 回滚上一条变更

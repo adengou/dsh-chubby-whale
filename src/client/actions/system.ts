@@ -369,7 +369,7 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
         '数据源：' + (d.dataSource || 'local') + ' · 模型：' + (d.model || '--'),
         '人格学习：' + yn(d.personalityLearning) + ' · 近期心境自写：' + yn(d.personalityWriting),
         '聊天缓存：' + yn(d.cacheEnabled),
-        'DeepSeek Key：' + (d.hasDeepseekKey ? '已配置' : '未配置') + ' · 硅基流动 Key：' + (d.hasSiliconflowKey ? '已配置' : '未配置'),
+        'DeepSeek Key：' + (d.hasDeepseekKey ? '已配置' : '未配置') + '（聊天和语音都用这一个）',
       ]
       host.bubble(lines.join('\n'), 12000)
     }).catch(() => host.bubble('配置读不到', 4000))

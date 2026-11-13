@@ -28,6 +28,9 @@ const PATTERNS = [
   { re: /通过\s*(\d+)\s*项\s*[，,/]\s*失败\s*(\d+)\s*项/g, kind: 'passFail' },
   { re: /结果：通过\s*(\d+)\s*项\s*\/\s*失败\s*(\d+)\s*项/g, kind: 'passFail' },
   { re: /全部通过[：:]\s*(\d+)\s*\/\s*(\d+)\s*项/g, kind: 'passTotal' },
+  // 2026-11-14：focus-reward / diary / belly / whale-speak / nervous-events 用「全部通过：N 项」
+  // 或「全部通过（N 项断言）」收尾，之前未识别。
+  { re: /全部通过[：:（(]\s*(\d+)\s*项/g, kind: 'passOnly' },
 ]
 
 function extract(text) {
@@ -39,6 +42,7 @@ function extract(text) {
     if (!last) continue
     const a = Number(last[1])
     const b = Number(last[2])
+    if (kind === 'passOnly') return { pass: a, fail: 0 }
     return kind === 'passTotal' ? { pass: a, fail: Math.max(0, b - a) } : { pass: a, fail: b }
   }
   return null

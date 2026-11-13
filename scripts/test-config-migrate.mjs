@@ -3,7 +3,7 @@
  *
  * 覆盖 src/host/config.ts、prefs.ts、migrate.ts 的：
  *   · 日志安全：坏 JSON 的 V8 报错会带原文片段（Node ≥20），非对象形状会按内容回显——
- *     config.json 里放着 deepseekKey / siliconflowKey，这两条路都可能把 Key 写进日志；
+ *     config.json 里放着 deepseekKey，这条读取路径可能把 Key 写进日志；
  *   · 类型错误的键：值被当默认值时要留一条告警（不回显值），不挡插件加载；
  *   · 超长 / 含控制字符的配置值不刷屏、不把日志行撕碎；
  *   · prefs 坏文件：写前先备份原文（不静默丢偏好），写入失败留痕但不抛；
@@ -93,7 +93,7 @@ function mkReq(body) {
 }
 
 const envKeys = [
-  'CHUBBY_WHALE_DEEPSEEK_KEY', 'DEEPSEEK_API_KEY', 'CHUBBY_WHALE_SILICONFLOW_KEY', 'SILICONFLOW_API_KEY',
+  'CHUBBY_WHALE_DEEPSEEK_KEY', 'DEEPSEEK_API_KEY',
   'CHUBBY_WHALE_DATA_SOURCE', 'CHUBBY_WHALE_MODEL',
 ]
 const savedEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]]))
@@ -136,10 +136,10 @@ try {
 
     // 1.0 目录/文件都不存在：ENOENT 是常态，必须静默（与 prefs/migrate 的“目录缺失不算错误”同口径）
     const cap0 = captureConsole()
-    const k0 = C.readApiKey(join(dir, 'no-such-dir')) + '|' + C.readSiliconFlowKey(join(dir, 'no-such-dir'))
+    const k0 = C.readApiKey(join(dir, 'no-such-dir'))
     cap0.restore()
     ok('没有 config.json / 目录不存在：静默按未配置（ENOENT 不算错误，只剩环境变量兜底）',
-      k0 === 'env-fallback-key|' && cap0.logs.length === 0, k0 + ' / ' + cap0.text().slice(0, 120))
+      k0 === 'env-fallback-key' && cap0.logs.length === 0, k0 + ' / ' + cap0.text().slice(0, 120))
 
     // 1.1 坏 JSON：Node ≥20 的 JSON.parse 报错会带原文片段（实测 "…pseekKey":sk-live-SE"…）
     writeFileSync(file, '{"deepseekKey":sk-live-SECRET123456}', 'utf8')
@@ -228,20 +228,20 @@ try {
     ok('deepseekKey 是对象：告警只报形状', cap2.has('deepseekKey') && cap2.has('对象'), cap2.text().slice(0, 160))
     ok('deepseekKey 是对象：日志不含嵌套值', !leaks(cap2.text(), ['sk-live', 'NESTED']))
 
-    // 2.3 siliconflowKey 同口径
+    // 2.3 旧配置里的 siliconflowKey 字段：2026-11-14 起不再读取，也不该出现在日志里
     writeFileSync(file, '{"siliconflowKey":true}', 'utf8')
     const cap3 = captureConsole()
-    const v3 = C.readSiliconFlowKey(dir)
+    const v3 = C.readApiKey(dir)
     cap3.restore()
-    ok('siliconflowKey 是布尔：按未配置处理', v3 === '')
-    ok('siliconflowKey 是布尔：有告警且点名该字段', cap3.has('siliconflowKey'), cap3.text().slice(0, 160))
+    ok('残留的 siliconflowKey 字段被忽略（不再读取）', v3 === '')
+    ok('残留的 siliconflowKey 字段不产生日志（不打扰主人）', cap3.logs.length === 0, cap3.text().slice(0, 160))
 
     // 2.4 空值/空白是「没配」，不该告警（保持旧行为）
     writeFileSync(file, '{"deepseekKey":"","siliconflowKey":"   "}', 'utf8')
     const cap4 = captureConsole()
-    const v4 = C.readApiKey(dir) + '|' + C.readSiliconFlowKey(dir)
+    const v4 = C.readApiKey(dir)
     cap4.restore()
-    ok('Key 为空串/空白：按未配置且不告警', v4 === '|' && cap4.logs.length === 0, cap4.text().slice(0, 120))
+    ok('Key 为空串/空白：按未配置且不告警', v4 === '' && cap4.logs.length === 0, cap4.text().slice(0, 120))
 
     // 2.5 其余键的类型口径（锁现状，供报告逐条列出）
     const capSan = captureConsole()
@@ -492,7 +492,7 @@ try {
   console.log('\n[6] 源码核对：console 调用不拼敏感字段/原文')
   {
     const readSrc = (rel) => readFileSync(join(process.cwd(), 'src', 'host', rel), 'utf8')
-    const SECRET_WORDS = ['deepseekKey', 'siliconflowKey', 'apiKey', 'DEEPSEEK_API_KEY', 'SILICONFLOW_API_KEY', 'process.env']
+    const SECRET_WORDS = ['deepseekKey', 'apiKey', 'DEEPSEEK_API_KEY', 'process.env']
     const consoleLines = (src) => src.split(/\r?\n/).filter((l) => /console\.(log|warn|error)\(/.test(l))
 
     for (const rel of ['config.ts', 'prefs.ts', 'migrate.ts']) {

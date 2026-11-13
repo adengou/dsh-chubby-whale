@@ -74,7 +74,7 @@ function mkReq(body, headers = {}) {
   }
 }
 
-const envKeys = ['CHUBBY_WHALE_DEEPSEEK_KEY', 'DEEPSEEK_API_KEY', 'CHUBBY_WHALE_SILICONFLOW_KEY', 'SILICONFLOW_API_KEY', 'CHUBBY_WHALE_DATA_SOURCE', 'CHUBBY_WHALE_MODEL']
+const envKeys = ['CHUBBY_WHALE_DEEPSEEK_KEY', 'DEEPSEEK_API_KEY', 'CHUBBY_WHALE_DATA_SOURCE', 'CHUBBY_WHALE_MODEL']
 const savedEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]]))
 const setEnv = (obj) => {
   for (const k of envKeys) delete process.env[k]
@@ -95,13 +95,15 @@ try {
     const file = join(dir, 'config.json')
     setEnv({})
 
-    ok('没有 config.json + 没有环境变量 → Key 空', C.readApiKey(dir) === '' && C.readSiliconFlowKey(dir) === '')
-    ok('缺 Key 时 keyStatus 只给布尔', JSON.stringify(C.keyStatus(dir)) === '{"deepseek":false,"siliconflow":false}')
+    ok('没有 config.json + 没有环境变量 → Key 空', C.readApiKey(dir) === '')
+    ok('缺 Key 时 keyStatus 只给布尔', JSON.stringify(C.keyStatus(dir)) === '{"deepseek":false}')
+    ok('2026-11-14 起不再导出 readSiliconFlowKey（SiliconFlow 依赖已删）', !('readSiliconFlowKey' in C))
 
     // BOM + 前后空白
     writeFileSync(file, '\uFEFF' + JSON.stringify({ deepseekKey: '  sk-bom  ', siliconflowKey: ' sf ' }), 'utf8')
-    ok('config.json 带 BOM 仍可读（Key 去空白）', C.readApiKey(dir) === 'sk-bom' && C.readSiliconFlowKey(dir) === 'sf')
-    ok('keyStatus 只回布尔（不回 Key 内容）', JSON.stringify(C.keyStatus(dir)) === '{"deepseek":true,"siliconflow":true}')
+    ok('config.json 带 BOM 仍可读（Key 去空白）', C.readApiKey(dir) === 'sk-bom')
+    ok('残留的 siliconflowKey 字段被忽略（不再读）', C.readApiKey(dir) === 'sk-bom')
+    ok('keyStatus 只回布尔（不回 Key 内容）', JSON.stringify(C.keyStatus(dir)) === '{"deepseek":true}')
 
     // 优先级：config.json > 专属 env > 通用 env
     setEnv({ CHUBBY_WHALE_DEEPSEEK_KEY: 'env-own', DEEPSEEK_API_KEY: 'env-generic' })
@@ -118,7 +120,6 @@ try {
     setEnv({ DEEPSEEK_API_KEY: 'env-generic' })
     const r1 = C.readApiKey(dir)
     C.readApiKey(dir)
-    C.readSiliconFlowKey(dir)
     const badWarn = cap.logs.filter((l) => l.indexOf('config.json 不是合法 JSON') >= 0).length
     cap.restore()
     ok('坏 JSON 降级到环境变量（不抛、不挡插件）', r1 === 'env-generic')

@@ -112,10 +112,12 @@ export async function prepareAudioForAsr(blob: Blob, deps: AsrAudioDeps): Promis
   const maxWavBytes = deps && typeof deps.maxWavBytes === 'number' ? deps.maxWavBytes : 6 * 1024 * 1024
   let src: Blob = blob
   let fmt: RecFormat = formatFromMime(blob.type || recMime)
-  if (fmt === 'mp4') {
+  // 官方 ASR（DeepSeek /v1/tools/asr）只收 16-bit PCM WAV / Ogg；Chrome 录的是 webm/opus，
+  // 所以除 wav 外一律先转 WAV。转不动就只有原字节，宿主会明确回「这段录音没能转成 WAV」。
+  if (fmt !== 'wav') {
     const wav = await transcodeToWav(blob, deps && deps.actx, maxWavBytes)
     if (wav) { src = wav; fmt = 'wav' } else {
-      try { onDiag && onDiag({ stage: 'mp4-no-transcode', hint: 'mp4 没能转成 wav，按原字节上传' }) } catch (e) { }
+      try { onDiag && onDiag({ stage: 'mp4-no-transcode', hint: '音频没能转成 wav，按原字节上传' }) } catch (e) { }
     }
   }
   const b64 = await blobToBase64(src)

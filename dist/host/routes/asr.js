@@ -1,23 +1,29 @@
 /**
- * host/routes/asr.ts —— 语音识别路由（硅基流动 Qwen3-ASR）
- * POST JSON { audio: base64, format: 'webm'|'wav'|'mp3' } → { text }
- * Key 由入口注入（getKey），路由不再自己读 config.json / 环境变量。
+ * host/routes/asr.ts —— 语音识别路由（DeepSeek 官方 /v1/tools/asr）
+ * POST JSON { audio: base64, format: 'wav' } → { text }
+ * Key 由入口注入（getDeepseekKey），路由不再自己读 config.json / 环境变量。
  * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB → 同样 413（口径统一，2026-11-07）
  * 外呼超时 60 秒；**客户端断开（30s 硬超时/切页/断网）立刻中止外呼**，不再把付费识别跑满 60s（B93）
+ *
+ * 2026-11-14：SiliconFlow 全链路下线（主人决定，**无兜底**）。现在只走官方，
+ * 官方只收 16-bit PCM WAV / Ogg；客户端录音后已统一转 WAV，转不动的音频直接回明确的错误，
+ * 不再悄悄换供应商（换供应商会让「谁在听」变得不可见）。
  */
 import { hashBytes } from '../../shared/hash.js';
 import { isInterruptWord, isNoiseText } from '../../shared/noise.js';
 import { fetchJson, isAbortError, isTimeoutOnly, sendTooLarge, watchClientGone } from '../http.js';
 import { readJsonBody } from '../body.js';
 import { sendJson, sendError } from '../respond.js';
-const ASR_MODEL = 'Qwen/Qwen3-ASR-1.7B';
-const ENDPOINT = 'https://api.siliconflow.cn/v1/audio/transcriptions';
+/** DeepSeek 官方语音识别（2026-11-13 全家桶 API）：只要 file 字段，WAV/Ogg，语种自动 */
+const OFFICIAL_ENDPOINT = 'https://api.deepseek.com/v1/tools/asr';
+/** 官方只收 WAV/Ogg，本路由只按 WAV 构造 multipart */
+const OFFICIAL_FORMAT = 'wav';
 /** 汉字（含扩展 A） */
 const HAN_RE = /[\u3400-\u4DBF\u4E00-\u9FFF]/;
 /** 拉丁字母 */
 const LATIN_RE = /[A-Za-z]/;
 /** 明显不是英语的常见词（西/葡/法/意/越等），命中即判非英语 */
-const NON_EN_STOP = /(el|la|los|las|lo|los|una|uno|unos|unas|de|del|que|para|por|com|con|não|nao|voce|você|muito|isso|aqui|está|esta|más|pero|como|quando|onde|obrigado|gracias|hola|bonjour|merci|je|suis|vous|nous|le|les|des|du|et|est|dans|pour|avec|sur|pas|plus|tout|fait|être|avoir|il|che|di|per|sono|una|della|delle|degli|essere|avere|ou|seja|partir|momento|homem|ser|torna|gente|fazer|tem|que|é|os|as|um|uma|em|no|na|nos|nas|do|da|dos|das|se|ao|aos|à|às|pelo|pela)/i;
+const NON_EN_STOP = /\b(el|la|los|las|lo|los|una|uno|unos|unas|de|del|que|para|por|com|con|não|nao|voce|você|muito|isso|aqui|está|esta|más|pero|como|quando|onde|obrigado|gracias|hola|bonjour|merci|je|suis|vous|nous|le|les|des|du|et|est|dans|pour|avec|sur|pas|plus|tout|fait|être|avoir|il|che|di|per|sono|una|della|delle|degli|essere|avere|ou|seja|partir|momento|homem|ser|torna|gente|fazer|tem|que|é|os|as|um|uma|em|no|na|nos|nas|do|da|dos|das|se|ao|aos|à|às|pelo|pela)\b/i;
 /** 拉丁字母里的重音字符（英语基本不用） */
 const ACCENTED_LATIN = /[\u00C0-\u024F\u0300-\u036F]/;
 /** 英文启发式：拉丁字母、无重音、无常见非英语词，且像一句英语 */
@@ -43,7 +49,7 @@ function looksEnglish(text) {
  */
 /**
  * 环境噪声误识别的典型形态：纯英文且只有 1-2 个词（"No, no" / "Okay" / "Thank you"）。
- * Qwen3-ASR 在静音/噪声上会编这类短英文——它不该被当主人说的话上行。
+ * ASR 在静音/噪声上会编这类短英文——它不该被当主人说的话上行。
  * 真主人说英文一般更长（>=3 词）或带中文。
  */
 function isShortEnglishNoise(text) {
@@ -95,9 +101,14 @@ export function createAsrHandler(opts) {
             }
             const body = parsed.body;
             const audioB64 = typeof body?.audio === 'string' ? body.audio : '';
-            // format 会被拼进 multipart 头，必须白名单，否则可 CRLF 注入伪造表单段
-            const rawFormat = typeof body?.format === 'string' ? body.format : 'webm';
-            const format = /^(webm|wav|mp3)$/.test(rawFormat) ? rawFormat : 'webm';
+            // format 会被拼进 multipart 头，必须白名单，否则可 CRLF 注入伪造表单段。
+            // 缺省 wav：客户端现在只会传 WAV（录音后统一转码），缺字段时按 WAV 处理。
+            const rawFormat = typeof body?.format === 'string' ? body.format.trim().toLowerCase() : OFFICIAL_FORMAT;
+            if (!/^(webm|wav|mp3)$/.test(rawFormat)) {
+                sendJson(res, { ok: false, error: 'bad format', text: '' }, 400);
+                return;
+            }
+            const format = rawFormat;
             if (!audioB64) {
                 sendJson(res, { ok: false, error: 'empty audio' }, 400);
                 return;
@@ -123,13 +134,29 @@ export function createAsrHandler(opts) {
                 sendJson(res, { ok: false, error: 'audio too large', text: '' }, 413);
                 return;
             }
-            const key = opts.getKey();
-            if (!key) {
-                sendJson(res, { ok: false, error: 'NO_KEY', text: '', hint: '没配语音识别 Key（siliconflowKey），语音听不见；打字也能聊' });
+            // 官方只收 WAV/Ogg：非 WAV 不再换供应商，直接把原因说清楚（客户端转码失败时走这里）
+            if (format !== OFFICIAL_FORMAT) {
+                console.error('[asr] AUDIO-FORMAT ' + format + '（官方只收 WAV）');
+                sendJson(res, {
+                    ok: false,
+                    error: 'unsupported format',
+                    text: '',
+                    hint: '这段录音没能转成 WAV，官方语音识别收不了；打字也能聊',
+                });
+                return;
+            }
+            const deepseekKey = String(opts.getDeepseekKey() || '');
+            if (!deepseekKey) {
+                sendJson(res, {
+                    ok: false,
+                    error: 'NO_KEY',
+                    text: '',
+                    hint: '没配 DeepSeek Key（deepseekKey），语音识别用不了；聊天、念诗、说书、打字都照常',
+                });
                 return;
             }
             // 用完整音频字节做 key（只取前 4000 字符容易撞 key）
-            // key 里带模型名：换 ASR 模型后不会命中旧文本
+            // key 里带引擎名与模型名：换 ASR 模型后不会命中旧文本
             // key 里还必须带 format：同一份字节在 multipart 里声明的 Content-Type / filename 不同，
             // 上游的解码方式就不同。原来只按「模型 + 字节」缓存，实测同一份字节先用 format=wav
             // 识别成功，再以 format=webm 上传会直接命中上一次的文本（cached:true）——A 容器的结果
@@ -140,14 +167,15 @@ export function createAsrHandler(opts) {
             // 识别语言优先级：请求里的聊天语言（zh/en/auto）→ config.json 的 asrLanguage（zh/en/auto）→ zh。
             // 为什么：聊天语言=自动时主人会说英语，但 asrLanguage 默认 zh 的脚本闸门会把纯英文全丢掉，
             // 表现为"说英语没一点反应"。聊天语言=自动时上游也不锁 zh（自动检测），闸门只放中/英。
+            // v6（2026-11-14）：SiliconFlow 下线，引擎固定 official——旧缓存里可能躺着别家引擎的
+            // 识别文本，升版本让它们自然失效，避免「换引擎后还念旧结果」。
             const rawChatLang = typeof body?.lang === 'string' ? String(body.lang).trim().toLowerCase() : '';
             const chatLang = rawChatLang === 'zh' || rawChatLang === 'en' || rawChatLang === 'auto' ? rawChatLang : '';
             const rawLang = opts.language ? String(opts.language() || '').trim().toLowerCase() : '';
             const configLang = rawLang === 'en' || rawLang === 'auto' ? rawLang : 'zh';
             const upstreamLang = chatLang ? (chatLang === 'auto' ? 'auto' : chatLang) : configLang;
             const gateLang = chatLang ? (chatLang === 'auto' ? 'zh-en' : chatLang) : (configLang === 'auto' ? 'auto' : configLang);
-            // v4：上游语言 + 闸门模式一起进 key（聊天语言从 zh 切 auto 时不能命中旧的中文缓存）
-            const ck = hashBytes(Buffer.concat([Buffer.from('v4|' + ASR_MODEL + '|' + upstreamLang + '|' + gateLang + '|' + format + '|'), buf]));
+            const ck = hashBytes(Buffer.concat([Buffer.from('v6|official|official-asr|' + upstreamLang + '|' + gateLang + '|' + format + '|'), buf]));
             if (opts.cache) {
                 const hit = await opts.cache.getJson(ck, 'json', ASR_CACHE_MAX_AGE);
                 if (hit && typeof hit.text === 'string') {
@@ -160,46 +188,31 @@ export function createAsrHandler(opts) {
                     console.error('[asr] CACHE-SCRIPT-SKIP lang=' + gateLang + ' text=' + JSON.stringify(String(hit.text).slice(0, 60)));
                 }
             }
-            // 构造 multipart
+            // 构造 multipart：官方只要一个 file 字段（不需要 model / language，语种自动）
             const boundary = '----chubbywhale' + Math.random().toString(36).slice(2, 10);
-            const mime = format === 'wav' ? 'audio/wav' : format === 'mp3' ? 'audio/mpeg' : 'audio/webm';
-            const langPart = upstreamLang === 'auto'
-                ? ''
-                : '--' + boundary + '\r\n' +
-                    'Content-Disposition: form-data; name="language"\r\n\r\n' + upstreamLang + '\r\n';
-            const head = Buffer.from('--' + boundary + '\r\n' +
-                'Content-Disposition: form-data; name="model"\r\n\r\n' + ASR_MODEL + '\r\n' +
-                langPart +
-                '--' + boundary + '\r\n' +
-                'Content-Disposition: form-data; name="file"; filename="audio.' + format + '"\r\n' +
-                'Content-Type: ' + mime + '\r\n\r\n');
-            const tail = Buffer.from('\r\n--' + boundary + '--\r\n');
-            const payload = Buffer.concat([head, buf, tail]);
+            const payload = Buffer.concat([
+                Buffer.from('--' + boundary + '\r\n' +
+                    'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n' +
+                    'Content-Type: audio/wav\r\n\r\n'),
+                buf,
+                Buffer.from('\r\n--' + boundary + '--\r\n'),
+            ]);
             let r = null;
             try {
-                r = await fetchJson(ENDPOINT, {
+                r = await fetchJson(OFFICIAL_ENDPOINT, {
                     method: 'POST',
                     headers: {
-                        authorization: 'Bearer ' + key,
+                        authorization: 'Bearer ' + deepseekKey,
                         'content-type': 'multipart/form-data; boundary=' + boundary,
                     },
                     body: payload,
                 }, ASR_TIMEOUT, client.signal);
             }
             catch (err) {
-                // 客户端已经走了（30s 硬超时/切页面/断网重发）：这次外呼是**我们自己** abort 的，
-                // 不是上游超时、也不是网络故障。处理口径：
-                //   · 不写缓存（没拿到结果，也避免把半截状态记进缓存）；
-                //   · 不记失败（不计入 ASR-TIMEOUT/ASR-NETWORK 的排障口径），只留专用诊断；
-                //   · 不回包（连接已经断了，没人收；写了也只是往死 socket 上叠一次写）。
                 if (client.gone()) {
                     console.error(LOG_CLIENT_ABORT_OUTBOUND);
                     return;
                 }
-                // 超时/中止/网络错误：用户看到的仍是 ok:false + 空文本，日志里留标签。
-                // 分类口径（2026-11-07 B95）：isTimeoutError 把 AbortError 与 TimeoutError 混为一类，
-                // 排障时会把「被我们自己中止」误读成「上游太慢」；改用只认内部超时的 isTimeoutOnly，
-                // 外部中止单独留 ASR-ABORT（正常客户端断连在上面 gone() 分支就 return 了）。
                 const timedOut = isTimeoutOnly(err);
                 if (timedOut)
                     console.error('[asr] ASR-TIMEOUT ' + ASR_TIMEOUT + 'ms 无响应，已中止');
@@ -207,8 +220,11 @@ export function createAsrHandler(opts) {
                     console.error('[asr] ASR-ABORT 外呼被中止（非内部超时）');
                 else
                     console.error('[asr] ASR-NETWORK ' + String(err?.message || err));
-                // 回包文案保持兼容：客户端只认 'timeout' 这个粗标签（据此降级/重试），细分只体现在日志与诊断里
                 sendJson(res, { ok: false, error: (timedOut || isAbortError(err)) ? 'timeout' : String(err?.message || err), text: '' });
+                return;
+            }
+            if (!r) {
+                sendJson(res, { ok: false, error: 'no asr provider', text: '' });
                 return;
             }
             if (!r.ok) {
@@ -217,7 +233,7 @@ export function createAsrHandler(opts) {
                 return;
             }
             const recognized = String(r.data?.text || '').trim();
-            // 脚本闸门（2026-11-07 严查）：Qwen3-ASR 在静音/噪声/音乐上会"编"外语
+            // 脚本闸门（2026-11-07 严查）：ASR 在静音/噪声/音乐上会"编"外语
             // （实测纯静音 → "No."；缓存里还有西/葡/越/泰整句）。language=zh 并不会阻止它。
             // 中文模式下：一个汉字都没有的输出一律当噪声（不写缓存、不上行），
             // 否则会被当主人说的话写进记忆，模型还会跟着回英文。

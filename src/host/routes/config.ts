@@ -7,7 +7,7 @@
  *   GET /api/chubby-whale/config
  *     → { ok, enabled, dataSource, model,
  *         personalityLearning, personalityWriting, cacheEnabled,
- *         hasDeepseekKey, hasSiliconflowKey }   // 只报"有没有"，绝不回 Key 内容
+ *         hasDeepseekKey }   // 只报"有没有"，绝不回 Key 内容
  *
  * 约定：不因读取失败而 500——各字段各自兜底，读不到就给缺省值。
  * 布尔字段统一经 safeBool 出口：即使注入方误把「读 Key」的函数直接接进来（返回 Key 原文），
@@ -24,7 +24,6 @@ export interface ConfigViewDeps {
   personalityWriting?: () => boolean
   cacheEnabled?: () => boolean
   hasDeepseekKey?: () => boolean
-  hasSiliconflowKey?: () => boolean
 }
 
 export function createConfigViewHandler(opts: ConfigViewDeps) {
@@ -72,7 +71,6 @@ export function createConfigViewHandler(opts: ConfigViewDeps) {
         cacheEnabled: safeBool(opts.cacheEnabled, true),
         // 只报有没有 Key，绝不回内容（safeBool 兜最后一道）
         hasDeepseekKey: safeBool(opts.hasDeepseekKey, false),
-        hasSiliconflowKey: safeBool(opts.hasSiliconflowKey, false),
       })
     } catch {
       // 兜底：配置视图永远不把请求打挂

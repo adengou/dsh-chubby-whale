@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.11";
+  var VERSION = "1.4.12";
 
   // src/client/styles.ts
   var W = 240;
@@ -1096,14 +1096,14 @@
     const maxWavBytes = deps && typeof deps.maxWavBytes === "number" ? deps.maxWavBytes : 6 * 1024 * 1024;
     let src = blob;
     let fmt = formatFromMime(blob.type || recMime);
-    if (fmt === "mp4") {
+    if (fmt !== "wav") {
       const wav = await transcodeToWav(blob, deps && deps.actx, maxWavBytes);
       if (wav) {
         src = wav;
         fmt = "wav";
       } else {
         try {
-          onDiag && onDiag({ stage: "mp4-no-transcode", hint: "mp4 没能转成 wav，按原字节上传" });
+          onDiag && onDiag({ stage: "mp4-no-transcode", hint: "音频没能转成 wav，按原字节上传" });
         } catch (e) {
         }
       }
@@ -6799,7 +6799,7 @@
           "数据源：" + (d.dataSource || "local") + " · 模型：" + (d.model || "--"),
           "人格学习：" + yn(d.personalityLearning) + " · 近期心境自写：" + yn(d.personalityWriting),
           "聊天缓存：" + yn(d.cacheEnabled),
-          "DeepSeek Key：" + (d.hasDeepseekKey ? "已配置" : "未配置") + " · 硅基流动 Key：" + (d.hasSiliconflowKey ? "已配置" : "未配置")
+          "DeepSeek Key：" + (d.hasDeepseekKey ? "已配置" : "未配置") + "（聊天和语音都用这一个）"
         ];
         host.bubble(lines.join("\n"), 12e3);
       }).catch(() => host.bubble("配置读不到", 4e3));
@@ -9872,9 +9872,133 @@
     return null;
   }
 
+  // src/client/weather-ask.ts
+  var DEFAULT_WEATHER_CITY = "北海";
+  var ASK_TAIL = /^(?:怎么样|怎样|如何|多少度?|几度|热不热|冷不冷|热吗|冷吗|好吗|好不|下雨吗|下不下雨|下雪吗|要不要带伞|穿什么)?$/;
+  var DEGREE_TAIL = /^(?:呢|啊|呀|了|现在|今天|大概|左右)*$/;
+  var FILLERS = [
+    "请问",
+    "问一下",
+    "查一下",
+    "看一下",
+    "帮我看",
+    "帮我查",
+    "帮我",
+    "给我",
+    "麻烦",
+    "说说",
+    "报一下",
+    "这几天",
+    "这阵子",
+    "最近",
+    "今天",
+    "明天",
+    "后天",
+    "昨天",
+    "现在",
+    "此刻",
+    "刚才",
+    "早上",
+    "上午",
+    "中午",
+    "下午",
+    "晚上",
+    "夜里",
+    "白天",
+    "一早",
+    "外面",
+    "外边",
+    "室外",
+    "本地",
+    "这里",
+    "这儿",
+    "那边",
+    "咱们",
+    "我们",
+    "你们",
+    "我",
+    "你",
+    "您",
+    "这",
+    "那",
+    "的",
+    "了",
+    "呢",
+    "吗",
+    "啊",
+    "呀",
+    "哦",
+    "嘛",
+    "啦",
+    "呗",
+    "和",
+    "跟",
+    "在",
+    "是"
+  ];
+  var NOT_CITY = /(喜欢|觉得|感觉|认为|讨厌|希望|好像|真的|特别|非常|有点|可能|应该|知道|告诉|看看|听听|说说|想要|要是|如果|这样|那样|怎么|什么|为什么|是不是|有没有)/;
+  var NOT_CITY_HEAD = /^(?:这|那|哪|几|多|两|每|整|一|二|三|四|五|六|七|八|九|十)/;
+  function charLen(s) {
+    return Array.from(s).length;
+  }
+  function stripFillers(text) {
+    let s = String(text || "").trim();
+    for (const f of FILLERS) {
+      if (!s) break;
+      s = s.split(f).join("");
+    }
+    return s.replace(/[\s·\-—/、,，。.]+/g, "");
+  }
+  function extractWeatherCity(prefix) {
+    const s = stripFillers(prefix);
+    if (!s) return "";
+    if (NOT_CITY.test(s) || NOT_CITY_HEAD.test(s)) return "";
+    if (/^[\u4e00-\u9fa5]{2,8}$/.test(s)) return s;
+    if (/^[A-Za-z][A-Za-z ]{1,18}$/.test(s)) return s.trim();
+    return "";
+  }
+  function onlyFillers(prefix) {
+    return stripFillers(prefix) === "";
+  }
+  function parseWeatherAsk(raw) {
+    const t = String(raw == null ? "" : raw).trim().replace(/[?？!！。.~～…]+$/, "").trim();
+    if (!t) return null;
+    if (charLen(t) > 30) return null;
+    if (!/(天气|气温|温度|多少度|几度)/.test(t)) return null;
+    const weatherWord = /天气|气温|温度/g;
+    let m = null;
+    let bestCity = "";
+    let fallback = null;
+    while ((m = weatherWord.exec(t)) !== null) {
+      weatherWord.lastIndex = m.index + 1;
+      const prefix = t.slice(0, m.index);
+      const tail = t.slice(m.index + m[0].length).trim();
+      if (!ASK_TAIL.test(tail)) continue;
+      const city = extractWeatherCity(prefix);
+      if (city) {
+        bestCity = city;
+        continue;
+      }
+      if (tail || onlyFillers(prefix)) fallback = { city: DEFAULT_WEATHER_CITY };
+    }
+    if (bestCity) return { city: bestCity };
+    if (fallback) return fallback;
+    const b = /^(.*?)(多少度|几度)\s*(.*)$/.exec(t);
+    if (b) {
+      const prefix = b[1] || "";
+      const tail = b[3] || "";
+      if (!DEGREE_TAIL.test(tail)) return null;
+      const city = extractWeatherCity(prefix);
+      return { city: city || DEFAULT_WEATHER_CITY };
+    }
+    return null;
+  }
+
   // src/client/chat-route.ts
   var CULTURE_TIMEOUT_MS = 2e4;
   var POEM_TIMEOUT_MS = 15e3;
+  var WEATHER_TIMEOUT_MS = 8e3;
+  var WEATHER_FAIL_TEXT = "天气没查到，可能是网断了；等会儿再问本鲸一次";
   function createLocalRouter(host) {
     let lastPoemAsk = { title: "", at: 0 };
     function takeOver() {
@@ -9901,6 +10025,32 @@
         }
         onItem(p);
       }).catch(() => host.bubble("诗册没读到", 4e3));
+    }
+    function weatherTip(d) {
+      try {
+        const desc = String(d && d.desc || "");
+        const temp = Number(d && d.tempC);
+        if (/雨|雪|雷/.test(desc)) return "出门带把伞";
+        if (Number.isFinite(temp) && temp <= 5) return "多穿点，别冻着";
+        if (Number.isFinite(temp) && temp >= 30) return "热，别在外面晒太久";
+        if (Number.isFinite(temp) && temp >= 20) return "穿件薄的就够了";
+        return "出门看天加件衣服";
+      } catch (e) {
+        return "";
+      }
+    }
+    function fetchWeather(city) {
+      host.bubble("（查天气）本鲸看看天…", 3e3, { transient: true });
+      getJson("/weather?city=" + encodeURIComponent(city), { cache: "no-store", timeout: WEATHER_TIMEOUT_MS }).then((d) => {
+        if (!d || d.ok !== true || typeof d.text !== "string" || !d.text) {
+          host.bubble(WEATHER_FAIL_TEXT, 6e3);
+          return;
+        }
+        const tip = weatherTip(d);
+        const said = d.text + (tip ? "，" + tip : "") + "～";
+        host.bubble(said, 9e3);
+        host.say(said, 7e3);
+      }).catch(() => host.bubble(WEATHER_FAIL_TEXT, 6e3));
     }
     function route(rawText) {
       const t0 = String(rawText || "").trim();
@@ -9935,6 +10085,12 @@
           }
           host.bubble("书单有 " + books.length + " 本：" + books.join("、") + "（说个书名本鲸就开讲）", 12e3);
         }).catch(() => host.bubble("书单没取到，稍后再试", 4e3));
+        return true;
+      }
+      const weatherAsk = parseWeatherAsk(t0);
+      if (weatherAsk) {
+        takeOver();
+        fetchWeather(weatherAsk.city);
         return true;
       }
       const hit = detectIntent(rawText);
@@ -11789,7 +11945,7 @@
         R.useEffect(() => {
           getJson("/status").then((d) => {
             if (d && d.ok && d.key === false) {
-              showBubble("还没配 Key：聊天和语音要用 Key（deepseekKey / siliconflowKey），念诗、说书、典故、提醒照样能用～ 配置方法见 README", 9e3);
+              showBubble("还没配 Key：聊天和语音都要 DeepSeek Key（deepseekKey），念诗、说书、典故、提醒照样能用～ 配置方法见 README", 9e3);
             }
           }).catch(() => {
           });

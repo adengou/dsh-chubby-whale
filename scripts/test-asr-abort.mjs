@@ -301,7 +301,7 @@ try {
     resetFetch(); setPlan('resolve'); FETCH.text = '主人好'
     logs.length = 0
     const cache = createMemCache()
-    const handle = createAsrHandler({ cache, getKey: () => 'k' })
+    const handle = createAsrHandler({ cache, getDeepseekKey: () => 'k' })
     const audio = Buffer.from('normal-audio-b93').toString('base64')
     const res = mkRes()
     await handle(mkReq({ audio }), res)
@@ -320,7 +320,7 @@ try {
     resetFetch(); setPlan('manual')
     logs.length = 0
     const cache2 = createMemCache()
-    const handle2 = createAsrHandler({ cache: cache2, getKey: () => 'k' })
+    const handle2 = createAsrHandler({ cache: cache2, getDeepseekKey: () => 'k' })
     const audio2 = Buffer.from('normal-close-b93').toString('base64')
     const req2 = mkReq({ audio: audio2 })
     const res3 = mkRes()
@@ -341,7 +341,7 @@ try {
     resetFetch(); setPlan('resolve'); FETCH.ok = false; FETCH.status = 503; FETCH.raw = 'busy'
     logs.length = 0
     const cache3 = createMemCache()
-    const handle3 = createAsrHandler({ cache: cache3, getKey: () => 'k' })
+    const handle3 = createAsrHandler({ cache: cache3, getDeepseekKey: () => 'k' })
     const res4 = mkRes()
     await handle3(mkReq({ audio: Buffer.from('http-err-b93').toString('base64') }), res4)
     ok('B3 上游 503：仍是 ok:false + error 带状态码（200 承载业务失败，既有约定）',
@@ -353,7 +353,7 @@ try {
     resetFetch(); setPlan('rejectTimeout')
     logs.length = 0
     const cache4 = createMemCache()
-    const handle4 = createAsrHandler({ cache: cache4, getKey: () => 'k' })
+    const handle4 = createAsrHandler({ cache: cache4, getDeepseekKey: () => 'k' })
     const res5 = mkRes()
     await handle4(mkReq({ audio: Buffer.from('timeout-b93').toString('base64') }), res5)
     ok('B4 上游超时（客户端未断）：仍是 error=timeout + ASR-TIMEOUT 日志',
@@ -370,7 +370,7 @@ try {
     resetFetch(); setPlan('pending')
     logs.length = 0
     const cache = createMemCache()
-    const handle = createAsrHandler({ cache, getKey: () => 'k' })
+    const handle = createAsrHandler({ cache, getDeepseekKey: () => 'k' })
     const audio = Buffer.from('client-gone-b93').toString('base64')
     const req = mkReq({ audio })
     const res = mkRes()
@@ -407,7 +407,7 @@ try {
     resetFetch(); setPlan('pending')
     logs.length = 0
     const cache2 = createMemCache()
-    const handle2 = createAsrHandler({ cache: cache2, getKey: () => 'k' })
+    const handle2 = createAsrHandler({ cache: cache2, getDeepseekKey: () => 'k' })
     const req3 = mkReq({ audio: Buffer.from('client-aborted-b93').toString('base64') })
     const res3 = mkRes()
     const pending3 = handle2(req3, res3)
@@ -425,7 +425,7 @@ try {
     resetFetch(); setPlan('resolve')
     logs.length = 0
     const cache3 = createMemCache()
-    const handle3 = createAsrHandler({ cache: cache3, getKey: () => 'k' })
+    const handle3 = createAsrHandler({ cache: cache3, getDeepseekKey: () => 'k' })
     const res4 = mkRes()
     await handle3(mkReq({ audio: Buffer.from('mid-body-b93').toString('base64') }, { throwMidBody: true }), res4)
     ok('C4 请求体没收完就断：一个上游请求都不发', FETCH.calls.length === 0, 'fetch=' + FETCH.calls.length)
@@ -436,7 +436,7 @@ try {
     // C5：监听不跨请求残留
     resetFetch(); setPlan('resolve')
     const cache4 = createMemCache()
-    const handle4 = createAsrHandler({ cache: cache4, getKey: () => 'k' })
+    const handle4 = createAsrHandler({ cache: cache4, getDeepseekKey: () => 'k' })
     const req5 = mkReq({ audio: Buffer.from('leak-check-b93').toString('base64') })
     const res5 = mkRes()
     await handle4(req5, res5)
@@ -454,7 +454,7 @@ try {
     resetFetch(); setPlan('resolve'); FETCH.text = '主人好'
     logs.length = 0
     const cache = createMemCache()
-    const handle = createAsrHandler({ cache, getKey: () => 'k' })
+    const handle = createAsrHandler({ cache, getDeepseekKey: () => 'k' })
     const server = http.createServer((req, res) => {
       Promise.resolve(handle(req, res)).catch(() => { })
     })

@@ -56,13 +56,14 @@ dsh web
 ```jsonc
 // ~/.dsh/plugins/dsh-chubby-whale/config.json   （或包安装目录下的 config.json）
 {
-  "deepseekKey": "sk-...",        // 对话/看图
-  "siliconflowKey": "sk-..."      // 语音识别 + 语音合成
+  "deepseekKey": "sk-..."         // 聊天 + 语音识别（官方 ASR），一个 Key 全包
 }
 ```
 
-也可用环境变量：`CHUBBY_WHALE_DEEPSEEK_KEY`、`CHUBBY_WHALE_SILICONFLOW_KEY`
-（最后才回退到通用名 `DEEPSEEK_API_KEY` / `SILICONFLOW_API_KEY`）。
+也可用环境变量：`CHUBBY_WHALE_DEEPSEEK_KEY`（最后才回退到通用名 `DEEPSEEK_API_KEY`）。
+
+> 2026-11-14 起**不再需要硅基流动 Key**：语音识别改走 DeepSeek 官方 `/v1/tools/asr`，
+> 旧配置里残留的硅基流动字段会被忽略，不影响启动。
 
 ### 自我进化（可选，都能关）
 
@@ -102,6 +103,7 @@ dsh plugin --profile web remove dsh-chubby-whale
 | 文化 | 说书（17 本古籍，念原文、进度记忆、不重复、**进度按数据源隔离**）、念诗（737 首）、典故（261）、成语（834）、民间故事（696）、对联（51 副 11 类）；**选本书 ▸ 书单**、**今日一句**、**今日简报** |
 | 音乐 | 11 首曲子 Web Audio 合成播放（含升降号与低/高音） |
 | 工具 | 提醒（口语时间：9点 / 明天9点 / 半小时后 / 每天8点；**管理面板**：回数字删除、回 `d` 顺延 10 分钟）、看图、拖文件（图片识别 / 文本总结）、**公文校对**（贴文本或选 docx，独立路由外呼，不写聊天记忆）、成长与亲密度、鱼粮账本、余额、清除记忆、**数据导出/导入**、**使用统计** |
+| 天气 | 问「上海今天天气怎么样」「北京天气」→ 宿主查 wttr.in（免费、不需 Key），气泡 + 朗读，按温度给一句穿衣提醒；**查不到就说没查到，不编温度**；「天气晚来秋」这类诗句不劫持 |
 | 感知 | **神经感知**（可一键关）：只读感知主人活动、昼夜与宿主事件（`session/event`、`agent/status`），归约成「唤醒 × 心情」二维情绪再映射表情；事件流本地环形缓冲，宿主事件带冷却与会话聚焦；**夜潜**把昨天的事件反刍成一句梦话（数据不足就闭嘴） |
 | 界面 | **界面语言**（中文默认 / 英文）、右键菜单键盘导航（↑↓/Enter/Esc）、「让它游走」可逆（右下角「○」或 Ctrl+Shift+W 恢复）、多标签页各自独立 |
 
@@ -137,7 +139,7 @@ http://<电脑IP>:<端口>/whale-mobile/
 |---|---|---|
 | 说话（TTS） | 电脑端装了 `python` + `edge-tts` | 没装时页面提示，文字聊天不受影响 |
 | 听你说话（录音） | 页面必须是**安全上下文**（HTTPS，或 `http://localhost`） | 浏览器规定：`http://` + 局域网 IP 时 `navigator.mediaDevices` 直接不可用 |
-| 转文字（ASR） | `config.json` 配了 `siliconflowKey` | 走硅基流动的语音识别 |
+| 转文字（ASR） | `config.json` 配了 `deepseekKey` | 走 DeepSeek 官方语音识别（只收 WAV，页面会自动转码） |
 
 **录音在手机上打不开，不是手机的问题**，是 `http://192.168.x.x` 不算安全上下文。通用解法（不涉及任何私有域名）：
 
@@ -165,9 +167,8 @@ dsh-chubby-whale/
 | 依赖 | 用途 | 必需性 |
 | --- | --- | --- |
 | Node.js ≥ 22 | 运行宿主端 | 必需 |
-| `config.json` 的 `deepseekKey`（或环境变量 `CHUBBY_WHALE_DEEPSEEK_KEY` / `DEEPSEEK_API_KEY`） | 聊天、总结 | 聊天必需 |
+| `config.json` 的 `deepseekKey`（或环境变量 `CHUBBY_WHALE_DEEPSEEK_KEY` / `DEEPSEEK_API_KEY`） | 聊天、总结、语音识别（官方 ASR） | 聊天与语音必需 |
 | Python 3 + `edge_tts`（`pip install edge-tts`） | 语音合成 | 语音必需 |
-| 硅基流动 Key（`config.json` 的 `siliconflowKey` 或环境变量 `SILICONFLOW_API_KEY`） | 语音识别（Qwen3-ASR） | 语音输入必需 |
 
 > 没有 Key 也能用：说书、念诗、典故、成语、民间故事、弹琴、提醒、成长全部离线可用，**不消耗 token**。
 
@@ -175,7 +176,7 @@ dsh-chubby-whale/
 
 - 插件照常加载，不报错、不阻止使用离线功能
 - 没配 DeepSeek Key：页面加载后会提示一次「还没配 Key」；聊天时回复会明确说缺 Key（不发模型请求）
-- 没配 SiliconFlow Key：开语音后第一次识别会提示一次，并**停止继续上传识别**（不会反复重试、不刷屏）；打字和离线功能不受影响
+- 语音识别也用同一个 DeepSeek Key：没配时开语音后第一次识别会提示一次，并**停止继续上传识别**（不会反复重试、不刷屏）；打字和离线功能不受影响
 - 语音合成（edge-tts）不需要 Key；若本机 python 环境缺依赖，客户端会自动回退浏览器朗读
 
 ## 安装
@@ -193,12 +194,11 @@ dsh plugin --profile web add link:<本目录>
 ```json
 {
   "deepseekKey": "",
-  "siliconflowKey": "",
   "dataSource": "local"
 }
 ```
 
-Key 读取优先级：`config.json` → 专属环境变量（`CHUBBY_WHALE_DEEPSEEK_KEY` / `CHUBBY_WHALE_SILICONFLOW_KEY`）→ 通用环境变量（`DEEPSEEK_API_KEY` / `SILICONFLOW_API_KEY`）。
+Key 读取优先级：`config.json` → 专属环境变量（`CHUBBY_WHALE_DEEPSEEK_KEY`）→ 通用环境变量（`DEEPSEEK_API_KEY`）。
 本插件刻意不读 `~/.dsh/.credentials.yaml`，避免与其他插件互相牵连。
 
 ### 数据源：本地 / 云端
@@ -235,7 +235,7 @@ Key 读取优先级：`config.json` → 专属环境变量（`CHUBBY_WHALE_DEEPS
 ## 常见问题
 
 - **没有声音**：检查本机是否装了 `python` 与 `edge-tts`（`python -m edge_tts --help` 能跑通即可）
-- **听不懂说话**：检查 `siliconflowKey`；浏览器地址栏麦克风权限要允许
+- **听不懂说话**：检查 `deepseekKey`（语音识别也用它）；浏览器地址栏麦克风权限要允许
 - **说书/念诗没内容**：`dataSource=local` 时确认 `data/` 目录存在且完整（33MB）；`cloud` 时看日志里的 `CLOUD-DATA-FAIL`（网络失败会自动回退本地）
 - **数据存哪**：`memory.json`、`growth.json`、`reminders.json`、说书进度、已读记录都在 `~/.dsh-chubby-whale/`（插件升级不丢）
 

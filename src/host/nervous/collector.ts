@@ -5,6 +5,9 @@
  * 由 routes/nervous.ts 用 GET /api/chubby-whale/nervous 交给客户端轮询（client/nervous/host-sense.ts）。
  * 不归约情绪（那是客户端第二层 affect.ts 的事），不碰聊天记忆，不写任何文件。
  *
+ * 诗词弹幕（poem-echo）**只由鲸鱼聊天路由触发**（noteUserChat）：DSH 输入框的
+ * user/message 只记一条摘要，不冒诗——2026-11-14 主人要求「工作区打字别打扰」。
+ *
  * ── 事件名出处（全部来自本机已安装包的类型声明，不是猜的）──────────────────────
  *   · '@deepseek-ai/dsh-session'  lib/types/index.d.ts 第 63 行
  *       'session/event'(this: Scoped<Session>, session: Session, event: SessionEvent): void
@@ -66,7 +69,7 @@ export type HostCollectorStatus = {
   lastAt: number
 }
 
-/** 收集器对外接口：路由只依赖这四个方法 */
+/** 收集器对外接口：路由只依赖这五个方法 */
 export interface HostCollector {
   /** 在当前 ctx 上订阅（幂等；返回订阅成功的事件名；任何失败都不抛） */
   start(ctx: any): string[]
@@ -75,6 +78,12 @@ export interface HostCollector {
   /** 最近 n 条，顺序旧 → 新；n 省略 = 全部 */
   recent(n?: number): HostNervousEvent[]
   status(): HostCollectorStatus
+  /**
+   * 鲸鱼聊天面板里主人发来的一句话：做本地诗词匹配，命中就推一条 poem-echo。
+   * **只有鲸鱼自己的聊天（/chat、/chat-stream）会调它**；DSH 输入框的 user/message
+   * 不经过这里（2026-11-14 主人要求：工作区打字不冒诗，别打扰干活）。
+   */
+  noteUserChat(text: string): void
 }
 
 /** 字符串裁剪：非字符串按空串处理，超长截断 */
@@ -198,59 +207,36 @@ export function createHostCollector(opts?: {
   }
 
   /**
-   * 从 user/message 事件里取用户文本：只用于本地主题匹配，
-   * 不入缓冲、不落盘、不外传——命中后只推一条匹配结果。
+   * 诗词弹幕：**只在鲸鱼聊天面板**里主人发话时触发（2026-11-14 改动）。
    *
-   * 结构依据（app.asar 里的类型声明，不是猜的）：
-   *   UserMessage extends MessageBase { role: 'user' }
-   *   MessageBase { id, content: readonly ContentBlock[], source }
-   * 所以文本在 **event.data.content** 的 text 块里，不是 event.data.message。
+   * 旧实现挂在这一层监听的 `user/message` 上——DSH 输入框里每打一句工作指令，
+   * 命中关键词就冒一首诗，把工作区搅了。现在触发点挪到聊天路由（/chat、/chat-stream），
+   * DSH 输入框只记「有人说过话」的摘要事件，不再产生弹幕。
    */
-  function userTextOf(event: any): string {
+  function noteUserChat(text: string): void {
     try {
-      const d = event && event.data
-      if (!d) return ''
-      const pick = (blocks: any): string => {
-        if (!Array.isArray(blocks)) return ''
-        return blocks.map((b: any) => (b && typeof b.text === 'string' ? b.text : '')).filter(Boolean).join('\n')
+      const txt = Array.from(typeof text === 'string' ? text : '').slice(0, 1000).join('')
+      if (!txt.trim()) return
+      // 关键词优先（主人说诗里的词），没命中再落到意境（坚持/往事这类诗里没有的词）
+      const kw = typeof opts.keywordEcho === 'function' ? (() => { try { return opts.keywordEcho(txt) } catch (e) { return null } })() : null
+      const echo = kw || matchPoem(txt)
+      if (!echo) return
+      const base = { name: 'poem-echo', theme: echo.theme, line: echo.line, title: echo.title, author: echo.author }
+      // 有查找器就异步补整首（查不到就只发一句，不影响弹幕）
+      if (opts && typeof opts.findPoem === 'function') {
+        void opts.findPoem(echo.title, echo.author).then((full) => {
+          try { push({ at: stamp(), type: 'host', data: full && full.length ? Object.assign({}, base, { full }) : base }) } catch (e) { }
+        }).catch(() => { try { push({ at: stamp(), type: 'host', data: base }) } catch (e) { } })
+      } else {
+        push({ at: stamp(), type: 'host', data: base })
       }
-      const fromContent = pick(d.content)
-      if (fromContent) return fromContent
-      // 兼容：某些版本可能把消息包一层
-      const fromMessage = pick(d.message && d.message.content)
-      if (fromMessage) return fromMessage
-      if (typeof d.text === 'string') return d.text
-      if (typeof d.message === 'string') return d.message
     } catch (e) { }
-    return ''
   }
 
   /** 'session/event'：一次会话日志追加（后提交、即发即忘；我们只读） */
   function onSessionEvent(session: any, event: any): void {
     try {
       push({ at: stamp(), type: 'host', data: summarizeSessionEvent(session, event) })
-    } catch (e) { }
-    // 诗词弹幕：用户一句话 → 本地匹配一句诗 → 命中才把结果推进缓冲
-    try {
-      if (event && event.type === 'user/message') {
-        const txt = Array.from(userTextOf(event)).slice(0, 1000).join('')
-        if (txt) {
-          // 关键词优先（用户说诗里的词），没命中再落到意境（坚持/往事这类诗里没有的词）
-        const kw = typeof opts.keywordEcho === 'function' ? (() => { try { return opts.keywordEcho(txt) } catch (e) { return null } })() : null
-        const echo = kw || matchPoem(txt)
-          if (echo) {
-            const base = { name: 'poem-echo', theme: echo.theme, line: echo.line, title: echo.title, author: echo.author }
-            // 有查找器就异步补整首（查不到就只发一句，不影响弹幕）
-            if (opts && typeof opts.findPoem === 'function') {
-              void opts.findPoem(echo.title, echo.author).then((full) => {
-                try { push({ at: stamp(), type: 'host', data: full && full.length ? Object.assign({}, base, { full }) : base }) } catch (e) { }
-              }).catch(() => { try { push({ at: stamp(), type: 'host', data: base }) } catch (e) { } })
-            } else {
-              push({ at: stamp(), type: 'host', data: base })
-            }
-          }
-        }
-      }
     } catch (e) { }
   }
 
@@ -301,5 +287,5 @@ export function createHostCollector(opts?: {
     return { subscribed: subscribed.slice(), count: size, cap, lastAt }
   }
 
-  return { start, stop, recent, status }
+  return { start, stop, recent, status, noteUserChat }
 }
