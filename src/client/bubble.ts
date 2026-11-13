@@ -20,7 +20,11 @@ export const BUBBLE_CSS =
   THAI_FONT_FACE +
   '.chubby-bubble{position:fixed;z-index:10002;max-width:320px;max-height:calc(100vh - 120px);overflow-y:auto;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 ' + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}' +
   '.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}' +
-  '.chubby-bubble.show{opacity:1;}'
+  '.chubby-bubble.show{opacity:1;}' +
+  // 诗词线：字号略小、米色底，与主气泡区分
+  '.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}' +
+  // 解说线：字号更小、灰蓝底
+  '.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}'
 
 /** 这些是「纯状态字」：气泡里只剩它们时才允许静默收起 */
 export const STATUS_TEXTS = ['在听…', '在想…', '识别中…', '在说…']

@@ -401,6 +401,11 @@ registerSkinActions(actions)
       const inputRef = R.useRef(null)
       const chatPanelRef = R.useRef(null)
       const bubbleRef = R.useRef(null)
+      // 诗词字幕线 / 工具解说线：各用独立气泡元素，互不覆盖（三线路）
+      const poemBubbleRef = R.useRef(null)
+      const poemBubbleTextRef = R.useRef(null)
+      const toolBubbleRef = R.useRef(null)
+      const toolBubbleTextRef = R.useRef(null)
       const bubbleTextRef = R.useRef(null)
 
       // 语音桥：回调只在 voice-bridge 里建一份（待命 effect 与菜单「唤醒」共用）。
@@ -515,7 +520,7 @@ registerSkinActions(actions)
           reminderPoller: () => reminderPollerRef.current,
           stopTts: () => stopTts(),
           stopMelody: () => melody.stop(),
-          clearBubble: () => clearBubbleTimer(bubbleRef.current),
+          clearBubble: () => { clearBubbleTimer(bubbleRef.current); clearBubbleTimer(poemBubbleRef.current); clearBubbleTimer(toolBubbleRef.current) },
         })
       }, [])
 
@@ -528,6 +533,20 @@ registerSkinActions(actions)
         onHide: () => { try { restoreIdleStatus() } catch (e) { } },
       })
       function showBubble(text: string, ms = 2400): void { bubble.show(text, ms) }
+      // 诗词线：位置比主气泡再高一点（y-44），独立元素独立计时
+      const poemBubble = createBubble({
+        el: () => poemBubbleRef.current,
+        textEl: () => poemBubbleTextRef.current,
+        pos: () => ({ x: posRef.current.x, y: posRef.current.y - 44 }),
+        xOffset: W / 2,
+      })
+      // 解说线：位置略低（y+10），与诗词/主气泡错开
+      const toolBubble = createBubble({
+        el: () => toolBubbleRef.current,
+        textEl: () => toolBubbleTextRef.current,
+        pos: () => ({ x: posRef.current.x, y: posRef.current.y + 10 }),
+        xOffset: W / 2,
+      })
       // 首次安装兜底：没配 Key 时给一句人话（离线功能照常可用），别让主人对着麦克风干等。
       // 每次页面加载最多提示一次；只读 /status，不发模型请求。
       R.useEffect(() => {
@@ -1661,8 +1680,9 @@ registerSkinActions(actions)
       R.useEffect(() => {
         const watch = createToolWatch({
           bubble: (text: string, ms?: number) => {
-            try { poemLockUntil = Date.now() + (Number(ms) || 18000); showBubble(text, ms) } catch (e) { }
+            try { poemLockUntil = Date.now() + (Number(ms) || 18000); poemBubble.show(text, ms) } catch (e) { }
           },
+          toolBubble: (text: string, ms?: number) => { try { toolBubble.show(text, ms) } catch (e) { } },
           enabled: () => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } },
           poemEnabled: () => { try { return localStorage.getItem('chubby-poem-echo') !== 'off' } catch (e) { return false } },
           speak: (t: string) => { try { speakText(t, { rate: narrationRate() }) } catch (e) { } },
@@ -1760,6 +1780,8 @@ registerSkinActions(actions)
           ),
         ),
         h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+        h('div', { ref: poemBubbleRef, className: 'chubby-bubble chubby-bubble-poem' }, h('div', { ref: poemBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+        h('div', { ref: toolBubbleRef, className: 'chubby-bubble chubby-bubble-tool' }, h('div', { ref: toolBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         recoverProps ? h('div', Object.assign({}, recoverProps, { style: recoverDotStyle }), '○') : null,
         menu ? h('div', menuRootProps({ menu, lang }),
           // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号

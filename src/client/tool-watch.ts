@@ -51,8 +51,10 @@ const PATH = '/nervous'
 const INTERVAL_MS = 3000
 
 export function createToolWatch(opts: {
-  /** 冒一句（调用方注入 showBubble） */
+  /** 诗词字幕线（调用方注入 poemBubble.show） */
   bubble: (text: string, ms?: number) => void
+  /** 工具解说线（调用方注入 toolBubble.show；缺省退回 bubble） */
+  toolBubble?: (text: string, ms?: number) => void
   /** 开关（localStorage chubby-tool-narrator !== 'off'） */
   enabled: () => boolean
   /** 诗词弹幕开关（localStorage chubby-poem-echo !== 'off'；缺省 = 开） */
@@ -74,6 +76,8 @@ export function createToolWatch(opts: {
   let baselineSet = false
   /** 上一次请求没回来就不再叠一个 */
   let inflight = false
+  /** 诗词字幕占用期：这段时间里工具解说让路，别把字幕顶掉 */
+  let poemBusyUntil = 0
 
   function deliver(events: any[]): void {
     if (!Array.isArray(events) || !listener) return
@@ -109,6 +113,7 @@ export function createToolWatch(opts: {
           // 时长按整首字数算（慢速每字约 320ms，下限 18s、上限 90s）
           const spoken = body + (source ? "。" + source : "") + tail
           const ms = Math.min(90000, Math.max(18000, spoken.length * 320))
+          poemBusyUntil = Date.now() + ms
           try { opts.bubble(text, ms) } catch (err) { }
           // 语音一次念完整首 + 出处 + 后缀
           try { if (opts.speak) opts.speak(spoken) } catch (err) { }
@@ -147,7 +152,14 @@ export function createToolWatch(opts: {
   function start(): void {
     if (running) return
     running = true
-    listener = (line: string) => { try { opts.bubble(line, 5200) } catch (e) { } }
+    listener = (line: string) => {
+      try {
+        // 诗词字幕正在显示：工具解说让路（优先级：诗词 > 解说）
+        if (Date.now() < poemBusyUntil) return
+        const show = opts.toolBubble || opts.bubble
+        show(line, 5200)
+      } catch (e) { }
+    }
     // 启动立刻拉一拍（对齐基线），之后定时
     poll()
     timer = setInterval(poll, interval)

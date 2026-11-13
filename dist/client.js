@@ -3488,6 +3488,7 @@
     let cursor = 0;
     let baselineSet = false;
     let inflight2 = false;
+    let poemBusyUntil = 0;
     function deliver(events) {
       if (!Array.isArray(events) || !listener) return;
       if (!baselineSet) {
@@ -3518,6 +3519,7 @@
             const text = "咕噜……" + body + cite + tail;
             const spoken = body + (source ? "。" + source : "") + tail;
             const ms2 = Math.min(9e4, Math.max(18e3, spoken.length * 320));
+            poemBusyUntil = Date.now() + ms2;
             try {
               opts.bubble(text, ms2);
             } catch (err) {
@@ -3567,7 +3569,9 @@
       running = true;
       listener = (line) => {
         try {
-          opts.bubble(line, 5200);
+          if (Date.now() < poemBusyUntil) return;
+          const show = opts.toolBubble || opts.bubble;
+          show(line, 5200);
         } catch (e) {
         }
       };
@@ -8588,7 +8592,7 @@
   // src/client/bubble.ts
   var BUBBLE_CSS = (
     // 内置泰文字体（data URL）：不依赖用户系统是否安装泰文字体
-    THAI_FONT_FACE + ".chubby-bubble{position:fixed;z-index:10002;max-width:320px;max-height:calc(100vh - 120px);overflow-y:auto;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 " + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}'
+    THAI_FONT_FACE + ".chubby-bubble{position:fixed;z-index:10002;max-width:320px;max-height:calc(100vh - 120px);overflow-y:auto;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 " + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}'
   );
   var STATUS_TEXTS = ["在听…", "在想…", "识别中…", "在说…"];
   deepFreeze(STATUS_TEXTS);
@@ -11306,6 +11310,10 @@
         const inputRef = R.useRef(null);
         const chatPanelRef = R.useRef(null);
         const bubbleRef = R.useRef(null);
+        const poemBubbleRef = R.useRef(null);
+        const poemBubbleTextRef = R.useRef(null);
+        const toolBubbleRef = R.useRef(null);
+        const toolBubbleTextRef = R.useRef(null);
         const bubbleTextRef = R.useRef(null);
         const bridgeRef = hookApi.useLazyRef(() => createVoiceBridge({
           narration,
@@ -11432,7 +11440,11 @@
             reminderPoller: () => reminderPollerRef.current,
             stopTts: () => stopTts(),
             stopMelody: () => melody.stop(),
-            clearBubble: () => clearBubbleTimer(bubbleRef.current)
+            clearBubble: () => {
+              clearBubbleTimer(bubbleRef.current);
+              clearBubbleTimer(poemBubbleRef.current);
+              clearBubbleTimer(toolBubbleRef.current);
+            }
           });
         }, []);
         const bubble = createBubble({
@@ -11450,6 +11462,18 @@
         function showBubble(text, ms2 = 2400) {
           bubble.show(text, ms2);
         }
+        const poemBubble = createBubble({
+          el: () => poemBubbleRef.current,
+          textEl: () => poemBubbleTextRef.current,
+          pos: () => ({ x: posRef.current.x, y: posRef.current.y - 44 }),
+          xOffset: W / 2
+        });
+        const toolBubble = createBubble({
+          el: () => toolBubbleRef.current,
+          textEl: () => toolBubbleTextRef.current,
+          pos: () => ({ x: posRef.current.x, y: posRef.current.y + 10 }),
+          xOffset: W / 2
+        });
         R.useEffect(() => {
           getJson("/status").then((d) => {
             if (d && d.ok && d.key === false) {
@@ -12800,7 +12824,13 @@
             bubble: (text, ms2) => {
               try {
                 poemLockUntil = Date.now() + (Number(ms2) || 18e3);
-                showBubble(text, ms2);
+                poemBubble.show(text, ms2);
+              } catch (e) {
+              }
+            },
+            toolBubble: (text, ms2) => {
+              try {
+                toolBubble.show(text, ms2);
               } catch (e) {
               }
             },
@@ -12956,6 +12986,8 @@
             )
           ),
           h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+          h("div", { ref: poemBubbleRef, className: "chubby-bubble chubby-bubble-poem" }, h("div", { ref: poemBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+          h("div", { ref: toolBubbleRef, className: "chubby-bubble chubby-bubble-tool" }, h("div", { ref: toolBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "○") : null,
           menu ? h(
             "div",
