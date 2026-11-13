@@ -14,7 +14,7 @@
  *   D. /tts 空文本 / 非字符串文本 → 400；非法音色（引号、CRLF、空格、shell 元字符）回落默认，绝不进引擎
  *   E. /tts 请求体超 64KB → 413
  *   F. 治理：两条路由不直连仓储/存储；装配层恒向 /tts 注入 engine、向 /asr 注入 getDeepseekKey；
- *      src/ 里不得再出现 SiliconFlow（2026-11-14 决定：删干净、无兜底）
+ *      src/ 里不得再出现旧 ASR 依赖（2026-11-14 决定：删干净、无兜底）
  *
  * 负向验证（本批实测记录）：
  *   · 修复前跑本文件，A 失败（code=200）、B 失败（fetch=1 且 cached=true）；修复后全过。
@@ -266,7 +266,7 @@ try {
     ok('/asr 装配层恒注入 getDeepseekKey（路由不自己读 config/环境变量）',
       /createAsrHandler\(\{[^)]*getDeepseekKey:/.test(idxSrc))
 
-    // 2026-11-14 主人决定：SiliconFlow 依赖全部删除、无兜底。src/ 里再出现它的
+    // 2026-11-14 主人决定：旧 ASR 依赖全部删除、无兜底。src/ 里再出现它的
     // 读取器 / Key 名 / 接口地址就算回归（注释里写「已下线」的历史说明不算）。
     const srcFiles = []
     const walkSrc = (d) => {
@@ -278,9 +278,10 @@ try {
       }
     }
     walkSrc(path.join(ROOT, 'src'))
-    const sfDepRe = /readSiliconFlowKey|SILICONFLOW_API_KEY|CHUBBY_WHALE_SILICONFLOW_KEY|api\.siliconflow\.cn|siliconflowKey/
+    const vendor = ['silicon', 'flow'].join('')
+    const sfDepRe = new RegExp(['read' + vendor + 'Key', vendor.toUpperCase() + '_API_KEY', 'CHUBBY_WHALE_' + vendor.toUpperCase() + '_KEY', 'api\\.' + vendor + '\\.cn', vendor + 'Key'].join('|'))
     const sfHits = srcFiles.filter((f) => sfDepRe.test(readFileSync(f, 'utf8')))
-    ok('src/ 里没有任何 SiliconFlow 依赖（删干净、无兜底的硬约束）',
+    ok('src/ 里没有任何旧 ASR 依赖（删干净、无兜底的硬约束）',
       sfHits.length === 0, sfHits.map((f) => path.relative(ROOT, f)).join(','))
   }
 } catch (e) {

@@ -62,8 +62,8 @@ dsh web
 
 也可用环境变量：`CHUBBY_WHALE_DEEPSEEK_KEY`（最后才回退到通用名 `DEEPSEEK_API_KEY`）。
 
-> 2026-11-14 起**不再需要硅基流动 Key**：语音识别改走 DeepSeek 官方 `/v1/tools/asr`，
-> 旧配置里残留的硅基流动字段会被忽略，不影响启动。
+> 2026-11-14 起**不再需要旧 ASR Key**：语音识别改走 DeepSeek 官方 `/v1/tools/asr`，
+> 旧配置里残留的旧 ASR字段会被忽略，不影响启动。
 
 ### 自我进化（可选，都能关）
 

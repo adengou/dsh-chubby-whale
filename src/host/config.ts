@@ -6,7 +6,7 @@
  *   2) 本插件专属环境变量：CHUBBY_WHALE_DEEPSEEK_KEY
  *   3) 兼容回退：DEEPSEEK_API_KEY（通用名，仅兜底）
  *
- * 2026-11-14：硅基流动依赖全部下线（聊天/语音都只用 DeepSeek Key），
+ * 2026-11-14：旧 ASR依赖全部下线（聊天/语音都只用 DeepSeek Key），
  * 旧配置里残留的旧 Key 字段不再读取，也不会告警。
  *
  * 刻意**不读** ~/.dsh/.credentials.yaml：那是 DSH 与其他插件共用的凭据库，
@@ -149,7 +149,7 @@ function fromEnv(own: string, legacy: string): string {
 
 /**
  * DeepSeek Key（聊天 / 语音识别 / 文档总结 / 对联）
- * 2026-11-14 起是唯一的外呼 Key：硅基流动依赖已全部删除。
+ * 2026-11-14 起是唯一的外呼 Key：旧 ASR依赖已全部删除。
  */
 export function readApiKey(pluginDir: string): string {
   const cfg = readConfigJson(pluginDir)

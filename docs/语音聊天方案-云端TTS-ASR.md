@@ -28,7 +28,7 @@
   ├─ 录音（1.5–2s 小段，VAD 端点仍在客户端）
   │    └─ POST /asr/seg  （每段一次，最多 3 段并发）──→ [插件 host]
   │                                              └─ cloud-asr.ts ──→ 云端 ASR HTTP
-  │                                                    └─ 失败/超时 → 硅基流动（现有）→ 离线兜底
+  │                                                    └─ 失败/超时 → 旧 ASR（现有）→ 离线兜底
   └─ 聊天（/chat-stream 不变）
        └─ TTS：POST /tts?provider=cloud ─────────→ [插件 host]
               cloud-tts.ts ──→ 云端 TTS HTTP（mp3 字节）
@@ -52,7 +52,7 @@
   }
 }
 ```
-- Key 只从 `config.json` 读（与现有 DeepSeek/硅基流动一致），**导出/导入备份绝不包含**；
+- Key 只从 `config.json` 读（与现有 DeepSeek/旧 ASR一致），**导出/导入备份绝不包含**；
 - 每段请求带大小上限；云端超时 8s；**成本熔断**：单日合成字数/识别时长超上限自动停用云端（配置项 `dailyBudgetChars` / `dailyBudgetSeconds`）。
 
 ## 五、成本估算（按主人日常）
@@ -72,7 +72,7 @@
 
 ### 阶段 2：云端 ASR 伪流式
 1. `src/host/cloud-asr.ts`：一句话识别（HTTP，base64 音频）；
-2. `src/host/routes/asr.ts`：`?provider=cloud` 优先，失败回退硅基流动；
+2. `src/host/routes/asr.ts`：`?provider=cloud` 优先，失败回退旧 ASR；
 3. `src/client/voice.ts`：录音段 **6s → 2s**（可配），段并发上限 3；
 4. 识别结果按序拼接 + 现有回声过滤/意图路由。
 

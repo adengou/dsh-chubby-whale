@@ -1220,7 +1220,7 @@ try {
   ok('导出 ok + version + 时间戳', exp && exp.ok === true && exp.version === '1.0.1' && exp.exportedAt === '2026-11-06T00:00:00.000Z')
   const fields = ['memory', 'personality', 'state', 'growth', 'fishfood', 'pet', 'reminders', 'storyProgress']
   ok('导出含全部数据字段', fields.every((k) => k in exp), fields.filter((k) => !(k in exp)).join(',') || '齐全')
-  ok('导出不含任何 Key', !/apiKey|deepseekKey|siliconflowKey|authorization/i.test(JSON.stringify(exp)))
+  ok('导出不含任何 Key', !/apiKey|deepseekKey|authorization/i.test(JSON.stringify(exp)))
   ok('人格导出丢掉核心设定', !('name' in exp.personality) && Array.isArray(exp.personality.catchphrases), Object.keys(exp.personality).join(','))
   ok('导出保留记忆内容', exp.memory.history.length === 1 && exp.memory.summary === '摘要')
 

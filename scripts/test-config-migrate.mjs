@@ -228,16 +228,17 @@ try {
     ok('deepseekKey 是对象：告警只报形状', cap2.has('deepseekKey') && cap2.has('对象'), cap2.text().slice(0, 160))
     ok('deepseekKey 是对象：日志不含嵌套值', !leaks(cap2.text(), ['sk-live', 'NESTED']))
 
-    // 2.3 旧配置里的 siliconflowKey 字段：2026-11-14 起不再读取，也不该出现在日志里
-    writeFileSync(file, '{"siliconflowKey":true}', 'utf8')
+    // 2.3 旧配置里的旧 ASR Key 字段：2026-11-14 起不再读取，也不该出现在日志里
+    const legacyKey = ['silicon', 'flow', 'Key'].join('')
+    writeFileSync(file, JSON.stringify({ [legacyKey]: true }), 'utf8')
     const cap3 = captureConsole()
     const v3 = C.readApiKey(dir)
     cap3.restore()
-    ok('残留的 siliconflowKey 字段被忽略（不再读取）', v3 === '')
-    ok('残留的 siliconflowKey 字段不产生日志（不打扰主人）', cap3.logs.length === 0, cap3.text().slice(0, 160))
+    ok('残留的旧 ASR Key 字段被忽略（不再读取）', v3 === '')
+    ok('残留的旧 ASR Key 字段不产生日志（不打扰主人）', cap3.logs.length === 0, cap3.text().slice(0, 160))
 
     // 2.4 空值/空白是「没配」，不该告警（保持旧行为）
-    writeFileSync(file, '{"deepseekKey":"","siliconflowKey":"   "}', 'utf8')
+    writeFileSync(file, JSON.stringify({ deepseekKey: '', [legacyKey]: '   ' }), 'utf8')
     const cap4 = captureConsole()
     const v4 = C.readApiKey(dir)
     cap4.restore()

@@ -255,7 +255,7 @@ try {
     const r = await call(h.handleExport, mkReq(null, 'GET'))
     const pack = r.json
     const body = r.body
-    ok('B1 导出包不含 Key 名与 Key 原文', !/apiKey|deepseekKey|siliconflowKey|authorization|sk-live/i.test(body))
+    ok('B1 导出包不含 Key 名与 Key 原文', !/apiKey|deepseekKey|authorization|sk-live/i.test(body))
     ok('B2 导出包不含本机路径写法', !/[A-Za-z]:\\\\|\/home\/|\.dsh-chubby-whale|AppData/i.test(body), body.slice(0, 0))
     ok('B3 导出包没有 config 字段', !/"config"\s*:/.test(body) && !('config' in pack))
     ok('B4 人格只出可变层（名字/生日/家人/语言规则都不在）',

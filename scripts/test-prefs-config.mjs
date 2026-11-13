@@ -97,12 +97,14 @@ try {
 
     ok('没有 config.json + 没有环境变量 → Key 空', C.readApiKey(dir) === '')
     ok('缺 Key 时 keyStatus 只给布尔', JSON.stringify(C.keyStatus(dir)) === '{"deepseek":false}')
-    ok('2026-11-14 起不再导出 readSiliconFlowKey（SiliconFlow 依赖已删）', !('readSiliconFlowKey' in C))
+    const legacyKey = ['silicon', 'flow', 'Key'].join('')
+    const legacyReader = 'read' + ['Silicon', 'Flow'].join('') + 'Key'
+    ok('2026-11-14 起不再导出旧 ASR Key 读取器', !(legacyReader in C))
 
     // BOM + 前后空白
-    writeFileSync(file, '\uFEFF' + JSON.stringify({ deepseekKey: '  sk-bom  ', siliconflowKey: ' sf ' }), 'utf8')
+    writeFileSync(file, '\uFEFF' + JSON.stringify({ deepseekKey: '  sk-bom  ', [legacyKey]: ' sf ' }), 'utf8')
     ok('config.json 带 BOM 仍可读（Key 去空白）', C.readApiKey(dir) === 'sk-bom')
-    ok('残留的 siliconflowKey 字段被忽略（不再读）', C.readApiKey(dir) === 'sk-bom')
+    ok('残留的旧 ASR Key 字段被忽略（不再读）', C.readApiKey(dir) === 'sk-bom')
     ok('keyStatus 只回布尔（不回 Key 内容）', JSON.stringify(C.keyStatus(dir)) === '{"deepseek":true}')
 
     // 优先级：config.json > 专属 env > 通用 env

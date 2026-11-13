@@ -354,7 +354,7 @@ export function apply(ctx: any, rawConfig?: any): void {
   // 云端优先、edge-tts 兜底的「三层降级」要两条通路都接上：
   // cloudTts 此前只构造没注入 → /tts 的 opts.cloudTts 恒为 undefined，云端一直不可达（配置了也不生效）。
   const tts = createTtsHandler({ cache: ttsCache, engine: ttsEngine, cloudTts })
-  // /asr 只注入 DeepSeek Key：2026-11-14 起官方 ASR 是唯一引擎（SiliconFlow 已删，无兜底）
+  // /asr 只注入 DeepSeek Key：2026-11-14 起官方 ASR 是唯一引擎（旧 ASR 已删，无兜底）
   const asr = createAsrHandler({ getDeepseekKey: getKey, cache: asrCache, language: () => readAsrLanguage(PLUGIN_DIR) })
   // 官方全家桶：OCR（取字）与文件解析（Files API → file_id）
   const ocr = createOcrHandler({ getDeepseekKey: getKey })

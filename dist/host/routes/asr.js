@@ -5,7 +5,7 @@
  * 体积：请求体（base64）上限 12MB → 413；解码后音频上限 8MB → 同样 413（口径统一，2026-11-07）
  * 外呼超时 60 秒；**客户端断开（30s 硬超时/切页/断网）立刻中止外呼**，不再把付费识别跑满 60s（B93）
  *
- * 2026-11-14：SiliconFlow 全链路下线（主人决定，**无兜底**）。现在只走官方，
+ * 2026-11-14：旧 ASR 全链路下线（主人决定，**无兜底**）。现在只走官方，
  * 官方只收 16-bit PCM WAV / Ogg；客户端录音后已统一转 WAV，转不动的音频直接回明确的错误，
  * 不再悄悄换供应商（换供应商会让「谁在听」变得不可见）。
  */
@@ -167,7 +167,7 @@ export function createAsrHandler(opts) {
             // 识别语言优先级：请求里的聊天语言（zh/en/auto）→ config.json 的 asrLanguage（zh/en/auto）→ zh。
             // 为什么：聊天语言=自动时主人会说英语，但 asrLanguage 默认 zh 的脚本闸门会把纯英文全丢掉，
             // 表现为"说英语没一点反应"。聊天语言=自动时上游也不锁 zh（自动检测），闸门只放中/英。
-            // v6（2026-11-14）：SiliconFlow 下线，引擎固定 official——旧缓存里可能躺着别家引擎的
+            // v6（2026-11-14）：旧 ASR 下线，引擎固定 official——旧缓存里可能躺着别家引擎的
             // 识别文本，升版本让它们自然失效，避免「换引擎后还念旧结果」。
             const rawChatLang = typeof body?.lang === 'string' ? String(body.lang).trim().toLowerCase() : '';
             const chatLang = rawChatLang === 'zh' || rawChatLang === 'en' || rawChatLang === 'auto' ? rawChatLang : '';

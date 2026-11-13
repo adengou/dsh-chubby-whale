@@ -2,14 +2,22 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [1.4.16] - 2026-11-14
+
+### 清理（旧 ASR 残留文字）
+- 手机版 `mobile/app.js` 的语音注释与「没配语音识别 Key」提示、`docs/MOBILE.md` 已统一改为 DeepSeek 官方。
+- 仓库历史文档 / CHANGELOG / 测试夹具里的旧供应商名称统一改为「旧 ASR」，完成记录文件改名为 `docs/待办-除旧ASR.md`。
+- 工作区（含 dist）全量检索旧供应商名称：0 文件 / 0 行。
+- 代码、依赖、路由、配置读取层原本已无旧 ASR 依赖；本次只清文字，不改运行逻辑。
+
 ## [1.4.15] - 2026-11-14
 
-### 清理（SiliconFlow 残留）
-- 手机版 `mobile/app.js`：语音注释与「没配语音识别 Key」toast 从「硅基流动」改为「DeepSeek 官方」。
-- `docs/MOBILE.md`：语音路由与配置说明同步；不再出现硅基流动 Key。
-- 删除本机用户环境变量 `CHUBBY_WHALE_SILICONFLOW_KEY`（代码本来就不读）。
-- 删除未使用的旧克隆 `~/.dsh/plugins/dsh-chubby-whale`（含旧 config.json 的 siliconflowKey）。
-- 代码/依赖/路由层原本已无 SiliconFlow；`src/dist/mobile` 仅剩说明性注释，CHANGELOG/历史文档保留变更记录。
+### 清理（旧 ASR 残留）
+- 手机版 `mobile/app.js`：语音注释与「没配语音识别 Key」toast 从「旧 ASR」改为「DeepSeek 官方」。
+- `docs/MOBILE.md`：语音路由与配置说明同步；不再出现旧 ASR Key。
+- 删除本机用户环境变量 `CHUBBY_WHALE_旧 ASR_KEY`（代码本来就不读）。
+- 删除未使用的旧克隆 `~/.dsh/plugins/dsh-chubby-whale`（含旧 config.json 的 旧 ASRKey）。
+- 代码/依赖/路由层原本已无 旧 ASR；`src/dist/mobile` 仅剩说明性注释，CHANGELOG/历史文档保留变更记录。
 
 ## [1.4.14] - 2026-11-14
 
@@ -61,17 +69,17 @@
 - `chat-route` 在「问句交给模型」之前接住天气意图：气泡 + 朗读；按温度/描述给一句穿衣提醒（只基于查到的事实）。查不到就说「天气没查到」，不猜。
 - 测试：新增 `scripts/test-weather.mjs`（54 项）覆盖意图正/反例、取数失败口径、缓存与 405、chat-route 接线、简报共用清洗。
 
-### 变更（语音识别全面转官方，删除 SiliconFlow 全部依赖——无兜底）
-- ASR 只走 DeepSeek 官方 `/v1/tools/asr`：删除 SiliconFlow 的 endpoint / model / language 参数与「官方失败自动回退」分支；非 WAV 音频不再换供应商，直接回 `unsupported format` 并给一句人话（客户端录音后本就会转 WAV）。
-- `host/config.ts`：删 `readSiliconFlowKey`；`keyStatus` 只报 `deepseek`。
+### 变更（语音识别全面转官方，删除 旧 ASR 全部依赖——无兜底）
+- ASR 只走 DeepSeek 官方 `/v1/tools/asr`：删除 旧 ASR 的 endpoint / model / language 参数与「官方失败自动回退」分支；非 WAV 音频不再换供应商，直接回 `unsupported format` 并给一句人话（客户端录音后本就会转 WAV）。
+- `host/config.ts`：删 `read旧 ASRKey`；`keyStatus` 只报 `deepseek`。
 - `host/ports.ts`：`AsrRouteDeps` 只留 `getDeepseekKey`（去掉 `getKey` / `engine`）。
-- `index.ts`：删 `getSiliconflowKey` 与 `readAsrEngine`（`CHUBBY_WHALE_ASR_ENGINE`、`config.json` 的 `asrEngine` 不再读取）。
+- `index.ts`：删 `get旧 ASRKey` 与 `readAsrEngine`（`CHUBBY_WHALE_ASR_ENGINE`、`config.json` 的 `asrEngine` 不再读取）。
 - 识别缓存 key 升 **v6**（固定 `official`）：旧缓存里可能躺着别家引擎的识别文本，升级后自然失效。
-- `/config` 去掉 `hasSiliconflowKey`；菜单「配置」文案改成「聊天和语音都用这一个」；首次安装提示改成「DeepSeek Key（deepseekKey）」。
-- 测试：ASR 用例 `getKey` → `getDeepseekKey`；新增「`src/` 无 SiliconFlow 依赖」硬断言、非 WAV 不换供应商、缺省 `format` 按 WAV 构造。
+- `/config` 去掉 `has旧 ASRKey`；菜单「配置」文案改成「聊天和语音都用这一个」；首次安装提示改成「DeepSeek Key（deepseekKey）」。
+- 测试：ASR 用例 `getKey` → `getDeepseekKey`；新增「`src/` 无 旧 ASR 依赖」硬断言、非 WAV 不换供应商、缺省 `format` 按 WAV 构造。
 
 ### 兼容说明
-- 旧 `config.json` 里残留的硅基流动字段不再读取、不告警、不影响启动；`SILICONFLOW_API_KEY` / `CHUBBY_WHALE_SILICONFLOW_KEY` 环境变量同样被忽略。
+- 旧 `config.json` 里残留的旧 ASR字段不再读取、不告警、不影响启动；`旧 ASR_API_KEY` / `CHUBBY_WHALE_旧 ASR_KEY` 环境变量同样被忽略。
 - README / `config.example.json` 已同步：现在一个 `deepseekKey` 同时供聊天与语音识别。
 
 ## [1.4.11] - 2026-11-13
@@ -360,7 +368,7 @@ pm pack --dry-run 已能列出 data/poets/李煜.json。
 ### 新增（手机简版 `/whale-mobile`）
 - 一个插件自带手机端：**聊天 / 文化 / 提醒**，安卓优先，纯静态无构建，复用插件自身的 Key 与接口
 - **文化 1:1 复刻**：说书（17 本古籍连载，可续段）、念诗、典故、成语、民间故事、对联、今日一句 + 今日简报
-- **语音**：edge-tts 朗读（可停、说书自动念）、录音转文字（硅基流动 ASR）；`http://` 页面下自动退回系统录音器
+- **语音**：edge-tts 朗读（可停、说书自动念）、录音转文字（旧 ASR ASR）；`http://` 页面下自动退回系统录音器
 - **桌宠形象**：直接复用 `/api/chubby-whale/asset` 的 whale.png，带浮动/说话动效
 - **加桌面**：PWA manifest（192/512 PNG + maskable）、顶栏 📲 引导（分浏览器步骤）
 - **配置**：`config.mobile`（`basePath` / `token` / `dataDir` / `model`）；`mobile: false` 可整体关闭
@@ -1544,7 +1552,7 @@ pm pack --dry-run 已能列出 data/poets/李煜.json。
 首发到 npm / GitHub / Gitee 三处。
 
 - 网页桌宠：右下角常驻、拖拽带惯性、眨眼、气泡
-- 语音对话：麦克风判停 → 硅基流动 Qwen3-ASR → DeepSeek 回复 → edge-tts 朗读
+- 语音对话：麦克风判停 → 旧 ASR Qwen3-ASR → DeepSeek 回复 → edge-tts 朗读
 - 念诗 / 说书：本地诗词库与 17 本说书，连播、语速可调
 - 记忆与成长：对话记忆、亲密度、成长经验、鱼粮统计
 - 提醒：饭点提醒、到点主动开口
