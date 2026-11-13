@@ -2789,8 +2789,8 @@
     "音色：Ana（英·女）": "Voice: Ana (EN F)",
     "音色：Jenny（英·女）": "Voice: Jenny (EN F)",
     "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)",
-    "导出话题（不含聊天记录）": "Export topics (no chat logs)",
-    "导入话题（只冒一句梦话）": "Import topics (just a dream line)",
+    "导出话题切片（不含聊天记录）": "Export topic slices (no chat logs)",
+    "导入话题切片（只冒一句梦话）": "Import topic slices (just a dream line)",
     "数据与统计 ▸": "Data & Stats ▸"
   };
   deepFreeze(EN_MAP);
@@ -2976,8 +2976,8 @@
         item("数据导出…", "data-export"),
         item("数据导入…", "data-import"),
         // 鲸落胶囊：只打包摘要里的抽象主题，不含对话原文
-        item("导出话题（不含聊天记录）", "capsule-export"),
-        item("导入话题（只冒一句梦话）", "capsule-import"),
+        item("导出话题切片（不含聊天记录）", "capsule-export"),
+        item("导入话题切片（只冒一句梦话）", "capsule-import"),
         item("使用统计", "stats"),
         sub("设置 ▸", [
           item("查看当前配置", "config-view")
@@ -8243,14 +8243,14 @@
         const cap = packCapsule({ madeAt: Date.now(), intimacy: 0, topics });
         const d2 = /* @__PURE__ */ new Date();
         const pad = (n) => String(n).padStart(2, "0");
-        const stem = "whale-topics-" + d2.getFullYear() + pad(d2.getMonth() + 1) + pad(d2.getDate());
+        const stem = "whale-topic-slices-" + d2.getFullYear() + pad(d2.getMonth() + 1) + pad(d2.getDate());
         try {
           saveJson(stem + ".json", cap);
         } catch (e) {
           host.bubble("话题文件没存下来：" + String(e && e.message || e));
           return;
         }
-        host.bubble("话题导出好啦：" + stem + ".json（" + cap.topics.length + " 个话题，不含聊天记录）", 9e3);
+        host.bubble("话题切片导出好啦：" + stem + ".json（" + cap.topics.length + " 个话题，不含聊天记录）", 9e3);
       }).catch(() => host.bubble("话题取不到，没导出成"));
     });
     table.define("capsule-import", (host) => {

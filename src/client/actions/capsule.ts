@@ -38,14 +38,14 @@ export function registerCapsuleActions(table: ActionTable<ActionHost>): void {
         const cap = packCapsule({ madeAt: Date.now(), intimacy: 0, topics })
         const d2 = new Date()
         const pad = (n: number): string => String(n).padStart(2, '0')
-        const stem = 'whale-topics-' + d2.getFullYear() + pad(d2.getMonth() + 1) + pad(d2.getDate())
+        const stem = 'whale-topic-slices-' + d2.getFullYear() + pad(d2.getMonth() + 1) + pad(d2.getDate())
         try {
           saveJson(stem + '.json', cap)
         } catch (e: any) {
           host.bubble('话题文件没存下来：' + String((e && e.message) || e))
           return
         }
-        host.bubble('话题导出好啦：' + stem + '.json（' + cap.topics.length + ' 个话题，不含聊天记录）', 9000)
+        host.bubble('话题切片导出好啦：' + stem + '.json（' + cap.topics.length + ' 个话题，不含聊天记录）', 9000)
       })
       .catch(() => host.bubble('话题取不到，没导出成'))
   })
