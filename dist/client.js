@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.6";
+  var VERSION = "1.4.7";
 
   // src/client/styles.ts
   var W = 240;
@@ -13099,7 +13099,7 @@
         R.useEffect(() => {
           const watch = createToolWatch({
             bubble: (text, ms2) => {
-              const dur = Math.min(Number(ms2) || 12e3, 12e3);
+              const dur = Number(ms2) || 18e3;
               try {
                 poemLockUntil = Date.now() + dur;
               } catch (e) {

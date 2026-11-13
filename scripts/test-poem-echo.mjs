@@ -52,7 +52,7 @@ const EXPECTED_TRIGGERS = {
   '思乡': ['思乡', '想家', '故乡', '家乡'],
   '友情': ['朋友', '友情', '兄弟', '知己'],
   '豁达': ['豁达', '看开', '放下', '无所谓', '随缘'],
-  '时光': ['时光', '时间', '老了', '岁月', '青春'],
+  '时光': ['时光', '时间', '老了', '岁月', '青春', '春红', '太匆匆'],
   '奋斗': ['奋斗', '拼搏', '打拼', '事业'],
   '失败': ['失败', '输了', '搞砸', '完蛋'],
   '读书': ['读书', '学习', '看书', '考试'],
@@ -307,13 +307,28 @@ ok('随机 5 条都能在数据源找到同名诗且诗句是原文', spotBad.le
 // ======================================================================
 console.log('\n[9] 轮换：确定性顺序轮转，池内每一句都轮得到')
 const rotateBad = []
+let rotatedThemes = 0
 for (const t of themes) {
   const lines = Array.from(table[t].lines)
-  const word = table[t].words[0]
   const n = lines.length
+  /**
+   * 触发词分成两种口径（与 matchPoem 的「点题优先」一致）：
+   *   · 词出现在池内某句里 → 永远返回那一句（点题），**不该**轮转；
+   *   · 词不在池内 → 按 (主题哈希 + 文本长度) % 池大小 顺序轮转。
+   * 旧断言对所有主题都按轮转检查，孤寂/往事这类「点名句」主题必然红。
+   */
+  const probe = Array.from(table[t].words).find((w) => !lines.some((l) => l.line.includes(w)))
+  if (!probe) {
+    const w = table[t].words[0]
+    const hits = new Set()
+    for (let i = 0; i < 4; i++) { const r = matchPoem(w + '啊'.repeat(i)); if (r) hits.add(r.line) }
+    if (hits.size !== 1) rotateBad.push(t + ': 点题词应恒定命中同一句')
+    continue
+  }
+  rotatedThemes++
   const got = []
   for (let i = 0; i < n * 2; i++) {
-    const r = matchPoem(word + '啊'.repeat(i))
+    const r = matchPoem(probe + '啊'.repeat(i))
     got.push(r ? r.line : null)
   }
   const offset = lines.findIndex((l) => l.line === got[0])
@@ -325,7 +340,8 @@ for (const t of themes) {
   }
   if (new Set(got).size !== n) rotateBad.push(t + ': 只轮到 ' + new Set(got).size + '/' + n + ' 句')
 }
-ok('24 个主题都按固定顺序逐句轮转且轮满整个池子', rotateBad.length === 0, rotateBad.slice(0, 4).join(' / '))
+ok('每个主题按各自口径：点题词恒定、非点题词顺序轮转且轮满池子（轮转覆盖 ' + rotatedThemes + ' 个主题）',
+  rotateBad.length === 0 && rotatedThemes > 0, rotateBad.slice(0, 4).join(' / '))
 
 // ======================================================================
 console.log('\n[10] 源码级断言：零 import / 无随机 / 无时钟 / 不读文件')

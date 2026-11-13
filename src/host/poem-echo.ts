@@ -156,7 +156,7 @@ export const POEM_ECHO_TABLE: Readonly<Record<string, EchoPool>> = deepFreeze({
     lines: [
       { line: '劝君莫惜金缕衣，劝君惜取少年时。', title: '金缕衣', author: '不详' },
       { line: '莫等闲、白了少年头，空悲切。', title: '满江红', author: '岳飞' },
-      { line: '林花谢了春红，太匆匆。', title: '乌夜啼·林花谢了春红', author: '李煜' },
+      { line: '林花谢了春红，太匆匆，无奈朝来寒雨晚来风。', title: '乌夜啼·林花谢了春红', author: '李煜' },
       { line: '锦瑟无端五十弦，一弦一柱思华年。', title: '锦瑟', author: '李商隐' },
       { line: '莫见长安行乐处，空令岁月易蹉跎。', title: '送魏万之京', author: '李颀' },
     ],
@@ -361,7 +361,7 @@ export function matchPoem(text: string): PoemEcho | null {
   }
   if (!theme) return null
 
-  // ③ 先点题：池里有诗句包含命中的触发词，就优先那句（如「春红」→「林花谢了春红，太匆匆」）；
+  // ③ 先点题：池里有诗句包含命中的触发词，就优先那句（如「春红」→「林花谢了春红，太匆匆，无奈朝来寒雨晚来风」）；
   //    没有包含的才按确定性轮换（主题哈希 + 文本长度）取模。
   const pool = POEM_ECHO_TABLE[theme].lines
   const exact = hitWord ? pool.find((p) => p.line.includes(hitWord)) : undefined

@@ -1748,8 +1748,10 @@ registerSkinActions(actions)
       R.useEffect(() => {
         const watch = createToolWatch({
           bubble: (text: string, ms?: number) => {
-            // 弹幕最多占 12 秒（原文案按 18 秒算，长叙述里会把主气泡压太久）
-            const dur = Math.min(Number(ms) || 12000, 12000)
+            // 弹幕是「整首一条」：时长由 tool-watch 按字数算好（18s 下限、90s 上限），
+            // 这里必须原样收下——上一版误当成固定 18s 截成 12s，长词会念到一半气泡就没了，
+            // 而且和 poemBusyUntil（按原时长锁的）对不上。
+            const dur = Number(ms) || 18000
             try { poemLockUntil = Date.now() + dur } catch (e) { }
             // 等 20 秒还没轮到就不补播：过了那个点，这句诗已经和现场无关了
             bubbleScheduler.enqueue({ lane: 'poem', text, ms: dur, staleAfter: 20000, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() })
