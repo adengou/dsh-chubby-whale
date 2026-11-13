@@ -5227,7 +5227,9 @@
   function registerSkinActions(table) {
     const noop = async () => {
     };
+    table.define("skin-bg", noop);
     table.define("skin-fixed", noop);
+    table.define("tool-narrator", noop);
     table.define("skin-bg-reset", noop);
   }
 
