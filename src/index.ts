@@ -414,7 +414,7 @@ export function apply(ctx: any, rawConfig?: any): void {
   const proofread = createProofreadHandler({ key: getKey, model: chatModel })
 
   // 记忆摘要只读视图：胶囊要用的是摘要与抽象主题词，绝不把 history 原文给出去
-  const memoryRoutes = createMemoryHandlers({ loadMemorySummary: store.loadMemorySummary })
+  const memoryRoutes = createMemoryHandlers({ loadMemorySummary: store.loadMemorySummary, loadHistory: store.loadHistory })
 
   // 神经感知第三层（宿主侧）：只读收集器订阅 dsh 会话事件，环形缓冲 200 条。
   // 订阅放在 ctx.effect 里，卸载/热重载时先退订再重订（与 ttsEngine / 自动备份同一套托管方式）；
