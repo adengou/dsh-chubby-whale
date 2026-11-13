@@ -33,7 +33,12 @@ const POEM_TIMEOUT_MS = 15000
 export type LocalRouteHost = {
   persona: Persona
   narrationRate: () => string
-  bubble: (text: string, ms?: number) => void
+  bubble: (text: string, ms?: number, opts?: { transient?: boolean }) => void
+  /**
+   * 诗词线气泡（念诗正文/逐句进度）：最高优先级 + 同道替换。
+   * 缺省时 recitePoem 退回 bubble，功能不受影响。
+   */
+  poemBubble?: (text: string, ms?: number) => void
   say: (text: string, ms?: number, opts?: { rate?: string; pitch?: string }) => void
   speak: (text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }) => void
   narrate: (ms: number) => void
@@ -67,11 +72,21 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     try { host.abortChat() } catch (e) { }
   }
 
-  function fetchPoem(query: string, onItem: (p: any) => void): void {
+  function fetchPoem(query: string, onItem: (p: any) => void, wantTitle?: string): void {
     // 显式 15s：宿主不回包时到点走下面的既有「诗册没读到」，不再无限等（B105）
     getJson('/poem' + query, { timeout: POEM_TIMEOUT_MS }).then((d: any) => {
-      const p = (d && d.ok && d.item) ? d.item : null
+      if (!d || d.ok !== true) { host.bubble('诗册没读到', 4000); return }
+      const p = d.item || null
       if (!p) { host.bubble('诗册没读到', 4000); return }
+      /**
+       * 点了名、诗库里却没有：宿主会「回落随机一首」并在响应里带 matched:false。
+       * 旧实现直接照着随机那首念——主人说「背诵《梦》」，听到的却是《雨霖铃》，
+       * 比「不知道」更糟。这里改成照实说没有，并明确不拿别的凑数。
+       */
+      if (wantTitle && d.matched === false) {
+        host.bubble('诗库里没有《' + wantTitle + '》，本鲸不拿别的凑数', 6000)
+        return
+      }
       onItem(p)
     }).catch(() => host.bubble('诗册没读到', 4000))
   }
@@ -97,7 +112,7 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     const againTail = again ? again[4] : ''
     if (again && (againTail === '' || /^[吧啊呀哦嘛哈啦呗吖诗]+/.test(againTail))) {
       takeOver()
-      host.bubble('（点播）好，再念一首', 3000)
+      host.bubble('（点播）好，再念一首', 3000, { transient: true })
       fetchPoem('', (p) => recitePoem(host, p))
       return true
     }
@@ -131,8 +146,10 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     takeOver()
 
     if (hit.kind === 'poem') {
-      host.bubble('（点播）好，念一首', 3000)
-      fetchPoem((hit.title || '') ? ('?title=' + encodeURIComponent(hit.title || '')) : '', (p) => recitePoem(host, p))
+      const wantTitle = String(hit.title || '').trim()
+      // 状态提示是瞬时的：诗词线一开始跑就会把它压掉，压掉后不必再补播
+      host.bubble('（点播）好，念一首', 3000, { transient: true })
+      fetchPoem(wantTitle ? ('?title=' + encodeURIComponent(wantTitle)) : '', (p) => recitePoem(host, p), wantTitle)
       return true
     }
 

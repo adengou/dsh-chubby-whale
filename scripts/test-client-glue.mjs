@@ -475,12 +475,17 @@ async function runSuite(mod, ctx) {
     let beginOnceResult = true
     let poemFail = false
     let booksFail = false
+    /** 点名但诗库里没有：宿主回落随机并带 matched:false（与 host/routes/poem.ts 同口径） */
+    let poemMiss = false
     globalThis.__glueBeginOnce = (key) => { calls.begin.push(key); return beginOnceResult }
     globalThis.__glueRecite = (host, poem) => { calls.recite.push(poem && poem.title) }
     ctx.setFetch(async (url) => {
       const p = pathOf(url)
       if (p.indexOf('/poem') === 0) {
         if (poemFail) throw new Error('offline')
+        if (poemMiss && p.indexOf('title=') >= 0) {
+          return { ok: true, status: 200, json: async () => ({ ok: true, matched: false, item: { title: '雨霖铃', author: '柳永', dynasty: '宋', text: '寒蝉凄切。\n对长亭晚。' } }) }
+        }
         return { ok: true, status: 200, json: async () => ({ ok: true, item: { title: '雨霖铃', author: '柳永', dynasty: '宋', text: '寒蝉凄切。\n对长亭晚。' } }) }
       }
       if (p.indexOf('/culture') === 0) {
@@ -556,6 +561,15 @@ async function runSuite(mod, ctx) {
     ok('route：点名诗带 title 参数（encodeURIComponent）',
       hit === true && ctx.fetches.some((u) => pathOf(u).indexOf('title=' + encodeURIComponent('雨霖铃')) >= 0),
       ctx.fetches.map(pathOf).join(','))
+    // 2026-11-13：语音里说的是「背诵。」「背诵《梦》。」——必须进本地念诗线路
+    hit = await run('背诵')
+    ok('route：只问「背诵」也走本地念诗（不再交给模型瞎答）',
+      hit === true && ctx.fetches.some((u) => pathOf(u).indexOf('/poem') === 0) && calls.recite.length === 1,
+      'hit=' + hit + ' fetches=' + ctx.fetches.map(pathOf).join(','))
+    hit = await run('背诵《梦》')
+    ok('route：「背诵《梦》」带 title 参数（书名号标题不必先有索引）',
+      hit === true && ctx.fetches.some((u) => pathOf(u).indexOf('title=' + encodeURIComponent('梦')) >= 0) && calls.recite[0] === '雨霖铃',
+      ctx.fetches.map(pathOf).join(','))
     hit = await run('讲个典故')
     ok('route：「讲个典故」取 chengyu 池，播报仍说「典故」（不按数据池名念成成语）',
       hit === true && ctx.fetches.some((u) => pathOf(u) === '/culture?type=chengyu') &&
@@ -596,6 +610,14 @@ async function runSuite(mod, ctx) {
     hit = await run('报书名')
     ok('route：书单取不到 → 轻提示「书单没取到」', hit === true && calls.bubbles.indexOf('书单没取到，稍后再试') >= 0, calls.bubbles.join(' | '))
     booksFail = false
+
+    // ⑧ 点名但诗库里没有：照实说没有，**不拿随机那首凑数**（旧实现会把回落随机当主人要的念）
+    poemMiss = true
+    hit = await run('背诵《梦》')
+    ok('route：点名诗库外 → 明说没有、不念随机',
+      hit === true && calls.recite.length === 0 && calls.bubbles.some((b) => b.indexOf('诗库里没有《梦》') >= 0),
+      'recite=' + JSON.stringify(calls.recite) + ' bubbles=' + calls.bubbles.join(' | '))
+    poemMiss = false
   }
 
   return results

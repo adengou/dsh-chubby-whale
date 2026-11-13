@@ -92,6 +92,11 @@ export type VoiceBridgeHost = {
   /** 停止朗读（会连带清叙述锁） */
   stopSpeaking: () => void
   bubble: (text: string, ms?: number) => void
+  /**
+   * 诗词线气泡（念诗/说书的逐句字幕）：走最高优先级的诗词线并同道替换。
+   * 缺省时退回 bubble（语音线），功能不因缺这根线而不可用。
+   */
+  poemBubble?: (text: string, ms?: number) => void
   /** 说一句（会朗读；喊名字的应答用；缺省时退回气泡） */
   say?: (text: string, ms?: number, opts?: any) => void
   sendText: (text: string, opts?: { voice?: boolean }) => void
@@ -310,7 +315,9 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
           if (!t) return
           // 念诗时拼「第 x/N 句」；说书/普通叙述没有进度，bumpProgress 返回空串
           const withProgress = bumpProgress(t)
-          host.bubble(withProgress || t, 8000)
+          // 字幕走诗词线（同道替换）：跟着声音逐句换，不排队
+          const showPoem = host.poemBubble || host.bubble
+          showPoem(withProgress || t, 8000)
         } catch (e) { }
       },
     })

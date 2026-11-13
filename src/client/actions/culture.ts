@@ -16,7 +16,7 @@ import { setNarrationRate, setChatRate, poemRate } from '../rates.js'
 import { clearT } from '../util.js'
 
 /** 念诗需要的最小能力集（菜单动作与点播路由共用） */
-export type ReciteHost = Pick<ActionHost, 'bubble' | 'talkFor' | 'narrate' | 'clearNarrate' | 'say' | 'speak' | 'persona' | 'narrationRate'>
+export type ReciteHost = Pick<ActionHost, 'bubble' | 'poemBubble' | 'talkFor' | 'narrate' | 'clearNarrate' | 'say' | 'speak' | 'persona' | 'narrationRate'>
 
 /**
  * 同入口连点防重：同一个入口（念诗/民间故事/典故/成语/每日内容）在 gapMs 内只放行一次。
@@ -63,7 +63,10 @@ export function recitePoem(host: ReciteHost, poem: any): void {
   const intro = '念首诗——' + poem.title + '，' + (poem.dynasty ? poem.dynasty + '，' : '') + author + '。'
   // 进度：按诗句字数累计，气泡显示「第 x/N 句」；开场白要传进去，否则会被算成第 1 句
   try { startProgress('念诗·' + String(poem.title || ''), lines, intro) } catch (e) { }
-  host.bubble('念诗·' + poem.title + '（' + author + '）' + (totalLines > 1 ? '· 共 ' + totalLines + ' 句' : ''), 15000)
+  // 标题走诗词线（最高优先级、同道替换）：这是「背诗」这条气泡线路的入口，
+  // 后续逐句字幕由 voice-bridge 的 onSegment 经同一条线替换，不会排队落后于声音。
+  const showPoem = host.poemBubble || host.bubble
+  showPoem('念诗·' + poem.title + '（' + author + '）' + (totalLines > 1 ? '· 共 ' + totalLines + ' 句' : ''), 15000)
   const speech = intro + collapsePoemBody(body)
   host.talkFor(Math.max(6000, estimateSpeakMs(speech)))
   const my = ++poemGen

@@ -24,6 +24,11 @@ import type { Voice } from './voice.js'
 export type ActionHost = {
   // —— 展示与朗读 ——
   bubble: (text: string, ms?: number) => void
+  /**
+   * 诗词线气泡（念诗正文/逐句进度）：走最高优先级的诗词线，且同道替换。
+   * 没接线时念诗回落到主气泡（与旧行为一致），功能不因缺这根线而不可用。
+   */
+  poemBubble?: (text: string, ms?: number) => void
   say: (text: string, ms?: number, voiceOpts?: { rate?: string; pitch?: string }) => void
   speak: (text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }) => void
   speakReply: (text: string) => void

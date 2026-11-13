@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.4";
+  var VERSION = "1.4.5";
 
   // src/client/styles.ts
   var W = 240;
@@ -5106,7 +5106,8 @@
             const t = String(seg || "").replace(/^念首诗——/, "").trim();
             if (!t) return;
             const withProgress = bumpProgress(t);
-            host.bubble(withProgress || t, 8e3);
+            const showPoem = host.poemBubble || host.bubble;
+            showPoem(withProgress || t, 8e3);
           } catch (e) {
           }
         }
@@ -5602,7 +5603,8 @@
       startProgress("念诗·" + String(poem.title || ""), lines, intro);
     } catch (e) {
     }
-    host.bubble("念诗·" + poem.title + "（" + author + "）" + (totalLines > 1 ? "· 共 " + totalLines + " 句" : ""), 15e3);
+    const showPoem = host.poemBubble || host.bubble;
+    showPoem("念诗·" + poem.title + "（" + author + "）" + (totalLines > 1 ? "· 共 " + totalLines + " 句" : ""), 15e3);
     const speech = intro + collapsePoemBody(body);
     host.talkFor(Math.max(6e3, estimateSpeakMs(speech)));
     const my = ++poemGen;
@@ -8598,7 +8600,7 @@
   // src/client/bubble.ts
   var BUBBLE_CSS = (
     // 内置泰文字体（data URL）：不依赖用户系统是否安装泰文字体
-    THAI_FONT_FACE + ".chubby-bubble{position:fixed;z-index:10002;max-width:320px;max-height:calc(100vh - 120px);overflow-y:auto;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 " + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}.chubby-bubble-persona{background:#fff8ee;}'
+    THAI_FONT_FACE + ".chubby-bubble{position:fixed;z-index:10002;max-width:320px;max-height:calc(100vh - 120px);overflow-y:auto;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 " + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble.show{opacity:1;}.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}.chubby-bubble-persona{background:#fff8ee;}.chubby-bubble-voice{background:#eef7ff;color:#2b4a6f;font-size:12.5px;max-width:280px;}'
   );
   var STATUS_TEXTS = ["在听…", "在想…", "识别中…", "在说…"];
   deepFreeze(STATUS_TEXTS);
@@ -8700,27 +8702,70 @@
 
   // src/client/bubble-queue.ts
   var LANE_PRIORITY = Object.freeze({
-    poem: 4,
+    poem: 5,
+    voice: 4,
     main: 3,
     persona: 2,
     tool: 1
   });
+  var MAX_QUEUED = 64;
   function insertIndex(queue, item2) {
     const p = LANE_PRIORITY[item2.lane];
     let i = 0;
-    while (i < queue.length && LANE_PRIORITY[queue[i].lane] >= p) i++;
+    while (i < queue.length && LANE_PRIORITY[queue[i].item.lane] >= p) i++;
     return i;
   }
   function createBubbleScheduler(timers) {
     const st = timers ? timers.setTimeout : (fn, ms2) => setTimeout(fn, ms2);
     const ct = timers ? timers.clearTimeout : (t) => clearTimeout(t);
+    const now = timers && timers.now ? timers.now : () => Date.now();
     const queue = [];
     let current2 = null;
     let timer = null;
+    function startItem(item2) {
+      current2 = item2;
+      try {
+        item2.start();
+      } catch (e) {
+      }
+      timer = st(() => {
+        timer = null;
+        if (current2 !== item2) return;
+        current2 = null;
+        try {
+          item2.stop();
+        } catch (e) {
+        }
+        pump();
+      }, item2.ms);
+    }
+    function dropStale() {
+      while (queue.length) {
+        const head = queue[0];
+        const st2 = head.item.staleAfter;
+        if (st2 !== void 0 && now() - head.at > st2) {
+          queue.shift();
+          continue;
+        }
+        break;
+      }
+    }
+    function trim2() {
+      if (queue.length <= MAX_QUEUED) return;
+      let minP = Infinity;
+      for (const q of queue) minP = Math.min(minP, LANE_PRIORITY[q.item.lane]);
+      for (let i = 0; i < queue.length; i++) {
+        if (LANE_PRIORITY[queue[i].item.lane] === minP) {
+          queue.splice(i, 1);
+          break;
+        }
+      }
+    }
     function pump() {
+      dropStale();
       if (current2) {
         const top = queue[0];
-        if (!top || LANE_PRIORITY[top.lane] <= LANE_PRIORITY[current2.lane]) return;
+        if (!top || LANE_PRIORITY[top.item.lane] <= LANE_PRIORITY[current2.lane]) return;
         const preempted = current2;
         current2 = null;
         if (timer) {
@@ -8734,31 +8779,84 @@
           preempted.stop();
         } catch (e) {
         }
-        queue.splice(insertIndex(queue, preempted), 0, preempted);
+        if (!preempted.transient) {
+          queue.splice(insertIndex(queue, preempted), 0, { item: preempted, at: now() });
+        }
+        dropStale();
       }
       const next = queue.shift();
       if (!next) return;
-      current2 = next;
-      try {
-        next.start();
-      } catch (e) {
+      startItem(next.item);
+    }
+    function dropKey(lane, key) {
+      for (let i = queue.length - 1; i >= 0; i--) {
+        const it = queue[i].item;
+        if (it.lane === lane && it.key === key) queue.splice(i, 1);
       }
-      timer = st(() => {
-        timer = null;
-        if (current2 !== next) return;
-        current2 = null;
-        try {
-          next.stop();
-        } catch (e) {
-        }
-        pump();
-      }, next.ms);
+      return !!(current2 && current2.lane === lane && current2.key === key);
     }
     function enqueue(item2) {
       if (!item2 || !item2.text) return false;
+      if (item2.key) {
+        const sameRunning = dropKey(item2.lane, item2.key);
+        if (sameRunning && current2) {
+          if (timer) {
+            try {
+              ct(timer);
+            } catch (e) {
+            }
+          }
+          timer = null;
+          const prev = current2;
+          current2 = null;
+          try {
+            prev.stop();
+          } catch (e) {
+          }
+          startItem(item2);
+          return true;
+        }
+        if (current2) {
+          queue.splice(insertIndex(queue, item2), 0, { item: item2, at: now() });
+          trim2();
+          pump();
+          return true;
+        }
+        startItem(item2);
+        return true;
+      }
+      if (item2.replace) {
+        for (let i = queue.length - 1; i >= 0; i--) {
+          if (queue[i].item.lane === item2.lane) queue.splice(i, 1);
+        }
+        if (current2 && current2.lane === item2.lane) {
+          if (timer) {
+            try {
+              ct(timer);
+            } catch (e) {
+            }
+          }
+          timer = null;
+          const prev = current2;
+          current2 = null;
+          try {
+            prev.stop();
+          } catch (e) {
+          }
+        }
+        if (current2) {
+          queue.splice(insertIndex(queue, item2), 0, { item: item2, at: now() });
+          trim2();
+          pump();
+          return true;
+        }
+        startItem(item2);
+        return true;
+      }
       if (current2 && current2.lane === item2.lane && current2.text === item2.text) return false;
-      for (const q of queue) if (q.lane === item2.lane && q.text === item2.text) return false;
-      queue.splice(insertIndex(queue, item2), 0, item2);
+      for (const q of queue) if (q.item.lane === item2.lane && q.item.text === item2.text) return false;
+      queue.splice(insertIndex(queue, item2), 0, { item: item2, at: now() });
+      trim2();
       pump();
       return true;
     }
@@ -9689,6 +9787,13 @@
   deepFreeze(BOOK_ALIAS);
   var BARE_STRIP = /[\s。，！？、,.!?…~～]/g;
   var BARE_TAIL_PARTICLES = "吧啊呀呢么嘛哈哦嗯啦";
+  var POEM_VERB = /背(一)?(首|下)|背诵|背|念(一)?(首|下)|念一下|吟|朗读|朗诵|来(一)?首|听(一)?首|讲(一)?首|放(一)?首/;
+  var NOT_POEM_TARGET = /课文|单词|台词|歌词|公式|定义|拼音|九九表|作业|默写|考试/;
+  function matchBracketedTitle(text) {
+    const t = String(text || "");
+    const m = /[《〈]([^》〉]{1,12})[》〉]/.exec(t);
+    return m ? m[1].trim() : "";
+  }
   function isBareBookName(bare, book, alias) {
     if (!bare) return false;
     if (bare === book) return true;
@@ -9721,7 +9826,11 @@
       const asks = bare === byTitle || /背|念|吟|朗读|朗诵|来(一)?首|听(一)?首|讲(一)?首|放(一)?首/.test(t);
       if (asks) return { kind: "poem", title: byTitle };
     }
-    if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗/.test(t)) return { kind: "poem" };
+    if (!NOT_POEM_TARGET.test(t)) {
+      const bracketed = matchBracketedTitle(t);
+      if (bracketed && POEM_VERB.test(t)) return { kind: "poem", title: bracketed };
+      if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗|背诵/.test(t)) return { kind: "poem" };
+    }
     if (/典故|成语/.test(t)) {
       const asksCulture = /讲|说|来|听|教|学|点|考/.test(t);
       if (asksCulture) return { kind: "culture", sub: /成语/.test(t) ? "idiom" : "chengyu" };
@@ -9753,11 +9862,19 @@
       } catch (e) {
       }
     }
-    function fetchPoem(query, onItem) {
+    function fetchPoem(query, onItem, wantTitle) {
       getJson("/poem" + query, { timeout: POEM_TIMEOUT_MS }).then((d) => {
-        const p = d && d.ok && d.item ? d.item : null;
+        if (!d || d.ok !== true) {
+          host.bubble("诗册没读到", 4e3);
+          return;
+        }
+        const p = d.item || null;
         if (!p) {
           host.bubble("诗册没读到", 4e3);
+          return;
+        }
+        if (wantTitle && d.matched === false) {
+          host.bubble("诗库里没有《" + wantTitle + "》，本鲸不拿别的凑数", 6e3);
           return;
         }
         onItem(p);
@@ -9770,7 +9887,7 @@
       const againTail = again ? again[4] : "";
       if (again && (againTail === "" || /^[吧啊呀哦嘛哈啦呗吖诗]+/.test(againTail))) {
         takeOver();
-        host.bubble("（点播）好，再念一首", 3e3);
+        host.bubble("（点播）好，再念一首", 3e3, { transient: true });
         fetchPoem("", (p) => recitePoem(host, p));
         return true;
       }
@@ -9802,8 +9919,9 @@
       if (!hit) return false;
       takeOver();
       if (hit.kind === "poem") {
-        host.bubble("（点播）好，念一首", 3e3);
-        fetchPoem(hit.title || "" ? "?title=" + encodeURIComponent(hit.title || "") : "", (p) => recitePoem(host, p));
+        const wantTitle = String(hit.title || "").trim();
+        host.bubble("（点播）好，念一首", 3e3, { transient: true });
+        fetchPoem(wantTitle ? "?title=" + encodeURIComponent(wantTitle) : "", (p) => recitePoem(host, p), wantTitle);
         return true;
       }
       if (hit.kind === "culture") {
@@ -10051,7 +10169,7 @@
               const nowT = Date.now();
               if (nowT - bubbleAt > 400) {
                 bubbleAt = nowT;
-                host.bubble(full.slice(-60), 3e3);
+                host.bubble(full.slice(-60), 3e3, { key: "chat:stream" });
               }
             }
             if (obj.done) {
@@ -10074,7 +10192,7 @@
                 }
                 if (fresh) {
                   try {
-                    host.bubble(reply, 6e3);
+                    host.bubble(reply, 6e3, { key: "chat:stream" });
                   } catch (e) {
                   }
                 }
@@ -10114,7 +10232,7 @@
           } catch (e) {
           }
           try {
-            host.bubble(tail, 6e3);
+            host.bubble(tail, 6e3, { key: "chat:stream" });
           } catch (e) {
           }
           try {
@@ -10251,7 +10369,7 @@
         }
         host.setMessages((m) => [...m, { who: "fish", text: reply }]);
         if (host.voiceMode.current) {
-          host.bubble("（说）" + reply, 8e3);
+          host.bubble("（说）" + reply, 8e3, { key: "chat:stream" });
         }
         if (data && data.upgraded) host.bubble("本鲸又长大一点啦！", 4e3);
       } catch (err) {
@@ -11410,12 +11528,17 @@
         const toolBubbleTextRef = R.useRef(null);
         const personaBubbleRef = R.useRef(null);
         const personaBubbleTextRef = R.useRef(null);
+        const voiceBubbleRef = R.useRef(null);
+        const voiceBubbleTextRef = R.useRef(null);
         const bubbleTextRef = R.useRef(null);
         const bridgeRef = hookApi.useLazyRef(() => createVoiceBridge({
           narration,
           narrating: () => storyNarratingRef.current,
           stopSpeaking: () => stopTts(),
-          bubble: showBubble,
+          // 语音识别的临时状态走语音线（五线路里的 voice），别再挤主气泡
+          bubble: showVoiceBubble,
+          // 念诗/说书字幕走诗词线
+          poemBubble: showPoemBubble,
           // 喊名字的应答要"出声"，不能只弹字：桥里拿不到 say 时会退化成纯气泡
           say: (text, ms2, opts) => sayLine(text, ms2, opts),
           sendText: (text, opts) => sendText(text, opts),
@@ -11545,6 +11668,7 @@
               clearBubbleTimer(poemBubbleRef.current);
               clearBubbleTimer(personaBubbleRef.current);
               clearBubbleTimer(toolBubbleRef.current);
+              clearBubbleTimer(voiceBubbleRef.current);
             }
           });
         }, []);
@@ -11561,8 +11685,17 @@
           }
         });
         const bubbleScheduler = createBubbleScheduler();
-        function showBubble(text, ms2 = 2400) {
-          bubbleScheduler.enqueue({ lane: "main", text, ms: ms2, start: () => bubble.show(text, ms2), stop: () => bubble.hide() });
+        function showBubble(text, ms2 = 2400, opts) {
+          bubbleScheduler.enqueue({
+            lane: "main",
+            text,
+            ms: ms2,
+            transient: !!(opts && opts.transient),
+            ...opts && opts.key ? { key: opts.key } : {},
+            ...opts && opts.staleAfter ? { staleAfter: opts.staleAfter } : {},
+            start: () => bubble.show(text, ms2),
+            stop: () => bubble.hide()
+          });
         }
         function sayPersonaLine(text, ms2 = 4e3) {
           if (!text) return;
@@ -11592,6 +11725,20 @@
           pos: () => ({ x: posRef.current.x, y: posRef.current.y + 10 }),
           xOffset: W / 2
         });
+        const voiceBubble = createBubble({
+          el: () => voiceBubbleRef.current,
+          textEl: () => voiceBubbleTextRef.current,
+          pos: () => ({ x: posRef.current.x, y: posRef.current.y - 22 }),
+          xOffset: W / 2
+        });
+        function showVoiceBubble(text, ms2 = 3e3) {
+          if (!text) return;
+          bubbleScheduler.enqueue({ lane: "voice", text, ms: ms2, transient: true, key: "voice:status", staleAfter: 4e3, start: () => voiceBubble.show(text, ms2), stop: () => voiceBubble.hide() });
+        }
+        function showPoemBubble(text, ms2 = 8e3) {
+          if (!text) return;
+          bubbleScheduler.enqueue({ lane: "poem", text, ms: ms2, replace: true, start: () => poemBubble.show(text, ms2), stop: () => poemBubble.hide() });
+        }
         R.useEffect(() => {
           getJson("/status").then((d) => {
             if (d && d.ok && d.key === false) {
@@ -12225,6 +12372,8 @@
         const reminderPoller = reminderPollerRef.current;
         const actionHost = {
           bubble: showBubble,
+          // 菜单「念首诗」的正文/进度走诗词线（与点播念诗同一口径）
+          poemBubble: showPoemBubble,
           // 鱼账本进食：token → 体型/爱心 + 鲸语（client/belly.ts 只算参数，这里接画布）
           feedBelly: (tokens) => {
             try {
@@ -12649,6 +12798,8 @@
           persona,
           narrationRate,
           bubble: showBubble,
+          // 点播念诗的正文/逐句进度走诗词线（语音说「背诵《X》」也走这条）
+          poemBubble: showPoemBubble,
           say: sayLine,
           speak: speakText,
           // 点播路由用独立句柄：主人这句"念首诗"与菜单动作互不代解对方的锁
@@ -13109,6 +13260,7 @@
           h("div", { ref: poemBubbleRef, className: "chubby-bubble chubby-bubble-poem" }, h("div", { ref: poemBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           h("div", { ref: personaBubbleRef, className: "chubby-bubble chubby-bubble-persona" }, h("div", { ref: personaBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           h("div", { ref: toolBubbleRef, className: "chubby-bubble chubby-bubble-tool" }, h("div", { ref: toolBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+          h("div", { ref: voiceBubbleRef, className: "chubby-bubble chubby-bubble-voice" }, h("div", { ref: voiceBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "○") : null,
           menu ? h(
             "div",

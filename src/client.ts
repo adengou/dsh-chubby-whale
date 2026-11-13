@@ -402,7 +402,8 @@ registerSkinActions(actions)
       const inputRef = R.useRef(null)
       const chatPanelRef = R.useRef(null)
       const bubbleRef = R.useRef(null)
-      // 诗词字幕线 / 工具解说线：各用独立气泡元素，互不覆盖（三线路）
+      // 气泡五线路，各用独立元素、互不覆盖：诗词字幕 / 主气泡 / 语音状态 / 工具解说 / persona
+      // 优先级见 client/bubble-queue.ts：poem > voice > main > persona > tool
       const poemBubbleRef = R.useRef(null)
       const poemBubbleTextRef = R.useRef(null)
       const toolBubbleRef = R.useRef(null)
@@ -410,6 +411,9 @@ registerSkinActions(actions)
       // persona 台词线：问候/饥饿/今日一句，与人设台词之外的对话分开
       const personaBubbleRef = R.useRef(null)
       const personaBubbleTextRef = R.useRef(null)
+      // 语音线：语音识别的临时状态（听到/识别中/麦克风失败），不和对话正文抢主气泡
+      const voiceBubbleRef = R.useRef(null)
+      const voiceBubbleTextRef = R.useRef(null)
       const bubbleTextRef = R.useRef(null)
 
       // 语音桥：回调只在 voice-bridge 里建一份（待命 effect 与菜单「唤醒」共用）。
@@ -418,7 +422,10 @@ registerSkinActions(actions)
         narration,
         narrating: () => storyNarratingRef.current,
         stopSpeaking: () => stopTts(),
-        bubble: showBubble,
+        // 语音识别的临时状态走语音线（五线路里的 voice），别再挤主气泡
+        bubble: showVoiceBubble,
+        // 念诗/说书字幕走诗词线
+        poemBubble: showPoemBubble,
         // 喊名字的应答要"出声"，不能只弹字：桥里拿不到 say 时会退化成纯气泡
         say: (text: string, ms?: number, opts?: any) => sayLine(text, ms, opts),
         sendText: (text: string, opts?: { voice?: boolean }) => sendText(text, opts),
@@ -524,7 +531,7 @@ registerSkinActions(actions)
           reminderPoller: () => reminderPollerRef.current,
           stopTts: () => stopTts(),
           stopMelody: () => melody.stop(),
-          clearBubble: () => { try { bubbleScheduler.clear() } catch (e) { } clearBubbleTimer(bubbleRef.current); clearBubbleTimer(poemBubbleRef.current); clearBubbleTimer(personaBubbleRef.current); clearBubbleTimer(toolBubbleRef.current) },
+          clearBubble: () => { try { bubbleScheduler.clear() } catch (e) { } clearBubbleTimer(bubbleRef.current); clearBubbleTimer(poemBubbleRef.current); clearBubbleTimer(personaBubbleRef.current); clearBubbleTimer(toolBubbleRef.current); clearBubbleTimer(voiceBubbleRef.current) },
         })
       }, [])
 
@@ -536,10 +543,16 @@ registerSkinActions(actions)
         xOffset: W / 2,
         onHide: () => { try { restoreIdleStatus() } catch (e) { } },
       })
-      // 气泡调度器：同一时间只有一条线路活着，按优先级排队（诗词>对话>persona>解说）
+      // 气泡调度器：同一时间只有一条线路活着，按优先级排队（poem > voice > main > persona > tool）
       const bubbleScheduler = createBubbleScheduler()
-      function showBubble(text: string, ms = 2400): void {
-        bubbleScheduler.enqueue({ lane: 'main', text, ms, start: () => bubble.show(text, ms), stop: () => bubble.hide() })
+      function showBubble(text: string, ms = 2400, opts?: { transient?: boolean; key?: string; staleAfter?: number }): void {
+        bubbleScheduler.enqueue({
+          lane: 'main', text, ms,
+          transient: !!(opts && opts.transient),
+          ...(opts && opts.key ? { key: opts.key } : {}),
+          ...(opts && opts.staleAfter ? { staleAfter: opts.staleAfter } : {}),
+          start: () => bubble.show(text, ms), stop: () => bubble.hide(),
+        })
       }
       /** persona 台词（问候/饥饿/今日一句）：走独立线，不占对话主气泡 */
       function sayPersonaLine(text: string, ms = 4000): void {
@@ -572,6 +585,27 @@ registerSkinActions(actions)
         pos: () => ({ x: posRef.current.x, y: posRef.current.y + 10 }),
         xOffset: W / 2,
       })
+      // 语音线：位置略高（y-22），只放语音识别的临时状态
+      const voiceBubble = createBubble({
+        el: () => voiceBubbleRef.current,
+        textEl: () => voiceBubbleTextRef.current,
+        pos: () => ({ x: posRef.current.x, y: posRef.current.y - 22 }),
+        xOffset: W / 2,
+      })
+      /** 语音状态（听到/识别中/麦克风失败）：走语音线，标 transient——被正文压掉后不再补播 */
+      function showVoiceBubble(text: string, ms = 3000): void {
+        if (!text) return
+        // 合并键 + 排队过期：连续几次识别只留最新一条；等太久（比如正念着长诗）就不补播了
+        bubbleScheduler.enqueue({ lane: 'voice', text, ms, transient: true, key: 'voice:status', staleAfter: 4000, start: () => voiceBubble.show(text, ms), stop: () => voiceBubble.hide() })
+      }
+      /**
+       * 诗词字幕（念诗正文/逐句进度）：走诗词线，且「同道替换」。
+       * 为什么必须替换：字幕要跟着声音走；排队会让「第 3 句」在整首诗念完之后才冒出来。
+       */
+      function showPoemBubble(text: string, ms = 8000): void {
+        if (!text) return
+        bubbleScheduler.enqueue({ lane: 'poem', text, ms, replace: true, start: () => poemBubble.show(text, ms), stop: () => poemBubble.hide() })
+      }
       // 首次安装兜底：没配 Key 时给一句人话（离线功能照常可用），别让主人对着麦克风干等。
       // 每次页面加载最多提示一次；只读 /status，不发模型请求。
       R.useEffect(() => {
@@ -1116,6 +1150,8 @@ registerSkinActions(actions)
       // 菜单动作：动作表 + 处理器注册（client/actions/*.ts），客户端只留组装与分发
       const actionHost: ActionHost = {
         bubble: showBubble,
+        // 菜单「念首诗」的正文/进度走诗词线（与点播念诗同一口径）
+        poemBubble: showPoemBubble,
         // 鱼账本进食：token → 体型/爱心 + 鲸语（client/belly.ts 只算参数，这里接画布）
         feedBelly: (tokens: number) => {
           try {
@@ -1449,6 +1485,8 @@ registerSkinActions(actions)
         persona,
         narrationRate: narrationRate,
         bubble: showBubble,
+        // 点播念诗的正文/逐句进度走诗词线（语音说「背诵《X》」也走这条）
+        poemBubble: showPoemBubble,
         say: sayLine,
         speak: speakText,
         // 点播路由用独立句柄：主人这句"念首诗"与菜单动作互不代解对方的锁
@@ -1813,6 +1851,7 @@ registerSkinActions(actions)
         h('div', { ref: poemBubbleRef, className: 'chubby-bubble chubby-bubble-poem' }, h('div', { ref: poemBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         h('div', { ref: personaBubbleRef, className: 'chubby-bubble chubby-bubble-persona' }, h('div', { ref: personaBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         h('div', { ref: toolBubbleRef, className: 'chubby-bubble chubby-bubble-tool' }, h('div', { ref: toolBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+        h('div', { ref: voiceBubbleRef, className: 'chubby-bubble chubby-bubble-voice' }, h('div', { ref: voiceBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         recoverProps ? h('div', Object.assign({}, recoverProps, { style: recoverDotStyle }), '○') : null,
         menu ? h('div', menuRootProps({ menu, lang }),
           // 标题栏：左边「名字 · 版本号」，右边余额（点一下刷新）；菜单最下面仍按规矩显示版本号

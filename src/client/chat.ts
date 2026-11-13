@@ -34,7 +34,7 @@ import { clearT } from './util.js'
 
 export type ChatHost = {
   persona: Persona
-  bubble: (text: string, ms?: number) => void
+  bubble: (text: string, ms?: number, opts?: { key?: string; staleAfter?: number }) => void
   say: (text: string, ms?: number, voiceOpts?: { rate?: string; pitch?: string }) => void
   speak: (text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }) => void
   speakReply: (text: string) => void
@@ -232,7 +232,7 @@ export function createChatSender(host: ChatHost): ChatController {
             full += obj.delta
             speakSegs(sb.push(obj.delta))
             const nowT = Date.now()
-            if (nowT - bubbleAt > 400) { bubbleAt = nowT; host.bubble(full.slice(-60), 3000) }
+            if (nowT - bubbleAt > 400) { bubbleAt = nowT; host.bubble(full.slice(-60), 3000, { key: 'chat:stream' }) }
           }
           if (obj.done) {
             // 收尾前再校验一次：旧流的 done 不能把气泡/消息列表/朗读补上
@@ -250,7 +250,7 @@ export function createChatSender(host: ChatHost): ChatController {
               // 这里再吞掉整条回复，会让主人的提问孤零零挂着、看不到答案。
               const fresh = host.replyDeduper.allow(reply)
               try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: reply }]) } catch (e) { }
-              if (fresh) { try { host.bubble(reply, 6000) } catch (e) { } }
+              if (fresh) { try { host.bubble(reply, 6000, { key: 'chat:stream' }) } catch (e) { } }
               try { host.talkFor(1500) } catch (e) { }
               try { host.scrollBody() } catch (e) { }
               const d = diag()
@@ -276,7 +276,7 @@ export function createChatSender(host: ChatHost): ChatController {
       try { if (host.onPhase) host.onPhase(tail ? 'success' : 'error') } catch (e) { }
       if (tail) {
         try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tail }]) } catch (e) { }
-        try { host.bubble(tail, 6000) } catch (e) { }
+        try { host.bubble(tail, 6000, { key: 'chat:stream' }) } catch (e) { }
         try { host.scrollBody() } catch (e) { }
       } else {
         fishTip(host, host.persona.line('error'))
@@ -394,7 +394,7 @@ export function createChatSender(host: ChatHost): ChatController {
       if (d1) d1.lastChat = { stage: 'fetched', reply: String(reply).slice(0, 40), at: Date.now() }
       try { if (host.onPhase) host.onPhase(data && data.ok === false ? 'error' : 'success') } catch (e) { }
       host.setMessages((m: any[]) => [...m, { who: 'fish', text: reply }])
-      if (host.voiceMode.current) { host.bubble('（说）' + reply, 8000) }
+      if (host.voiceMode.current) { host.bubble('（说）' + reply, 8000, { key: 'chat:stream' }) }
       if (data && data.upgraded) host.bubble('本鲸又长大一点啦！', 4000)
     } catch (err: any) {
       if (!host.epoch.isCurrent(myEpoch)) return   // 被停止说话/新提问作废：不弹错误、不念旧答案

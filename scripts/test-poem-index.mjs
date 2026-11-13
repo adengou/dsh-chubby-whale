@@ -67,6 +67,9 @@ try {
   }
   // 太常见的景语（BANAL）刻意不进关键词，避免「东风」「明月」这类词把弹幕刷成噪音
   ok('「东风」被 BANAL 排除（返回 null）', matchPoemKeyword('东风', index) === null)
+  // 2026-11-13：聊天里的称呼/日常词不得触发诗词弹幕（主人 → 送郭司仓 实测误触发）
+  ok('「主人」被 STOP 排除（返回 null）', matchPoemKeyword('主人', index) === null)
+  ok('整句「主人都更新到 1.4.4 版本了」不触发诗词', matchPoemKeyword('怎么都还停留在1.4.0算法思维下，主人都更新到1.4.4版本了', index) === null)
   // 同一词牌多首时优先带副题的名篇（虞美人 → 李煜两首之一，不是只写词牌的那首）
   const yumeiren = matchPoemKeyword('虞美人', index)
   ok('「虞美人」优先带副题的名篇', !!yumeiren && yumeiren.title.includes('·'), yumeiren ? yumeiren.title + '/' + yumeiren.author : 'null')
