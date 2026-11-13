@@ -247,6 +247,9 @@ export interface MenuState {
 /** 诗词弹幕开关（默认开） */
   poemEchoOn?: boolean
 
+/** 曲目列表（运行时从 /melodies 拉取；缺省用内置 MELODIES 兜底） */
+  melodies?: string[]
+
 /** 固定背景开关（true = 不随机） */
   skinFixed?: boolean
   /** 说书连播开关（缺省视为开：讲完一段自动接下一段） */
@@ -312,7 +315,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     item('神经感知：看一眼状态', 'nervous-status'),
     sep(),
     // ── 曲子 ──
-    sub('弹首曲子 ▸', MELODIES.map((m) => item('弹《' + m + '》', 'music:' + m))),
+    sub('弹首曲子 ▸', (state.melodies && state.melodies.length ? state.melodies : MELODIES).map((m) => item('弹《' + m + '》', 'music:' + m))),
     item('停止弹奏', 'music-stop'),
     sep(),
     // ── 说话与耳朵（语音类全放一起）──

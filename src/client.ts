@@ -383,6 +383,8 @@ registerCapsuleActions(actions)
       const menuEntriesRef = R.useRef([] as any[])
       // 说书书单（菜单「选本书 ▸」用）：tried 区分「还没拉」与「拉过但为空/失败」
       const [storyBooks, setStoryBooks] = R.useState([] as string[])
+      // 曲目列表：从 /melodies 动态拉（数据文件增减曲目后无需改客户端）
+      const [melodies, setMelodies] = R.useState([] as string[])
       const [storyBooksTried, setStoryBooksTried] = R.useState(false)
       const [balanceText, setBalanceText] = R.useState('')
       const [lang, setLang] = R.useState((() => { try { return localStorage.getItem('chubby-lang') || 'zh' } catch { return 'zh' } })())
@@ -906,12 +908,24 @@ registerCapsuleActions(actions)
         refreshMenuStats()
         // 书单不进节流：本地接口、数据量小，每次打开菜单都拉一遍，书单换了立刻能看到
         refreshStoryBooks()
+        // 曲目列表同理：打开菜单时现拉，曲子增减立刻反映到菜单
+        refreshMelodies()
       }
 
       /**
        * 「选本书 ▸」的数据源：成功写入书名数组；失败/空列表按「取到过但为空」处理，
        * 菜单里显示「书单没取到，稍后再试」，点那一项会重试（story-books 动作）。
        */
+      /** 曲目列表：从 /melodies 拉，失败静默（菜单退回内置 MELODIES） */
+      function refreshMelodies(): void {
+        getJson('/melodies', { cache: 'no-store' })
+          .then((d: any) => {
+            const list = (d && d.ok && Array.isArray(d.songs)) ? d.songs.map((s: any) => String(s && s.name || '')).filter(Boolean) : []
+            if (list.length) setMelodies(list)
+          })
+          .catch(() => { })
+      }
+
       function refreshStoryBooks(): void {
         getJson('/story/books', { cache: 'no-store' })
           .then((d: any) => { setStoryBooks(parseBookList(d)); setStoryBooksTried(true) })
@@ -1696,7 +1710,7 @@ registerCapsuleActions(actions)
       // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去。
       // 可见项清单在渲染时同步算一次（键盘高亮与屏幕顺序共用这一份，不各算一套）。
       const menuItems = menu
-        ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), toolNarratorOn: (() => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
+        ? buildMenu(VERSION, Object.assign({ melodies, skinFixed: skinFixed(), toolNarratorOn: (() => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
         : []
       const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : []
       menuEntriesRef.current = menuEntries

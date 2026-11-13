@@ -2898,7 +2898,7 @@
       item("神经感知：看一眼状态", "nervous-status"),
       sep(),
       // ── 曲子 ──
-      sub("弹首曲子 ▸", MELODIES.map((m) => item("弹《" + m + "》", "music:" + m))),
+      sub("弹首曲子 ▸", (state.melodies && state.melodies.length ? state.melodies : MELODIES).map((m) => item("弹《" + m + "》", "music:" + m))),
       item("停止弹奏", "music-stop"),
       sep(),
       // ── 说话与耳朵（语音类全放一起）──
@@ -11420,6 +11420,7 @@
         menuFocusRef.current = menuFocus;
         const menuEntriesRef = R.useRef([]);
         const [storyBooks, setStoryBooks] = R.useState([]);
+        const [melodies, setMelodies] = R.useState([]);
         const [storyBooksTried, setStoryBooksTried] = R.useState(false);
         const [balanceText, setBalanceText] = R.useState("");
         const [lang, setLang] = R.useState((() => {
@@ -12068,6 +12069,14 @@
           setMenuFocus(-1);
           refreshMenuStats();
           refreshStoryBooks();
+          refreshMelodies();
+        }
+        function refreshMelodies() {
+          getJson("/melodies", { cache: "no-store" }).then((d) => {
+            const list = d && d.ok && Array.isArray(d.songs) ? d.songs.map((s) => String(s && s.name || "")).filter(Boolean) : [];
+            if (list.length) setMelodies(list);
+          }).catch(() => {
+          });
         }
         function refreshStoryBooks() {
           getJson("/story/books", { cache: "no-store" }).then((d) => {
@@ -13000,7 +13009,7 @@
           return () => clearInterval(timer);
         }, []);
         const recoverProps = recover.dot(hidden);
-        const menuItems = menu ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), toolNarratorOn: (() => {
+        const menuItems = menu ? buildMenu(VERSION, Object.assign({ melodies, skinFixed: skinFixed(), toolNarratorOn: (() => {
           try {
             return localStorage.getItem("chubby-tool-narrator") !== "off";
           } catch (e) {
