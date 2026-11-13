@@ -2788,7 +2788,9 @@
     "音色：云扬（中·男）": "Voice: Yunyang (CN M)",
     "音色：Ana（英·女）": "Voice: Ana (EN F)",
     "音色：Jenny（英·女）": "Voice: Jenny (EN F)",
-    "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)"
+    "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)",
+    "鲸落（导出记忆胶囊）": "Whale Fall (Export Memory Capsule)",
+    "接住漂来的鲸（导入胶囊）": "Catch a Drifting Whale (Import Capsule)"
   };
   deepFreeze(EN_MAP);
   var STAGE_EN = {
