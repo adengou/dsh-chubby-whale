@@ -19,7 +19,7 @@
  *   node tools/check-release.mjs --require-tag   # 发布推 tag 之后跑，缺 tag 即失败
  * 退出码：0 = 一致；1 = 有不一致（会逐条打印）。
  */
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -104,6 +104,18 @@ if (!tagSha) {
     else if (taggedVersion !== version) bad('tag ' + tagName + ' 里的 package.json 是 ' + taggedVersion + '，与当前 ' + version + ' 不一致（坏 tag，别推！）')
     else ok('tag 内 package.json 版本与当前一致：' + taggedVersion)
   }
+}
+
+console.log('\n[4] 打包清单覆盖 data/ 子目录（漏一个目录 = 安装出来的包缺数据）')
+try {
+  const files = Array.isArray(pkg.files) ? pkg.files.map(String) : []
+  const dataDirs = readdirSync(join(ROOT, 'data'), { withFileTypes: true })
+    .filter((d) => d.isDirectory()).map((d) => d.name)
+  const missing = dataDirs.filter((name) => !files.some((f) => f === 'data/' + name || f === 'data' || f.startsWith('data/' + name + '/')))
+  if (missing.length) bad('package.json files 漏了：' + missing.map((n) => 'data/' + n).join('、'))
+  else ok('data 子目录全部在 files 里：' + (dataDirs.join(', ') || '（无子目录）'))
+} catch (e) {
+  bad('读 data/ 目录失败：' + String((e && e.message) || e))
 }
 
 console.log('\n' + '='.repeat(48))

@@ -2,6 +2,17 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [1.4.8] - 2026-11-13
+
+### 修复（打包漏 data/poets：弹幕只背一句、分诗人归档整目录丢失）
+- package.json 的 iles 漏了 data/poets/（分诗人归档，如《李煜.json》14 KB）。git/pnpm 安装出来的包没有这个目录，于是：
+  「春红」弹幕只能显示表里那一句、查整首失败（/poem?title=乌夜啼 实测返回 matched:false 并回落随机），点播李煜这类分诗人归档里的作品也可能查不到。
+- iles 补 data/poets；
+pm pack --dry-run 已能列出 data/poets/李煜.json。
+- 	ools/check-release.mjs 新增门禁：data/ 下每个子目录都必须出现在 iles 里，漏一个即发版失败。
+
+### 测试
+- check-release 通过（新增第 [4] 项：data 子目录覆盖）。
 ## [1.4.7] - 2026-11-13
 
 ### 修复（1.4.6 的两个回归 / 引文口径）
