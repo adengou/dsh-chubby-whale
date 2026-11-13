@@ -1995,6 +1995,19 @@ function init() {
     }
   } catch (e) { /* 动画失败不影响功能 */ }
 
+  // 点鱼互动：原来手机版鱼没有点击反馈，点了像"不动"；这里给气泡 + 嘴动
+  try {
+    const petEl = $('#pet');
+    if (petEl) {
+      const lines = ['戳本鲸干嘛～', '本鲸在呢', '哼，别闹', '轻点，会冒泡泡的'];
+      petEl.addEventListener('pointerdown', () => {
+        showPetBubble(lines[Math.floor(Math.random() * lines.length)]);
+        try { petAnimator && petAnimator.talkFor(1200); } catch (e) { }
+      });
+      petEl.style.cursor = 'pointer';
+    }
+  } catch (e) { /* 忽略 */ }
+
   setupTabs();
   setupWelcome();
   loadDependencies();  // 依赖自述：电脑端 dsh web + 伴生桌宠
