@@ -220,6 +220,8 @@ try {
     ok('chat-stream.ts 仅在 poem:true 时调用 noteUserChat', /body\?\.poem === true && opts\.noteUserChat/.test(streamSrc))
     ok('index.ts 把 noteUserChat 同时注入两条聊天路由',
       (idxSrc.match(/noteUserChat,/g) || []).length >= 2, 'count=' + (idxSrc.match(/noteUserChat,/g) || []).length)
+    const chatClientSrc = readFileSync(path.join(ROOT, 'src/client/chat.ts'), 'utf8')
+    ok('鲸鱼聊天普通/流式两条请求都带 poem:true', (chatClientSrc.match(/poem: true/g) || []).length >= 2, String((chatClientSrc.match(/poem: true/g) || []).length))
     ok('collector.ts 不再读 user/message 做匹配（源码级硬约束）',
       !/event\.type\s*===\s*'user\/message'/.test(collectorSrc), '仍含 user/message 分支')
   }

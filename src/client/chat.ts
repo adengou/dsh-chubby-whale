@@ -425,6 +425,8 @@ export function createChatSender(host: ChatHost): ChatController {
       const tChat = performance.now()
       data = await postJson('/chat', {
         message: text,
+        // poem: 只有鲸鱼自己的聊天面板才允许触发诗词弹幕（Harness 输入框不经过这里）
+        poem: true,
         // voice 表示「输入来自语音识别」（后端据此追加 ASR 纠错说明）。
         // 原来这里写死 true，打字也会被当成语音，且与流式的缓存键对不上。
         voice: !!(opts && opts.voice),
