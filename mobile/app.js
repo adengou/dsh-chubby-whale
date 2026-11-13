@@ -1997,7 +1997,7 @@ function init() {
 
   // 点鱼 / 拖鱼 / 抛鱼（对齐电脑端手感）：
   //   · 点一下（位移 < 8px）= 冒气泡 + 嘴动；
-  //   · 拖住移动 = 整只鱼跟着走；
+  //   · 拖住移动 = 鱼跟着走（用 margin 偏移，不碰 canvas 的 CSS 浮动动画）；
   //   · 松手带速度 = 惯性抛出，摩擦衰减后停下；
   //   · 位置记在 localStorage，下次打开还在原地。
   try {
@@ -2012,22 +2012,23 @@ function init() {
       let lastX = 0, lastY = 0, lastT = 0;
       let vx = 0, vy = 0;
       let inertia = 0;
+      let posX = 0, posY = 0;
 
-      const readPos = () => [parseFloat(wrap.style.left) || 0, parseFloat(wrap.style.top) || 0];
-      const clampTo = (x, y) => {
-        const parent = wrap.parentElement;
-        const maxX = Math.max(0, (parent ? parent.clientWidth : window.innerWidth) - wrap.offsetWidth);
-        const maxY = Math.max(0, window.innerHeight - wrap.offsetHeight - 8);
-        return [Math.min(Math.max(0, x), maxX), Math.min(Math.max(0, y), maxY)];
+      // 边界：横向按容器可用宽度，纵向按视口高度（鱼本身只有 ~118px 宽）
+      const clampX = (v) => {
+        const span = Math.max(0, (wrap.clientWidth - petEl.offsetWidth) / 2);
+        return Math.min(Math.max(-span, v), span);
       };
-      const applyPos = (x, y) => {
-        const p = clampTo(x, y);
-        wrap.style.left = p[0] + 'px';
-        wrap.style.top = p[1] + 'px';
-        return p;
+      const clampY = (v) => {
+        const span = Math.max(0, Math.min(window.innerHeight / 2, 320));
+        return Math.min(Math.max(-span, v), span);
+      };
+      const applyPos = () => {
+        petEl.style.marginLeft = posX + 'px';
+        petEl.style.marginTop = posY + 'px';
       };
       const savePos = () => {
-        try { localStorage.setItem(POS_KEY, JSON.stringify({ x: readPos()[0], y: readPos()[1] })) } catch (e) { }
+        try { localStorage.setItem(POS_KEY, JSON.stringify({ x: posX, y: posY })) } catch (e) { }
       };
       const stopInertia = () => { if (inertia) { cancelAnimationFrame(inertia); inertia = 0 } };
       const startInertia = () => {
@@ -2035,10 +2036,11 @@ function init() {
         const step = () => {
           vx *= 0.94; vy *= 0.94;
           if (Math.abs(vx) < 0.12 && Math.abs(vy) < 0.12) { inertia = 0; savePos(); return }
-          const [cx, cy] = applyPos(readPos()[0] + vx, readPos()[1] + vy);
-          // 撞边：横向/纵向速度归零，避免弹来弹去
-          if (cx <= 0 || cx >= clampTo(1e9, 0)[0]) vx = 0;
-          if (cy <= 0 || cy >= clampTo(0, 1e9)[1]) vy = 0;
+          const nx = clampX(posX + vx);
+          const ny = clampY(posY + vy);
+          if (nx !== posX + vx) vx = 0;
+          if (ny !== posY + vy) vy = 0;
+          posX = nx; posY = ny; applyPos();
           inertia = requestAnimationFrame(step);
         };
         inertia = requestAnimationFrame(step);
@@ -2048,28 +2050,11 @@ function init() {
       try {
         const saved = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
         if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
-          wrap.style.position = 'relative';
-          applyPos(saved.x, saved.y);
+          posX = clampX(saved.x); posY = clampY(saved.y); applyPos();
         }
       } catch (e) { }
 
-      petEl.addEventListener('pointerdown', (e) => {
-        if (e.button !== undefined && e.button !== 0) return;
-        e.preventDefault();
-        stopInertia();
-        dragging = true;
-        moved = false;
-        wrap.style.position = 'relative';
-        const p = readPos();
-        baseX = p[0]; baseY = p[1];
-        startX = e.clientX; startY = e.clientY;
-        lastX = e.clientX; lastY = e.clientY; lastT = performance.now();
-        vx = 0; vy = 0;
-        try { petEl.setPointerCapture(e.pointerId) } catch (err) { }
-        petEl.style.cursor = 'grabbing';
-      });
-
-      petEl.addEventListener('pointermove', (e) => {
+      const onMove = (e) => {
         if (!dragging) return;
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
@@ -2079,14 +2064,18 @@ function init() {
         vx = ((e.clientX - lastX) / dt) * 16;
         vy = ((e.clientY - lastY) / dt) * 16;
         lastX = e.clientX; lastY = e.clientY; lastT = now;
-        if (moved) applyPos(baseX + dx, baseY + dy);
-      });
-
-      const endDrag = (e) => {
+        if (moved) {
+          posX = clampX(baseX + dx);
+          posY = clampY(baseY + dy);
+          applyPos();
+        }
+      };
+      const onUp = () => {
         if (!dragging) return;
         dragging = false;
-        petEl.style.cursor = 'pointer';
-        try { petEl.releasePointerCapture(e.pointerId) } catch (err) { }
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
         if (!moved) {
           showPetBubble(lines[Math.floor(Math.random() * lines.length)]);
           try { petAnimator && petAnimator.talkFor(1200); } catch (err) { }
@@ -2094,10 +2083,26 @@ function init() {
           startInertia();
         }
       };
-      petEl.addEventListener('pointerup', endDrag);
-      petEl.addEventListener('pointercancel', endDrag);
 
-      window.addEventListener('resize', () => { if (!dragging) applyPos(readPos()[0], readPos()[1]) });
+      petEl.addEventListener('pointerdown', (e) => {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        stopInertia();
+        dragging = true;
+        moved = false;
+        startX = e.clientX; startY = e.clientY;
+        baseX = posX; baseY = posY;
+        lastX = e.clientX; lastY = e.clientY; lastT = performance.now();
+        vx = 0; vy = 0;
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+      });
+
+      window.addEventListener('resize', () => {
+        if (dragging) return;
+        posX = clampX(posX); posY = clampY(posY); applyPos();
+      });
     }
   } catch (e) { /* 忽略 */ }
 
