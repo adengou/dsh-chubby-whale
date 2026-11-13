@@ -11480,6 +11480,13 @@
         function applySkinBg(index) {
           try {
             const pick = BG_GALLERY[(index % BG_GALLERY.length + BG_GALLERY.length) % BG_GALLERY.length];
+            const isElectronShell = (() => {
+              try {
+                return /Electron/i.test(navigator.userAgent || "");
+              } catch (e) {
+                return false;
+              }
+            })();
             let tag = document.getElementById("chubby-skin-bg");
             if (!tag) {
               tag = document.createElement("style");
@@ -11490,7 +11497,7 @@
               // 1) 深海女仆皮肤：覆盖它的背景变量（换整页背景）
               'html body{--maid-palace-art:url("/api/chubby-whale/skin?n=' + index + '") !important;--maid-top-trim-art:none;--maid-bow-art:none;--maid-bottom-trim-art:none;--maid-bottom-crest-art:none;--maid-sidebar-corner-art:none;--maid-new-session-art:none;--maid-sidebar-swag-art:none;--maid-settings-frame-art:none;--maid-workspace-crest-art:none;--maid-workspace-ribbon-art:none;--maid-composer-ribbon-left-cap-art:none;--maid-composer-ribbon-right-cap-art:none;--maid-composer-ribbon-left-fill-art:none;--maid-composer-ribbon-right-fill-art:none;--maid-composer-frame-art:none;--maid-composer-lace-art:none !important;}',
               // 2) 官方默认（无皮肤）：body 铺背景图（高特异性 + 内联兜底）
-              'html > body{background:url("/api/chubby-whale/skin?n=' + index + '") center center / cover no-repeat fixed !important;}',
+              isElectronShell ? 'html > body{background-image:linear-gradient(rgba(246,248,252,0.97),rgba(246,248,252,0.97)),url("/api/chubby-whale/skin?n=' + index + '") !important;background-size:100% 42px,cover !important;background-position:top center,center center !important;background-repeat:no-repeat,no-repeat !important;background-attachment:fixed,fixed !important;}' : 'html > body{background:url("/api/chubby-whale/skin?n=' + index + '") center center / cover no-repeat fixed !important;}',
               // 官方默认：把 DSH 布局各层也透明，让 body 背景露出来
               "html body #root{background:transparent !important;}",
               'html body [class*="pI_x6G_frame"]{background:transparent !important;}',
@@ -11511,11 +11518,19 @@
             tag.appendChild(document.createTextNode(css));
             try {
               if (!document.body.hasAttribute("data-dsh-maid-atelier")) {
-                document.body.style.backgroundImage = 'url("/api/chubby-whale/skin?n=' + index + '")';
-                document.body.style.backgroundSize = "cover";
-                document.body.style.backgroundPosition = "center center";
-                document.body.style.backgroundRepeat = "no-repeat";
-                document.body.style.backgroundAttachment = "fixed";
+                if (isElectronShell) {
+                  document.body.style.backgroundImage = 'linear-gradient(rgba(246,248,252,0.97),rgba(246,248,252,0.97)),url("/api/chubby-whale/skin?n=' + index + '")';
+                  document.body.style.backgroundSize = "100% 42px, cover";
+                  document.body.style.backgroundPosition = "top center, center center";
+                  document.body.style.backgroundRepeat = "no-repeat, no-repeat";
+                  document.body.style.backgroundAttachment = "fixed, fixed";
+                } else {
+                  document.body.style.backgroundImage = 'url("/api/chubby-whale/skin?n=' + index + '")';
+                  document.body.style.backgroundSize = "cover";
+                  document.body.style.backgroundPosition = "center center";
+                  document.body.style.backgroundRepeat = "no-repeat";
+                  document.body.style.backgroundAttachment = "fixed";
+                }
               }
             } catch (e) {
             }
@@ -11527,6 +11542,16 @@
           try {
             const tag = document.getElementById("chubby-skin-bg");
             if (tag) tag.remove();
+            try {
+              document.body.style.backgroundImage = "";
+              document.body.style.backgroundSize = "";
+              document.body.style.backgroundPosition = "";
+              document.body.style.backgroundRepeat = "";
+              document.body.style.backgroundAttachment = "";
+              document.body.style.removeProperty("--chubby-fg");
+              document.body.style.removeProperty("--chubby-veil");
+            } catch (e) {
+            }
             showBubble("背景恢复默认～", 2e3);
           } catch (e) {
           }
