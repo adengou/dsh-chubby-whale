@@ -1226,6 +1226,9 @@ registerCapsuleActions(actions)
                         'html body [class*="EvIC1a_"]{background:transparent !important;}',
                         'html body [class*="hWmORq_"]{background:transparent !important;}',
                         'html body div[class*="_markdown_"]{background:rgba(255,255,255,0.35) !important;}',
+            // 通用兜底（不认皮肤名）：body 的直接子元素是各皮肤/主题的根容器，统一透明
+            'html body > div, html body > main, html body > section{background-color:transparent !important;background-image:none !important;}',
+            'html{background-image:url("/api/chubby-whale/skin?n=' + index + '") !important;background-size:cover !important;background-position:center center !important;background-repeat:no-repeat !important;background-attachment:fixed !important;}',
           ].join('')
           // 按背景亮度决定字色（深背景→浅字，浅背景→深字），并垫一层淡遮罩保证可读
           const lum = BG_LUMA[((index % BG_LUMA.length) + BG_LUMA.length) % BG_LUMA.length]
@@ -1243,6 +1246,12 @@ registerCapsuleActions(actions)
               // 普通 CSS 规则可能被更后加载的同特异性规则压过；内联 important 是最强的一层
               const u = 'url("/api/chubby-whale/skin?n=' + index + '")'
               try {
+                // html 与 body 各写一份：有的皮肤在 html、有的在 body
+                document.documentElement.style.setProperty('background-image', u, 'important')
+                document.documentElement.style.setProperty('background-size', 'cover', 'important')
+                document.documentElement.style.setProperty('background-position', 'center center', 'important')
+                document.documentElement.style.setProperty('background-repeat', 'no-repeat', 'important')
+                document.documentElement.style.setProperty('background-attachment', 'fixed', 'important')
                 document.body.style.setProperty('background-image', u, 'important')
                 document.body.style.setProperty('background-size', 'cover', 'important')
                 document.body.style.setProperty('background-position', 'center center', 'important')
@@ -1261,6 +1270,7 @@ registerCapsuleActions(actions)
           if (tag) tag.remove()
           // 内联 !important 的优先级高于样式表，删 style 标签清不掉，必须逐项 removeProperty
           for (const prop of ['background-image', 'background-size', 'background-position', 'background-repeat', 'background-attachment', 'background-color']) {
+            try { document.documentElement.style.removeProperty(prop) } catch (e) { }
             try { document.body.style.removeProperty(prop) } catch (e) { }
           }
           try { document.body.style.removeProperty('--chubby-fg') } catch (e) { }

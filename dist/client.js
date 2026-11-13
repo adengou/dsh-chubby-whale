@@ -12179,7 +12179,10 @@
               'html body [class*="wSkVaW_"]{background:transparent !important;}',
               'html body [class*="EvIC1a_"]{background:transparent !important;}',
               'html body [class*="hWmORq_"]{background:transparent !important;}',
-              'html body div[class*="_markdown_"]{background:rgba(255,255,255,0.35) !important;}'
+              'html body div[class*="_markdown_"]{background:rgba(255,255,255,0.35) !important;}',
+              // 通用兜底（不认皮肤名）：body 的直接子元素是各皮肤/主题的根容器，统一透明
+              "html body > div, html body > main, html body > section{background-color:transparent !important;background-image:none !important;}",
+              'html{background-image:url("/api/chubby-whale/skin?n=' + index + '") !important;background-size:cover !important;background-position:center center !important;background-repeat:no-repeat !important;background-attachment:fixed !important;}'
             ].join("");
             const lum = BG_LUMA[(index % BG_LUMA.length + BG_LUMA.length) % BG_LUMA.length];
             const dark = lum < 128;
@@ -12193,6 +12196,11 @@
               if (!document.body.hasAttribute("data-dsh-maid-atelier")) {
                 const u = 'url("/api/chubby-whale/skin?n=' + index + '")';
                 try {
+                  document.documentElement.style.setProperty("background-image", u, "important");
+                  document.documentElement.style.setProperty("background-size", "cover", "important");
+                  document.documentElement.style.setProperty("background-position", "center center", "important");
+                  document.documentElement.style.setProperty("background-repeat", "no-repeat", "important");
+                  document.documentElement.style.setProperty("background-attachment", "fixed", "important");
                   document.body.style.setProperty("background-image", u, "important");
                   document.body.style.setProperty("background-size", "cover", "important");
                   document.body.style.setProperty("background-position", "center center", "important");
@@ -12213,6 +12221,10 @@
             const tag = document.getElementById("chubby-skin-bg");
             if (tag) tag.remove();
             for (const prop of ["background-image", "background-size", "background-position", "background-repeat", "background-attachment", "background-color"]) {
+              try {
+                document.documentElement.style.removeProperty(prop);
+              } catch (e) {
+              }
               try {
                 document.body.style.removeProperty(prop);
               } catch (e) {
