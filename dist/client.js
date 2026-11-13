@@ -10988,6 +10988,15 @@
   }
 
   // src/client.ts
+  function adaptWhaleMenu(items) {
+    return (Array.isArray(items) ? items : []).map((it) => {
+      if (!it || typeof it !== "object") return { type: "sep" };
+      if (it.sep) return { type: "sep" };
+      if (typeof it.sub === "string") return { type: "sub", label: it.sub, items: adaptWhaleMenu(it.items || []) };
+      if (typeof it.label === "string") return { type: "item", label: it.label, action: String(it.action || "") };
+      return { type: "sep" };
+    });
+  }
   var autoSkinStarted = false;
   window.__ModuleLoader__.load({
     id: "dsh-chubby-whale",
@@ -12695,10 +12704,11 @@
           return () => clearInterval(timer);
         }, []);
         const recoverProps = recover.dot(hidden);
-        const menuItems = menu ? buildWhaleMenu({ voiceOn, earOn, voiceChatOn }).concat([
-          { sep: true },
+        const menuItems = menu ? adaptWhaleMenu(buildWhaleMenu({ voiceOn, earOn, voiceChatOn })).concat([
+          { type: "sep" },
           {
-            sub: "完整菜单 ▸",
+            type: "sub",
+            label: "完整菜单 ▸",
             items: buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
           }
         ]) : [];

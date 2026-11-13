@@ -48,6 +48,21 @@ import { bindFileDropCapture, bindOutsideClose, bindResize, bindChatFocus, bindM
 import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, listMenuEntries, menuRootProps } from './client/render.js'
 import { evPrevent, evStop } from './client/util.js'
 
+/**
+ * 鲸式菜单（menu-whale.ts 的 {label,action}/{sub,items}/{sep:true}）→ 渲染器要的 MenuItem（带 type）。
+ * 为什么在装配层做：menu-whale 保持「只产出数据」，渲染器保持「只认 type」，两边都不改。
+ */
+function adaptWhaleMenu(items: any[]): any[] {
+  return (Array.isArray(items) ? items : []).map((it: any) => {
+    if (!it || typeof it !== 'object') return { type: 'sep' }
+    if (it.sep) return { type: 'sep' }
+    if (typeof it.sub === 'string') return { type: 'sub', label: it.sub, items: adaptWhaleMenu(it.items || []) }
+    if (typeof it.label === 'string') return { type: 'item', label: it.label, action: String(it.action || '') }
+    return { type: 'sep' }
+  })
+}
+
+
 /** 定时随机背景只启动一次（模块级，不挂 window 防污染） */
 let autoSkinStarted = false
 ;(window as any).__ModuleLoader__.load({
@@ -1563,10 +1578,11 @@ registerCapsuleActions(actions)
       // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去。
       // 可见项清单在渲染时同步算一次（键盘高亮与屏幕顺序共用这一份，不各算一套）。
       const menuItems = menu
-        ? ((buildWhaleMenu({ voiceOn, earOn, voiceChatOn }) as any[]).concat([
-            { sep: true as const },
+        ? ((adaptWhaleMenu(buildWhaleMenu({ voiceOn, earOn, voiceChatOn })) as any[]).concat([
+            { type: 'sep' },
             {
-              sub: '完整菜单 ▸',
+              type: 'sub',
+              label: '完整菜单 ▸',
               items: buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())),
             },
           ]) as any[])
