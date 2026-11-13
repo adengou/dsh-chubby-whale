@@ -1283,9 +1283,8 @@ registerCapsuleActions(actions)
             // 通用兜底（不认皮肤名）：body 的直接子元素是各皮肤/主题的根容器，统一透明
             // 真背景方案：把界面根容器链（body 下前三层）全部透明，原图从底层透出来；
             // 不写死类名——body 的直接子元素/孙元素/曾孙就是各皮肤与布局的根
+            // 只透明最外层根容器：再往里会透明化 Settings 等面板的底（内容发花）
             'html body > div, html body > main, html body > section{background-color:transparent !important;background-image:none !important;}',
-            'html body > div > div, html body > main > div, html body > section > div{background-color:transparent !important;}',
-            'html body > div > div > div, html body > main > div > div{background-color:transparent !important;}',
             'html{background-image:url("/api/chubby-whale/skin?n=' + index + '") !important;background-size:cover !important;background-position:center center !important;background-repeat:no-repeat !important;background-attachment:fixed !important;}',
           ].join('')
           // 按背景亮度决定字色（深背景→浅字，浅背景→深字），并垫一层淡遮罩保证可读
