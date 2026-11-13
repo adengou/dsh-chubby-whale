@@ -672,7 +672,6 @@ try {
   mods[4].registerProofreadActions(table)
   mods[5].registerNervousActions(table)
   mods[6].registerCapsuleActions(table)
-  mods[7].registerFeedbackActions(table)
   ;(await import('../src/client/actions.ts')).registerSkinActions(table)
 
   const menu = await import('../src/client/menu.ts')

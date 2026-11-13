@@ -145,11 +145,10 @@ try {
 
   // 记忆摘要只读（鲸落/记忆胶囊用）：stub 只回空摘要
   const memory = (await load('host/routes/memory.ts')).createMemoryHandlers({ loadMemorySummary: () => '' })
-  const feedback = (await load('host/routes/feedback.ts')).createFeedbackHandler({ loadSmtp: () => null, runtimeDir: tmpdir() })
 
   const sets = {
     misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles,
-    briefing, tts, asr, personality, daily, backup, stats, configView, proofread, nervous, memory, feedback,
+    briefing, tts, asr, personality, daily, backup, stats, configView, proofread, nervous, memory,
   }
 
   let produced = 0
