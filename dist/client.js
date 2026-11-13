@@ -2791,9 +2791,7 @@
     "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)",
     "鲸落（导出记忆胶囊）": "Whale Fall (Export Memory Capsule)",
     "接住漂来的鲸（导入胶囊）": "Catch a Drifting Whale (Import Capsule)",
-    "数据与统计 ▸": "Data & Stats ▸",
-    "鲸式解说：开": "Whale commentary: on",
-    "鲸式解说：关": "Whale commentary: off"
+    "数据与统计 ▸": "Data & Stats ▸"
   };
   deepFreeze(EN_MAP);
   var STAGE_EN = {
