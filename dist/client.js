@@ -11629,7 +11629,7 @@
             const LAST = "chubby-last-seen";
             const DAY = "chubby-diary-day";
             const now = Date.now();
-            const last = Number(localStorage.getItem(LAST) || 0) || now - 3 * 3600 * 1e3;
+            const last = now - 3 * 3600 * 1e3;
             localStorage.setItem(LAST, String(now));
             const day = new Date(now).toISOString().slice(0, 10);
             if (!last || localStorage.getItem(DAY) === day) return;
