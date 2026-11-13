@@ -137,9 +137,9 @@ export function createChatHandler(opts) {
                 console.error('[chat] REMINDER-CREATE-FAIL ' + String((err && err.message) || err));
             }
             // 诗词弹幕的唯一触发点（2026-11-14）：只认鲸鱼自己的聊天面板。
-            // 之前挂在宿主 user/message 上，工作区输入框里每打一句工作指令都可能冒诗。
+            // 客户端显式带 poem:true；Harness 输入框/其它 API 调用不带，不会冒诗。
             try {
-                if (opts.noteUserChat)
+                if (body?.poem === true && opts.noteUserChat)
                     opts.noteUserChat(message);
             }
             catch (err) { }

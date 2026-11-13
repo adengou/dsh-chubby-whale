@@ -228,7 +228,7 @@ export function createChatSender(host: ChatHost): ChatController {
     }
 
     try {
-      const res = await postRaw('/chat-stream', { message: text, lang: resolveChatLang(), voice: !!(opts && opts.voice) }, { signal: ctl ? ctl.signal : undefined })
+      const res = await postRaw('/chat-stream', { message: text, lang: resolveChatLang(), voice: !!(opts && opts.voice), poem: true }, { signal: ctl ? ctl.signal : undefined })
       gotHeaders = true
       clearTimeout(firstTimer)
       if (!isCurrent()) return dropStale()

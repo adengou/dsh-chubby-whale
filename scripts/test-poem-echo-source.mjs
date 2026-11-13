@@ -180,13 +180,18 @@ try {
       text: async () => JSON.stringify({ choices: [{ message: { content: '在呢' } }], usage: { total_tokens: 5 } }),
     })
     let res = mkRes()
-    await chat(mkReq({ message: '寻寻觅觅' }), res)
+    await chat(mkReq({ message: '寻寻觅觅', poem: true }), res)
     ok('/chat 把主人原话交给 noteUserChat', seen.length === 1 && seen[0] === '寻寻觅觅', JSON.stringify(seen))
     ok('/chat 正常回包不受影响', res.json() && res.json().ok === true && res.json().reply === '在呢', res.bodyText().slice(0, 80))
 
     seen.length = 0
     res = mkRes()
-    await chat(mkReq({ message: '   ' }), res)
+    await chat(mkReq({ message: '寻寻觅觅' }), res)
+    ok('/chat 未带 poem:true 不触发（Harness/其它 API 调用）', seen.length === 0, JSON.stringify(seen))
+
+    seen.length = 0
+    res = mkRes()
+    await chat(mkReq({ message: '   ', poem: true }), res)
     ok('/chat 空消息不触发', seen.length === 0, JSON.stringify(seen))
 
     // /chat-stream：外呼失败也要先触发（触发点在请求上游之前）
@@ -200,15 +205,19 @@ try {
     })
     globalThis.fetch = async () => { throw new Error('upstream down') }
     res = mkRes()
-    await stream(mkReq({ message: '寻寻觅觅' }), res)
+    await stream(mkReq({ message: '寻寻觅觅', poem: true }), res)
     ok('/chat-stream 把主人原话交给 noteUserChat', streamSeen.length === 1 && streamSeen[0] === '寻寻觅觅', JSON.stringify(streamSeen))
+    streamSeen.length = 0
+    res = mkRes()
+    await stream(mkReq({ message: '寻寻觅觅' }), res)
+    ok('/chat-stream 未带 poem:true 不触发', streamSeen.length === 0, JSON.stringify(streamSeen))
 
     const chatSrc = readFileSync(path.join(ROOT, 'src/host/routes/chat.ts'), 'utf8')
     const streamSrc = readFileSync(path.join(ROOT, 'src/host/routes/chat-stream.ts'), 'utf8')
     const idxSrc = readFileSync(path.join(ROOT, 'src/index.ts'), 'utf8')
     const collectorSrc = readFileSync(path.join(ROOT, 'src/host/nervous/collector.ts'), 'utf8')
-    ok('chat.ts 调用 opts.noteUserChat(message)', /opts\.noteUserChat\(message\)/.test(chatSrc))
-    ok('chat-stream.ts 调用 opts.noteUserChat(message)', /opts\.noteUserChat\(message\)/.test(streamSrc))
+    ok('chat.ts 仅在 poem:true 时调用 noteUserChat', /body\?\.poem === true && opts\.noteUserChat/.test(chatSrc))
+    ok('chat-stream.ts 仅在 poem:true 时调用 noteUserChat', /body\?\.poem === true && opts\.noteUserChat/.test(streamSrc))
     ok('index.ts 把 noteUserChat 同时注入两条聊天路由',
       (idxSrc.match(/noteUserChat,/g) || []).length >= 2, 'count=' + (idxSrc.match(/noteUserChat,/g) || []).length)
     ok('collector.ts 不再读 user/message 做匹配（源码级硬约束）',

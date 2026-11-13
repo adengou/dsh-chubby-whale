@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.16";
+  var VERSION = "1.4.17";
 
   // src/client/styles.ts
   var W = 240;
@@ -10462,7 +10462,7 @@
         return true;
       };
       try {
-        const res = await postRaw("/chat-stream", { message: text, lang: resolveChatLang(), voice: !!(opts && opts.voice) }, { signal: ctl ? ctl.signal : void 0 });
+        const res = await postRaw("/chat-stream", { message: text, lang: resolveChatLang(), voice: !!(opts && opts.voice), poem: true }, { signal: ctl ? ctl.signal : void 0 });
         gotHeaders = true;
         clearTimeout(firstTimer);
         if (!isCurrent()) return dropStale();

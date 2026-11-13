@@ -2,6 +2,13 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [1.4.17] - 2026-11-14
+
+### 修复（诗词弹幕只由鲸鱼聊天面板触发，加显式开关）
+- 上一版虽然已把匹配从 DSH `user/message` 挪到 `/chat`、`/chat-stream`，但**任何**直接调用这两条路由的客户端（脚本、验收探针、其它集成）都会触发弹幕。
+- 现在客户端只在鲸鱼自己的聊天发送器里带 `poem:true`；两条聊天路由只有收到 `poem:true` 才调用 `noteUserChat`。Harness 输入框、普通 API 调用、移动端不带该字段，不冒诗。
+- 测试：`test-poem-echo-source` 增至 25 项，新增「不带 poem:true 的 /chat 与 /chat-stream 都不触发」。
+
 ## [1.4.16] - 2026-11-14
 
 ### 清理（旧 ASR 残留文字）

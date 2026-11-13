@@ -192,9 +192,9 @@ export function createChatStreamHandler(opts) {
             catch (err) {
                 console.error('[chat-stream] REMINDER-CREATE-FAIL ' + String((err && err.message) || err));
             }
-            // 诗词弹幕的唯一触发点（2026-11-14）：与 /chat 同口径，只在鲸鱼聊天面板里冒诗
+            // 诗词弹幕的唯一触发点（2026-11-14）：与 /chat 同口径，客户端显式 poem:true 才触发
             try {
-                if (opts.noteUserChat)
+                if (body?.poem === true && opts.noteUserChat)
                     opts.noteUserChat(message);
             }
             catch (err) { }
