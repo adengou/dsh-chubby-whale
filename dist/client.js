@@ -12212,6 +12212,20 @@
           try {
             const tag = document.getElementById("chubby-skin-bg");
             if (tag) tag.remove();
+            for (const prop of ["background-image", "background-size", "background-position", "background-repeat", "background-attachment", "background-color"]) {
+              try {
+                document.body.style.removeProperty(prop);
+              } catch (e) {
+              }
+            }
+            try {
+              document.body.style.removeProperty("--chubby-fg");
+            } catch (e) {
+            }
+            try {
+              document.body.style.removeProperty("--chubby-veil");
+            } catch (e) {
+            }
             showBubble("背景恢复默认～", 2e3);
           } catch (e) {
           }

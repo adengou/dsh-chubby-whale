@@ -1259,6 +1259,12 @@ registerCapsuleActions(actions)
         try {
           const tag = document.getElementById('chubby-skin-bg')
           if (tag) tag.remove()
+          // 内联 !important 的优先级高于样式表，删 style 标签清不掉，必须逐项 removeProperty
+          for (const prop of ['background-image', 'background-size', 'background-position', 'background-repeat', 'background-attachment', 'background-color']) {
+            try { document.body.style.removeProperty(prop) } catch (e) { }
+          }
+          try { document.body.style.removeProperty('--chubby-fg') } catch (e) { }
+          try { document.body.style.removeProperty('--chubby-veil') } catch (e) { }
           showBubble('背景恢复默认～', 2000)
         } catch (e) { }
       }
