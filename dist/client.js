@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.13";
+  var VERSION = "1.4.14";
 
   // src/client/styles.ts
   var W = 240;
@@ -8813,7 +8813,7 @@
         el.style.transform = "translateX(-50%)";
         el.style.top = "auto";
         el.style.right = "auto";
-        el.style.bottom = Math.max(70, v.h - p.y + 12) + "px";
+        el.style.bottom = Math.max(70, v.h - p.y + 28) + "px";
         const te = opts.textEl();
         if (te) te.textContent = decorateText(text);
         el.classList.add("show");

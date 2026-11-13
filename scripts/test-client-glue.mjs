@@ -272,7 +272,7 @@ async function runSuite(mod, ctx) {
     // 定位与显示
     bubble.show('吃白饭啦', 60)
     ok('bubble：定位（left=x+中心偏移 / bottom 抬到鱼上方 / 三角居中）',
-      el.style.left === '140px' && el.style.transform === 'translateX(-50%)' && el.style.bottom === '532px',
+      el.style.left === '140px' && el.style.transform === 'translateX(-50%)' && el.style.bottom === '548px',
       JSON.stringify(el.style))
     ok('bubble：show 会加 show 类', el.classList.has('show') && textEl.textContent === '吃白饭啦')
     await sleep(100)
@@ -320,7 +320,7 @@ async function runSuite(mod, ctx) {
     const el2 = makeEl()
     const bubble2 = createBubble({ el: () => el2, textEl: () => ({ textContent: '' }), pos: () => ({ x: 0, y: 300 }), xOffset: 10 })
     bubble2.show('无窗口', 5000)
-    ok('bubble：没有 window 时视口回落 1024×768', el2.style.bottom === '480px', el2.style.bottom)
+    ok('bubble：没有 window 时视口回落 1024×768', el2.style.bottom === '496px', el2.style.bottom)
     bubble2.hide()
 
     // 元素还没挂上（el() 返回 null）也不能抛

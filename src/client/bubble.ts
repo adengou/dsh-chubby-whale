@@ -133,7 +133,9 @@ export function createBubble(opts: BubbleOptions): Bubble {
       el.style.transform = 'translateX(-50%)'
       el.style.top = 'auto'
       el.style.right = 'auto'
-      el.style.bottom = Math.max(70, v.h - p.y + 12) + 'px'
+      // 气泡下沿到鱼头顶的间距：旧值 12px 扣除三角 9px 后只剩 3px，视觉上几乎贴头。
+      // 2026-11-14 主人反馈「离头太近」→ 28px（三角尖端仍有约 19px），气泡不再压头。
+      el.style.bottom = Math.max(70, v.h - p.y + 28) + 'px'
       const te = opts.textEl()
       if (te) te.textContent = decorateText(text)
       el.classList.add('show')
