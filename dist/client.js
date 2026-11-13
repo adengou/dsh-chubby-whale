@@ -12157,6 +12157,53 @@
             return Math.floor(Math.random() * BG_GALLERY.length);
           }
         }
+        const clearedContainers = /* @__PURE__ */ new Set();
+        function clearOpaqueAncestors() {
+          try {
+            const W2 = window.innerWidth, H2 = window.innerHeight;
+            const pts = [
+              [Math.floor(W2 / 2), Math.floor(H2 / 2)],
+              [Math.floor(W2 / 2), Math.floor(H2 * 0.05)],
+              [Math.floor(W2 * 0.97), Math.floor(H2 / 2)],
+              [Math.floor(W2 * 0.03), Math.floor(H2 / 2)],
+              [Math.floor(W2 / 2), Math.floor(H2 * 0.97)]
+            ];
+            for (const pt of pts) {
+              let e = document.elementFromPoint(pt[0], pt[1]);
+              let d = 0;
+              while (e && e !== document.documentElement && d < 20) {
+                if (e !== document.body && !clearedContainers.has(e)) {
+                  const cs = getComputedStyle(e);
+                  const bg = String(cs.backgroundColor || "");
+                  const solid = bg !== "transparent" && !/rgba\(0,\s*0,\s*0,\s*0\)/.test(bg);
+                  const r = e.getBoundingClientRect();
+                  const big = r.width >= W2 * 0.5 || r.height >= H2 * 0.5;
+                  if (solid && big) {
+                    try {
+                      e.style.setProperty("background-color", "transparent", "important");
+                      e.style.setProperty("background-image", "none", "important");
+                    } catch (err) {
+                    }
+                    clearedContainers.add(e);
+                  }
+                }
+                e = e.parentElement;
+                d++;
+              }
+            }
+          } catch (e) {
+          }
+        }
+        function restoreOccluders() {
+          for (const el of Array.from(clearedContainers)) {
+            try {
+              el.style.removeProperty("background-color");
+              el.style.removeProperty("background-image");
+            } catch (e) {
+            }
+          }
+          clearedContainers.clear();
+        }
         function applySkinBg(index) {
           try {
             const pick = BG_GALLERY[(index % BG_GALLERY.length + BG_GALLERY.length) % BG_GALLERY.length];
@@ -12181,7 +12228,11 @@
               'html body [class*="hWmORq_"]{background:transparent !important;}',
               'html body div[class*="_markdown_"]{background:rgba(255,255,255,0.35) !important;}',
               // 通用兜底（不认皮肤名）：body 的直接子元素是各皮肤/主题的根容器，统一透明
+              // 真背景方案：把界面根容器链（body 下前三层）全部透明，原图从底层透出来；
+              // 不写死类名——body 的直接子元素/孙元素/曾孙就是各皮肤与布局的根
               "html body > div, html body > main, html body > section{background-color:transparent !important;background-image:none !important;}",
+              "html body > div > div, html body > main > div, html body > section > div{background-color:transparent !important;}",
+              "html body > div > div > div, html body > main > div > div{background-color:transparent !important;}",
               'html{background-image:url("/api/chubby-whale/skin?n=' + index + '") !important;background-size:cover !important;background-position:center center !important;background-repeat:no-repeat !important;background-attachment:fixed !important;}'
             ].join("");
             const lum = BG_LUMA[(index % BG_LUMA.length + BG_LUMA.length) % BG_LUMA.length];
@@ -12193,25 +12244,16 @@
             while (tag.firstChild) tag.removeChild(tag.firstChild);
             tag.appendChild(document.createTextNode(css));
             try {
-              if (!document.body.hasAttribute("data-dsh-maid-atelier")) {
-                const u = 'url("/api/chubby-whale/skin?n=' + index + '")';
-                try {
-                  document.documentElement.style.setProperty("background-image", u, "important");
-                  document.documentElement.style.setProperty("background-size", "cover", "important");
-                  document.documentElement.style.setProperty("background-position", "center center", "important");
-                  document.documentElement.style.setProperty("background-repeat", "no-repeat", "important");
-                  document.documentElement.style.setProperty("background-attachment", "fixed", "important");
-                  document.body.style.setProperty("background-image", u, "important");
-                  document.body.style.setProperty("background-size", "cover", "important");
-                  document.body.style.setProperty("background-position", "center center", "important");
-                  document.body.style.setProperty("background-repeat", "no-repeat", "important");
-                  document.body.style.setProperty("background-attachment", "fixed", "important");
-                  document.body.style.setProperty("background-color", "transparent", "important");
-                } catch (e) {
-                }
-              }
+              const oldLayer = document.getElementById("chubby-bg-layer");
+              if (oldLayer) oldLayer.remove();
             } catch (e) {
             }
+            setTimeout(() => {
+              try {
+                clearOpaqueAncestors();
+              } catch (e) {
+              }
+            }, 800);
             showBubble("背景 " + (index + 1) + "/" + BG_GALLERY.length + " ～", 2e3);
           } catch (e) {
           }
@@ -12220,6 +12262,12 @@
           try {
             const tag = document.getElementById("chubby-skin-bg");
             if (tag) tag.remove();
+            const layer = document.getElementById("chubby-bg-layer");
+            if (layer) layer.remove();
+            try {
+              restoreOccluders();
+            } catch (e) {
+            }
             for (const prop of ["background-image", "background-size", "background-position", "background-repeat", "background-attachment", "background-color"]) {
               try {
                 document.documentElement.style.removeProperty(prop);

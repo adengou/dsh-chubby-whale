@@ -1202,6 +1202,60 @@ registerCapsuleActions(actions)
           return pick
         } catch (e) { return Math.floor(Math.random() * BG_GALLERY.length) }
       }
+      /** 被动态透明化过的容器（恢复默认背景时还原） */
+      const clearedContainers = new Set<HTMLElement>()
+
+      /**
+       * 动态透明化「铺满半屏以上的不透明容器」（DIAG2 实测：DSH 的根容器是 an3WzG_root / mP3x-q_centerCol 这类哈希类名，
+       * 和早先写死的那批 class 完全不同 —— 所以必须按「尺寸 + 背景是否不透明」现场判断，不写死类名。
+       * 只处理宽或高至少半屏的容器，避免误伤消息气泡、按钮等小元素。
+       */
+      function clearOpaqueAncestors(): void {
+        try {
+          const W = window.innerWidth, H = window.innerHeight
+          const pts: Array<[number, number]> = [
+            [Math.floor(W / 2), Math.floor(H / 2)],
+            [Math.floor(W / 2), Math.floor(H * 0.05)],
+            [Math.floor(W * 0.97), Math.floor(H / 2)],
+            [Math.floor(W * 0.03), Math.floor(H / 2)],
+            [Math.floor(W / 2), Math.floor(H * 0.97)],
+          ]
+          for (const pt of pts) {
+            let e: any = document.elementFromPoint(pt[0], pt[1])
+            let d = 0
+            while (e && e !== document.documentElement && d < 20) {
+              if (e !== document.body && !clearedContainers.has(e)) {
+                const cs = getComputedStyle(e)
+                const bg = String(cs.backgroundColor || "")
+                const solid = bg !== "transparent" && !/rgba\(0,\s*0,\s*0,\s*0\)/.test(bg)
+                const r = e.getBoundingClientRect()
+                const big = (r.width >= W * 0.5) || (r.height >= H * 0.5)
+                if (solid && big) {
+                  try {
+                    e.style.setProperty("background-color", "transparent", "important")
+                    e.style.setProperty("background-image", "none", "important")
+                  } catch (err) { }
+                  clearedContainers.add(e)
+                }
+              }
+              e = e.parentElement
+              d++
+            }
+          }
+        } catch (e) { }
+      }
+
+      /** 恢复默认背景：把动态透明化过的容器还原 */
+      function restoreOccluders(): void {
+        for (const el of Array.from(clearedContainers)) {
+          try {
+            el.style.removeProperty("background-color")
+            el.style.removeProperty("background-image")
+          } catch (e) { }
+        }
+        clearedContainers.clear()
+      }
+
       function applySkinBg(index: number): void {
         try {
           const pick = BG_GALLERY[((index % BG_GALLERY.length) + BG_GALLERY.length) % BG_GALLERY.length]
@@ -1227,7 +1281,11 @@ registerCapsuleActions(actions)
                         'html body [class*="hWmORq_"]{background:transparent !important;}',
                         'html body div[class*="_markdown_"]{background:rgba(255,255,255,0.35) !important;}',
             // 通用兜底（不认皮肤名）：body 的直接子元素是各皮肤/主题的根容器，统一透明
+            // 真背景方案：把界面根容器链（body 下前三层）全部透明，原图从底层透出来；
+            // 不写死类名——body 的直接子元素/孙元素/曾孙就是各皮肤与布局的根
             'html body > div, html body > main, html body > section{background-color:transparent !important;background-image:none !important;}',
+            'html body > div > div, html body > main > div, html body > section > div{background-color:transparent !important;}',
+            'html body > div > div > div, html body > main > div > div{background-color:transparent !important;}',
             'html{background-image:url("/api/chubby-whale/skin?n=' + index + '") !important;background-size:cover !important;background-position:center center !important;background-repeat:no-repeat !important;background-attachment:fixed !important;}',
           ].join('')
           // 按背景亮度决定字色（深背景→浅字，浅背景→深字），并垫一层淡遮罩保证可读
@@ -1241,33 +1299,25 @@ registerCapsuleActions(actions)
           tag.appendChild(document.createTextNode(css))
           // 兜底：官方默认时 DSH 的 body 背景可能压过 CSS，内联也写一份
           try {
-            if (!document.body.hasAttribute('data-dsh-maid-atelier')) {
-              // 内联 !important：官方默认皮肤/主题会往 body 上写 background-color，
-              // 普通 CSS 规则可能被更后加载的同特异性规则压过；内联 important 是最强的一层
-              const u = 'url("/api/chubby-whale/skin?n=' + index + '")'
-              try {
-                // html 与 body 各写一份：有的皮肤在 html、有的在 body
-                document.documentElement.style.setProperty('background-image', u, 'important')
-                document.documentElement.style.setProperty('background-size', 'cover', 'important')
-                document.documentElement.style.setProperty('background-position', 'center center', 'important')
-                document.documentElement.style.setProperty('background-repeat', 'no-repeat', 'important')
-                document.documentElement.style.setProperty('background-attachment', 'fixed', 'important')
-                document.body.style.setProperty('background-image', u, 'important')
-                document.body.style.setProperty('background-size', 'cover', 'important')
-                document.body.style.setProperty('background-position', 'center center', 'important')
-                document.body.style.setProperty('background-repeat', 'no-repeat', 'important')
-                document.body.style.setProperty('background-attachment', 'fixed', 'important')
-                document.body.style.setProperty('background-color', 'transparent', 'important')
-              } catch (e) { }
-            }
+            // 顶层蒙层（主人方案）：不跟 DSH 皮肤/布局抢底层，直接把图铺在最上面，
+            // z-index 8999 在鱼（9999）和气泡（10002）之下、DSH 内容之上；pointer-events:none 不挡点击。
+            // 深海女仆皮肤自己会按 --maid-palace-art 画背景，不重复盖蒙层。
+            // 真背景方案：不再用蒙层（图直接铺 html/body），先清掉历史蒙层
+            const oldLayer = document.getElementById('chubby-bg-layer')
+            if (oldLayer) oldLayer.remove()
           } catch (e) { }
-          showBubble('背景 ' + (index + 1) + '/' + BG_GALLERY.length + ' ～', 2000)
+          // 等布局稳定后动态清掉不透明的根容器，让 html/body 的背景图真正露出来
+          setTimeout(() => { try { clearOpaqueAncestors() } catch (e) { } }, 800)
+                    showBubble('背景 ' + (index + 1) + '/' + BG_GALLERY.length + ' ～', 2000)
         } catch (e) { }
       }
       function resetSkinBg(): void {
         try {
           const tag = document.getElementById('chubby-skin-bg')
           if (tag) tag.remove()
+          const layer = document.getElementById('chubby-bg-layer')
+          if (layer) layer.remove()
+          try { restoreOccluders() } catch (e) { }
           // 内联 !important 的优先级高于样式表，删 style 标签清不掉，必须逐项 removeProperty
           for (const prop of ['background-image', 'background-size', 'background-position', 'background-repeat', 'background-attachment', 'background-color']) {
             try { document.documentElement.style.removeProperty(prop) } catch (e) { }
