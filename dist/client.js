@@ -2808,7 +2808,8 @@
     "语音聊天：": ["Voice chat: on", "Voice chat: off"],
     "流式回复：": ["Streaming replies: on", "Streaming replies: off"],
     "神经感知：": ["Nervous system: on", "Nervous system: off"],
-    "鲸式解说：": ["Whale commentary: on", "Whale commentary: off"]
+    "鲸式解说：": ["Whale commentary: on", "Whale commentary: off"],
+    "诗词弹幕：": ["Poem commentary: on", "Poem commentary: off"]
   };
   function tr(label, lang) {
     if (lang !== "en") return label;
@@ -2884,6 +2885,7 @@
       item("固定背景：" + (state.skinFixed ? "开" : "关"), "skin-fixed"),
       item("恢复默认背景", "skin-bg-reset"),
       item("鲸式解说：" + (state.toolNarratorOn === false ? "关" : "开"), "tool-narrator"),
+      item("诗词弹幕：" + (state.poemEchoOn === false ? "关" : "开"), "poem-echo"),
       item("成长：" + growthText, "growth"),
       item("投喂一碗", "feed"),
       item("看张图…", "vision"),
@@ -3477,6 +3479,16 @@
         if (!Number.isFinite(at) || at <= cursor) continue;
         cursor = at;
         const d = e && e.data || {};
+        if (e && e.type === "host" && d.name === "poem-echo" && d.line) {
+          const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true;
+          if (poemOn) {
+            try {
+              opts.bubble("咕噜……「" + String(d.line) + "」——这句是不是有点像你？", 9e3);
+            } catch (err) {
+            }
+          }
+          continue;
+        }
         if (e && e.type === "host" && d.name === "tool/call" && d.tool) {
           try {
             const r = narrateTool(state, { tool: String(d.tool), at, seq: Number(d.seq) || 0 });
@@ -5229,6 +5241,7 @@
     table.define("skin-bg", noop);
     table.define("skin-fixed", noop);
     table.define("tool-narrator", noop);
+    table.define("poem-echo", noop);
     table.define("skin-bg-reset", noop);
   }
 

@@ -21,6 +21,8 @@ export function createToolWatch(opts: {
   bubble: (text: string, ms?: number) => void
   /** 开关（localStorage chubby-tool-narrator !== 'off'） */
   enabled: () => boolean
+  /** 诗词弹幕开关（localStorage chubby-poem-echo !== 'off'；缺省 = 开） */
+  poemEnabled?: () => boolean
   intervalMs?: number
 }): { start: () => void; stop: () => void } {
   const interval = Number(opts.intervalMs) > 0 ? Number(opts.intervalMs) : INTERVAL_MS
@@ -53,6 +55,11 @@ export function createToolWatch(opts: {
       cursor = at
       // 只认 tool/call；data.tool 是工具名（见 host/nervous/collector.ts）
       const d = (e && e.data) || {}
+      if (e && e.type === 'host' && d.name === 'poem-echo' && d.line) {
+        const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true
+        if (poemOn) { try { opts.bubble('咕噜……「' + String(d.line) + '」——这句是不是有点像你？', 9000) } catch (err) { } }
+        continue
+      }
       if (e && e.type === 'host' && d.name === 'tool/call' && d.tool) {
         try {
           const r = narrateTool(state, { tool: String(d.tool), at, seq: Number(d.seq) || 0 })

@@ -33,6 +33,8 @@
  */
 /** 契约规定的缓冲容量（docs/神经感知-接口契约.md 第三层：环形缓冲 200 条） */
 const DEFAULT_CAP = 200;
+// 诗词弹幕：用户一句话 → 本地匹配一句诗（纯函数，零依赖；不是第三方包）
+import { matchPoem } from '../poem-echo.js';
 /** 会话 id 只留前若干字符：够区分是哪个会话，又不把整串 id 塞进每条事件 */
 const MAX_ID_LEN = 16;
 /** 摘要里其余字符串字段（事件名、工具名、状态）的截断长度 */
@@ -158,10 +160,44 @@ export function createHostCollector(opts) {
             console.warn('[chubby-whale] nervous: 订阅 ' + name + ' 失败，已跳过（' + String((e && e.message) || e) + '）');
         }
     }
+    /**
+     * 从 user/message 事件里取用户文本：只用于本地主题匹配，
+     * 不入缓冲、不落盘、不外传——命中后只推一条匹配结果。
+     */
+    function userTextOf(event) {
+        try {
+            const m = event && event.data && event.data.message;
+            if (typeof m === 'string')
+                return m;
+            if (m && typeof m === 'object') {
+                if (typeof m.text === 'string')
+                    return m.text;
+                const content = m.content;
+                if (Array.isArray(content)) {
+                    return content.map((b) => (b && typeof b.text === 'string' ? b.text : '')).join('\n');
+                }
+            }
+        }
+        catch (e) { }
+        return '';
+    }
     /** 'session/event'：一次会话日志追加（后提交、即发即忘；我们只读） */
     function onSessionEvent(session, event) {
         try {
             push({ at: stamp(), type: 'host', data: summarizeSessionEvent(session, event) });
+        }
+        catch (e) { }
+        // 诗词弹幕：用户一句话 → 本地匹配一句诗 → 命中才把结果推进缓冲
+        try {
+            if (event && event.type === 'user/message') {
+                const txt = Array.from(userTextOf(event)).slice(0, 1000).join('');
+                if (txt) {
+                    const echo = matchPoem(txt);
+                    if (echo) {
+                        push({ at: stamp(), type: 'host', data: { name: 'poem-echo', theme: echo.theme, line: echo.line, title: echo.title, author: echo.author } });
+                    }
+                }
+            }
         }
         catch (e) { }
     }

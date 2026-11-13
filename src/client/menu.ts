@@ -160,6 +160,7 @@ const TOGGLE_EN: Record<string, [string, string]> = {
   '流式回复：': ['Streaming replies: on', 'Streaming replies: off'],
   '神经感知：': ['Nervous system: on', 'Nervous system: off'],
   '鲸式解说：': ['Whale commentary: on', 'Whale commentary: off'],
+  '诗词弹幕：': ['Poem commentary: on', 'Poem commentary: off'],
 }
 
 export function tr(label: string, lang: string): string {
@@ -239,6 +240,9 @@ export interface MenuState {
   /** 鲸式解说开关（默认开） */
   toolNarratorOn?: boolean
 
+/** 诗词弹幕开关（默认开） */
+  poemEchoOn?: boolean
+
 /** 固定背景开关（true = 不随机） */
   skinFixed?: boolean
   /** 说书连播开关（缺省视为开：讲完一段自动接下一段） */
@@ -295,6 +299,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     item('固定背景：' + (state.skinFixed ? '开' : '关'), 'skin-fixed'),
     item('恢复默认背景', 'skin-bg-reset'),
     item('鲸式解说：' + (state.toolNarratorOn === false ? '关' : '开'), 'tool-narrator'),
+    item('诗词弹幕：' + (state.poemEchoOn === false ? '关' : '开'), 'poem-echo'),
     item('成长：' + growthText, 'growth'),
     item('投喂一碗', 'feed'),
     item('看张图…', 'vision'),

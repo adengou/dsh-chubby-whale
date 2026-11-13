@@ -168,5 +168,6 @@ export function registerSkinActions(table: any): void {
   table.define('skin-bg', noop)
   table.define('skin-fixed', noop)
   table.define('tool-narrator', noop)
+  table.define('poem-echo', noop)
   table.define('skin-bg-reset', noop)
 }
