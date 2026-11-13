@@ -11694,6 +11694,10 @@
           const rp = String(text || "");
           if (!rp.trim()) return;
           if (!replyDeduper.allow(rp)) return;
+          try {
+            talkFor(Math.max(1500, Math.round(rp.length * 220)));
+          } catch (e) {
+          }
           speakText(rp, { rate: rp.length >= 80 ? narrationRate() : chatRate() });
         }
         R.useEffect(() => {

@@ -1413,6 +1413,9 @@ registerSkinActions(actions)
         if (!rp.trim()) return
         // 同一句回复 30 秒内不重复念（client/text.ts 的 deduper，重复时计数 dupReply）
         if (!replyDeduper.allow(rp)) return
+        // 嘴动时长跟随朗读时长：普通 /chat 路径原来只在回复到达时 talkFor(1500)，
+        // 长回复念到一半嘴就停了（流式关闭后聊天时最明显）。按字数估算，至少 1.5 秒。
+        try { talkFor(Math.max(1500, Math.round(rp.length * 220))) } catch (e) { }
         speakText(rp, { rate: rp.length >= 80 ? narrationRate() : chatRate() })
       }
 
