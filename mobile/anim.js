@@ -53,22 +53,20 @@
       ctx.stroke()
     }
 
-    function drawMouth(closeAmount) {
-      // closeAmount 0..1（0=张嘴露立绘嘴，1=完全闭嘴）——连续量，和电脑端同一套平滑画法
-      var a = Math.max(0, Math.min(1, closeAmount))
-      if (a <= 0.02) return
+    function drawMouth(open) {
+      if (open) return // 张嘴帧：露立绘的嘴
       var p = { x: MOUTH.x * SX, y: MOUTH.y * SY }
-      var rw = MOUTH.rw * SX * (1.35 + 0.35 * a)
-      var rh = MOUTH.rh * SY * (0.7 + 1.2 * a)
+      var rw = MOUTH.rw * SX * 1.7
+      var rh = MOUTH.rh * SY * 1.9
       ctx.fillStyle = '#FDF6F0'
       ctx.beginPath()
       ctx.ellipse(p.x, p.y, rw, rh, 0, 0, Math.PI * 2)
       ctx.fill()
-      ctx.strokeStyle = 'rgba(197,110,106,' + (0.35 + 0.6 * a).toFixed(2) + ')'
-      ctx.lineWidth = 1.0 + 0.6 * a
+      ctx.strokeStyle = '#C56E6A'
+      ctx.lineWidth = 1.4
       ctx.beginPath()
       ctx.moveTo(p.x - rw * 0.5, p.y + rh * 0.03)
-      ctx.quadraticCurveTo(p.x, p.y + rh * 0.3 * a, p.x + rw * 0.5, p.y + rh * 0.03)
+      ctx.quadraticCurveTo(p.x, p.y + rh * 0.3, p.x + rw * 0.5, p.y + rh * 0.03)
       ctx.stroke()
     }
 
@@ -105,11 +103,8 @@
         }
         if (blinkClosed) { drawEye(EYE_L, true); drawEye(EYE_R, true) }
 
-        // 说话嘴动（正弦连续开合，周期约 1.2 秒，与电脑端同一套）
-        if (t < talkUntil) {
-          var phase = Math.sin(t / 150)
-          drawMouth(1 - (phase * 0.45 + 0.5))
-        }
+        // 说话嘴动（小幅度噏合）
+        if (t < talkUntil) drawMouth(Math.sin(t / 90) > 0)
       } finally {
         ctx.restore()
       }
