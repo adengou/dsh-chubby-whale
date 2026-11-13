@@ -45,6 +45,16 @@ function deepFreeze<T>(value: T): T {
 
 /** 主题名 → 诗句池（24 个主题，共 79 句；诗句均取自 data/poems.json 原文） */
 export const POEM_ECHO_TABLE: Readonly<Record<string, EchoPool>> = deepFreeze({
+  // 秋愁 —— 长恨歌（白居易）· 鹧鸪天（周紫芝）· 长信怨（王昌龄）· 秋登宣城谢朓北楼（李白）
+  '秋愁': {
+    words: ['梧桐', '秋雨', '细雨', '离愁', '秋风'],
+    lines: [
+      { line: '春风桃李花开日，秋雨梧桐叶落时。', title: '长恨歌', author: '白居易' },
+      { line: '梧桐叶上三更雨，叶叶声声是别离。', title: '鹧鸪天', author: '周紫芝' },
+      { line: '金井梧桐秋叶黄，珠帘不卷夜来霜。', title: '长信怨', author: '王昌龄' },
+      { line: '人烟寒橘柚，秋色老梧桐。', title: '秋登宣城谢朓北楼', author: '李白' },
+    ],
+  },
   // 羁旅 —— 天净沙·秋思（马致远）
   '羁旅': {
     words: ['昏鸦', '枯藤', '古道', '瘦马', '断肠', '天涯', '羁旅', '漂泊', '秋思'],
