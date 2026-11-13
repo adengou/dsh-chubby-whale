@@ -2678,17 +2678,21 @@
   function rateSub(prefix, action, current2, opts) {
     return sub(prefix + current2 + " ▸", opts.map(([rate, text]) => item((rate === current2 ? "✓ " : "") + text, action + rate)));
   }
-  var MELODIES = ["小星星", "两只老虎", "生日快乐", "欢乐颂", "铃儿响叮当", "伦敦大桥", "斯卡布罗集市", "思君黯然", "绿袖子", "致爱丽丝", "友谊天长地久"];
+  var MELODIES = ["小星星", "两只老虎", "生日快乐", "欢乐颂", "铃儿响叮当", "伦敦大桥", "斯卡布罗集市", "绿袖子", "致爱丽丝", "友谊天长地久", "阳关三叠", "茉莉花", "卡农", "土耳其进行曲", "平安夜"];
   deepFreeze(MELODIES);
   var SONG_EN = {
     "小星星": "Twinkle Twinkle Little Star",
+    "阳关三叠": "Yangguan Sandie",
+    "茉莉花": "Jasmine Flower",
+    "卡农": "Canon in D",
+    "土耳其进行曲": "Turkish March",
+    "平安夜": "Silent Night",
     "两只老虎": "Two Tigers",
     "生日快乐": "Happy Birthday",
     "欢乐颂": "Ode to Joy",
     "铃儿响叮当": "Jingle Bells",
     "伦敦大桥": "London Bridge",
     "斯卡布罗集市": "Scarborough Fair",
-    "思君黯然": "Longing for You",
     "绿袖子": "Greensleeves",
     "致爱丽丝": "Fur Elise",
     "友谊天长地久": "Auld Lang Syne"
