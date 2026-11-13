@@ -82,6 +82,27 @@ export function buildPoemIndex(poems) {
         if (!title)
             continue;
         const seen = new Set();
+        // 诗题/词牌名也是关键词：「雨霖铃」「声声慢」「乌夜啼」「虞美人」要能直接命中
+        // （「·」后的题目部分也单独切；词牌部分用滑窗兜住「雨霖铃」这种三字牌名）
+        const titleParts = [title].concat(title.includes('·') ? [title.split('·')[0], title.split('·').slice(1).join('·')] : []);
+        for (const tp of titleParts) {
+            const tpText = String(tp || '').trim();
+            if (!tpText)
+                continue;
+            for (const w of wordsOf(tpText)) {
+                if (!usable(w) || seen.has(w))
+                    continue;
+                seen.add(w);
+                const entry = { title, author, line: String((Array.isArray(p.lines) && p.lines[0]) || '') };
+                const list = idx.get(w);
+                if (list) {
+                    if (!list.some((x) => x.title === title && x.author === author))
+                        list.push(entry);
+                }
+                else
+                    idx.set(w, [entry]);
+            }
+        }
         for (const raw of Array.isArray(p.lines) ? p.lines : []) {
             const line = String(raw || '').trim();
             if (!line)

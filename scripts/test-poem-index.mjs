@@ -56,6 +56,9 @@ try {
     ['春红', '乌夜啼'],
     ['梧桐', ''],
     ['一晌贪欢', '浪淘沙'],
+    ['雨霖铃', '雨霖铃'],
+    ['声声慢', '声声慢'],
+    ['乌夜啼', '乌夜啼'],
   ]
   for (const [word, titlePart] of cases) {
     const hit = matchPoemKeyword(word, index)
