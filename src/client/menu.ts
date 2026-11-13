@@ -375,6 +375,9 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     // ── 数据与统计（处理器由其他分身实现，未接上时走兜底提示）──
     item('数据导出…', 'data-export'),
     item('数据导入…', 'data-import'),
+    // 鲸落胶囊：只打包摘要里的抽象主题，不含对话原文
+    item('鲸落（导出记忆胶囊）', 'capsule-export'),
+    item('接住漂来的鲸（导入胶囊）', 'capsule-import'),
     item('使用统计', 'stats'),
     sub('设置 ▸', [
       item('查看当前配置', 'config-view'),
