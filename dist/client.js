@@ -12874,30 +12874,6 @@
           if (!canvas) return;
           animRef.current = createAnimator({ canvas, imgSrc: "/api/chubby-whale/asset?v=" + Date.now(), cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current });
           animRef.current.start();
-          R.useEffect(() => {
-            const watch = createToolWatch({
-              bubble: (text, ms2) => {
-                try {
-                  showBubble(text, ms2);
-                } catch (e) {
-                }
-              },
-              enabled: () => {
-                try {
-                  return localStorage.getItem("chubby-tool-narrator") !== "off";
-                } catch (e) {
-                  return false;
-                }
-              }
-            });
-            watch.start();
-            return () => {
-              try {
-                watch.stop();
-              } catch (e) {
-              }
-            };
-          }, []);
           try {
             if (!autoSkinStarted) {
               autoSkinStarted = true;
@@ -12919,6 +12895,30 @@
           } catch (e) {
           }
           return () => animRef.current?.stop();
+        }, []);
+        R.useEffect(() => {
+          const watch = createToolWatch({
+            bubble: (text, ms2) => {
+              try {
+                showBubble(text, ms2);
+              } catch (e) {
+              }
+            },
+            enabled: () => {
+              try {
+                return localStorage.getItem("chubby-tool-narrator") !== "off";
+              } catch (e) {
+                return false;
+              }
+            }
+          });
+          watch.start();
+          return () => {
+            try {
+              watch.stop();
+            } catch (e) {
+            }
+          };
         }, []);
         const lastActivityRef = R.useRef(Date.now());
         R.useEffect(() => {

@@ -1625,15 +1625,6 @@ registerCapsuleActions(actions)
         if (!canvas) return
         animRef.current = createAnimator({ canvas, imgSrc: '/api/chubby-whale/asset?v=' + Date.now(), cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current })
         animRef.current.start()
-      // 工具调用实况解说（方向 7）：3 秒轮询 /nervous，tool/call 事件交给 tool-narrator 决定要不要冒一句
-      R.useEffect(() => {
-        const watch = createToolWatch({
-          bubble: (text: string, ms?: number) => { try { showBubble(text, ms) } catch (e) { } },
-          enabled: () => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } },
-        })
-        watch.start()
-        return () => { try { watch.stop() } catch (e) { } }
-      }, [])
 
       // 后台定时随机换背景（每 5 分钟；固定开关打开时不换）
       try { if (!autoSkinStarted) { autoSkinStarted = true; startAutoSkin() } } catch (e) { }
@@ -1647,6 +1638,17 @@ registerCapsuleActions(actions)
       } catch (e) { }
 
         return () => animRef.current?.stop()
+      }, [])
+
+      // 工具调用实况解说（方向 7）：3 秒轮询 /nervous，tool/call 事件交给 tool-narrator 决定要不要冒一句
+      // 注意：必须是组件顶层的 hook，不能塞进别的 useEffect 回调里（嵌套 hook 会让组件直接崩）
+      R.useEffect(() => {
+        const watch = createToolWatch({
+          bubble: (text: string, ms?: number) => { try { showBubble(text, ms) } catch (e) { } },
+          enabled: () => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } },
+        })
+        watch.start()
+        return () => { try { watch.stop() } catch (e) { } }
       }, [])
 
       // ===== 炫技：眼睛跟随鼠标 / 深夜打瞌睡 ===== 
