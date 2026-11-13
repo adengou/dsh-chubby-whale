@@ -2791,7 +2791,8 @@
     "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)",
     "鲸落（导出记忆胶囊）": "Whale Fall (Export Memory Capsule)",
     "接住漂来的鲸（导入胶囊）": "Catch a Drifting Whale (Import Capsule)",
-    "数据与统计 ▸": "Data & Stats ▸"
+    "数据与统计 ▸": "Data & Stats ▸",
+    "意见反馈…": "Send feedback…"
   };
   deepFreeze(EN_MAP);
   var STAGE_EN = {
@@ -2977,7 +2978,8 @@
         item("使用统计", "stats"),
         sub("设置 ▸", [
           item("查看当前配置", "config-view")
-        ])
+        ]),
+        item("意见反馈…", "feedback")
       ]),
       item("提醒管理…", "remind-manage"),
       item("唤醒恢复", "wake-recover"),
@@ -8019,6 +8021,30 @@
     });
   }
 
+  // src/client/actions/feedback.ts
+  function registerFeedbackActions(table) {
+    table.define("feedback", async (host) => {
+      const raw = await promptText({
+        title: "意见反馈（多行，Ctrl+Enter 提交）",
+        placeholder: "遇到什么问题、希望怎么改，都可以写在这里……",
+        multiline: true,
+        maxLength: 4e3,
+        okText: "提交"
+      });
+      const text = String(raw || "").trim();
+      if (!text) return;
+      host.bubble("本鲸把反馈送出去…", 2e4);
+      try {
+        const r = await postJson("/feedback", { text }, { timeout: 3e4 });
+        if (r && r.ok && r.sent === "smtp") host.bubble("反馈已发送，谢谢主人！", 6e3);
+        else if (r && r.ok) host.bubble("反馈已记录（本机保存），谢谢主人！", 6e3);
+        else host.bubble("反馈没送成：" + String(r && r.error || "接口没回内容"), 6e3);
+      } catch (e) {
+        host.bubble("反馈没送成：" + String(e && e.message || e).slice(0, 80), 6e3);
+      }
+    });
+  }
+
   // data/persona.json
   var persona_default = {
     name: "饭团",
@@ -10893,6 +10919,7 @@
       registerProofreadActions(actions);
       registerNervousActions(actions);
       registerCapsuleActions(actions);
+      registerFeedbackActions(actions);
       const CLIENT_ID = (() => {
         try {
           const v2 = sessionStorage.getItem("chubby-client-id");

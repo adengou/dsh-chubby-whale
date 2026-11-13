@@ -43,5 +43,7 @@ export function createRouteTable(h) {
         { path: '/api/chubby-whale/nervous', handler: h.nervous },
         // 记忆摘要只读：摘要 + 抽象主题词（不返回原始对话）
         { path: '/api/chubby-whale/memory', handler: h.memory.handleMemory },
+        // 意见反馈：后台投递，回执不含收件人
+        { path: '/api/chubby-whale/feedback', handler: h.feedback.handleFeedback },
     ];
 }
