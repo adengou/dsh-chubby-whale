@@ -34,6 +34,13 @@ function deepFreeze(value) {
 }
 /** 主题名 → 诗句池（24 个主题，共 79 句；诗句均取自 data/poems.json 原文） */
 export const POEM_ECHO_TABLE = deepFreeze({
+    // 清秋 —— 相见欢·无言独上西楼（李煜）
+    '清秋': {
+        words: ['清秋'],
+        lines: [
+            { line: '无言独上西楼，月如钩。寂寞梧桐深院锁清秋。', title: '相见欢·无言独上西楼', author: '李煜' },
+        ],
+    },
     // 秋愁 —— 长恨歌（白居易）· 鹧鸪天（周紫芝）· 长信怨（王昌龄）· 秋登宣城谢朓北楼（李白）
     '秋愁': {
         words: ['梧桐', '秋雨', '细雨', '离愁', '秋风'],
