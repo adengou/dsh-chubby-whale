@@ -15,6 +15,7 @@ import { MAX_SCRIPT_CHARS, exportSpeechToAudio } from '../voice/export-audio.js'
 import { noteWork } from '../nervous/index.js'
 import { setCustomWakeWord, WAKE_WORDS } from '../wake.js'
 import { promptText } from './prompt-modal.js'
+import { poemRate } from '../rates.js'
 
 /**
  * 唤醒门里的词表是否已经是这次设置的结果。
@@ -177,7 +178,7 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
       const out = await exportSpeechToAudio({
         text,
         voice: readStoredVoiceName(),
-        rate: '+0%',
+        rate: poemRate(host.narrationRate()),   // 与念诗同档（默认 -25%），稿子不该按原速念
         onProgress: (done, total) => { try { host.bubble('录音中 ' + done + '/' + total + ' 段…', 180000) } catch (e) { } },
       })
       const d = new Date()

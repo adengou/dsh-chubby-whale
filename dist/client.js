@@ -7309,7 +7309,8 @@
         const out = await exportSpeechToAudio({
           text,
           voice: readStoredVoiceName(),
-          rate: "+0%",
+          rate: poemRate(host.narrationRate()),
+          // 与念诗同档（默认 -25%），稿子不该按原速念
           onProgress: (done, total) => {
             try {
               host.bubble("录音中 " + done + "/" + total + " 段…", 18e4);
