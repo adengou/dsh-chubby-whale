@@ -978,6 +978,9 @@ body {
 .pet {
   /* 相对定位：拖动用 left/top 偏移，不参与 flex 布局计算（用 margin 会被 flex 挤压变形） */
   position: relative;
+  /* 不被 flex 压缩/拉伸：否则拖动偏移会改可用空间，把立绘压扁拉长 */
+  flex: none;
+  align-self: center;
   width: 118px;
   max-width: 34vw;
   height: auto;
