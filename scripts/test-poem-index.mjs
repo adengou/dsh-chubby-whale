@@ -70,6 +70,9 @@ try {
   // 同一词牌多首时优先带副题的名篇（虞美人 → 李煜两首之一，不是只写词牌的那首）
   const yumeiren = matchPoemKeyword('虞美人', index)
   ok('「虞美人」优先带副题的名篇', !!yumeiren && yumeiren.title.includes('·'), yumeiren ? yumeiren.title + '/' + yumeiren.author : 'null')
+  // 带空格的输入也认（「冷 冷」→「冷冷」）
+  const spaced = matchPoemKeyword('冷 冷', index)
+  ok('「冷 冷」（带空格）也能命中', !!spaced && spaced.title.includes('声声慢'), spaced ? spaced.title : 'null')
   const hit = matchPoemKeyword('寻寻觅觅', index)
   ok('命中的那句包含关键词', !!hit && hit.line.includes('寻寻觅觅'), hit ? hit.line : 'null')
 

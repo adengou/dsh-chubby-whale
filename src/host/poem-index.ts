@@ -133,7 +133,8 @@ function hashWord(w: string): number {
  * 返回命中的诗 + 那句诗 + 命中的词；没命中返回 null。
  */
 export function matchPoemKeyword(text: string, index: PoemIndex): (PoetEntry & { word: string }) | null {
-  const src = String(text || '').trim()
+  // 去掉空白再匹配：「冷 冷」当成「冷冷」（用户打字带空格很常见）
+  const src = String(text || '').replace(/\s+/g, '')
   if (!src || !index || index.size === 0) return null
   // 候选：用户文本里所有 2~4 字连续片段（用分词 + 滑窗双保险）
   const cands = new Set<string>(wordsOf(src))
