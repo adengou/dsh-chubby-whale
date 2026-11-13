@@ -845,11 +845,17 @@ registerCapsuleActions(actions)
       if (g) sayLine(g, 5000)
       // 今日一句：开场问候之后补一句当天的诗（/daily 失败静默；chubby-daily-greet=off 可关）
       try {
-        const off = (() => { try { return typeof localStorage !== 'undefined' && localStorage.getItem('chubby-daily-greet') === 'off' } catch (e) { return false } })()
-        if (!off) {
+        // 默认不再自动念「今日一句」：每次开机都冒、诗又长（如《蜀道难》全篇），主人嫌吵。
+        // 想恢复的人设 chubby-daily-greet=on 即可。
+        const dailyOn = (() => { try { return typeof localStorage !== 'undefined' && localStorage.getItem('chubby-daily-greet') === 'on' } catch (e) { return false } })()
+        if (dailyOn) {
           getJson('/daily', { cache: 'no-store' }).then((d: any) => {
             try {
-              if (d && d.ok && d.text) sayLine('今天这句——' + String(d.text) + (d.source ? '（' + String(d.source) + '）' : ''), 9000)
+              if (d && d.ok && d.text) {
+                // 只取前 30 字：全篇动辄几百字，气泡装不下、听着也累
+                const short = Array.from(String(d.text)).slice(0, 30).join('')
+                sayLine('今天这句——' + short + (Array.from(String(d.text)).length > 30 ? '…' : '') + (d.source ? '（' + String(d.source) + '）' : ''), 9000)
+              }
             } catch (e) { }
           }).catch(() => { })
         }

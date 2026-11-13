@@ -11712,17 +11712,20 @@
                 const g = persona.greeting();
                 if (g) sayLine(g, 5e3);
                 try {
-                  const off = (() => {
+                  const dailyOn = (() => {
                     try {
-                      return typeof localStorage !== "undefined" && localStorage.getItem("chubby-daily-greet") === "off";
+                      return typeof localStorage !== "undefined" && localStorage.getItem("chubby-daily-greet") === "on";
                     } catch (e) {
                       return false;
                     }
                   })();
-                  if (!off) {
+                  if (dailyOn) {
                     getJson("/daily", { cache: "no-store" }).then((d) => {
                       try {
-                        if (d && d.ok && d.text) sayLine("今天这句——" + String(d.text) + (d.source ? "（" + String(d.source) + "）" : ""), 9e3);
+                        if (d && d.ok && d.text) {
+                          const short = Array.from(String(d.text)).slice(0, 30).join("");
+                          sayLine("今天这句——" + short + (Array.from(String(d.text)).length > 30 ? "…" : "") + (d.source ? "（" + String(d.source) + "）" : ""), 9e3);
+                        }
                       } catch (e) {
                       }
                     }).catch(() => {
