@@ -67,6 +67,9 @@ try {
   }
   // 太常见的景语（BANAL）刻意不进关键词，避免「东风」「明月」这类词把弹幕刷成噪音
   ok('「东风」被 BANAL 排除（返回 null）', matchPoemKeyword('东风', index) === null)
+  // 同一词牌多首时优先带副题的名篇（虞美人 → 李煜两首之一，不是只写词牌的那首）
+  const yumeiren = matchPoemKeyword('虞美人', index)
+  ok('「虞美人」优先带副题的名篇', !!yumeiren && yumeiren.title.includes('·'), yumeiren ? yumeiren.title + '/' + yumeiren.author : 'null')
   const hit = matchPoemKeyword('寻寻觅觅', index)
   ok('命中的那句包含关键词', !!hit && hit.line.includes('寻寻觅觅'), hit ? hit.line : 'null')
 

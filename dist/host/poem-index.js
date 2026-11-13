@@ -159,10 +159,13 @@ export function matchPoemKeyword(text, index) {
     }
     if (!best)
         return null;
-    const list = index.get(best) || [];
+    const list = (index.get(best) || []).slice();
     if (!list.length)
         return null;
-    // 多首同词：按词哈希轮换（确定性）
+    // 多首同词：先按「标题里带副题」的长度降序排——带副题的通常是名篇
+    // （如「虞美人·春花秋月何时了」优先于只写词牌的「虞美人」），
+    // 再按词哈希 + 文本长度取模轮换（确定性，同一句话永远同一首）。
+    list.sort((a, b) => String(b.title).length - String(a.title).length);
     const picked = list[(hashWord(best) + src.length) % list.length];
     return { title: picked.title, author: picked.author, line: picked.line, word: best };
 }
