@@ -3137,6 +3137,300 @@
     return word;
   }
 
+  // src/client/focus-reward.ts
+  var DEFAULT_THRESHOLD_MS = 45 * 60 * 1e3;
+  var DEFAULT_IDLE_GAP_MS = 60 * 1e3;
+  var ZERO_START = /* @__PURE__ */ Symbol("focusReward.zeroStart");
+  function isTime(t) {
+    return typeof t === "number" && Number.isFinite(t) && t >= 0;
+  }
+  function span(v, fallback) {
+    return isTime(v) ? v : fallback;
+  }
+  function copyPrev(prev) {
+    if (!prev || typeof prev !== "object") return null;
+    if (!isTime(prev.streakStartAt) || !isTime(prev.lastTickAt)) return null;
+    const copy = {
+      streakStartAt: prev.streakStartAt,
+      lastTickAt: prev.lastTickAt,
+      rewarded: prev.rewarded === true
+    };
+    if (isZeroStart(prev)) brandZeroStart(copy);
+    return copy;
+  }
+  function holdState(now) {
+    return { streakStartAt: 0, lastTickAt: now, rewarded: false };
+  }
+  function startState(now) {
+    const state = { streakStartAt: now, lastTickAt: now, rewarded: false };
+    if (now === 0) brandZeroStart(state);
+    return state;
+  }
+  function isZeroStart(s) {
+    return s[ZERO_START] === true;
+  }
+  function brandZeroStart(s) {
+    Object.defineProperty(s, ZERO_START, { value: true });
+  }
+  function updateFocus(prev, input, opts) {
+    const thresholdMs = span(opts && opts.thresholdMs, DEFAULT_THRESHOLD_MS);
+    const idleGapMs = span(opts && opts.idleGapMs, DEFAULT_IDLE_GAP_MS);
+    const active = !!(input && input.active === true);
+    const rawNow = input && typeof input === "object" ? input.now : void 0;
+    if (!isTime(rawNow)) return { state: holdState(0), reward: null };
+    const now = rawNow;
+    const base = copyPrev(prev);
+    if (!base) {
+      return { state: active ? startState(now) : holdState(now), reward: null };
+    }
+    if (!active) return { state: holdState(now), reward: null };
+    const gap = now - base.lastTickAt;
+    if (gap > idleGapMs) return { state: startState(now), reward: null };
+    if (base.streakStartAt === 0 && !isZeroStart(base)) {
+      return { state: startState(now), reward: null };
+    }
+    const next = {
+      streakStartAt: base.streakStartAt,
+      lastTickAt: now,
+      rewarded: base.rewarded
+    };
+    if (isZeroStart(base)) brandZeroStart(next);
+    if (!base.rewarded && now - base.streakStartAt >= thresholdMs) {
+      next.rewarded = true;
+      return { state: next, reward: { kind: "poem", at: now } };
+    }
+    return { state: next, reward: null };
+  }
+
+  // src/client/diary.ts
+  var MIN_OFFLINE_MS = 2 * 60 * 60 * 1e3;
+  var DREAM_OFFLINE_MS = 12 * 60 * 60 * 1e3;
+  var MAX_SUMMARY_CHARS = 2e3;
+  var KEYWORD_GROUPS = [
+    { keys: ["材料", "文件", "报告", "论文", "文档", "表格", "稿子", "作业"], image: "一叠纸" },
+    { keys: ["代码", "程序", "项目", "数据", "电脑", "键盘", "屏幕", "邮件", "消息"], image: "一排发光的小格子" },
+    { keys: ["会议", "开会", "电话", "客户", "同事", "领导", "沟通"], image: "一串散不开的声音" },
+    { keys: ["咖啡", "茶", "饭", "糖", "药", "零食", "水果"], image: "一圈暖暖的涟漪" },
+    { keys: ["鱼干", "小鱼", "罐头"], image: "一小片鱼干" },
+    { keys: ["音乐", "歌", "电影", "游戏", "诗", "故事", "小说"], image: "一串会游的音符" },
+    { keys: ["猫", "狗", "鸟", "蝴蝶", "花", "草", "树"], image: "一个会摆尾的小影子" },
+    { keys: ["学习", "考试", "上课", "课程", "复习", "背单词"], image: "一排整齐的贝壳" },
+    { keys: ["出差", "旅行", "飞机", "火车", "地铁", "远方"], image: "一条远得看不见的航线" },
+    { keys: ["睡觉", "休息", "困", "累", "熬夜", "失眠"], image: "一团软软的水母" },
+    { keys: ["家人", "朋友", "主人", "回家", "回来", "想你"], image: "岸上的一点灯光" },
+    { keys: ["工作", "加班", "任务", "公司", "忙"], image: "一串赶路的泡泡" },
+    { keys: ["雨", "风", "雪", "天气", "冷", "热"], image: "一阵很轻的潮声" }
+  ];
+  var DREAM_OPEN = {
+    low: "昨晚本鲸梦见自己在深一点的水里。",
+    mid: "昨晚本鲸做了一个梦。",
+    high: "昨晚本鲸梦见你回来了。"
+  };
+  var FRAGMENT_OPEN = {
+    low: "今天见到你之前，本鲸在深一点的水里待着。",
+    mid: "今天见到你之前，本鲸捡到几片碎碎的光。",
+    high: "今天见到你之前，本鲸数着泡泡等你。"
+  };
+  var DREAM_SCENE = {
+    low: "泡泡从海沟底浮到水面，半路就散了。",
+    mid: "咕噜一声，泡泡从海沟底浮到水面。",
+    high: "咕噜一声，泡泡把梦托到了水面。"
+  };
+  var FRAGMENT_SCENE = {
+    low: "咕噜一声，泡泡贴着海沟慢慢散了。",
+    mid: "咕噜一声，泡泡贴着珊瑚散开了。",
+    high: "咕噜一声，海沟的水都亮了一点。"
+  };
+  var DREAM_CLOSE = {
+    low: "水面很静，本鲸没打算特意浮上去。",
+    mid: "珊瑚晃了两下，本鲸就醒了。",
+    high: "醒来时，本鲸想游到你身边。"
+  };
+  var FRAGMENT_CLOSE = {
+    low: "本鲸没等多久，只是刚好路过。",
+    mid: "鱼干还剩半条，本鲸分你一半。",
+    high: "你回来得正好，泡泡还没散。"
+  };
+  var EVENT_SCENE = {
+    "long-work": "主人忙的时候，本鲸把泡泡吹得小一点。",
+    "late-night": "夜里的海很安静，本鲸的咕噜声显得有点大。",
+    "idle": "水面很久没动静，本鲸数泡泡数到发呆。",
+    "welcome-back": "听见你回来的动静，本鲸把尾巴摆正了。"
+  };
+  function toneOf(intimacy) {
+    if (typeof intimacy !== "number" || !Number.isFinite(intimacy)) return "mid";
+    if (intimacy < 30) return "low";
+    if (intimacy < 70) return "mid";
+    return "high";
+  }
+  function splitClauses(text) {
+    const out = [];
+    const re = /[^，。！？；：、,.!?;:\s]+/g;
+    let m;
+    while ((m = re.exec(text)) !== null) out.push({ text: m[0], at: m.index });
+    return out;
+  }
+  function pickKeywordImages(summary) {
+    if (typeof summary !== "string") return [];
+    const text = summary.slice(0, MAX_SUMMARY_CHARS);
+    const hits2 = [];
+    for (const clause of splitClauses(text)) {
+      for (let g = 0; g < KEYWORD_GROUPS.length; g++) {
+        const group2 = KEYWORD_GROUPS[g];
+        let first = -1;
+        for (const key of group2.keys) {
+          const at = clause.text.indexOf(key);
+          if (at >= 0 && (first < 0 || at < first)) first = at;
+        }
+        if (first >= 0) hits2.push({ at: clause.at + first, group: g });
+      }
+    }
+    hits2.sort((a, b) => a.at - b.at || a.group - b.group);
+    const images = [];
+    const used = /* @__PURE__ */ new Set();
+    for (const hit of hits2) {
+      if (used.has(hit.group)) continue;
+      used.add(hit.group);
+      images.push(KEYWORD_GROUPS[hit.group].image);
+      if (images.length >= 2) break;
+    }
+    return images;
+  }
+  function keywordSentence(mode, image, order) {
+    if (mode === "dream") {
+      return order === 0 ? "梦里有" + image + "，浮在珊瑚边上。" : "还有" + image + "，跟着泡泡慢慢转。";
+    }
+    return order === 0 ? "水面漂来" + image + "，本鲸绕了两圈。" : "后来又漂来" + image + "，本鲸多看了两眼。";
+  }
+  function sceneOf(mode, tone, recentEvent) {
+    if (typeof recentEvent === "string") {
+      const hit = EVENT_SCENE[recentEvent];
+      if (typeof hit === "string") return hit;
+    }
+    return mode === "dream" ? DREAM_SCENE[tone] : FRAGMENT_SCENE[tone];
+  }
+  function buildDiary(input) {
+    if (!input || typeof input !== "object") return null;
+    const now = input.now;
+    const lastSeenAt = input.lastSeenAt;
+    if (typeof now !== "number" || typeof lastSeenAt !== "number") return null;
+    if (!Number.isFinite(now) || !Number.isFinite(lastSeenAt)) return null;
+    const offlineMs = now - lastSeenAt;
+    if (!Number.isFinite(offlineMs) || offlineMs < MIN_OFFLINE_MS) return null;
+    const mode = offlineMs >= DREAM_OFFLINE_MS ? "dream" : "fragment";
+    const tone = toneOf(input.intimacy);
+    const images = pickKeywordImages(input.summary);
+    const parts = [mode === "dream" ? DREAM_OPEN[tone] : FRAGMENT_OPEN[tone]];
+    for (let i = 0; i < images.length; i++) parts.push(keywordSentence(mode, images[i], i));
+    if (images.length < 2) parts.push(sceneOf(mode, tone, input.recentEvent));
+    parts.push(mode === "dream" ? DREAM_CLOSE[tone] : FRAGMENT_CLOSE[tone]);
+    return parts.join("");
+  }
+
+  // src/client/whale-misread.ts
+  var KIND_BY_EXT = Object.freeze({
+    ".ts": "code",
+    ".tsx": "code",
+    ".js": "code",
+    ".jsx": "code",
+    ".mjs": "code",
+    ".cjs": "code",
+    ".py": "code",
+    ".java": "code",
+    ".go": "code",
+    ".rs": "code",
+    ".json": "data",
+    ".yaml": "data",
+    ".yml": "data",
+    ".toml": "data",
+    ".csv": "data",
+    ".md": "doc",
+    ".txt": "doc",
+    ".docx": "doc",
+    ".log": "log",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+    ".gif": "image",
+    ".svg": "image"
+  });
+  var POOLS = Object.freeze({
+    code: Object.freeze([
+      "像一条把自己绕晕的鱼，咕噜咕噜吐着泡泡。",
+      "像一片缠在一起的海藻，理不清哪根是哪根。",
+      "像一群小鱼在珊瑚缝里钻来钻去，热闹得没个队形。",
+      "像海沟深处绕来绕去的暗流，本鲸只敢远远看。"
+    ]),
+    data: Object.freeze([
+      "像一整片珊瑚礁，密密麻麻，本鲸只认得颜色。",
+      "像退潮后留在沙滩上的贝壳，一颗一颗数不完。",
+      "像鲸群迁徙的路线，本鲸只敢顺着泡泡走。",
+      "像渔市清晨的账本，热闹、密实，本鲸看着就饱了。"
+    ]),
+    doc: Object.freeze([
+      "像一片很安静的浅滩，字句都泡在潮水里，慢慢晃。",
+      "像鲸歌拖长的尾音，本鲸听着听着就走神了。",
+      "像晒在礁石上的鱼干，一页一页摊开，海风翻得慢。",
+      "像一封被海水泡软的信，本鲸只摸到气泡。"
+    ]),
+    log: Object.freeze([
+      "像一锅熬了很久的海带汤，咕噜咕噜，稠得搅不动。",
+      "像鲸群一路留下的气泡，一串接一串，前头的早散了。",
+      "像潮汐退去后的滩涂，密密麻麻都是小洞，本鲸懒得数。",
+      "像海底火山在远处冒烟，本鲸只听见咕噜声。"
+    ]),
+    image: Object.freeze([
+      "像一尾停在珊瑚上的小鱼，本鲸想凑近看看，又怕惊着它。",
+      "像海面上碎掉的一片月光，亮晶晶的，捞不起来。",
+      "像鲸眼里的那口深蓝，本鲸先眯起眼感受一下。",
+      "像一张被浪打湿的明信片，颜色还在，边缘软了。"
+    ]),
+    other: Object.freeze([
+      "像从别的海域漂来的漂流瓶，本鲸不认得上面的字。",
+      "像一块没见过的贝壳，本鲸拿尾巴拨了两下，先放着。",
+      "这格式本鲸没见过，像深海里没名字的小东西，先吐个泡泡。",
+      "像一枚沉在沙里的旧硬币，本鲸不知道它从哪片海来。"
+    ])
+  });
+  function baseName(name) {
+    const cut = Math.max(name.lastIndexOf("/"), name.lastIndexOf("\\"));
+    return cut >= 0 ? name.slice(cut + 1) : name;
+  }
+  function extOf(base) {
+    const dot = base.lastIndexOf(".");
+    return dot > 0 ? base.slice(dot).toLowerCase() : "";
+  }
+  function hashName(name) {
+    let h = 2166136261;
+    for (let i = 0; i < name.length; i++) {
+      h ^= name.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+  function headCue(head) {
+    const h = head.slice(0, 400).toLowerCase();
+    if (/error|失败|错误/.test(h)) return "本鲸闻到一点焦味。";
+    if (/todo/.test(h)) return "还有几处没铺好的沙。";
+    return "";
+  }
+  function misreadFile(hint) {
+    if (!hint || typeof hint !== "object") return null;
+    const rawName = hint.name;
+    if (typeof rawName !== "string") return null;
+    const name = rawName.trim();
+    if (!name) return null;
+    const base = baseName(name);
+    if (!base) return null;
+    const kind = KIND_BY_EXT[extOf(base)] || "other";
+    const pool = POOLS[kind];
+    const text = pool[hashName(base.toLowerCase()) % pool.length];
+    const rawHead = hint.head;
+    const cue = typeof rawHead === "string" ? headCue(rawHead) : "";
+    return { text: cue ? text + cue : text, kind };
+  }
+
   // src/client/narration-progress.ts
   function createProgress() {
     let current2 = null;
@@ -6370,13 +6664,13 @@
   var ALLOWED_EXTS = [".txt", ".md", ".json", ".log", ".csv", ".docx"];
   var MAX_DOC_BYTES = 20 * 1024 * 1024;
   var DOC_ACCEPT = ".txt,.md,.json,.log,.csv,.docx";
-  function extOf(name) {
+  function extOf2(name) {
     const n = String(name || "").toLowerCase();
     const i = n.lastIndexOf(".");
     return i >= 0 ? n.slice(i) : "";
   }
   function isSupportedDocName(name) {
-    return ALLOWED_EXTS.indexOf(extOf(name)) >= 0;
+    return ALLOWED_EXTS.indexOf(extOf2(name)) >= 0;
   }
   function pickDocument() {
     return new Promise((resolve) => {
@@ -6481,7 +6775,7 @@
     try {
       if (!file) return { ok: false, kind: "error", error: "没有文件" };
       if (file.size > MAX_DOC_BYTES) return { ok: false, kind: "error", error: "文件太大（20MB 上限）" };
-      const ext = extOf(file.name);
+      const ext = extOf2(file.name);
       if (PLAIN_EXTS.indexOf(ext) >= 0) {
         const text = await file.text();
         return { ok: true, kind: "plain", text };
@@ -10769,6 +11063,7 @@
         if (!phaseRef.current) phaseRef.current = createPhaseMachine();
         const animRef = R.useRef(null);
         const bellyStateRef = R.useRef(null);
+        const focusStateRef = R.useRef(null);
         const talkFor = (ms2) => {
           try {
             animRef.current?.talkFor(ms2);
@@ -11132,6 +11427,11 @@
               if (!file) return;
               evPrevent(e);
               evStop(e);
+              try {
+                const mis = misreadFile({ name: String(file.name || ""), sizeBytes: file.size });
+                if (mis) showBubble(mis.text, 5e3);
+              } catch (e2) {
+              }
               handleFileDrop(file, { showBubble, speakText }).catch(() => {
                 try {
                   showBubble("图片没处理成，再贴一次试试", 4e3);
@@ -11151,6 +11451,51 @@
             } catch (e) {
             }
           };
+        }, []);
+        R.useEffect(() => {
+          const timer = setInterval(() => {
+            try {
+              const now = Date.now();
+              const active = now - lastActivityRef.current < 6e4;
+              const r = updateFocus(focusStateRef.current, { now, active });
+              focusStateRef.current = r.state;
+              if (r.reward) {
+                getJson("/poem").then((d) => {
+                  const it = d && d.item;
+                  if (!it || !it.text) return;
+                  showBubble("（肚皮朝上）" + String(it.title || "") + "：" + String(it.text).slice(0, 36) + "…", 12e3);
+                  try {
+                    speakText(String(it.text).slice(0, 120), { rate: narrationRate() });
+                  } catch (e) {
+                  }
+                }).catch(() => {
+                });
+              }
+            } catch (e) {
+            }
+          }, 3e4);
+          return () => clearInterval(timer);
+        }, []);
+        R.useEffect(() => {
+          try {
+            const LAST = "chubby-last-seen";
+            const DAY = "chubby-diary-day";
+            const now = Date.now();
+            const last = Number(localStorage.getItem(LAST) || 0);
+            localStorage.setItem(LAST, String(now));
+            const day = new Date(now).toISOString().slice(0, 10);
+            if (!last || localStorage.getItem(DAY) === day) return;
+            const text = buildDiary({ now, lastSeenAt: last, summary: "", intimacy: 0 });
+            if (!text) return;
+            localStorage.setItem(DAY, day);
+            setTimeout(() => {
+              try {
+                showBubble(text, 14e3);
+              } catch (e) {
+              }
+            }, 2500);
+          } catch (e) {
+          }
         }, []);
         const clickBurstRef = R.useRef([]);
         function dragBeginAt(x, y) {
@@ -12241,6 +12586,11 @@
                 e.preventDefault();
                 e.stopPropagation();
                 const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                try {
+                  const mis = misreadFile({ name: String(file.name || ""), sizeBytes: file.size });
+                  if (mis) showBubble(mis.text, 5e3);
+                } catch (e2) {
+                }
                 handleFileDrop(file, { showBubble, speakText }).catch(() => {
                 });
               },

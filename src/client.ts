@@ -9,6 +9,9 @@ import { buildMenu, tr } from './client/menu.js'
 import { buildWhaleMenu } from './client/menu-whale.js'
 import { digest as digestBelly, chewPlan, type BellyState } from './client/belly.js'
 import { pickWhaleWord } from './client/whale-speak.js'
+import { updateFocus, type FocusState } from './client/focus-reward.js'
+import { buildDiary } from './client/diary.js'
+import { misreadFile } from './client/whale-misread.js'
 import { stopProgress } from './client/narration-progress.js'
 import { narrationRate, chatRate } from './client/rates.js'
 import { handleFileDrop } from './client/dropzone.js'
@@ -312,6 +315,8 @@ registerSkinActions(actions)
       const animRef = R.useRef(null as any)
       // 鱼账本进食状态（参数由 client/belly.ts 纯函数算，这里只存）
       const bellyStateRef = R.useRef(null as BellyState | null)
+      // 专注段状态（client/focus-reward.ts 纯判定，这里只存）
+      const focusStateRef = R.useRef(null as FocusState | null)
       /** 动画口型：动画器还没建好时静默（宿主回调里多处共用这一份，别各写一遍 try/catch） */
       const talkFor = (ms: number): void => { try { animRef.current?.talkFor(ms) } catch (e) { } }
       /** 挤压形变：把 scale 写在包裹层上，不动 canvas 自己的成长缩放 */
@@ -641,6 +646,10 @@ registerSkinActions(actions)
             }
             if (!file) return
             evPrevent(e); evStop(e)
+            try {
+              const mis = misreadFile({ name: String(file.name || ''), sizeBytes: file.size })
+              if (mis) showBubble(mis.text, 5000)
+            } catch (e) { }
             handleFileDrop(file, { showBubble, speakText }).catch(() => {
               try { showBubble('图片没处理成，再贴一次试试', 4000) } catch (e2) { }
             })
@@ -648,6 +657,44 @@ registerSkinActions(actions)
         }
         try { window.addEventListener('paste', onPaste, true) } catch (e) { }
         return () => { try { window.removeEventListener('paste', onPaste, true) } catch (e) { } }
+      }, [])
+
+      // ===== 专注奖励（反向驯化）：连续专注 45 分钟才叼一首诗，切走就重置 ===== 
+      R.useEffect(() => {
+        const timer = setInterval(() => {
+          try {
+            const now = Date.now()
+            const active = now - lastActivityRef.current < 60000
+            const r = updateFocus(focusStateRef.current, { now, active })
+            focusStateRef.current = r.state
+            if (r.reward) {
+              getJson('/poem').then((d: any) => {
+                const it = d && d.item
+                if (!it || !it.text) return
+                showBubble('（肚皮朝上）' + String(it.title || '') + '：' + String(it.text).slice(0, 36) + '…', 12000)
+                try { speakText(String(it.text).slice(0, 120), { rate: narrationRate() }) } catch (e) { }
+              }).catch(() => { })
+            }
+          } catch (e) { }
+        }, 30000)
+        return () => clearInterval(timer)
+      }, [])
+
+      // ===== 离线生活：每天第一次打开时递一篇日记/梦（离线 <2 小时不写，由 diary.ts 判定）==
+      R.useEffect(() => {
+        try {
+          const LAST = 'chubby-last-seen'
+          const DAY = 'chubby-diary-day'
+          const now = Date.now()
+          const last = Number(localStorage.getItem(LAST) || 0)
+          localStorage.setItem(LAST, String(now))
+          const day = new Date(now).toISOString().slice(0, 10)
+          if (!last || localStorage.getItem(DAY) === day) return
+          const text = buildDiary({ now, lastSeenAt: last, summary: '', intimacy: 0 })
+          if (!text) return
+          localStorage.setItem(DAY, day)
+          setTimeout(() => { try { showBubble(text, 14000) } catch (e) { } }, 2500)
+        } catch (e) { }
       }, [])
 
       // 连点彩蛋：4 秒内点 10 下触发（不动文件、纯互动）
@@ -1549,6 +1596,10 @@ registerSkinActions(actions)
             e.preventDefault()
             e.stopPropagation()
             const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]
+            try {
+              const mis = misreadFile({ name: String(file.name || ''), sizeBytes: file.size })
+              if (mis) showBubble(mis.text, 5000)
+            } catch (e) { }
             handleFileDrop(file, { showBubble, speakText }).catch(() => { })
           },
           onClick: () => {
