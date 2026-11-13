@@ -1995,16 +1995,109 @@ function init() {
     }
   } catch (e) { /* 动画失败不影响功能 */ }
 
-  // 点鱼互动：原来手机版鱼没有点击反馈，点了像"不动"；这里给气泡 + 嘴动
+  // 点鱼 / 拖鱼 / 抛鱼（对齐电脑端手感）：
+  //   · 点一下（位移 < 8px）= 冒气泡 + 嘴动；
+  //   · 拖住移动 = 整只鱼跟着走；
+  //   · 松手带速度 = 惯性抛出，摩擦衰减后停下；
+  //   · 位置记在 localStorage，下次打开还在原地。
   try {
     const petEl = $('#pet');
-    if (petEl) {
+    const wrap = petEl && petEl.parentElement;
+    if (petEl && wrap) {
+      const POS_KEY = 'chubby-mobile-pet-pos';
       const lines = ['戳本鲸干嘛～', '本鲸在呢', '哼，别闹', '轻点，会冒泡泡的'];
-      petEl.addEventListener('pointerdown', () => {
-        showPetBubble(lines[Math.floor(Math.random() * lines.length)]);
-        try { petAnimator && petAnimator.talkFor(1200); } catch (e) { }
+      let dragging = false;
+      let moved = false;
+      let startX = 0, startY = 0, baseX = 0, baseY = 0;
+      let lastX = 0, lastY = 0, lastT = 0;
+      let vx = 0, vy = 0;
+      let inertia = 0;
+
+      const readPos = () => [parseFloat(wrap.style.left) || 0, parseFloat(wrap.style.top) || 0];
+      const clampTo = (x, y) => {
+        const parent = wrap.parentElement;
+        const maxX = Math.max(0, (parent ? parent.clientWidth : window.innerWidth) - wrap.offsetWidth);
+        const maxY = Math.max(0, window.innerHeight - wrap.offsetHeight - 8);
+        return [Math.min(Math.max(0, x), maxX), Math.min(Math.max(0, y), maxY)];
+      };
+      const applyPos = (x, y) => {
+        const p = clampTo(x, y);
+        wrap.style.left = p[0] + 'px';
+        wrap.style.top = p[1] + 'px';
+        return p;
+      };
+      const savePos = () => {
+        try { localStorage.setItem(POS_KEY, JSON.stringify({ x: readPos()[0], y: readPos()[1] })) } catch (e) { }
+      };
+      const stopInertia = () => { if (inertia) { cancelAnimationFrame(inertia); inertia = 0 } };
+      const startInertia = () => {
+        stopInertia();
+        const step = () => {
+          vx *= 0.94; vy *= 0.94;
+          if (Math.abs(vx) < 0.12 && Math.abs(vy) < 0.12) { inertia = 0; savePos(); return }
+          const [cx, cy] = applyPos(readPos()[0] + vx, readPos()[1] + vy);
+          // 撞边：横向/纵向速度归零，避免弹来弹去
+          if (cx <= 0 || cx >= clampTo(1e9, 0)[0]) vx = 0;
+          if (cy <= 0 || cy >= clampTo(0, 1e9)[1]) vy = 0;
+          inertia = requestAnimationFrame(step);
+        };
+        inertia = requestAnimationFrame(step);
+      };
+
+      // 恢复上次位置
+      try {
+        const saved = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
+        if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+          wrap.style.position = 'relative';
+          applyPos(saved.x, saved.y);
+        }
+      } catch (e) { }
+
+      petEl.addEventListener('pointerdown', (e) => {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        stopInertia();
+        dragging = true;
+        moved = false;
+        wrap.style.position = 'relative';
+        const p = readPos();
+        baseX = p[0]; baseY = p[1];
+        startX = e.clientX; startY = e.clientY;
+        lastX = e.clientX; lastY = e.clientY; lastT = performance.now();
+        vx = 0; vy = 0;
+        try { petEl.setPointerCapture(e.pointerId) } catch (err) { }
+        petEl.style.cursor = 'grabbing';
       });
-      petEl.style.cursor = 'pointer';
+
+      petEl.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (!moved && Math.sqrt(dx * dx + dy * dy) > 8) moved = true;
+        const now = performance.now();
+        const dt = Math.max(1, now - lastT);
+        vx = ((e.clientX - lastX) / dt) * 16;
+        vy = ((e.clientY - lastY) / dt) * 16;
+        lastX = e.clientX; lastY = e.clientY; lastT = now;
+        if (moved) applyPos(baseX + dx, baseY + dy);
+      });
+
+      const endDrag = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        petEl.style.cursor = 'pointer';
+        try { petEl.releasePointerCapture(e.pointerId) } catch (err) { }
+        if (!moved) {
+          showPetBubble(lines[Math.floor(Math.random() * lines.length)]);
+          try { petAnimator && petAnimator.talkFor(1200); } catch (err) { }
+        } else {
+          startInertia();
+        }
+      };
+      petEl.addEventListener('pointerup', endDrag);
+      petEl.addEventListener('pointercancel', endDrag);
+
+      window.addEventListener('resize', () => { if (!dragging) applyPos(readPos()[0], readPos()[1]) });
     }
   } catch (e) { /* 忽略 */ }
 

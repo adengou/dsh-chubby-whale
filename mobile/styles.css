@@ -984,6 +984,9 @@ body {
   animation: pet-float 4.2s ease-in-out infinite;
   user-select: none;
   -webkit-user-drag: none;
+  /* 拖动时不让页面跟着滚（pointer events 接管手势） */
+  touch-action: none;
+  cursor: pointer;
 }
 
 .pet.is-speaking {
