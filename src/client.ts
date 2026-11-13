@@ -1216,7 +1216,7 @@ registerCapsuleActions(actions)
             // 1) 深海女仆皮肤：覆盖它的背景变量（换整页背景）
             'html body{--maid-palace-art:url("/api/chubby-whale/skin?n=' + index + '") !important;' + "--maid-top-trim-art:none;--maid-bow-art:none;--maid-bottom-trim-art:none;--maid-bottom-crest-art:none;--maid-sidebar-corner-art:none;--maid-new-session-art:none;--maid-sidebar-swag-art:none;--maid-settings-frame-art:none;--maid-workspace-crest-art:none;--maid-workspace-ribbon-art:none;--maid-composer-ribbon-left-cap-art:none;--maid-composer-ribbon-right-cap-art:none;--maid-composer-ribbon-left-fill-art:none;--maid-composer-ribbon-right-fill-art:none;--maid-composer-frame-art:none;--maid-composer-lace-art:none" + ' !important;}',
             // 2) 官方默认（无皮肤）：body 铺背景图（高特异性 + 内联兜底）
-            'html > body{background:url("/api/chubby-whale/skin?n=' + index + '") center center / cover no-repeat fixed !important;}',
+            'html > body{background:url("/api/chubby-whale/skin?n=' + index + '") center center / cover no-repeat fixed !important;background-color:transparent !important;}',
                         // 官方默认：把 DSH 布局各层也透明，让 body 背景露出来
                         'html body #root{background:transparent !important;}',
                         'html body [class*="pI_x6G_frame"]{background:transparent !important;}',
@@ -1239,11 +1239,17 @@ registerCapsuleActions(actions)
           // 兜底：官方默认时 DSH 的 body 背景可能压过 CSS，内联也写一份
           try {
             if (!document.body.hasAttribute('data-dsh-maid-atelier')) {
-              document.body.style.backgroundImage = 'url("/api/chubby-whale/skin?n=' + index + '")'
-              document.body.style.backgroundSize = 'cover'
-              document.body.style.backgroundPosition = 'center center'
-              document.body.style.backgroundRepeat = 'no-repeat'
-              document.body.style.backgroundAttachment = 'fixed'
+              // 内联 !important：官方默认皮肤/主题会往 body 上写 background-color，
+              // 普通 CSS 规则可能被更后加载的同特异性规则压过；内联 important 是最强的一层
+              const u = 'url("/api/chubby-whale/skin?n=' + index + '")'
+              try {
+                document.body.style.setProperty('background-image', u, 'important')
+                document.body.style.setProperty('background-size', 'cover', 'important')
+                document.body.style.setProperty('background-position', 'center center', 'important')
+                document.body.style.setProperty('background-repeat', 'no-repeat', 'important')
+                document.body.style.setProperty('background-attachment', 'fixed', 'important')
+                document.body.style.setProperty('background-color', 'transparent', 'important')
+              } catch (e) { }
             }
           } catch (e) { }
           showBubble('背景 ' + (index + 1) + '/' + BG_GALLERY.length + ' ～', 2000)
