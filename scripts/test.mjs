@@ -474,6 +474,7 @@ try {
     configView: { handleConfig: fn },
     proofread: fn,
     nervous: fn,
+    memory: { handleMemory: fn },
   }
   const table = createRouteTable(stub)
   const paths = table.map((r) => r.path)

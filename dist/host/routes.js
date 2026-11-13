@@ -41,5 +41,7 @@ export function createRouteTable(h) {
         { path: '/api/chubby-whale/proofread', handler: h.proofread },
         // 神经感知第三层：宿主事件只读快照（客户端按 at 去重后逐条喂给情绪模型）
         { path: '/api/chubby-whale/nervous', handler: h.nervous },
+        // 记忆摘要只读：摘要 + 抽象主题词（不返回原始对话）
+        { path: '/api/chubby-whale/memory', handler: h.memory.handleMemory },
     ];
 }

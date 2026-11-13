@@ -3019,7 +3019,9 @@
       group("干活 ▸", [
         act("把稿子念成音频（语音导出）", "voice-export"),
         act("帮你挑挑错字（公文校对）", "proofread"),
-        act("记个钟点（加提醒）", "remind-add")
+        act("记个钟点（加提醒）", "remind-add"),
+        act("鲸落（导出记忆胶囊）", "capsule-export"),
+        act("接住漂来的鲸（导入胶囊）", "capsule-import")
       ]),
       sep2(),
       act("喂点数据（鱼粮账本）", "fishfood"),
@@ -8001,6 +8003,171 @@
     });
   }
 
+  // src/client/memory-capsule.ts
+  var MAX_TOPICS = 8;
+  var MAX_TOPIC_CHARS = 8;
+  var MAX_DREAM_CHARS = 200;
+  var DREAM_OPEN2 = "我好像闻到了另一片海的味道……";
+  var DREAM_EMPTY = DREAM_OPEN2 + "那边有另一只鲸在慢慢游。";
+  function toChars(s) {
+    return Array.from(s);
+  }
+  function cutChars(s, n) {
+    const chars = toChars(s);
+    return chars.length <= n ? s : chars.slice(0, n).join("");
+  }
+  function hasOwn(o, key) {
+    return Object.prototype.hasOwnProperty.call(o, key);
+  }
+  function clampIntimacy(value) {
+    if (typeof value !== "number" || Number.isNaN(value)) return 0;
+    return Math.min(100, Math.max(0, Math.round(value)));
+  }
+  function cleanTopics(input) {
+    if (!Array.isArray(input)) return [];
+    const out = [];
+    for (const item2 of input) {
+      if (typeof item2 !== "string") continue;
+      const word = cutChars(item2.trim(), MAX_TOPIC_CHARS);
+      if (!word) continue;
+      if (out.indexOf(word) >= 0) continue;
+      out.push(word);
+      if (out.length >= MAX_TOPICS) break;
+    }
+    return out;
+  }
+  function dreamFrom(topics) {
+    const words = [];
+    for (const t of topics) {
+      if (typeof t !== "string") continue;
+      const word = cutChars(t.trim(), MAX_TOPIC_CHARS);
+      if (!word) continue;
+      words.push(word);
+      if (words.length >= 2) break;
+    }
+    if (words.length === 0) return DREAM_EMPTY;
+    if (words.length === 1) return DREAM_OPEN2 + "那边有人在弄『" + words[0] + "』。";
+    return DREAM_OPEN2 + "那边有人在弄『" + words[0] + "』和『" + words[1] + "』。";
+  }
+  function capsuleDream(c) {
+    try {
+      if (!c || typeof c !== "object" || Array.isArray(c)) return null;
+      const o = c;
+      if (!hasOwn(o, "v") || o.v !== 1) return null;
+      if (o.topics === void 0) return DREAM_EMPTY;
+      if (!Array.isArray(o.topics)) return null;
+      for (const t of o.topics) if (typeof t !== "string") return null;
+      return dreamFrom(o.topics);
+    } catch {
+      return null;
+    }
+  }
+  function packCapsule(input) {
+    const src = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+    const madeAt = typeof src.madeAt === "number" && Number.isFinite(src.madeAt) ? src.madeAt : 0;
+    const intimacy = clampIntimacy(src.intimacy);
+    const topics = cleanTopics(src.topics);
+    const capsule = { v: 1, madeAt, intimacy, topics, dream: "" };
+    capsule.dream = capsuleDream(capsule) || DREAM_EMPTY;
+    return capsule;
+  }
+  function readCapsule(raw) {
+    try {
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+      const o = raw;
+      if (hasOwn(o, "__proto__")) return null;
+      if (!hasOwn(o, "v") || !hasOwn(o, "madeAt") || !hasOwn(o, "intimacy") || !hasOwn(o, "topics") || !hasOwn(o, "dream")) {
+        return null;
+      }
+      if (o.v !== 1) return null;
+      if (typeof o.madeAt !== "number" || !Number.isFinite(o.madeAt)) return null;
+      if (typeof o.intimacy !== "number" || !Number.isFinite(o.intimacy)) return null;
+      const intimacy = Math.min(100, Math.max(0, o.intimacy));
+      if (!Array.isArray(o.topics)) return null;
+      for (const t of o.topics) if (typeof t !== "string") return null;
+      if (typeof o.dream !== "string") return null;
+      if (toChars(o.dream).length > MAX_DREAM_CHARS) return null;
+      const topics = o.topics.slice(0, MAX_TOPICS).map((t) => cutChars(t, MAX_TOPIC_CHARS));
+      return { v: 1, madeAt: o.madeAt, intimacy, topics, dream: o.dream };
+    } catch {
+      return null;
+    }
+  }
+
+  // src/client/actions/capsule.ts
+  function saveJson(name, obj) {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (e) {
+      }
+    }, 15e3);
+  }
+  function registerCapsuleActions(table) {
+    table.define("capsule-export", (host) => {
+      getJson("/memory", { cache: "no-store" }).then((d) => {
+        if (!d || !d.ok) {
+          host.bubble("记忆摘要取不到，胶囊没做成");
+          return;
+        }
+        const topics = Array.isArray(d.topics) ? d.topics : [];
+        const cap = packCapsule({ madeAt: Date.now(), intimacy: 0, topics });
+        const d2 = /* @__PURE__ */ new Date();
+        const pad = (n) => String(n).padStart(2, "0");
+        const stem = "肥鲸记忆胶囊-" + d2.getFullYear() + pad(d2.getMonth() + 1) + pad(d2.getDate());
+        try {
+          saveJson(stem + ".json", cap);
+        } catch (e) {
+          host.bubble("胶囊文件没存下来：" + String(e && e.message || e));
+          return;
+        }
+        host.bubble("鲸落好啦：" + stem + ".json（" + cap.topics.length + " 个主题，不含原文）", 9e3);
+      }).catch(() => host.bubble("记忆摘要取不到，胶囊没做成"));
+    });
+    table.define("capsule-import", (host) => {
+      try {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".json,application/json";
+        input.onchange = () => {
+          const f = input.files && input.files[0];
+          if (!f) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            let cap = null;
+            try {
+              cap = readCapsule(JSON.parse(String(reader.result || "null")));
+            } catch (e) {
+              cap = null;
+            }
+            if (!cap) {
+              host.bubble("这个胶囊读不出来（格式不对或版本不认）");
+              return;
+            }
+            const dream = capsuleDream(cap);
+            if (dream) host.bubble(dream, 11e3);
+            try {
+              localStorage.setItem("chubby-capsule-dream", JSON.stringify({ at: Date.now(), dream }));
+            } catch (e) {
+            }
+          };
+          reader.readAsText(f, "utf-8");
+        };
+        input.click();
+      } catch (e) {
+        host.bubble("打不开文件选择");
+      }
+    });
+  }
+
   // data/persona.json
   var persona_default = {
     name: "饭团",
@@ -10874,6 +11041,7 @@
       registerVoiceActions(actions);
       registerProofreadActions(actions);
       registerNervousActions(actions);
+      registerCapsuleActions(actions);
       const CLIENT_ID = (() => {
         try {
           const v2 = sessionStorage.getItem("chubby-client-id");
