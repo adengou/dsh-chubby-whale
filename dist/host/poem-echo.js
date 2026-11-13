@@ -34,6 +34,16 @@ function deepFreeze(value) {
 }
 /** 主题名 → 诗句池（24 个主题，共 79 句；诗句均取自 data/poems.json 原文） */
 export const POEM_ECHO_TABLE = deepFreeze({
+    // 往事 —— 虞美人·春花秋月何时了（李煜）· 浪淘沙·往事只堪哀（李煜）
+    '往事': {
+        words: ['往事', '故国', '春花秋月', '一晌贪欢', '朱颜改', '天上人间'],
+        lines: [
+            { line: '春花秋月何时了，往事知多少。', title: '虞美人·春花秋月何时了', author: '李煜' },
+            { line: '雕栏玉砌应犹在，只是朱颜改。', title: '虞美人·春花秋月何时了', author: '李煜' },
+            { line: '流水落花春去也，天上人间。', title: '浪淘沙令·帘外雨潺潺', author: '李煜' },
+            { line: '往事只堪哀，对景难排。', title: '浪淘沙·往事只堪哀', author: '李煜' },
+        ],
+    },
     // 清秋 —— 相见欢·无言独上西楼（李煜）
     '清秋': {
         words: ['清秋'],
@@ -57,6 +67,7 @@ export const POEM_ECHO_TABLE = deepFreeze({
         lines: [
             { line: '枯藤老树昏鸦，小桥流水人家，古道西风瘦马。', title: '天净沙·秋思', author: '马致远' },
             { line: '夕阳西下，断肠人在天涯。', title: '天净沙·秋思', author: '马致远' },
+            { line: '梦里不知身是客，一晌贪欢。', title: '浪淘沙令·帘外雨潺潺', author: '李煜' },
         ],
     },
     // 坚持 —— 行路难三首一（李白）· 感遇十二首七（张九龄）· 老将行（王维）
@@ -85,6 +96,7 @@ export const POEM_ECHO_TABLE = deepFreeze({
             { line: '无为在歧路，儿女共沾巾。', title: '杜少府之任蜀州', author: '王勃' },
             { line: '相见时难别亦难，东风无力百花残。', title: '无题·相见时难别亦难', author: '李商隐' },
             { line: '故人西辞黄鹤楼，烟花三月下扬州。', title: '黄鹤楼送孟浩然之广陵', author: '李白' },
+            { line: '独自莫凭栏，无限江山，别时容易见时难。', title: '浪淘沙令·帘外雨潺潺', author: '李煜' },
         ],
     },
     // 思乡 —— 静夜思（李白）· 九月九日忆山东兄弟（王维）· 月夜忆舍弟（杜甫）· 次北固山下（王湾）
@@ -122,6 +134,7 @@ export const POEM_ECHO_TABLE = deepFreeze({
         lines: [
             { line: '劝君莫惜金缕衣，劝君惜取少年时。', title: '金缕衣', author: '不详' },
             { line: '莫等闲、白了少年头，空悲切。', title: '满江红', author: '岳飞' },
+            { line: '林花谢了春红，太匆匆。', title: '乌夜啼·林花谢了春红', author: '李煜' },
             { line: '锦瑟无端五十弦，一弦一柱思华年。', title: '锦瑟', author: '李商隐' },
             { line: '莫见长安行乐处，空令岁月易蹉跎。', title: '送魏万之京', author: '李颀' },
         ],
@@ -159,6 +172,7 @@ export const POEM_ECHO_TABLE = deepFreeze({
         words: ['烦恼', '烦', '焦虑', '压力', '郁闷'],
         lines: [
             { line: '抽刀断水水更流，举杯销愁愁更愁。', title: '宣州谢朓楼饯别校书叔云', author: '李白' },
+            { line: '问君能有几多愁，恰似一江春水向东流。', title: '虞美人·春花秋月何时了', author: '李煜' },
             { line: '这次第，怎一个愁字了得！', title: '声声慢·寻寻觅觅', author: '李清照' },
             { line: '白发三千丈，缘愁似个长。', title: '秋浦歌', author: '李白' },
         ],
@@ -225,6 +239,7 @@ export const POEM_ECHO_TABLE = deepFreeze({
         lines: [
             { line: '清明时节雨纷纷，路上行人欲断魂。', title: '清明', author: '杜牧' },
             { line: '天街小雨润如酥，草色遥看近却无。', title: '初春小雨', author: '韩愈' },
+            { line: '帘外雨潺潺，春意阑珊。', title: '浪淘沙令·帘外雨潺潺', author: '李煜' },
             { line: '沾衣欲湿杏花雨，吹面不寒杨柳风。', title: '绝句', author: '僧志南' },
         ],
     },

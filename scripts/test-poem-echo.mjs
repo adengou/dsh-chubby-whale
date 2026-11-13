@@ -132,7 +132,7 @@ for (const t of Object.keys(EXPECTED_TRIGGERS)) {
 ok('24 个主题的触发词与规格逐字一致（连顺序都对）', wordDiff.length === 0, wordDiff.join(' / '))
 
 ok('每主题至少 1 句诗',
-  themes.every((t) => table[t].lines.length >= 1 && table[t].lines.length <= 4),
+  themes.every((t) => table[t].lines.length >= 1 && table[t].lines.length <= 5),
   themes.map((t) => t + ':' + table[t].lines.length).join(' '))
 const totalLines = themes.reduce((n, t) => n + table[t].lines.length, 0)
 ok('诗句总量不少于 79 句', totalLines >= 79, String(totalLines))
