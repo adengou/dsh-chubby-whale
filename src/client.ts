@@ -1109,9 +1109,6 @@ registerSkinActions(actions)
       function applySkinBg(index: number): void {
         try {
           const pick = BG_GALLERY[((index % BG_GALLERY.length) + BG_GALLERY.length) % BG_GALLERY.length]
-          // 桌面端是 Electron：Windows 标题栏用 titleBarOverlay（透明底 + 深色图标），
-          // 深色背景透上来后图标/菜单文字看不清；顶部 42px 垫一条浅色底解决
-          const isElectronShell = (() => { try { return /Electron/i.test(navigator.userAgent || '') } catch (e) { return false } })()
           let tag = document.getElementById('chubby-skin-bg') as HTMLStyleElement | null
           if (!tag) {
             tag = document.createElement('style')
@@ -1123,9 +1120,7 @@ registerSkinActions(actions)
             // 1) 深海女仆皮肤：覆盖它的背景变量（换整页背景）
             'html body{--maid-palace-art:url("/api/chubby-whale/skin?n=' + index + '") !important;' + "--maid-top-trim-art:none;--maid-bow-art:none;--maid-bottom-trim-art:none;--maid-bottom-crest-art:none;--maid-sidebar-corner-art:none;--maid-new-session-art:none;--maid-sidebar-swag-art:none;--maid-settings-frame-art:none;--maid-workspace-crest-art:none;--maid-workspace-ribbon-art:none;--maid-composer-ribbon-left-cap-art:none;--maid-composer-ribbon-right-cap-art:none;--maid-composer-ribbon-left-fill-art:none;--maid-composer-ribbon-right-fill-art:none;--maid-composer-frame-art:none;--maid-composer-lace-art:none" + ' !important;}',
             // 2) 官方默认（无皮肤）：body 铺背景图（高特异性 + 内联兜底）
-            isElectronShell
-              ? 'html > body{background-image:linear-gradient(rgba(246,248,252,0.97),rgba(246,248,252,0.97)),url("/api/chubby-whale/skin?n=' + index + '") !important;background-size:100% 42px,cover !important;background-position:top center,center center !important;background-repeat:no-repeat,no-repeat !important;background-attachment:fixed,fixed !important;}'
-              : 'html > body{background:url("/api/chubby-whale/skin?n=' + index + '") center center / cover no-repeat fixed !important;}',
+            'html > body{background:url("/api/chubby-whale/skin?n=' + index + '") center center / cover no-repeat fixed !important;}',
                         // 官方默认：把 DSH 布局各层也透明，让 body 背景露出来
                         'html body #root{background:transparent !important;}',
                         'html body [class*="pI_x6G_frame"]{background:transparent !important;}',
@@ -1135,9 +1130,6 @@ registerSkinActions(actions)
                         'html body [class*="EvIC1a_"]{background:transparent !important;}',
                         'html body [class*="hWmORq_"]{background:transparent !important;}',
                         'html body div[class*="_markdown_"]{background:rgba(255,255,255,0.35) !important;}',
-            // 桌面端标题栏是 titleBarOverlay（透明底 + 深色图标）：女仆皮肤/深色背景透上来后
-            // 最小化/最大化/关闭和菜单文字看不清；顶部 42px 垫一条浅色（pointer-events:none 不挡点击）
-            isElectronShell ? 'html body::after{content:"";position:fixed;top:0;left:0;right:0;height:42px;background:rgba(246,248,252,0.97);z-index:2147483000;pointer-events:none;}' : '',
           ].join('')
           // 按背景亮度决定字色（深背景→浅字，浅背景→深字），并垫一层淡遮罩保证可读
           const lum = BG_LUMA[((index % BG_LUMA.length) + BG_LUMA.length) % BG_LUMA.length]
@@ -1151,20 +1143,11 @@ registerSkinActions(actions)
           // 兜底：官方默认时 DSH 的 body 背景可能压过 CSS，内联也写一份
           try {
             if (!document.body.hasAttribute('data-dsh-maid-atelier')) {
-              if (isElectronShell) {
-                // 顶部 42px 浅色条盖住标题栏区域，深色图标/菜单文字才看得清
-                document.body.style.backgroundImage = 'linear-gradient(rgba(246,248,252,0.97),rgba(246,248,252,0.97)),url("/api/chubby-whale/skin?n=' + index + '")'
-                document.body.style.backgroundSize = '100% 42px, cover'
-                document.body.style.backgroundPosition = 'top center, center center'
-                document.body.style.backgroundRepeat = 'no-repeat, no-repeat'
-                document.body.style.backgroundAttachment = 'fixed, fixed'
-              } else {
-                document.body.style.backgroundImage = 'url("/api/chubby-whale/skin?n=' + index + '")'
-                document.body.style.backgroundSize = 'cover'
-                document.body.style.backgroundPosition = 'center center'
-                document.body.style.backgroundRepeat = 'no-repeat'
-                document.body.style.backgroundAttachment = 'fixed'
-              }
+              document.body.style.backgroundImage = 'url("/api/chubby-whale/skin?n=' + index + '")'
+              document.body.style.backgroundSize = 'cover'
+              document.body.style.backgroundPosition = 'center center'
+              document.body.style.backgroundRepeat = 'no-repeat'
+              document.body.style.backgroundAttachment = 'fixed'
             }
           } catch (e) { }
           showBubble('背景 ' + (index + 1) + '/' + BG_GALLERY.length + ' ～', 2000)
@@ -1174,16 +1157,6 @@ registerSkinActions(actions)
         try {
           const tag = document.getElementById('chubby-skin-bg')
           if (tag) tag.remove()
-          // 清掉内联兜底：否则「恢复默认」后 body 背景还在（背景标签删了、内联样式没删）
-          try {
-            document.body.style.backgroundImage = ''
-            document.body.style.backgroundSize = ''
-            document.body.style.backgroundPosition = ''
-            document.body.style.backgroundRepeat = ''
-            document.body.style.backgroundAttachment = ''
-            document.body.style.removeProperty('--chubby-fg')
-            document.body.style.removeProperty('--chubby-veil')
-          } catch (e) { }
           showBubble('背景恢复默认～', 2000)
         } catch (e) { }
       }
