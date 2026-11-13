@@ -33,21 +33,21 @@ export function registerCapsuleActions(table: ActionTable<ActionHost>): void {
   table.define('capsule-export', (host) => {
     getJson('/memory', { cache: 'no-store' })
       .then((d: any) => {
-        if (!d || !d.ok) { host.bubble('记忆摘要取不到，胶囊没做成'); return }
+        if (!d || !d.ok) { host.bubble('话题取不到，没导出成'); return }
         const topics = Array.isArray(d.topics) ? d.topics : []
         const cap = packCapsule({ madeAt: Date.now(), intimacy: 0, topics })
         const d2 = new Date()
         const pad = (n: number): string => String(n).padStart(2, '0')
-        const stem = '肥鲸记忆胶囊-' + d2.getFullYear() + pad(d2.getMonth() + 1) + pad(d2.getDate())
+        const stem = 'whale-topics-' + d2.getFullYear() + pad(d2.getMonth() + 1) + pad(d2.getDate())
         try {
           saveJson(stem + '.json', cap)
         } catch (e: any) {
-          host.bubble('胶囊文件没存下来：' + String((e && e.message) || e))
+          host.bubble('话题文件没存下来：' + String((e && e.message) || e))
           return
         }
-        host.bubble('鲸落好啦：' + stem + '.json（' + cap.topics.length + ' 个主题，不含原文）', 9000)
+        host.bubble('话题导出好啦：' + stem + '.json（' + cap.topics.length + ' 个话题，不含聊天记录）', 9000)
       })
-      .catch(() => host.bubble('记忆摘要取不到，胶囊没做成'))
+      .catch(() => host.bubble('话题取不到，没导出成'))
   })
 
   // —— 接住漂来的鲸：导入胶囊，只梦见一句，不写记忆 ——
@@ -63,7 +63,7 @@ export function registerCapsuleActions(table: ActionTable<ActionHost>): void {
         reader.onload = () => {
           let cap: any = null
           try { cap = readCapsule(JSON.parse(String(reader.result || 'null'))) } catch (e) { cap = null }
-          if (!cap) { host.bubble('这个胶囊读不出来（格式不对或版本不认）'); return }
+          if (!cap) { host.bubble('这个话题文件读不出来（格式不对或版本不认）'); return }
           const dream = capsuleDream(cap)
           if (dream) host.bubble(dream, 11000)
           // 只存一句梦话，下次打开还能再梦一次；不碰 memory.json
