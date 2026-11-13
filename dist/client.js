@@ -11506,7 +11506,10 @@
               'html body [class*="wSkVaW_"]{background:transparent !important;}',
               'html body [class*="EvIC1a_"]{background:transparent !important;}',
               'html body [class*="hWmORq_"]{background:transparent !important;}',
-              'html body div[class*="_markdown_"]{background:rgba(255,255,255,0.35) !important;}'
+              'html body div[class*="_markdown_"]{background:rgba(255,255,255,0.35) !important;}',
+              // 桌面端标题栏是 titleBarOverlay（透明底 + 深色图标）：女仆皮肤/深色背景透上来后
+              // 最小化/最大化/关闭和菜单文字看不清；顶部 42px 垫一条浅色（pointer-events:none 不挡点击）
+              isElectronShell ? 'html body::after{content:"";position:fixed;top:0;left:0;right:0;height:42px;background:rgba(246,248,252,0.97);z-index:2147483000;pointer-events:none;}' : ""
             ].join("");
             const lum = BG_LUMA[(index % BG_LUMA.length + BG_LUMA.length) % BG_LUMA.length];
             const dark = lum < 128;
