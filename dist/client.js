@@ -625,12 +625,12 @@
   function createDeduper(opts) {
     const windowMs = Math.max(0, Number(opts && opts.windowMs) || 0);
     let lastNorm = "";
-    let lastAt = 0;
+    let lastAt2 = 0;
     return {
       allow(text) {
         const norm = normalizePlain(text);
         const now = Date.now();
-        if (lastNorm && lastAt && now - lastAt < windowMs && norm === lastNorm) {
+        if (lastNorm && lastAt2 && now - lastAt2 < windowMs && norm === lastNorm) {
           try {
             if (opts.onDuplicate) opts.onDuplicate();
           } catch (e) {
@@ -638,12 +638,12 @@
           return false;
         }
         lastNorm = norm;
-        lastAt = now;
+        lastAt2 = now;
         return true;
       },
       reset() {
         lastNorm = "";
-        lastAt = 0;
+        lastAt2 = 0;
       }
     };
   }
@@ -2985,6 +2985,158 @@
     ];
   }
 
+  // src/client/menu-whale.ts
+  function act(label, action) {
+    return { label, action };
+  }
+  function group(title, items) {
+    return { sub: title, items };
+  }
+  function sep2() {
+    return { sep: true };
+  }
+  function toggle(on, whaleOn, whaleOff, func) {
+    return (on ? whaleOn : whaleOff) + "（" + func + "：" + (on ? "开" : "关") + "）";
+  }
+  function buildWhaleMenu(state) {
+    return [
+      group("说话 ▸", [
+        act(toggle(state.voiceOn, "鲸口已开", "鲸口闭着", "语音朗读"), "voice"),
+        act(toggle(state.earOn, "鲸耳竖着", "鲸耳耷拉", "语音待命"), "ear"),
+        act(toggle(state.voiceChatOn, "鲸言在线", "鲸言静默", "语音聊天"), "voice-chat"),
+        act("检查鱼鳃（语音自检）", "test-tts")
+      ]),
+      sep2(),
+      group("内容 ▸", [
+        act("让她念首诗（念诗）", "poem"),
+        act("翻翻书堆（选本书）", "story-books"),
+        act("接着往下讲（自动续讲）", "story-auto"),
+        act("听她说句好话（今日一句）", "daily-line"),
+        act("听听今天的动静（今日简报）", "briefing-card")
+      ]),
+      sep2(),
+      // 需求里的「工作」组：用「干活」保持鲸鱼娘口吻，功能名逐条写在括号里
+      group("干活 ▸", [
+        act("把稿子念成音频（语音导出）", "voice-export"),
+        act("帮你挑挑错字（公文校对）", "proofread"),
+        act("记个钟点（加提醒）", "remind-add")
+      ]),
+      sep2(),
+      act("喂点数据（鱼粮账本）", "fishfood"),
+      sep2(),
+      group("皮肤 ▸", [
+        act("鲸身定住（固定背景）", "skin-fixed"),
+        act("游回原来的水（恢复默认背景）", "skin-bg-reset")
+      ]),
+      sep2(),
+      group("系统 ▸", [
+        act("忘掉这些（清除记忆）", "clear-memory"),
+        act("哄睡（让它游走）", "quit")
+      ])
+    ];
+  }
+
+  // src/client/belly.ts
+  var TOKENS_PER_CHEW = 1e4;
+  var FULL_TOKENS = 5e5;
+  var SCALE_MIN = 1;
+  var SCALE_MAX = 1.12;
+  var SCALE_CAP_TOKENS = 3e5;
+  function sanitizeTokens(v) {
+    if (typeof v !== "number" || Number.isNaN(v)) return 0;
+    if (!Number.isFinite(v)) return v > 0 ? Number.MAX_SAFE_INTEGER : 0;
+    if (v <= 0) return 0;
+    return Math.floor(v);
+  }
+  function clampScale(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return SCALE_MIN;
+    if (n < SCALE_MIN) return SCALE_MIN;
+    if (n > SCALE_MAX) return SCALE_MAX;
+    return n;
+  }
+  function chewsFor(total) {
+    return Math.floor(total / TOKENS_PER_CHEW);
+  }
+  function scaleFor(total) {
+    const ratio = total >= SCALE_CAP_TOKENS ? 1 : total / SCALE_CAP_TOKENS;
+    return clampScale(SCALE_MIN + (SCALE_MAX - SCALE_MIN) * ratio);
+  }
+  function baseline(total) {
+    return { scale: scaleFor(total), chewCount: chewsFor(total), full: total >= FULL_TOKENS };
+  }
+  function readPrev(prev) {
+    if (!prev || typeof prev !== "object" || Array.isArray(prev)) return null;
+    const p = prev;
+    const n = Number(p.chewCount);
+    return {
+      scale: clampScale(p.scale),
+      chewCount: Number.isFinite(n) && n > 0 ? Math.floor(n) : 0,
+      full: p.full === true
+    };
+  }
+  function digest(prev, totalTokens) {
+    const total = sanitizeTokens(totalTokens);
+    const base = baseline(total);
+    const before = readPrev(prev);
+    if (!before) return base;
+    if (base.chewCount < before.chewCount) return base;
+    const scale = clampScale(Math.max(before.scale, base.scale));
+    const full = before.full || base.full;
+    return { scale, chewCount: base.chewCount, full };
+  }
+  function chewPlan(state) {
+    const s = readPrev(state);
+    if (!s) return { scale: SCALE_MIN, hearts: 0 };
+    const chews = s.chewCount;
+    let hearts = 0;
+    if (chews >= 30) hearts = 4;
+    else if (chews >= 15) hearts = 3;
+    else if (chews >= 5) hearts = 2;
+    else if (chews >= 1) hearts = 1;
+    if (s.full) hearts += 1;
+    if (hearts > 5) hearts = 5;
+    return { scale: s.scale, hearts };
+  }
+
+  // src/client/whale-speak.ts
+  var RATE_LOW = 20;
+  var RATE_MID = 45;
+  var RATE_HIGH = 70;
+  var COOLDOWN_MS = 6e4;
+  var SCENE_WORDS = Object.freeze({
+    greet: Object.freeze(["鲸喜", "鲸软", "鲸蹦"]),
+    reply: Object.freeze(["咕噜", "鲸奇", "鲸呆"]),
+    idle: Object.freeze(["鲸懒", "鲸泡", "鲸闹"]),
+    feed: Object.freeze(["鲸软", "咕噜"])
+  });
+  var acc = 0;
+  var hits = 0;
+  var lastAt = null;
+  function hitRate(intimacy) {
+    const v = Number(intimacy);
+    if (!Number.isFinite(v) || v < 30) return RATE_LOW;
+    if (v < 70) return RATE_MID;
+    return RATE_HIGH;
+  }
+  function pickWhaleWord(ctx, now = Date.now()) {
+    if (!ctx || typeof ctx !== "object") return null;
+    const trigger = ctx.trigger;
+    if (typeof trigger !== "string") return null;
+    const pool = SCENE_WORDS[trigger];
+    if (!Array.isArray(pool) || pool.length === 0) return null;
+    const at = Number(now);
+    const stamp = Number.isFinite(at) ? at : Date.now();
+    if (lastAt !== null && stamp - lastAt < COOLDOWN_MS) return null;
+    acc += hitRate(ctx.intimacy);
+    if (acc < 100) return null;
+    acc -= 100;
+    lastAt = stamp;
+    const word = pool[hits % pool.length];
+    hits++;
+    return word;
+  }
+
   // src/client/narration-progress.ts
   function createProgress() {
     let current2 = null;
@@ -3583,13 +3735,14 @@
     function wagGap() {
       return Math.max(2500, look.tailEveryMs * (1 - WAG_JITTER + Math.random() * WAG_JITTER * 2));
     }
+    let bellyScale = 1;
     function applyLook(next) {
       const prev = look;
       look = next || lookFor(0);
       if (look.dots !== prev.dots) dotIdx = pickDotIndexes(look.dots);
       if (look.tailEveryMs !== prev.tailEveryMs) nextWagAt = performance.now() + wagGap();
       try {
-        canvas.style.transform = "scale(" + look.scale + ")";
+        canvas.style.transform = "scale(" + look.scale * bellyScale + ")";
         canvas.style.transformOrigin = "50% 100%";
       } catch (e) {
       }
@@ -3957,10 +4110,19 @@
     function wakeSplash() {
       spawnSplash(10, 2.5);
     }
+    function setBellyScale(multiplier) {
+      const m = Number(multiplier);
+      bellyScale = Number.isFinite(m) ? Math.min(1.12, Math.max(1, m)) : 1;
+      try {
+        canvas.style.transform = "scale(" + look.scale * bellyScale + ")";
+        canvas.style.transformOrigin = "50% 100%";
+      } catch (e) {
+      }
+    }
     function getLook() {
       return look;
     }
-    return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook, wakeSplash, setSleepy, celebrate, shake, jump };
+    return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook, setBellyScale, wakeSplash, setSleepy, celebrate, shake, jump };
   }
 
   // src/client/wake.ts
@@ -4014,14 +4176,14 @@
     const norm = normalizeWakeText(raw);
     if (!norm) return { hit: false, text: "", word: "" };
     const sorted = (words || []).filter(Boolean).map((w) => String(w)).sort((a, b) => b.length - a.length);
-    const hits = sorted.filter((w) => {
+    const hits2 = sorted.filter((w) => {
       const nw = normalizeWakeText(w);
       if (!nw) return false;
       if (nw.length === 1) return norm === nw;
       if (nw.length >= 3) return norm.indexOf(nw) >= 0;
       return norm.startsWith(nw) || norm.length <= 4 && norm.indexOf(nw) >= 0;
     });
-    if (!hits.length) {
+    if (!hits2.length) {
       if (isDefaultWords(words) && norm.length <= 12) {
         for (const re of WAKE_FUZZY) {
           const m = norm.match(re);
@@ -4035,17 +4197,17 @@
       return { hit: false, text: raw.trim(), word: "" };
     }
     let out = raw;
-    for (const w of hits) {
+    for (const w of hits2) {
       const pattern = w.split("").map(escapeRe).join("\\s*");
       out = out.replace(new RegExp(pattern, "gi"), " ");
     }
     out = out.replace(/^[\s。，、！？；：,.!?;:…~～·]+/, "").replace(/[\s。，、！？；：,.!?;:…~～·]+$/, "");
     if (normalizeWakeText(out) === norm) {
       out = norm;
-      for (const w of hits) out = out.split(normalizeWakeText(w)).join("");
+      for (const w of hits2) out = out.split(normalizeWakeText(w)).join("");
     }
     if (!/[\u4e00-\u9fa5a-z0-9]/i.test(out)) out = "";
-    return { hit: true, text: out, word: hits[0] };
+    return { hit: true, text: out, word: hits2[0] };
   }
   function createWakeGate(opts = {}) {
     const words = (opts.words && opts.words.length ? opts.words : WAKE_WORDS).slice();
@@ -5950,6 +6112,10 @@
           cny > 0 ? "按官方价目（" + String(d.priceCheckedAt || "") + " 核对）估算" : ""
         ].filter(Boolean);
         const text = parts.join("，");
+        try {
+          host.feedBelly?.(Number(d.total) || 0);
+        } catch (e) {
+        }
         const buckets = kindBucketText(d.byKind);
         host.bubble(buckets ? text + "\n分桶（本版起）：" + buckets : text, 6e3);
       }).catch(() => host.bubble("鱼粮查不到"));
@@ -6909,6 +7075,81 @@
     };
   }
 
+  // src/client/nervous/events.ts
+  var MINUTE = 60 * 1e3;
+  var HOUR = 60 * MINUTE;
+  var THRESHOLDS = Object.freeze({
+    longWorkAfterMs: 2 * HOUR,
+    recentActivityMs: 10 * MINUTE,
+    longWorkCooldownMs: 30 * MINUTE,
+    lateNightFromHour: 0,
+    lateNightToHour: 5,
+    lateNightCooldownMs: 2 * HOUR,
+    idleAfterMs: 30 * MINUTE,
+    idleCooldownMs: 60 * MINUTE,
+    welcomeBackFromMs: 5 * MINUTE,
+    welcomeBackToMs: 30 * MINUTE,
+    welcomeBackCooldownMs: 30 * MINUTE
+  });
+  var KINDS = ["long-work", "late-night", "idle", "welcome-back"];
+  function readTime(v) {
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return null;
+    return v;
+  }
+  function readSessionStart(v) {
+    const t = readTime(v);
+    return t !== null && t > 0 ? t : null;
+  }
+  function readHour(v) {
+    if (typeof v !== "number" || !Number.isFinite(v)) return null;
+    return v >= 0 && v <= 23 ? v : null;
+  }
+  function copyTriggers(prev) {
+    const out = {};
+    const src = prev && typeof prev === "object" ? prev.lastTriggerAt : null;
+    if (!src || typeof src !== "object") return out;
+    for (const kind of KINDS) {
+      const t = src[kind];
+      if (typeof t === "number" && Number.isFinite(t) && t >= 0) out[kind] = t;
+    }
+    return out;
+  }
+  function inCooldown(last, now, cooldownMs) {
+    if (last === void 0) return false;
+    return now - last < cooldownMs;
+  }
+  function senseEvents(input, prev) {
+    const src = input && typeof input === "object" ? input : {};
+    const now = readTime(src.now);
+    const lastTriggerAt = copyTriggers(prev);
+    const events = [];
+    const prevSeenAt = prev && typeof prev === "object" ? readSessionStart(prev.seenAt) : null;
+    const firstCall = now === null || prevSeenAt === null || now < prevSeenAt;
+    const seenAt = now === null ? prevSeenAt === null ? 0 : prevSeenAt : firstCall || prevSeenAt === null ? now : prevSeenAt;
+    if (now === null) return { events, next: { lastTriggerAt, seenAt } };
+    const at = now;
+    const fire = (kind, cooldownMs) => {
+      if (inCooldown(lastTriggerAt[kind], at, cooldownMs)) return;
+      lastTriggerAt[kind] = at;
+      events.push({ kind, at });
+    };
+    const lastActivityAt = readTime(src.lastActivityAt);
+    const gap = lastActivityAt === null ? null : at - lastActivityAt;
+    const gapKnown = gap !== null && gap >= 0;
+    const recentlyActive = gapKnown && gap <= THRESHOLDS.recentActivityMs;
+    const hour = readHour(src.hour);
+    const lateHour = hour !== null && hour >= THRESHOLDS.lateNightFromHour && hour <= THRESHOLDS.lateNightToHour;
+    if (!firstCall && recentlyActive && at - seenAt >= THRESHOLDS.longWorkAfterMs) {
+      fire("long-work", THRESHOLDS.longWorkCooldownMs);
+    }
+    if (lateHour && recentlyActive) fire("late-night", THRESHOLDS.lateNightCooldownMs);
+    if (gapKnown && gap >= THRESHOLDS.idleAfterMs) fire("idle", THRESHOLDS.idleCooldownMs);
+    if (gapKnown && gap >= THRESHOLDS.welcomeBackFromMs && gap < THRESHOLDS.welcomeBackToMs) {
+      fire("welcome-back", THRESHOLDS.welcomeBackCooldownMs);
+    }
+    return { events, next: { lastTriggerAt, seenAt } };
+  }
+
   // src/client/nervous/index.ts
   var LS_KEY = "chubby-nervous";
   var AWAY_MS = 20 * 60 * 1e3;
@@ -6961,6 +7202,14 @@
     s.affect.tick(now, away, night);
     const st = s.affect.read();
     emit(s, "tick", { away, night, arousal: st.arousal, valence: st.valence });
+    try {
+      const hour = new Date(now).getHours();
+      const sensed = senseEvents({ now, lastActivityAt: s.lastActivityAt, hour }, s.senseState);
+      s.senseState = sensed.next;
+      const typeMap = { "long-work": "work", "late-night": "mood", idle: "away", "welcome-back": "back" };
+      for (const ev of sensed.events) emit(s, typeMap[ev.kind] || "tick", { sense: ev.kind });
+    } catch (e) {
+    }
     if (away && !s.wasAway) emit(s, "away", { sinceMs: now - s.lastActivityAt });
     s.wasAway = away;
     if (moodOf(s) === "idle") {
@@ -7008,7 +7257,8 @@
       wasAway: false,
       listeners: [],
       log,
-      sense: null
+      sense: null,
+      senseState: null
     };
     current = s;
     emit(s, "host", { hook: "attach" });
@@ -10518,6 +10768,7 @@
         const phaseRef = R.useRef(null);
         if (!phaseRef.current) phaseRef.current = createPhaseMachine();
         const animRef = R.useRef(null);
+        const bellyStateRef = R.useRef(null);
         const talkFor = (ms2) => {
           try {
             animRef.current?.talkFor(ms2);
@@ -11281,6 +11532,27 @@
         const reminderPoller = reminderPollerRef.current;
         const actionHost = {
           bubble: showBubble,
+          // 鱼账本进食：token → 体型/爱心 + 鲸语（client/belly.ts 只算参数，这里接画布）
+          feedBelly: (tokens) => {
+            try {
+              bellyStateRef.current = digest(bellyStateRef.current, tokens);
+              const plan = chewPlan(bellyStateRef.current);
+              try {
+                animRef.current?.setBellyScale(plan.scale);
+              } catch (e) {
+              }
+              for (let i = 0; i < plan.hearts; i++) setTimeout(() => {
+                try {
+                  animRef.current?.pushHeart();
+                } catch (e) {
+                }
+              }, 90 * i);
+              const word = pickWhaleWord({ trigger: "feed" });
+              const chews = bellyStateRef.current ? bellyStateRef.current.chewCount : 0;
+              showBubble((word ? word + "～" : "") + "吃到 " + chews + " 口啦（鱼粮 " + Math.round(tokens / 1e3) + "k）", 4e3);
+            } catch (e) {
+            }
+          },
           say: sayLine,
           speak: speakText,
           speakReply: (text) => speakReply(text),
@@ -11910,7 +12182,13 @@
           return () => clearInterval(timer);
         }, []);
         const recoverProps = recover.dot(hidden);
-        const menuItems = menu ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())) : [];
+        const menuItems = menu ? buildWhaleMenu({ voiceOn, earOn, voiceChatOn }).concat([
+          { sep: true },
+          {
+            sub: "完整菜单 ▸",
+            items: buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
+          }
+        ]) : [];
         const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : [];
         menuEntriesRef.current = menuEntries;
         function renderItems(items) {
@@ -11969,6 +12247,11 @@
               onClick: () => {
                 if (dragRef.current.moved > 8) return;
                 animRef.current?.talkFor(1200);
+                try {
+                  const word = pickWhaleWord({ trigger: "reply" });
+                  if (word) showBubble(word + "～");
+                } catch (e) {
+                }
               }
             },
             h(

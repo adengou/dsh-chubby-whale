@@ -152,6 +152,8 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
       // 分桶（2026-11-07 B98）：聊天 / 说书 / 摘要 / 人格各花了多少。
       // 老账本没有 byKind → kindBucketText 返回空串，这一行连标题都不加（不显示 0 桶）。
       const text = parts.join('，')
+      // 进食动画：token 总量交给动画层（接口可选，缺省不动画）
+      try { host.feedBelly?.(Number(d.total) || 0) } catch (e) { }
       const buckets = kindBucketText(d.byKind)
       // 「本版起」：分桶只记新发生的用量，历史账不回填（拆不出来就不编）
       host.bubble(buckets ? text + '\n分桶（本版起）：' + buckets : text, 6000)

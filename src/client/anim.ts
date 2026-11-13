@@ -198,6 +198,9 @@ export function createAnimator(opts: {
     return Math.max(2500, look.tailEveryMs * (1 - WAG_JITTER + Math.random() * WAG_JITTER * 2))
   }
 
+  /** 进食体型系数（1~1.12，鱼账本用；乘在成长档位体型上，不改变 look 本身） */
+  let bellyScale = 1
+
   /** 应用外观参数：体型走 canvas 元素 transform，光点数量即时生效 */
   function applyLook(next: Look): void {
     const prev = look
@@ -207,7 +210,7 @@ export function createAnimator(opts: {
     if (look.dots !== prev.dots) dotIdx = pickDotIndexes(look.dots)
     if (look.tailEveryMs !== prev.tailEveryMs) nextWagAt = performance.now() + wagGap()
     try {
-      canvas.style.transform = 'scale(' + look.scale + ')'
+      canvas.style.transform = 'scale(' + (look.scale * bellyScale) + ')'
       canvas.style.transformOrigin = '50% 100%'
     } catch (e) { }
   }
@@ -599,8 +602,21 @@ export function createAnimator(opts: {
   /** 落地/被摔时甩一圈水花（复用甩尾水珠） */
   function wakeSplash(): void { spawnSplash(10, 2.5) }
 
+  /**
+   * 进食体型：在成长档位体型上乘一个临时系数（1~1.12），只改画布 transform，不改 look。
+   * 传 1 即恢复；非法值按 1 处理，绝不抛错。
+   */
+  function setBellyScale(multiplier: number): void {
+    const m = Number(multiplier)
+    bellyScale = Number.isFinite(m) ? Math.min(1.12, Math.max(1, m)) : 1
+    try {
+      canvas.style.transform = 'scale(' + (look.scale * bellyScale) + ')'
+      canvas.style.transformOrigin = '50% 100%'
+    } catch (e) { }
+  }
+
   /** 当前外观参数（诊断/自测用） */
   function getLook(): Look { return look }
 
-  return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook, wakeSplash, setSleepy, celebrate, shake, jump }
+  return { start, stop, talkFor, pushHeart, setPhase, setLook, getLook, setBellyScale, wakeSplash, setSleepy, celebrate, shake, jump }
 }

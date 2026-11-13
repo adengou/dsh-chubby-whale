@@ -6,6 +6,9 @@
  */
 import { W, H, CW, CH, SX, SY, VERSION, stageStyle, stageTransform, canvasStyle, recoverDotStyle } from './client/styles.js'
 import { buildMenu, tr } from './client/menu.js'
+import { buildWhaleMenu } from './client/menu-whale.js'
+import { digest as digestBelly, chewPlan, type BellyState } from './client/belly.js'
+import { pickWhaleWord } from './client/whale-speak.js'
 import { stopProgress } from './client/narration-progress.js'
 import { narrationRate, chatRate } from './client/rates.js'
 import { handleFileDrop } from './client/dropzone.js'
@@ -307,6 +310,8 @@ registerSkinActions(actions)
       const phaseRef = R.useRef(null as any)
       if (!phaseRef.current) phaseRef.current = createPhaseMachine()
       const animRef = R.useRef(null as any)
+      // 鱼账本进食状态（参数由 client/belly.ts 纯函数算，这里只存）
+      const bellyStateRef = R.useRef(null as BellyState | null)
       /** 动画口型：动画器还没建好时静默（宿主回调里多处共用这一份，别各写一遍 try/catch） */
       const talkFor = (ms: number): void => { try { animRef.current?.talkFor(ms) } catch (e) { } }
       /** 挤压形变：把 scale 写在包裹层上，不动 canvas 自己的成长缩放 */
@@ -977,6 +982,18 @@ registerSkinActions(actions)
       // 菜单动作：动作表 + 处理器注册（client/actions/*.ts），客户端只留组装与分发
       const actionHost: ActionHost = {
         bubble: showBubble,
+        // 鱼账本进食：token → 体型/爱心 + 鲸语（client/belly.ts 只算参数，这里接画布）
+        feedBelly: (tokens: number) => {
+          try {
+            bellyStateRef.current = digestBelly(bellyStateRef.current, tokens)
+            const plan = chewPlan(bellyStateRef.current)
+            try { animRef.current?.setBellyScale(plan.scale) } catch (e) { }
+            for (let i = 0; i < plan.hearts; i++) setTimeout(() => { try { animRef.current?.pushHeart() } catch (e) { } }, 90 * i)
+            const word = pickWhaleWord({ trigger: 'feed' })
+            const chews = bellyStateRef.current ? bellyStateRef.current.chewCount : 0
+            showBubble((word ? word + '～' : '') + '吃到 ' + chews + ' 口啦（鱼粮 ' + Math.round(tokens / 1000) + 'k）', 4000)
+          } catch (e) { }
+        },
         say: sayLine,
         speak: speakText,
         speakReply: (text) => speakReply(text),
@@ -1497,7 +1514,13 @@ registerSkinActions(actions)
       // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去。
       // 可见项清单在渲染时同步算一次（键盘高亮与屏幕顺序共用这一份，不各算一套）。
       const menuItems = menu
-        ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
+        ? ((buildWhaleMenu({ voiceOn, earOn, voiceChatOn }) as any[]).concat([
+            { sep: true as const },
+            {
+              sub: '完整菜单 ▸',
+              items: buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())),
+            },
+          ]) as any[])
         : []
       const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : []
       menuEntriesRef.current = menuEntries
@@ -1528,7 +1551,15 @@ registerSkinActions(actions)
             const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]
             handleFileDrop(file, { showBubble, speakText }).catch(() => { })
           },
-          onClick: () => { if (dragRef.current.moved > 8) return; animRef.current?.talkFor(1200) },
+          onClick: () => {
+            if (dragRef.current.moved > 8) return
+            animRef.current?.talkFor(1200)
+            // 鲸语口癖：点击时偶尔冒一个（频率由 client/whale-speak.ts 控）
+            try {
+              const word = pickWhaleWord({ trigger: 'reply' })
+              if (word) showBubble(word + '～')
+            } catch (e) { }
+          },
         },
           h('div', { ref: squashRef, style: { width: '100%', height: '100%', transformOrigin: '50% 100%', willChange: 'transform' } },
             h('canvas', { ref: canvasRef, width: CW, height: CH, style: canvasStyle }),

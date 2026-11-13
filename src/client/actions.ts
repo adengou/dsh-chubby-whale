@@ -36,6 +36,8 @@ export type ActionHost = {
   playMelody: (notes: any[], bpm: number, onDone?: () => void) => void
   talkFor: (ms: number) => void
   heart: () => void
+  /** 鱼账本进食：把 token 总量交给动画层（可选，缺省不动画） */
+  feedBelly?: (tokens: number) => void
 
   // —— 数据 ——
   persona: Persona

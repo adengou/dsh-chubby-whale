@@ -23,6 +23,8 @@ import type { EventLog, NervousEvent } from './stream.js'
 import { createHostSense } from './host-sense.js'
 import type { SenseSource } from './host-sense.js'
 import { createDreamBook } from './dream.js'
+import { senseEvents } from './events.js'
+import type { SenseState } from './events.js'
 
 const LS_KEY = 'chubby-nervous'
 /** 闲置多久算「主人不在」 */
@@ -66,6 +68,8 @@ type Session = {
   /** 上一次心跳是否处于「不在」，只在翻转时记一条 away 事件 */
   wasAway: boolean
   listeners: Array<() => void>
+  /** 感官事件源（events.ts）的冷却状态；null = 还没跑过 */
+  senseState: SenseState | null
 }
 
 let current: Session | null = null
@@ -108,6 +112,15 @@ function tick(s: Session): void {
   s.affect.tick(now, away, night)
   const st = s.affect.read()
   emit(s, 'tick', { away, night, arousal: st.arousal, valence: st.valence })
+
+  // 感官事件源：连续工作/深夜/久离/回来由 events.ts 纯函数判定，这里只映射成流事件记账
+  try {
+    const hour = new Date(now).getHours()
+    const sensed = senseEvents({ now, lastActivityAt: s.lastActivityAt, hour }, s.senseState)
+    s.senseState = sensed.next
+    const typeMap: Record<string, 'work' | 'mood' | 'away' | 'back'> = { 'long-work': 'work', 'late-night': 'mood', idle: 'away', 'welcome-back': 'back' }
+    for (const ev of sensed.events) emit(s, typeMap[ev.kind] || 'tick', { sense: ev.kind })
+  } catch (e) { }
   if (away && !s.wasAway) emit(s, 'away', { sinceMs: now - s.lastActivityAt })
   s.wasAway = away
 
@@ -154,6 +167,7 @@ export function attachNervous(deps: NervousDeps): () => void {
     listeners: [],
     log,
     sense: null,
+    senseState: null,
   }
   current = s
   emit(s, 'host', { hook: 'attach' })
