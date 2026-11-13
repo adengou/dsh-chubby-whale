@@ -10,7 +10,6 @@ import { digest as digestBelly, chewPlan, type BellyState } from './client/belly
 import { pickWhaleWord } from './client/whale-speak.js'
 import { updateFocus, type FocusState } from './client/focus-reward.js'
 import { buildDiary } from './client/diary.js'
-import { misreadFile } from './client/whale-misread.js'
 import { stopProgress } from './client/narration-progress.js'
 import { narrationRate, chatRate } from './client/rates.js'
 import { handleFileDrop } from './client/dropzone.js'
@@ -649,10 +648,6 @@ registerCapsuleActions(actions)
             }
             if (!file) return
             evPrevent(e); evStop(e)
-            try {
-              const mis = misreadFile({ name: String(file.name || ''), sizeBytes: file.size })
-              if (mis) showBubble(mis.text, 5000)
-            } catch (e) { }
             handleFileDrop(file, { showBubble, speakText }).catch(() => {
               try { showBubble('图片没处理成，再贴一次试试', 4000) } catch (e2) { }
             })
@@ -1622,10 +1617,6 @@ registerCapsuleActions(actions)
             e.preventDefault()
             e.stopPropagation()
             const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]
-            try {
-              const mis = misreadFile({ name: String(file.name || ''), sizeBytes: file.size })
-              if (mis) showBubble(mis.text, 5000)
-            } catch (e) { }
             handleFileDrop(file, { showBubble, speakText }).catch(() => { })
           },
           onClick: () => {
