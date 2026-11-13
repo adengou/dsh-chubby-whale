@@ -436,7 +436,19 @@ export function apply(ctx, rawConfig) {
     // 神经感知第三层（宿主侧）：只读收集器订阅 dsh 会话事件，环形缓冲 200 条。
     // 订阅放在 ctx.effect 里，卸载/热重载时先退订再重订（与 ttsEngine / 自动备份同一套托管方式）；
     // start 内部全 try/catch，订阅失败只打一条 warn，绝不把插件挡在加载之外。
-    const hostCollector = createHostCollector();
+    const hostCollector = createHostCollector({
+        // 诗词弹幕：按出处查整首（主库 + data/poets 目录合并后的诗库）
+        findPoem: async (title, author) => {
+            try {
+                const chunk = await dataPort.readPoemsChunk(0);
+                const hit = (chunk.items || []).find((p) => String(p.title || '') === title && (!author || String(p.author || '') === author));
+                return hit && Array.isArray(hit.lines) && hit.lines.length ? hit.lines.map((x) => String(x)) : null;
+            }
+            catch (e) {
+                return null;
+            }
+        },
+    });
     const mountHostCollector = () => {
         try {
             hostCollector.start(ctx);

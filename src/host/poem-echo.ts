@@ -338,18 +338,22 @@ export function matchPoem(text: string): PoemEcho | null {
   // ② 找主题：触发词最长者胜；等长时按表顺序先到先得
   let theme = ''
   let longest = 0
+  let hitWord = ''
   for (const name of POEM_ECHO_THEMES) {
     for (const word of POEM_ECHO_TABLE[name].words) {
       if (word.length > longest && src.includes(word)) {
         theme = name
         longest = word.length
+        hitWord = word
       }
     }
   }
   if (!theme) return null
 
-  // ③ 确定性轮换：主题哈希 + 文本长度，对池大小取模
+  // ③ 先点题：池里有诗句包含命中的触发词，就优先那句（如「春红」→「林花谢了春红，太匆匆」）；
+  //    没有包含的才按确定性轮换（主题哈希 + 文本长度）取模。
   const pool = POEM_ECHO_TABLE[theme].lines
-  const picked = pool[(themeHash(theme) + src.length) % pool.length]
+  const exact = hitWord ? pool.find((p) => p.line.includes(hitWord)) : undefined
+  const picked = exact || pool[(themeHash(theme) + src.length) % pool.length]
   return { theme, line: picked.line, title: picked.title, author: picked.author }
 }

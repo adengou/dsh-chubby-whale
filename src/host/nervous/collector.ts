@@ -125,7 +125,11 @@ function resolveCap(cap?: number): number {
  * 建一个宿主事件收集器。
  * cap 默认 200（契约值），可传入覆盖（离线测试用）。
  */
-export function createHostCollector(opts?: { cap?: number }): HostCollector {
+export function createHostCollector(opts?: {
+  cap?: number
+  /** 按出处查整首（诗词弹幕用：命中一句后要把整首背上） */
+  findPoem?: (title: string, author: string) => Promise<string[] | null>
+}): HostCollector {
   const cap = resolveCap(opts && opts.cap)
 
   // ── 环形缓冲：固定长度数组 + 写指针，超出容量时覆盖最旧一条 ──────────────
@@ -231,7 +235,15 @@ export function createHostCollector(opts?: { cap?: number }): HostCollector {
         if (txt) {
           const echo = matchPoem(txt)
           if (echo) {
-            push({ at: stamp(), type: 'host', data: { name: 'poem-echo', theme: echo.theme, line: echo.line, title: echo.title, author: echo.author } })
+            const base = { name: 'poem-echo', theme: echo.theme, line: echo.line, title: echo.title, author: echo.author }
+            // 有查找器就异步补整首（查不到就只发一句，不影响弹幕）
+            if (opts && typeof opts.findPoem === 'function') {
+              void opts.findPoem(echo.title, echo.author).then((full) => {
+                try { push({ at: stamp(), type: 'host', data: full && full.length ? Object.assign({}, base, { full }) : base }) } catch (e) { }
+              }).catch(() => { try { push({ at: stamp(), type: 'host', data: base }) } catch (e) { } })
+            } else {
+              push({ at: stamp(), type: 'host', data: base })
+            }
           }
         }
       }

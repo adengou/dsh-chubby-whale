@@ -95,15 +95,20 @@ export function createToolWatch(opts: {
         const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true
         if (poemOn) {
           const line = String(d.line)
-          const tail = poemTail(String((d as any).theme || ''), Date.now())
-          // 出处必须写明：作者《诗题》
-          const title = String((d as any).title || '').trim()
-          const author = String((d as any).author || '').trim()
-          const source = title ? (author ? author + '《' + title + '》' : '《' + title + '》') : ''
-          const cite = source ? '——' + source + '。' : ''
-          const text = '咕噜……「' + line + '」' + cite + tail
-          try { opts.bubble(text, 18000) } catch (err) { }
-          try { if (opts.speak) opts.speak(line + (source ? '。' + source : '') + tail) } catch (err) { }
+          const full = Array.isArray((d as any).full) ? (d as any).full.map((x: any) => String(x)).filter(Boolean) : []
+          const body = full.length ? full.join("\n") : line
+          const tail = poemTail(String((d as any).theme || ""), Date.now())
+          const title = String((d as any).title || "").trim()
+          const author = String((d as any).author || "").trim()
+          const source = title ? (author ? author + "《" + title + "》" : "《" + title + "》") : ""
+          const cite = source ? "——" + source + "。" : ""
+          // 气泡显示整首（有全文时），语音念整首 + 出处 + 后缀
+          const text = "咕噜……" + body + "\n" + cite + tail
+          // 动态时长：按字数 × 慢速每字约 320ms（下限 18s，上限 90s），保证念完整首
+          const spoken = body + (source ? "。" + source : "") + tail
+          const ms = Math.min(90000, Math.max(18000, spoken.length * 320))
+          try { opts.bubble(text, ms) } catch (err) { }
+          try { if (opts.speak) opts.speak(spoken) } catch (err) { }
         }
         continue
       }

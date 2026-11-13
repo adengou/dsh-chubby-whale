@@ -3507,18 +3507,22 @@
           const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true;
           if (poemOn) {
             const line = String(d.line);
+            const full = Array.isArray(d.full) ? d.full.map((x) => String(x)).filter(Boolean) : [];
+            const body = full.length ? full.join("\n") : line;
             const tail = poemTail(String(d.theme || ""), Date.now());
             const title = String(d.title || "").trim();
             const author = String(d.author || "").trim();
             const source = title ? author ? author + "《" + title + "》" : "《" + title + "》" : "";
             const cite = source ? "——" + source + "。" : "";
-            const text = "咕噜……「" + line + "」" + cite + tail;
+            const text = "咕噜……" + body + "\n" + cite + tail;
+            const spoken = body + (source ? "。" + source : "") + tail;
+            const ms2 = Math.min(9e4, Math.max(18e3, spoken.length * 320));
             try {
-              opts.bubble(text, 18e3);
+              opts.bubble(text, ms2);
             } catch (err) {
             }
             try {
-              if (opts.speak) opts.speak(line + (source ? "。" + source : "") + tail);
+              if (opts.speak) opts.speak(spoken);
             } catch (err) {
             }
           }

@@ -207,7 +207,22 @@ export function createHostCollector(opts) {
                 if (txt) {
                     const echo = matchPoem(txt);
                     if (echo) {
-                        push({ at: stamp(), type: 'host', data: { name: 'poem-echo', theme: echo.theme, line: echo.line, title: echo.title, author: echo.author } });
+                        const base = { name: 'poem-echo', theme: echo.theme, line: echo.line, title: echo.title, author: echo.author };
+                        // 有查找器就异步补整首（查不到就只发一句，不影响弹幕）
+                        if (opts && typeof opts.findPoem === 'function') {
+                            void opts.findPoem(echo.title, echo.author).then((full) => {
+                                try {
+                                    push({ at: stamp(), type: 'host', data: full && full.length ? Object.assign({}, base, { full }) : base });
+                                }
+                                catch (e) { }
+                            }).catch(() => { try {
+                                push({ at: stamp(), type: 'host', data: base });
+                            }
+                            catch (e) { } });
+                        }
+                        else {
+                            push({ at: stamp(), type: 'host', data: base });
+                        }
                     }
                 }
             }
