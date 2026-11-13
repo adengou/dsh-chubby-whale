@@ -3469,13 +3469,13 @@
     离别: ["。别难过。"],
     离别酒: ["。别难过。"]
   };
-  function poemTail(theme, now) {
-    const day = Math.floor(now / 864e5);
-    let h = 0;
-    for (const ch of String(theme || "")) h = h * 31 + (ch.codePointAt(0) || 0) >>> 0;
+  var poemTailSeq = 0;
+  function poemTail(theme, line) {
     const special = POEM_TAILS_BY_THEME[theme] || [];
     const pool = special.concat(POEM_TAILS_COMMON);
-    return pool[(h + day) % pool.length];
+    let h = poemTailSeq++ >>> 0;
+    for (const ch of String(theme || "") + String(line || "")) h = h * 31 + (ch.codePointAt(0) || 0) >>> 0;
+    return pool[h % pool.length];
   }
   var PATH = "/nervous";
   var INTERVAL_MS = 3e3;
@@ -3510,7 +3510,7 @@
             const line = String(d.line);
             const full = Array.isArray(d.full) ? d.full.map((x) => String(x)).filter(Boolean) : [];
             const src = full.length ? full : [line];
-            const tail = poemTail(String(d.theme || ""), Date.now());
+            const tail = poemTail(String(d.theme || ""), String(d.line || ""));
             const title = String(d.title || "").trim();
             const author = String(d.author || "").trim();
             const source = title ? author ? author + "《" + title + "》" : "《" + title + "》" : "";

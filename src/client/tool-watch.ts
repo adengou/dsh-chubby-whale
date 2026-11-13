@@ -31,17 +31,20 @@ const POEM_TAILS_BY_THEME: Record<string, string[]> = {
   离别酒: ['。别难过。'],
 }
 
+/** 后缀轮换计数：每次触发 +1，保证不会每次都同一句 */
+let poemTailSeq = 0
+
 /**
- * 选后缀：主题名哈希 + 当天日期取模——
- * 同一主题同一天同一句，隔天自动换；不用随机，便于复现与排查。
+ * 选后缀：诗句哈希 + 递增计数。
+ * 为什么不用「主题哈希 + 日期」：关键词触发的 theme 恒为「关键词」，
+ * 同一天里算出来永远是同一句（主人反馈「每道诗都是这个收尾」）。
  */
-function poemTail(theme: string, now: number): string {
-  const day = Math.floor(now / 86400000)
-  let h = 0
-  for (const ch of String(theme || "")) h = (h * 31 + (ch.codePointAt(0) || 0)) >>> 0
+function poemTail(theme: string, line: string): string {
   const special = POEM_TAILS_BY_THEME[theme] || []
   const pool = special.concat(POEM_TAILS_COMMON)
-  return pool[(h + day) % pool.length]
+  let h = poemTailSeq++ >>> 0
+  for (const ch of String(theme || "") + String(line || "")) h = (h * 31 + (ch.codePointAt(0) || 0)) >>> 0
+  return pool[h % pool.length]
 }
 
 
@@ -101,7 +104,7 @@ export function createToolWatch(opts: {
           const line = String(d.line)
           const full = Array.isArray((d as any).full) ? (d as any).full.map((x: any) => String(x)).filter(Boolean) : []
           const src = full.length ? full : [line]
-          const tail = poemTail(String((d as any).theme || ""), Date.now())
+          const tail = poemTail(String((d as any).theme || ""), String(d.line || ""))
           const title = String((d as any).title || "").trim()
           const author = String((d as any).author || "").trim()
           const source = title ? (author ? author + "《" + title + "》" : "《" + title + "》") : ""
