@@ -2,6 +2,15 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [1.4.15] - 2026-11-14
+
+### 清理（SiliconFlow 残留）
+- 手机版 `mobile/app.js`：语音注释与「没配语音识别 Key」toast 从「硅基流动」改为「DeepSeek 官方」。
+- `docs/MOBILE.md`：语音路由与配置说明同步；不再出现硅基流动 Key。
+- 删除本机用户环境变量 `CHUBBY_WHALE_SILICONFLOW_KEY`（代码本来就不读）。
+- 删除未使用的旧克隆 `~/.dsh/plugins/dsh-chubby-whale`（含旧 config.json 的 siliconflowKey）。
+- 代码/依赖/路由层原本已无 SiliconFlow；`src/dist/mobile` 仅剩说明性注释，CHANGELOG/历史文档保留变更记录。
+
 ## [1.4.14] - 2026-11-14
 
 ### 修复（气泡离鱼头太近）

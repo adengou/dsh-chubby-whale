@@ -48,7 +48,7 @@ dsh web 进程
 页面直接调，不经过本扩展：
 
 - 文化：`/story/books`、`/story/start`、`/story/next`、`/culture?type=chengyu|idiom|minsu`、`/poem`、`/daily`、`/briefing`
-- 语音：`/tts`（edge-tts 合成）、`/asr`（硅基流动识别）
+- 语音：`/tts`（edge-tts 合成）、`/asr`（DeepSeek 官方识别）
 - 形象：`/asset`（whale.png）
 
 ## 4. 数据
@@ -57,7 +57,7 @@ dsh web 进程
 |---|---|
 | `$DSH_HOME/whale-mobile/state.json` | 本扩展的会话 + 提醒 |
 | `mobile/duilian.json` | 对联库（客户端抽取，与桌面端同一份数据） |
-| 插件的 `config.json` | DeepSeek Key / 硅基流动 Key / 模型名（与桌宠共用） |
+| 插件的 `config.json` | DeepSeek Key / 模型名（与桌宠共用） |
 
 ## 5. 配置
 

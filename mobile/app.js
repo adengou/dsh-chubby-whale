@@ -309,7 +309,7 @@ async function playAudioBuffer(buf, token) {
   });
 }
 /* ========================================================================== *
- * 语音输入：录音 → 电脑端 /api/chubby-whale/asr（硅基流动）→ 文字 → 发送
+ * 语音输入：录音 → 电脑端 /api/chubby-whale/asr（DeepSeek 官方）→ 文字 → 发送
  * ========================================================================== */
 
 let micState = null; // { recorder, stream, chunks }
@@ -389,7 +389,7 @@ async function transcribeAndSend(blob, format = 'webm') {
       body: JSON.stringify({ audio, format }),
     });
     if (!res.ok) {
-      toast(res.status === 501 ? '电脑端没配语音识别 Key（硅基流动）' : `识别失败（${res.status}）`, 'error');
+      toast(res.status === 501 ? '电脑端没配语音识别 Key（DeepSeek）' : `识别失败（${res.status}）`, 'error');
       return;
     }
     const data = await res.json();
