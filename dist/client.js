@@ -11632,16 +11632,21 @@
             const last = now - 3 * 3600 * 1e3;
             localStorage.setItem(LAST, String(now));
             const day = new Date(now).toISOString().slice(0, 10);
-            if (!last || localStorage.getItem(DAY) === day) return;
             const text = buildDiary({ now, lastSeenAt: last, summary: "", intimacy: 0 });
             if (!text) return;
             localStorage.setItem(DAY, day);
             setTimeout(() => {
               try {
-                showBubble(text, 14e3);
+                showBubble(text, 22e3);
               } catch (e) {
               }
-            }, 2500);
+            }, 1e3);
+            setTimeout(() => {
+              try {
+                speakText(text, { rate: narrationRate() });
+              } catch (e) {
+              }
+            }, 1500);
           } catch (e) {
           }
         }, []);

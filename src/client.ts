@@ -708,15 +708,16 @@ registerCapsuleActions(actions)
           const LAST = 'chubby-last-seen'
           const DAY = 'chubby-diary-day'
           const now = Date.now()
-          // TEMP-VERIFY：验证期无视 localStorage 的 last-seen，强制按「离线 3 小时」算（验完改回）
+          // TEMP-VERIFY：验证期无视 last-seen 与「今天写过」标记，强制按离线 3 小时试一次（验完改回）
           const last = now - 3 * 3600 * 1000
           localStorage.setItem(LAST, String(now))
           const day = new Date(now).toISOString().slice(0, 10)
-          if (!last || localStorage.getItem(DAY) === day) return
           const text = buildDiary({ now, lastSeenAt: last, summary: '', intimacy: 0 })
           if (!text) return
           localStorage.setItem(DAY, day)
-          setTimeout(() => { try { showBubble(text, 14000) } catch (e) { } }, 2500)
+          // 气泡 + 语音（1 秒后冒，1.5 秒后念，避开开场问候）
+          setTimeout(() => { try { showBubble(text, 22000) } catch (e) { } }, 1000)
+          setTimeout(() => { try { speakText(text, { rate: narrationRate() }) } catch (e) { } }, 1500)
         } catch (e) { }
       }, [])
 
