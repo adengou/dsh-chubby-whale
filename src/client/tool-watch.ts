@@ -23,6 +23,8 @@ export function createToolWatch(opts: {
   enabled: () => boolean
   /** 诗词弹幕开关（localStorage chubby-poem-echo !== 'off'；缺省 = 开） */
   poemEnabled?: () => boolean
+  /** 念出来（诗词弹幕用；缺省 = 只冒气泡不念） */
+  speak?: (text: string) => void
   intervalMs?: number
 }): { start: () => void; stop: () => void } {
   const interval = Number(opts.intervalMs) > 0 ? Number(opts.intervalMs) : INTERVAL_MS
@@ -57,7 +59,12 @@ export function createToolWatch(opts: {
       const d = (e && e.data) || {}
       if (e && e.type === 'host' && d.name === 'poem-echo' && d.line) {
         const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true
-        if (poemOn) { try { opts.bubble('咕噜……「' + String(d.line) + '」——这句是不是有点像你？', 9000) } catch (err) { } }
+        if (poemOn) {
+          const line = String(d.line)
+          const text = '咕噜……「' + line + '」——这句是不是有点像你？'
+          try { opts.bubble(text, 18000) } catch (err) { }
+          try { if (opts.speak) opts.speak(line + '——这句是不是有点像你？') } catch (err) { }
+        }
         continue
       }
       if (e && e.type === 'host' && d.name === 'tool/call' && d.tool) {

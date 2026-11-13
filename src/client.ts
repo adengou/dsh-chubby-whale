@@ -1646,6 +1646,8 @@ registerCapsuleActions(actions)
         const watch = createToolWatch({
           bubble: (text: string, ms?: number) => { try { showBubble(text, ms) } catch (e) { } },
           enabled: () => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } },
+          poemEnabled: () => { try { return localStorage.getItem('chubby-poem-echo') !== 'off' } catch (e) { return false } },
+          speak: (t: string) => { try { speakText(t, { rate: narrationRate() }) } catch (e) { } },
         })
         watch.start()
         return () => { try { watch.stop() } catch (e) { } }

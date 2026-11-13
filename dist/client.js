@@ -3482,8 +3482,14 @@
         if (e && e.type === "host" && d.name === "poem-echo" && d.line) {
           const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true;
           if (poemOn) {
+            const line = String(d.line);
+            const text = "咕噜……「" + line + "」——这句是不是有点像你？";
             try {
-              opts.bubble("咕噜……「" + String(d.line) + "」——这句是不是有点像你？", 9e3);
+              opts.bubble(text, 18e3);
+            } catch (err) {
+            }
+            try {
+              if (opts.speak) opts.speak(line + "——这句是不是有点像你？");
             } catch (err) {
             }
           }
@@ -12922,6 +12928,19 @@
                 return localStorage.getItem("chubby-tool-narrator") !== "off";
               } catch (e) {
                 return false;
+              }
+            },
+            poemEnabled: () => {
+              try {
+                return localStorage.getItem("chubby-poem-echo") !== "off";
+              } catch (e) {
+                return false;
+              }
+            },
+            speak: (t) => {
+              try {
+                speakText(t, { rate: narrationRate() });
+              } catch (e) {
               }
             }
           });
