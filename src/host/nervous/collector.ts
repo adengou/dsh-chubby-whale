@@ -129,6 +129,8 @@ export function createHostCollector(opts?: {
   cap?: number
   /** 按出处查整首（诗词弹幕用：命中一句后要把整首背上） */
   findPoem?: (title: string, author: string) => Promise<string[] | null>
+  /** 关键词触发（优先于意境）：从诗库索引里找用户话里的 2~4 字词 */
+  keywordEcho?: (text: string) => { theme: string; line: string; title: string; author: string } | null
 }): HostCollector {
   const cap = resolveCap(opts && opts.cap)
 
@@ -233,7 +235,9 @@ export function createHostCollector(opts?: {
       if (event && event.type === 'user/message') {
         const txt = Array.from(userTextOf(event)).slice(0, 1000).join('')
         if (txt) {
-          const echo = matchPoem(txt)
+          // 关键词优先（用户说诗里的词），没命中再落到意境（坚持/往事这类诗里没有的词）
+        const kw = typeof opts.keywordEcho === 'function' ? (() => { try { return opts.keywordEcho(txt) } catch (e) { return null } })() : null
+        const echo = kw || matchPoem(txt)
           if (echo) {
             const base = { name: 'poem-echo', theme: echo.theme, line: echo.line, title: echo.title, author: echo.author }
             // 有查找器就异步补整首（查不到就只发一句，不影响弹幕）

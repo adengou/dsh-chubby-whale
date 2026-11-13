@@ -32,6 +32,8 @@ import { createPersonalityHandlers } from './host/routes/personality.js'
 import { createChatHandler } from './host/routes/chat.js'
 import { createProofreadHandler } from './host/routes/proofread.js'
 import { createHostCollector } from './host/nervous/collector.js'
+import { buildPoemIndex, matchPoemKeyword } from './host/poem-index.js'
+import type { PoemIndex, PoemSource } from './host/poem-index.js'
 import { createNervousHandler } from './host/routes/nervous.js'
 import { createChatStreamHandler } from './host/routes/chat-stream.js'
 import { createStoryHandlers } from './host/routes/story.js'
@@ -417,7 +419,19 @@ export function apply(ctx: any, rawConfig?: any): void {
   // 神经感知第三层（宿主侧）：只读收集器订阅 dsh 会话事件，环形缓冲 200 条。
   // 订阅放在 ctx.effect 里，卸载/热重载时先退订再重订（与 ttsEngine / 自动备份同一套托管方式）；
   // start 内部全 try/catch，订阅失败只打一条 warn，绝不把插件挡在加载之外。
+  // 诗句关键词索引：启动时从诗库构建（主库 + data/poets 目录），异步不挡加载
+  let poemIndex: PoemIndex | null = null
+  void (async () => {
+    try {
+      const chunk = await dataPort.readPoemsChunk(0)
+      poemIndex = buildPoemIndex(((chunk && chunk.items) || []) as PoemSource[])
+    } catch (e) { poemIndex = null }
+  })()
   const hostCollector = createHostCollector({
+    keywordEcho: (text: string) => {
+      const hit = matchPoemKeyword(text, poemIndex)
+      return hit ? { theme: '关键词', line: hit.line, title: hit.title, author: hit.author } : null
+    },
     // 诗词弹幕：按出处查整首（主库 + data/poets 目录合并后的诗库）
     findPoem: async (title: string, author: string) => {
       try {
