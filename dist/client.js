@@ -11604,7 +11604,7 @@
                 dbgMs = Number(localStorage.getItem("chubby-focus-threshold-ms") || 0);
               } catch (e) {
               }
-              const opts = dbgMs > 0 && Number.isFinite(dbgMs) ? { thresholdMs: dbgMs } : void 0;
+              const opts = dbgMs > 0 && Number.isFinite(dbgMs) ? { thresholdMs: dbgMs } : { thresholdMs: 9e4 };
               const r = updateFocus(focusStateRef.current, { now, active }, opts);
               focusStateRef.current = r.state;
               if (r.reward) {

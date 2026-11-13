@@ -686,7 +686,8 @@ registerCapsuleActions(actions)
             // 调试开关：验证专注奖励时可临时调小阈值（localStorage 里是正数才生效）
             let dbgMs = 0
             try { dbgMs = Number(localStorage.getItem('chubby-focus-threshold-ms') || 0) } catch (e) { }
-            const opts = (dbgMs > 0 && Number.isFinite(dbgMs)) ? { thresholdMs: dbgMs } : undefined
+            // TEMP-VERIFY：桌面端没有 Console，验证期把默认阈值临时缩到 90 秒（验完改回 45 分钟）
+            const opts = (dbgMs > 0 && Number.isFinite(dbgMs)) ? { thresholdMs: dbgMs } : { thresholdMs: 90000 }
             const r = updateFocus(focusStateRef.current, { now, active }, opts)
             focusStateRef.current = r.state
             if (r.reward) {
