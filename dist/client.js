@@ -3860,7 +3860,7 @@
         if (sleepy) drawZZZ(t);
         if (t < state.talkUntil && !sleepy) {
           const phase2 = Math.sin(t / 150);
-          const open = phase2 * 0.35 + 0.5;
+          const open = phase2 * 0.45 + 0.5;
           drawMouth(1 - open);
         }
         drawSplashes(dt);
