@@ -96,18 +96,29 @@ export function createToolWatch(opts: {
         if (poemOn) {
           const line = String(d.line)
           const full = Array.isArray((d as any).full) ? (d as any).full.map((x: any) => String(x)).filter(Boolean) : []
-          const body = full.length ? full.join("\n") : line
+          const src = full.length ? full : [line]
           const tail = poemTail(String((d as any).theme || ""), Date.now())
           const title = String((d as any).title || "").trim()
           const author = String((d as any).author || "").trim()
           const source = title ? (author ? author + "《" + title + "》" : "《" + title + "》") : ""
-          const cite = source ? "——" + source + "。" : ""
-          // 气泡显示整首（有全文时），语音念整首 + 出处 + 后缀
-          const text = "咕噜……" + body + "\n" + cite + tail
-          // 动态时长：按字数 × 慢速每字约 320ms（下限 18s，上限 90s），保证念完整首
-          const spoken = body + (source ? "。" + source : "") + tail
-          const ms = Math.min(90000, Math.max(18000, spoken.length * 320))
-          try { opts.bubble(text, ms) } catch (err) { }
+          // 每 2 句一条字幕、依次显示：整首塞一条太长，气泡会显示不全
+          const chunks: string[][] = []
+          for (let i = 0; i < src.length; i += 2) chunks.push(src.slice(i, i + 2))
+          if (!chunks.length) chunks.push([line])
+          let delay = 0
+          chunks.forEach((seg, idx) => {
+            const isLast = idx === chunks.length - 1
+            const head = idx === 0 ? "咕噜……" : ""
+            const cite = isLast && source ? "\n——" + source + "。" : ""
+            const end = isLast ? tail : ""
+            const text = head + seg.join("\n") + cite + end
+            const segMs = Math.min(30000, Math.max(6000, (seg.join("").length + (isLast ? 20 : 0)) * 320))
+            if (delay === 0) { try { opts.bubble(text, segMs) } catch (err) { } }
+            else { setTimeout(() => { try { opts.bubble(text, segMs) } catch (err) { } }, delay) }
+            delay += segMs
+          })
+          // 语音一次念完整首 + 出处 + 后缀
+          const spoken = src.join("") + (source ? "。" + source : "") + tail
           try { if (opts.speak) opts.speak(spoken) } catch (err) { }
         }
         continue

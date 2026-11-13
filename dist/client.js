@@ -3508,19 +3508,38 @@
           if (poemOn) {
             const line = String(d.line);
             const full = Array.isArray(d.full) ? d.full.map((x) => String(x)).filter(Boolean) : [];
-            const body = full.length ? full.join("\n") : line;
+            const src = full.length ? full : [line];
             const tail = poemTail(String(d.theme || ""), Date.now());
             const title = String(d.title || "").trim();
             const author = String(d.author || "").trim();
             const source = title ? author ? author + "《" + title + "》" : "《" + title + "》" : "";
-            const cite = source ? "——" + source + "。" : "";
-            const text = "咕噜……" + body + "\n" + cite + tail;
-            const spoken = body + (source ? "。" + source : "") + tail;
-            const ms2 = Math.min(9e4, Math.max(18e3, spoken.length * 320));
-            try {
-              opts.bubble(text, ms2);
-            } catch (err) {
-            }
+            const chunks = [];
+            for (let i = 0; i < src.length; i += 2) chunks.push(src.slice(i, i + 2));
+            if (!chunks.length) chunks.push([line]);
+            let delay = 0;
+            chunks.forEach((seg, idx) => {
+              const isLast = idx === chunks.length - 1;
+              const head = idx === 0 ? "咕噜……" : "";
+              const cite = isLast && source ? "\n——" + source + "。" : "";
+              const end = isLast ? tail : "";
+              const text = head + seg.join("\n") + cite + end;
+              const segMs = Math.min(3e4, Math.max(6e3, (seg.join("").length + (isLast ? 20 : 0)) * 320));
+              if (delay === 0) {
+                try {
+                  opts.bubble(text, segMs);
+                } catch (err) {
+                }
+              } else {
+                setTimeout(() => {
+                  try {
+                    opts.bubble(text, segMs);
+                  } catch (err) {
+                  }
+                }, delay);
+              }
+              delay += segMs;
+            });
+            const spoken = src.join("") + (source ? "。" + source : "") + tail;
             try {
               if (opts.speak) opts.speak(spoken);
             } catch (err) {
