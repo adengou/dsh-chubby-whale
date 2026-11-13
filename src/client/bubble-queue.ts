@@ -115,11 +115,13 @@ export function createBubbleScheduler(timers?: {
 
   const queue: Queued[] = []
   let current: BubbleItem | null = null
+  let currentAt = 0
   let timer: any = null
 
   /** 让一条气泡成为「当前」（重置计时器，到点换下一条） */
-  function startItem(item: BubbleItem): void {
+  function startItem(item: BubbleItem, at = now()): void {
     current = item
+    currentAt = at
     try { item.start() } catch (e) { }
     timer = st(() => {
       timer = null
@@ -167,15 +169,17 @@ export function createBubbleScheduler(timers?: {
       timer = null
       try { preempted.stop() } catch (e) { }
       if (!preempted.transient) {
-        // 按优先级放回（不能 unshift 到队首，否则下一轮又先取到它，高优先级没机会）
-        queue.splice(insertIndex(queue, preempted), 0, { item: preempted, at: now() })
+        // 按优先级放回（不能 unshift 到队首，否则下一轮又先取到它，高优先级没机会）。
+        // 入队时刻沿用**第一次入队**的那个：被抢占不算「重新排队」，
+        // 否则一条回复每次被语音顶掉都重置过期计时，能无限往后拖、在很久之后补播。
+        queue.splice(insertIndex(queue, preempted), 0, { item: preempted, at: currentAt })
       }
       dropStale()
     }
 
     const next = queue.shift()
     if (!next) return
-    startItem(next.item)
+    startItem(next.item, next.at)
   }
 
   /** 清掉排队中「同线同 key」的旧条目；返回是否有当前项也是同线同 key */

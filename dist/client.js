@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.5";
+  var VERSION = "1.4.6";
 
   // src/client/styles.ts
   var W = 240;
@@ -8721,9 +8721,11 @@
     const now = timers && timers.now ? timers.now : () => Date.now();
     const queue = [];
     let current2 = null;
+    let currentAt = 0;
     let timer = null;
-    function startItem(item2) {
+    function startItem(item2, at = now()) {
       current2 = item2;
+      currentAt = at;
       try {
         item2.start();
       } catch (e) {
@@ -8780,13 +8782,13 @@
         } catch (e) {
         }
         if (!preempted.transient) {
-          queue.splice(insertIndex(queue, preempted), 0, { item: preempted, at: now() });
+          queue.splice(insertIndex(queue, preempted), 0, { item: preempted, at: currentAt });
         }
         dropStale();
       }
       const next = queue.shift();
       if (!next) return;
-      startItem(next.item);
+      startItem(next.item, next.at);
     }
     function dropKey(lane, key) {
       for (let i = queue.length - 1; i >= 0; i--) {
@@ -9516,7 +9518,8 @@
       const rate = normalizeRate(storyRate(), host.narrationRate());
       const speakMs = estimateSpeakMsAtRate(text, rate);
       if (d && d.book) refs.book.current = String(d.book);
-      host.bubble(titleOf(d), 12e3);
+      const showTitle = host.poemBubble || host.bubble;
+      showTitle(titleOf(d), 12e3);
       host.talkFor(8e3);
       if (!text.trim()) {
         refs.busy.current = false;
@@ -9527,7 +9530,7 @@
       if (host.isVoiceOff()) {
         refs.busy.current = false;
         refs.narrating.current = false;
-        host.bubble(titleOf(d) + "（语音朗读关着）", 12e3);
+        showTitle(titleOf(d) + "（语音朗读关着）", 12e3);
         return;
       }
       refs.busy.current = true;
@@ -9893,7 +9896,7 @@
       }
       if (/^(继续|接着说|接着讲|往下讲)$/.test(cmd)) {
         takeOver();
-        host.bubble("（点播）接着说", 3e3);
+        host.bubble("（点播）接着说", 3e3, { transient: true });
         try {
           host.storyState.auto.current = true;
           setStoryAuto(true);
@@ -9945,7 +9948,7 @@
         return true;
       }
       const book = hit.book || "";
-      host.bubble("（点播）" + (book ? "讲《" + book + "》" : "讲一段书"), 4e3);
+      host.bubble("（点播）" + (book ? "讲《" + book + "》" : "讲一段书"), 4e3, { transient: true });
       host.storyState.auto.current = true;
       host.story.start(book);
       return true;
@@ -9993,7 +9996,7 @@
     } catch (e) {
     }
     try {
-      host.bubble(tip, ms2);
+      host.bubble(tip, ms2, { staleAfter: 15e3 });
     } catch (e) {
     }
   }
@@ -10127,7 +10130,7 @@
             } catch (e) {
             }
             try {
-              host.bubble(tip, 6e3);
+              host.bubble(tip, 6e3, { staleAfter: 15e3 });
             } catch (e) {
             }
             try {
@@ -10192,7 +10195,7 @@
                 }
                 if (fresh) {
                   try {
-                    host.bubble(reply, 6e3, { key: "chat:stream" });
+                    host.bubble(reply, 6e3, { key: "chat:stream", staleAfter: 2e4 });
                   } catch (e) {
                   }
                 }
@@ -10232,7 +10235,7 @@
           } catch (e) {
           }
           try {
-            host.bubble(tail, 6e3, { key: "chat:stream" });
+            host.bubble(tail, 6e3, { key: "chat:stream", staleAfter: 2e4 });
           } catch (e) {
           }
           try {
@@ -10261,7 +10264,7 @@
             }
           }
           try {
-            host.bubble(partial ? "网络断了一下，本鲸先念到这儿～" : "网络断了一下，本鲸没说完～", 5e3);
+            host.bubble(partial ? "网络断了一下，本鲸先念到这儿～" : "网络断了一下，本鲸没说完～", 5e3, { staleAfter: 12e3 });
           } catch (e2) {
           }
           return true;
@@ -10277,7 +10280,7 @@
       if (d0) d0.lastChat = { stage: "entry", busy: host.busy.isBusy(), tts: !!host.ttsPlaying(), at: Date.now() };
       if (host.busy.isBusy() && host.busy.age() < BUSY_STALE_MS) {
         if (d0) d0.lastChat.stage = "blocked-busy";
-        host.bubble("本鲸还在想上一句呢，稍等～", 2500);
+        host.bubble("本鲸还在想上一句呢，稍等～", 2500, { transient: true, staleAfter: 5e3 });
         return;
       }
       if (host.narrating.current || host.storyBusy.current || host.ttsPlaying()) {
@@ -10369,9 +10372,9 @@
         }
         host.setMessages((m) => [...m, { who: "fish", text: reply }]);
         if (host.voiceMode.current) {
-          host.bubble("（说）" + reply, 8e3, { key: "chat:stream" });
+          host.bubble("（说）" + reply, 8e3, { key: "chat:stream", staleAfter: 2e4 });
         }
-        if (data && data.upgraded) host.bubble("本鲸又长大一点啦！", 4e3);
+        if (data && data.upgraded) host.bubble("本鲸又长大一点啦！", 4e3, { staleAfter: 15e3 });
       } catch (err) {
         if (!host.epoch.isCurrent(myEpoch)) return;
         const timedOut = !!err && (err.name === "AbortError" || err.name === "TimeoutError" || err.code === 20 || err.code === 2 || err.code === 23);
@@ -11475,7 +11478,8 @@
         })());
         const reminderPollerRef = hookApi.useLazyRef(() => createReminderPoller({
           getJson: (path, init) => getJson(path, init),
-          bubble: showBubble,
+          // 到点提醒：等太久（比如正在念长诗）就不补播了，避免「过期的提醒」突然插进来
+          bubble: (text, ms2) => showBubble(text, ms2, { staleAfter: 3e4 }),
           talkFor,
           speak: (text) => {
             try {
@@ -11692,14 +11696,16 @@
             ms: ms2,
             transient: !!(opts && opts.transient),
             ...opts && opts.key ? { key: opts.key } : {},
-            ...opts && opts.staleAfter ? { staleAfter: opts.staleAfter } : {},
+            // 主气泡默认 20 秒过期：被长诗/长说书压在队里太久就不补播了（内容是时效性的，
+            // 过期补播看起来像「串线」——旧提醒、旧回复突然冒出来）。
+            staleAfter: opts && opts.staleAfter !== void 0 ? opts.staleAfter : 2e4,
             start: () => bubble.show(text, ms2),
             stop: () => bubble.hide()
           });
         }
         function sayPersonaLine(text, ms2 = 4e3) {
           if (!text) return;
-          bubbleScheduler.enqueue({ lane: "persona", text, ms: ms2, start: () => personaBubble.show(text, ms2), stop: () => personaBubble.hide() });
+          bubbleScheduler.enqueue({ lane: "persona", text, ms: ms2, staleAfter: 2e4, start: () => personaBubble.show(text, ms2), stop: () => personaBubble.hide() });
           try {
             if (localStorage.getItem("chubby-voice") === "off") return;
             const v = bridge.ensure();
@@ -12367,6 +12373,8 @@
               return false;
             }
           },
+          // 说书段标题走诗词线：与逐句字幕同一条线、同道替换，避免「标题被字幕顶下又插回来」的串线
+          poemBubble: showPoemBubble,
           refs: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef }
         });
         const reminderPoller = reminderPollerRef.current;
@@ -13091,17 +13099,17 @@
         R.useEffect(() => {
           const watch = createToolWatch({
             bubble: (text, ms2) => {
-              const dur = Number(ms2) || 18e3;
+              const dur = Math.min(Number(ms2) || 12e3, 12e3);
               try {
                 poemLockUntil = Date.now() + dur;
               } catch (e) {
               }
-              bubbleScheduler.enqueue({ lane: "poem", text, ms: dur, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() });
+              bubbleScheduler.enqueue({ lane: "poem", text, ms: dur, staleAfter: 2e4, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() });
             },
             toolBubble: (text, ms2) => {
               const dur = Number(ms2) || 5200;
               try {
-                bubbleScheduler.enqueue({ lane: "tool", text, ms: dur, start: () => toolBubble.show(text, dur), stop: () => toolBubble.hide() });
+                bubbleScheduler.enqueue({ lane: "tool", text, ms: dur, staleAfter: 15e3, start: () => toolBubble.show(text, dur), stop: () => toolBubble.hide() });
               } catch (e) {
               }
             },

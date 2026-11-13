@@ -355,7 +355,8 @@ registerSkinActions(actions)
       // 到点提醒：轮询 + 播报队列在 client/reminders.ts；惰性 ref 保证跨渲染只建一个实例
       const reminderPollerRef = hookApi.useLazyRef(() => createReminderPoller({
         getJson: (path, init) => getJson(path, init),
-        bubble: showBubble,
+        // 到点提醒：等太久（比如正在念长诗）就不补播了，避免「过期的提醒」突然插进来
+        bubble: (text: string, ms: number) => showBubble(text, ms, { staleAfter: 30000 }),
         talkFor,
         speak: (text) => { try { speakText(text) } catch (e) { } },
         isSpeaking: () => ttsPlaying,
@@ -550,14 +551,16 @@ registerSkinActions(actions)
           lane: 'main', text, ms,
           transient: !!(opts && opts.transient),
           ...(opts && opts.key ? { key: opts.key } : {}),
-          ...(opts && opts.staleAfter ? { staleAfter: opts.staleAfter } : {}),
+          // 主气泡默认 20 秒过期：被长诗/长说书压在队里太久就不补播了（内容是时效性的，
+          // 过期补播看起来像「串线」——旧提醒、旧回复突然冒出来）。
+          staleAfter: opts && opts.staleAfter !== undefined ? opts.staleAfter : 20000,
           start: () => bubble.show(text, ms), stop: () => bubble.hide(),
         })
       }
       /** persona 台词（问候/饥饿/今日一句）：走独立线，不占对话主气泡 */
       function sayPersonaLine(text: string, ms = 4000): void {
         if (!text) return
-        bubbleScheduler.enqueue({ lane: 'persona', text, ms, start: () => personaBubble.show(text, ms), stop: () => personaBubble.hide() })
+        bubbleScheduler.enqueue({ lane: 'persona', text, ms, staleAfter: 20000, start: () => personaBubble.show(text, ms), stop: () => personaBubble.hide() })
         try {
           if (localStorage.getItem('chubby-voice') === 'off') return
           const v: any = bridge.ensure()
@@ -1141,6 +1144,8 @@ registerSkinActions(actions)
         talkFor: (ms: number) => { try { animRef.current?.talkFor(ms) } catch (e) { } },
         narrationRate: narrationRate,
         isVoiceOff: () => { try { return localStorage.getItem('chubby-voice') === 'off' } catch (e) { return false } },
+        // 说书段标题走诗词线：与逐句字幕同一条线、同道替换，避免「标题被字幕顶下又插回来」的串线
+        poemBubble: showPoemBubble,
         refs: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
       })
 
@@ -1743,13 +1748,15 @@ registerSkinActions(actions)
       R.useEffect(() => {
         const watch = createToolWatch({
           bubble: (text: string, ms?: number) => {
-            const dur = Number(ms) || 18000
+            // 弹幕最多占 12 秒（原文案按 18 秒算，长叙述里会把主气泡压太久）
+            const dur = Math.min(Number(ms) || 12000, 12000)
             try { poemLockUntil = Date.now() + dur } catch (e) { }
-            bubbleScheduler.enqueue({ lane: 'poem', text, ms: dur, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() })
+            // 等 20 秒还没轮到就不补播：过了那个点，这句诗已经和现场无关了
+            bubbleScheduler.enqueue({ lane: 'poem', text, ms: dur, staleAfter: 20000, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() })
           },
           toolBubble: (text: string, ms?: number) => {
             const dur = Number(ms) || 5200
-            try { bubbleScheduler.enqueue({ lane: 'tool', text, ms: dur, start: () => toolBubble.show(text, dur), stop: () => toolBubble.hide() }) } catch (e) { }
+            try { bubbleScheduler.enqueue({ lane: 'tool', text, ms: dur, staleAfter: 15000, start: () => toolBubble.show(text, dur), stop: () => toolBubble.hide() }) } catch (e) { }
           },
           enabled: () => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } },
           poemEnabled: () => { try { return localStorage.getItem('chubby-poem-echo') !== 'off' } catch (e) { return false } },

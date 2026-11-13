@@ -61,6 +61,12 @@ export type StoryHost = {
   /** 解叙述锁 */
   clearNarrate: () => void
   bubble: (text: string, ms?: number) => void
+  /**
+   * 诗词线气泡（说书的段标题）：与念诗字幕同一条最高优先级线，且同道替换。
+   * 缺省时退回 bubble——旧行为是段标题走主气泡，会被逐句字幕顶下来、回队列，
+   * 结果在念到一半时把标题插回来（串线），所以能注入就走诗词线。
+   */
+  poemBubble?: (text: string, ms?: number) => void
   speak: (text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }) => void
   talkFor: (ms: number) => void
   narrationRate: () => string
@@ -329,8 +335,10 @@ export function createStoryController(host: StoryHost): StoryController {
   // 叙述锁/看门狗按实际语速估算：-35% 的估算时长比实际短 1/0.65，旧值会提前解锁让语音插话
   const speakMs = estimateSpeakMsAtRate(text, rate)
     if (d && d.book) refs.book.current = String(d.book)
-    // 头顶只显示状态：不把整段古文糊上来
-    host.bubble(titleOf(d), 12000)
+    // 头顶只显示状态：不把整段古文糊上来。段标题走诗词线（同道替换），
+    // 第一句字幕一到就顶掉它，不会在念到一半时被回队列的旧标题插回来。
+    const showTitle = host.poemBubble || host.bubble
+    showTitle(titleOf(d), 12000)
     host.talkFor(8000)
     if (!text.trim()) {
       // 没正文时绝不能占线等 onDone（空文本 speak 不会回调）
@@ -342,7 +350,7 @@ export function createStoryController(host: StoryHost): StoryController {
     if (host.isVoiceOff()) {
       refs.busy.current = false
       refs.narrating.current = false
-      host.bubble(titleOf(d) + '（语音朗读关着）', 12000)
+      showTitle(titleOf(d) + '（语音朗读关着）', 12000)
       return
     }
     refs.busy.current = true

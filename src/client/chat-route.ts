@@ -118,7 +118,7 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     }
     if (/^(继续|接着说|接着讲|往下讲)$/.test(cmd)) {
       takeOver()
-      host.bubble('（点播）接着说', 3000)
+      host.bubble('（点播）接着说', 3000, { transient: true })
       // 点播故事=要连播：同步写 localStorage，避免菜单显示「关」但实际自动接段
       try { host.storyState.auto.current = true; setStoryAuto(true) } catch (e) { }
       host.story.start(host.storyState.book.current || '')
@@ -177,7 +177,7 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     }
 
     const book = hit.book || ''
-    host.bubble('（点播）' + (book ? '讲《' + book + '》' : '讲一段书'), 4000)
+    host.bubble('（点播）' + (book ? '讲《' + book + '》' : '讲一段书'), 4000, { transient: true })
     host.storyState.auto.current = true
     host.story.start(book)
     return true

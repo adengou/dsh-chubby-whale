@@ -34,7 +34,7 @@ import { clearT } from './util.js'
 
 export type ChatHost = {
   persona: Persona
-  bubble: (text: string, ms?: number, opts?: { key?: string; staleAfter?: number }) => void
+  bubble: (text: string, ms?: number, opts?: { key?: string; staleAfter?: number; transient?: boolean }) => void
   say: (text: string, ms?: number, voiceOpts?: { rate?: string; pitch?: string }) => void
   speak: (text: string, opts?: { rate?: string; narration?: boolean; onDone?: () => void }) => void
   speakReply: (text: string) => void
@@ -86,7 +86,7 @@ export function resolveChatLang(): string {
 /** 兜底提示：消息列表留一条 + 气泡（两个动作各自失败都不影响主流程，原来三处各写两份） */
 function fishTip(host: ChatHost, tip: string, ms = 6000): void {
   try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tip }]) } catch (e) { }
-  try { host.bubble(tip, ms) } catch (e) { }
+  try { host.bubble(tip, ms, { staleAfter: 15000 }) } catch (e) { }
 }
 
 /** 诊断对象：与旧实现一样直接写 window.__chubbyWhale */
@@ -204,7 +204,7 @@ export function createChatSender(host: ChatHost): ChatController {
         try { if (host.onPhase) host.onPhase('error') } catch (e) { }
         if (isCurrent()) {
           try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tip }]) } catch (e) { }
-          try { host.bubble(tip, 6000) } catch (e) { }
+          try { host.bubble(tip, 6000, { staleAfter: 15000 }) } catch (e) { }
           try { host.speakReply(tip) } catch (e) { }
         }
         const d = diag()
@@ -250,7 +250,7 @@ export function createChatSender(host: ChatHost): ChatController {
               // 这里再吞掉整条回复，会让主人的提问孤零零挂着、看不到答案。
               const fresh = host.replyDeduper.allow(reply)
               try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: reply }]) } catch (e) { }
-              if (fresh) { try { host.bubble(reply, 6000, { key: 'chat:stream' }) } catch (e) { } }
+              if (fresh) { try { host.bubble(reply, 6000, { key: 'chat:stream', staleAfter: 20000 }) } catch (e) { } }
               try { host.talkFor(1500) } catch (e) { }
               try { host.scrollBody() } catch (e) { }
               const d = diag()
@@ -276,7 +276,7 @@ export function createChatSender(host: ChatHost): ChatController {
       try { if (host.onPhase) host.onPhase(tail ? 'success' : 'error') } catch (e) { }
       if (tail) {
         try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: tail }]) } catch (e) { }
-        try { host.bubble(tail, 6000, { key: 'chat:stream' }) } catch (e) { }
+        try { host.bubble(tail, 6000, { key: 'chat:stream', staleAfter: 20000 }) } catch (e) { }
         try { host.scrollBody() } catch (e) { }
       } else {
         fishTip(host, host.persona.line('error'))
@@ -298,7 +298,7 @@ export function createChatSender(host: ChatHost): ChatController {
         if (partial) {
           try { host.setMessages((m: any[]) => [...m, { who: 'fish', text: partial }]) } catch (e2) { }
         }
-        try { host.bubble(partial ? '网络断了一下，本鲸先念到这儿～' : '网络断了一下，本鲸没说完～', 5000) } catch (e2) { }
+        try { host.bubble(partial ? '网络断了一下，本鲸先念到这儿～' : '网络断了一下，本鲸没说完～', 5000, { staleAfter: 12000 }) } catch (e2) { }
         return true
       }
       return false
@@ -321,7 +321,7 @@ export function createChatSender(host: ChatHost): ChatController {
     if (host.busy.isBusy() && host.busy.age() < BUSY_STALE_MS) {
       if (d0) d0.lastChat.stage = 'blocked-busy'
       // 打字也要提示：客户端发送后会把输入框清空，原来只在语音时冒一句，打字的这句就静默丢了
-      host.bubble('本鲸还在想上一句呢，稍等～', 2500)
+      host.bubble('本鲸还在想上一句呢，稍等～', 2500, { transient: true, staleAfter: 5000 })
       return
     }
     // 用户提问永远优先：先打断正在播的旁白（说书/念诗）再回答。
@@ -394,8 +394,8 @@ export function createChatSender(host: ChatHost): ChatController {
       if (d1) d1.lastChat = { stage: 'fetched', reply: String(reply).slice(0, 40), at: Date.now() }
       try { if (host.onPhase) host.onPhase(data && data.ok === false ? 'error' : 'success') } catch (e) { }
       host.setMessages((m: any[]) => [...m, { who: 'fish', text: reply }])
-      if (host.voiceMode.current) { host.bubble('（说）' + reply, 8000, { key: 'chat:stream' }) }
-      if (data && data.upgraded) host.bubble('本鲸又长大一点啦！', 4000)
+      if (host.voiceMode.current) { host.bubble('（说）' + reply, 8000, { key: 'chat:stream', staleAfter: 20000 }) }
+      if (data && data.upgraded) host.bubble('本鲸又长大一点啦！', 4000, { staleAfter: 15000 })
     } catch (err: any) {
       if (!host.epoch.isCurrent(myEpoch)) return   // 被停止说话/新提问作废：不弹错误、不念旧答案
       // AbortSignal.timeout() 的拒绝名是 TimeoutError（Node 24 code=23），只认 AbortError/20/2

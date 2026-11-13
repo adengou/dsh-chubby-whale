@@ -201,7 +201,35 @@ try {
     ok('过期项被清出队列', s.status().queued === 0, JSON.stringify(s.status()))
   }
 
-  console.log('\n[10] 队列上限')
+  console.log('\n[10] 被抢占后沿用首次入队时间（不重置过期计时）')
+  {
+    const log = []
+    const t = fakeTimers()
+    const s = createBubbleScheduler(t)
+    const m = item('main', '回复', 6000, log); m.staleAfter = 5000
+    s.enqueue(m)
+    t.advance(3000)
+    s.enqueue(item('voice', '（听到）', 3000, log))   // 抢占 main，main 回队列
+    t.advance(3000)                                   // 距首次入队已 6s > 5s
+    t.tick()                                          // 语音跑完 → 取队首
+    ok('超期的回复不再补播（抢占不重置计时）',
+      log.filter((x) => x === 'start:main:回复').length === 1, log.join('|'))
+    ok('超期条目已清出队列', s.status().queued === 0, JSON.stringify(s.status()))
+    // 没超期时仍会接着显示
+    const log2 = []
+    const t2 = fakeTimers()
+    const s2 = createBubbleScheduler(t2)
+    const m2 = item('main', '回复2', 6000, log2); m2.staleAfter = 5000
+    s2.enqueue(m2)
+    t2.advance(1000)
+    s2.enqueue(item('voice', '（听到）2', 3000, log2))
+    t2.advance(1000)
+    t2.tick()
+    ok('未超期的回复在语音之后继续显示',
+      log2.filter((x) => x === 'start:main:回复2').length === 2, log2.join('|'))
+  }
+
+  console.log('\n[11] 队列上限')
   {
     const log = []
     const t = fakeTimers()
@@ -212,7 +240,7 @@ try {
     ok('溢出保留高优先级那条（main 仍在跑）', s.status().running === 'main', JSON.stringify(s.status()))
   }
 
-  console.log('\n[11] 不变量：任何时刻只有一条活着')
+  console.log('\n[12] 不变量：任何时刻只有一条活着')
   {
     let alive = 0
     let maxAlive = 0
@@ -237,7 +265,7 @@ try {
     ok('清场后回到 0 条活着', alive === 0, String(alive))
   }
 
-  console.log('\n[12] 模块卫生')
+  console.log('\n[13] 模块卫生')
   {
     const { readFileSync } = await import('node:fs')
     const src = readFileSync(join(ROOT, 'src', 'client', 'bubble-queue.ts'), 'utf8')
