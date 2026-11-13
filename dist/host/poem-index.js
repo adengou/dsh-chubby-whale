@@ -133,6 +133,10 @@ export function buildPoemIndex(poems) {
     }
     return idx;
 }
+/** 明确点名优先的固定搭配：用户说这个词时期望的名篇 */
+const KEYWORD_PICKS = Object.freeze({
+    '残月': '雨霖铃',
+});
 /** 太泛的词：出现在超过这么多首诗里就不当关键词（否则几乎任何话都能命中） */
 const MAX_HITS_PER_WORD = 30;
 /** 词哈希（用于多首同词时的确定性轮换） */
@@ -177,6 +181,8 @@ export function matchPoemKeyword(text, index) {
     // （如「虞美人·春花秋月何时了」优先于只写词牌的「虞美人」），
     // 再按词哈希 + 文本长度取模轮换（确定性，同一句话永远同一首）。
     list.sort((a, b) => String(b.title).length - String(a.title).length);
-    const picked = list[(hashWord(best) + src.length) % list.length];
+    const prefer = KEYWORD_PICKS[best];
+    const preferred = prefer ? list.find((x) => String(x.title).includes(prefer)) : null;
+    const picked = preferred || list[(hashWord(best) + src.length) % list.length];
     return { title: picked.title, author: picked.author, line: picked.line, word: best };
 }

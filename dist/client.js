@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.19";
+  var VERSION = "1.4.20";
 
   // src/client/styles.ts
   var W = 240;
@@ -3535,6 +3535,10 @@
             }
             try {
               if (opts.speak) opts.speak(spoken);
+            } catch (err) {
+            }
+            try {
+              if (opts.onPoem) opts.onPoem(text);
             } catch (err) {
             }
           }
@@ -13518,6 +13522,12 @@
             speak: (t) => {
               try {
                 speakText(t, { rate: narrationRate() });
+              } catch (e) {
+              }
+            },
+            onPoem: (t) => {
+              try {
+                setMessages((m) => [...m, { who: "fish", text: t }]);
               } catch (e) {
               }
             }

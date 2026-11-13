@@ -69,6 +69,8 @@ export function createToolWatch(opts: {
   poemEnabled?: () => boolean
   /** 念出来（诗词弹幕用；缺省 = 只冒气泡不念） */
   speak?: (text: string) => void
+  /** 同步进聊天面板（诗词弹幕用；缺省 = 只冒气泡/朗读） */
+  onPoem?: (text: string) => void
   intervalMs?: number
 }): { start: () => void; stop: () => void } {
   const interval = Number(opts.intervalMs) > 0 ? Number(opts.intervalMs) : INTERVAL_MS
@@ -133,6 +135,8 @@ export function createToolWatch(opts: {
           try { opts.bubble(text, ms) } catch (err) { }
           // 语音一次念完整首 + 出处 + 后缀
           try { if (opts.speak) opts.speak(spoken) } catch (err) { }
+          // 同时作为一条鱼消息写进「跟她说两句」的聊天面板（2026-11-14 主人要求）
+          try { if (opts.onPoem) opts.onPoem(text) } catch (err) { }
         }
         continue
       }

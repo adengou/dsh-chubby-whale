@@ -1773,6 +1773,10 @@ registerSkinActions(actions)
           enabled: () => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } },
           poemEnabled: () => { try { return localStorage.getItem('chubby-poem-echo') !== 'off' } catch (e) { return false } },
           speak: (t: string) => { try { speakText(t, { rate: narrationRate() }) } catch (e) { } },
+          onPoem: (t: string) => {
+            // 诗词弹幕同步进聊天面板：只在鲸鱼自己的聊天里出现，Harness 输入不经过这里
+            try { setMessages((m: any[]) => [...m, { who: 'fish', text: t }]) } catch (e) { }
+          },
         })
         watch.start()
         return () => { try { watch.stop() } catch (e) { } }
