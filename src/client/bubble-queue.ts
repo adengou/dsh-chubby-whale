@@ -78,6 +78,12 @@ export type BubbleItem = {
    * 语音状态这类「只对当下有意义」的气泡必须带它，否则会排在长诗后面、诗念完才冒出来。
    */
   staleAfter?: number
+  /**
+   * 同线路内的子优先级（越大越先）：只影响**同一线路**的排队顺序，不影响跨线路优先级。
+   * 诗词线里「点播/念诗字幕」=10、诗词弹幕=0：主人点播的内容永远排在弹幕前面，
+   * 同 rank 之间仍是 FIFO。跨线路仍按 LANE_PRIORITY。
+   */
+  rank?: number
 }
 
 export type BubbleScheduler = {
@@ -92,11 +98,22 @@ export type BubbleScheduler = {
 /** 队内条目：带上入队时刻，供 staleAfter 判定 */
 type Queued = { item: BubbleItem; at: number }
 
-/** 找插入位置：优先级高者在前；同优先级排在已有同级之后（FIFO） */
+/** 找插入位置：先按线路优先级，再按同线 rank（大者前），同 rank 排在已有同级之后（FIFO） */
 function insertIndex(queue: Queued[], item: BubbleItem): number {
   const p = LANE_PRIORITY[item.lane]
+  const r = item.rank || 0
   let i = 0
-  while (i < queue.length && LANE_PRIORITY[queue[i].item.lane] >= p) i++
+  while (i < queue.length) {
+    const q = queue[i].item
+    const qp = LANE_PRIORITY[q.lane]
+    if (qp < p) break
+    if (qp === p) {
+      const qr = q.rank || 0
+      if (qr < r) break
+      // qr === r：FIFO，继续往后找
+    }
+    i++
+  }
   return i
 }
 

@@ -5,4 +5,4 @@
  * 想改版本号请改 package.json，然后 npm run build。
  */
 
-export const VERSION = '1.4.8'
+export const VERSION = '1.4.9'

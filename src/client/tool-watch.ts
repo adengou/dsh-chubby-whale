@@ -106,8 +106,13 @@ export function createToolWatch(opts: {
       if (e && e.type === 'host' && d.name === 'poem-echo' && d.line) {
         const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true
         if (poemOn) {
-          // 冷却期内不再冒诗：避免「每输入一句都触发」
-          if (Date.now() - lastPoemAt < POEM_COOLDOWN_MS) { continue }
+          /**
+           * 冷却只拦「意境」触发（theme 是主题名），**关键词命中放行**：
+           * 主人明确要求「寻寻」这类关键词要按点播优先立刻冒整首，不被 5 分钟冷却挡住。
+           * 意境触发仍走冷却，避免日常闲聊每句话都冒诗（1.4.0 的旧问题）。
+           */
+          const keywordHit = String((d as any).theme || '') === '关键词'
+          if (!keywordHit && Date.now() - lastPoemAt < POEM_COOLDOWN_MS) { continue }
           lastPoemAt = Date.now()
           const line = String(d.line)
           const full = Array.isArray((d as any).full) ? (d as any).full.map((x: any) => String(x)).filter(Boolean) : []

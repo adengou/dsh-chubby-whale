@@ -607,7 +607,7 @@ registerSkinActions(actions)
        */
       function showPoemBubble(text: string, ms = 8000): void {
         if (!text) return
-        bubbleScheduler.enqueue({ lane: 'poem', text, ms, replace: true, start: () => poemBubble.show(text, ms), stop: () => poemBubble.hide() })
+        bubbleScheduler.enqueue({ lane: 'poem', rank: 10, text, ms, replace: true, start: () => poemBubble.show(text, ms), stop: () => poemBubble.hide() })
       }
       // 首次安装兜底：没配 Key 时给一句人话（离线功能照常可用），别让主人对着麦克风干等。
       // 每次页面加载最多提示一次；只读 /status，不发模型请求。
@@ -1754,7 +1754,8 @@ registerSkinActions(actions)
             const dur = Number(ms) || 18000
             try { poemLockUntil = Date.now() + dur } catch (e) { }
             // 等 20 秒还没轮到就不补播：过了那个点，这句诗已经和现场无关了
-            bubbleScheduler.enqueue({ lane: 'poem', text, ms: dur, staleAfter: 20000, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() })
+            // rank 0：弹幕在诗词线里让位给点播/念诗字幕（rank 10）
+            bubbleScheduler.enqueue({ lane: 'poem', rank: 0, text, ms: dur, staleAfter: 20000, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() })
           },
           toolBubble: (text: string, ms?: number) => {
             const dur = Number(ms) || 5200

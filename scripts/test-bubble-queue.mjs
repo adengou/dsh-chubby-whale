@@ -265,7 +265,25 @@ try {
     ok('清场后回到 0 条活着', alive === 0, String(alive))
   }
 
-  console.log('\n[13] 模块卫生')
+  console.log('\n[13] 同线 rank：点播字幕(10) 排在诗词弹幕(0) 前面')
+  {
+    const log = []
+    const t = fakeTimers()
+    const s = createBubbleScheduler(t)
+    s.enqueue(item('poem', '占位诗', 9000, log))       // 先占住诗词线
+    const e1 = item('poem', '弹幕A', 1000, log); e1.rank = 0
+    s.enqueue(e1)
+    const r1 = item('poem', '点播字幕', 1000, log); r1.rank = 10
+    s.enqueue(r1)
+    const e2 = item('poem', '弹幕B', 1000, log); e2.rank = 0
+    s.enqueue(e2)
+    const order = []
+    for (let i = 0; i < 3; i++) { t.tick(); const last = log[log.length - 1]; if (last.indexOf('start:') === 0) order.push(last) }
+    ok('rank 高的先出（点播先于两条弹幕）', order[0] === 'start:poem:点播字幕' && order.length === 3, order.join(' | '))
+    ok('同 rank 之间仍是 FIFO（弹幕A 先于 弹幕B）', order[1] === 'start:poem:弹幕A' && order[2] === 'start:poem:弹幕B', order.join(' | '))
+  }
+
+  console.log('\n[14] 模块卫生')
   {
     const { readFileSync } = await import('node:fs')
     const src = readFileSync(join(ROOT, 'src', 'client', 'bubble-queue.ts'), 'utf8')

@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.8";
+  var VERSION = "1.4.9";
 
   // src/client/styles.ts
   var W = 240;
@@ -3509,7 +3509,8 @@
         if (e && e.type === "host" && d.name === "poem-echo" && d.line) {
           const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true;
           if (poemOn) {
-            if (Date.now() - lastPoemAt < POEM_COOLDOWN_MS) {
+            const keywordHit = String(d.theme || "") === "关键词";
+            if (!keywordHit && Date.now() - lastPoemAt < POEM_COOLDOWN_MS) {
               continue;
             }
             lastPoemAt = Date.now();
@@ -8711,8 +8712,18 @@
   var MAX_QUEUED = 64;
   function insertIndex(queue, item2) {
     const p = LANE_PRIORITY[item2.lane];
+    const r = item2.rank || 0;
     let i = 0;
-    while (i < queue.length && LANE_PRIORITY[queue[i].item.lane] >= p) i++;
+    while (i < queue.length) {
+      const q = queue[i].item;
+      const qp = LANE_PRIORITY[q.lane];
+      if (qp < p) break;
+      if (qp === p) {
+        const qr = q.rank || 0;
+        if (qr < r) break;
+      }
+      i++;
+    }
     return i;
   }
   function createBubbleScheduler(timers) {
@@ -11743,7 +11754,7 @@
         }
         function showPoemBubble(text, ms2 = 8e3) {
           if (!text) return;
-          bubbleScheduler.enqueue({ lane: "poem", text, ms: ms2, replace: true, start: () => poemBubble.show(text, ms2), stop: () => poemBubble.hide() });
+          bubbleScheduler.enqueue({ lane: "poem", rank: 10, text, ms: ms2, replace: true, start: () => poemBubble.show(text, ms2), stop: () => poemBubble.hide() });
         }
         R.useEffect(() => {
           getJson("/status").then((d) => {
@@ -13104,7 +13115,7 @@
                 poemLockUntil = Date.now() + dur;
               } catch (e) {
               }
-              bubbleScheduler.enqueue({ lane: "poem", text, ms: dur, staleAfter: 2e4, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() });
+              bubbleScheduler.enqueue({ lane: "poem", rank: 0, text, ms: dur, staleAfter: 2e4, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() });
             },
             toolBubble: (text, ms2) => {
               const dur = Number(ms2) || 5200;
