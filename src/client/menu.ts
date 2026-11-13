@@ -142,6 +142,7 @@ export const EN_MAP: Record<string, string> = {
   '音色：Sonia（英·女·英式）': 'Voice: Sonia (EN-GB F)',
   '鲸落（导出记忆胶囊）': 'Whale Fall (Export Memory Capsule)',
   '接住漂来的鲸（导入胶囊）': 'Catch a Drifting Whale (Import Capsule)',
+  '数据与统计 ▸': 'Data & Stats ▸',
 }
 deepFreeze(EN_MAP)
 
@@ -374,15 +375,17 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     item('今日一句', 'daily-line'),
     item('今日简报', 'briefing-card'),
     sep(),
-    // ── 数据与统计（处理器由其他分身实现，未接上时走兜底提示）──
-    item('数据导出…', 'data-export'),
-    item('数据导入…', 'data-import'),
-    // 鲸落胶囊：只打包摘要里的抽象主题，不含对话原文
-    item('鲸落（导出记忆胶囊）', 'capsule-export'),
-    item('接住漂来的鲸（导入胶囊）', 'capsule-import'),
-    item('使用统计', 'stats'),
-    sub('设置 ▸', [
-      item('查看当前配置', 'config-view'),
+    // ── 数据与统计：导出/导入/鲸落/统计/配置，统一收进一个子菜单 ──
+    sub('数据与统计 ▸', [
+      item('数据导出…', 'data-export'),
+      item('数据导入…', 'data-import'),
+      // 鲸落胶囊：只打包摘要里的抽象主题，不含对话原文
+      item('鲸落（导出记忆胶囊）', 'capsule-export'),
+      item('接住漂来的鲸（导入胶囊）', 'capsule-import'),
+      item('使用统计', 'stats'),
+      sub('设置 ▸', [
+        item('查看当前配置', 'config-view'),
+      ]),
     ]),
     item('提醒管理…', 'remind-manage'),
     item('唤醒恢复', 'wake-recover'),
