@@ -1,9 +1,13 @@
 # dsh-chubby-whale（肥鲸）
 
-[LICENSE](LICENSE)
+[LICENSE](LICENSE) | [NOTICE（版权与素材来源）](NOTICE)
 [![Gitee](https://gitee.com/adengou/dsh-chubby-whale/badge/star.svg?theme=dark)](https://gitee.com/adengou/dsh-chubby-whale)
 
 DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下角。可拖拽（带惯性、位置记忆）、会眨眼、能说话、能说书念诗弹琴，也能听懂你说话。
+
+> **版权与素材来源**：代码为 MIT 许可（Copyright (c) 2026 adengou）；
+> 角色立绘与全部背景图由作者 adengou 使用 seedream 2.0 模型（豆包）生成。
+> 详见 [NOTICE](NOTICE)。
 
 | 渠道 | 地址 |
 | --- | --- |
