@@ -1037,7 +1037,13 @@ registerCapsuleActions(actions)
           try {
             bellyStateRef.current = digestBelly(bellyStateRef.current, tokens)
             const plan = chewPlan(bellyStateRef.current)
-            try { animRef.current?.setBellyScale(plan.scale) } catch (e) { }
+            // 每次喂食都「鼓一下」：临时 +5% 再到回落，总量小也能看见（17k token 累计只有 +0.7%，肉眼不可辨）
+            try {
+              const baseScale = plan.scale
+              const peak = Math.min(1.12, baseScale + 0.05)
+              animRef.current?.setBellyScale(peak)
+              setTimeout(() => { try { animRef.current?.setBellyScale(baseScale) } catch (e) { } }, 1200)
+            } catch (e) { }
             // 总量还不到一口（1 万 token）时，按「开饭」至少冒 1 颗心：
             // 数值小就一点动静都没有，用户会以为功能坏了
             const hearts = plan.hearts > 0 ? plan.hearts : (tokens > 0 ? 1 : 0)

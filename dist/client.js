@@ -11998,7 +11998,15 @@
               bellyStateRef.current = digest(bellyStateRef.current, tokens);
               const plan = chewPlan(bellyStateRef.current);
               try {
-                animRef.current?.setBellyScale(plan.scale);
+                const baseScale = plan.scale;
+                const peak = Math.min(1.12, baseScale + 0.05);
+                animRef.current?.setBellyScale(peak);
+                setTimeout(() => {
+                  try {
+                    animRef.current?.setBellyScale(baseScale);
+                  } catch (e) {
+                  }
+                }, 1200);
               } catch (e) {
               }
               const hearts = plan.hearts > 0 ? plan.hearts : tokens > 0 ? 1 : 0;
