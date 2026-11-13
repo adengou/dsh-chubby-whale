@@ -14,6 +14,7 @@ import { isSupportedDocName, pickDocument, readDocumentText } from '../doc-text.
 import { MAX_SCRIPT_CHARS, exportSpeechToAudio } from '../voice/export-audio.js'
 import { noteWork } from '../nervous/index.js'
 import { setCustomWakeWord, WAKE_WORDS } from '../wake.js'
+import { promptText } from './prompt-modal.js'
 
 /**
  * 唤醒门里的词表是否已经是这次设置的结果。
@@ -156,8 +157,13 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
       if (!r.ok) { host.bubble('读不了这个文档：' + String(r.error || '读取失败'), 8000); return }
       text = String(r.text || '').trim()
     } else {
-      let raw: any = null
-      try { raw = typeof window !== 'undefined' && typeof (window as any).prompt === 'function' ? (window as any).prompt('也可以直接把稿子贴进来（一次最多 ' + MAX_SCRIPT_CHARS + ' 字）：', '') : null } catch (e) { }
+      // 桌面端是 Electron，window.prompt 不弹框；改用自绘输入框
+      const raw = await promptText({
+        title: '把稿子贴进来（一次最多 ' + MAX_SCRIPT_CHARS + ' 字，Ctrl+Enter 开始）',
+        placeholder: '在这里粘贴稿子……',
+        multiline: true,
+        maxLength: MAX_SCRIPT_CHARS,
+      })
       text = str(raw).trim()
     }
     if (!text) return
@@ -201,11 +207,10 @@ export function registerVoiceActions(table: ActionTable<ActionHost>): void {
   })
 
   // —— 唤醒词：默认 / 候选 / 自定义（存 localStorage；语音随时可说，唤醒词只用来剥句子开头/叫名字应声）——
-  table.definePrefix('wake-word:', (host, val) => {
+  table.definePrefix('wake-word:', async (host, val) => {
     const word = str(val).trim()
     if (word === 'custom') {
-      let input: any = null
-      try { input = typeof window !== 'undefined' && typeof (window as any).prompt === 'function' ? (window as any).prompt('唤醒词（1–12 字）', '大肥鱼') : null } catch (e) { }
+      const input = await promptText({ title: '唤醒词（1–12 字）', placeholder: '比如：大肥鱼', defaultValue: '大肥鱼', multiline: false, maxLength: 12, okText: '保存' })
       if (input == null) { host.bubble('没改唤醒词'); return }
       const on = setCustomWakeWord(String(input))
       // 存储值 = trim 后截 12 字（client/wake.ts 的 setCustomWakeWord 口径），气泡照抄它

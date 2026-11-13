@@ -6,6 +6,7 @@
  */
 
 import type { ActionHost, ActionTable } from '../actions.js'
+import { promptText } from './prompt-modal.js'
 import { getJson, postJson, delJson } from '../http.js'
 import { VISION_PROMPT } from '../dropzone.js'
 import { imageToB64 } from '../image.js'
@@ -303,13 +304,14 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
   })
 
   // —— 提醒 ——
-  table.define('remind-add', (host) => {
+  table.define('remind-add', async (host) => {
     // 照 C# Reminders.cs 的 ParseDue：一句话里就能带时间（明天9点 / 半小时后 / 每天9点…）
-    const msg = (window as any).prompt('提醒什么？（可以一起说时间，如「明天9点提醒我开会」）')
+    // 桌面端是 Electron，window.prompt 不弹框；改用自绘输入框
+    const msg = await promptText({ title: '提醒什么？', placeholder: '可以一起说时间，如「明天9点提醒我开会」', multiline: false, okText: '下一步' })
     if (!msg) return
     let parsed = parseDue(msg)
     if (!parsed) {
-      const ans = (window as any).prompt('什么时候提醒？（如 9点 / 明天9点 / 半小时后 / 20分钟后 / 每天9点）', '5分钟后')
+      const ans = await promptText({ title: '什么时候提醒？', placeholder: '如 9点 / 明天9点 / 半小时后 / 20分钟后 / 每天9点', defaultValue: '5分钟后', multiline: false, okText: '定' })
       if (!ans) return
       parsed = parseDue(ans)
       if (!parsed) { host.bubble('这个时间本鱼没听懂……试试「9点」「明天9点」「半小时后」', 5000); return }

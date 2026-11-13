@@ -5320,6 +5320,118 @@
     });
   }
 
+  // src/client/actions/prompt-modal.ts
+  function promptText(opts) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        try {
+          wrap.remove();
+        } catch (e) {
+        }
+        resolve(value);
+      };
+      let wrap = null;
+      try {
+        const doc = document;
+        wrap = doc.createElement("div");
+        wrap.style.cssText = [
+          "position:fixed",
+          "inset:0",
+          "z-index:2147483000",
+          "display:flex",
+          "align-items:center",
+          "justify-content:center",
+          "background:rgba(4,8,20,.55)",
+          "backdrop-filter:blur(2px)"
+        ].join(";");
+        const box = doc.createElement("div");
+        box.style.cssText = [
+          "width:min(560px,92vw)",
+          "max-height:86vh",
+          "display:flex",
+          "flex-direction:column",
+          "box-sizing:border-box",
+          "background:#101a33",
+          "color:#eaf1ff",
+          "border:1px solid rgba(120,170,255,.35)",
+          "border-radius:14px",
+          "padding:16px 18px",
+          "box-shadow:0 18px 60px rgba(0,0,0,.5)",
+          'font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif'
+        ].join(";");
+        const title = doc.createElement("div");
+        title.textContent = opts.title;
+        title.style.cssText = "font-weight:600;margin-bottom:10px";
+        const input = doc.createElement(opts.multiline === false ? "input" : "textarea");
+        input.value = opts.defaultValue || "";
+        if (opts.placeholder) input.placeholder = opts.placeholder;
+        if (opts.maxLength) input.maxLength = opts.maxLength;
+        input.style.cssText = [
+          "width:100%",
+          "box-sizing:border-box",
+          opts.multiline === false ? "height:38px" : "height:180px",
+          "resize:vertical",
+          "background:rgba(255,255,255,.06)",
+          "color:#eaf1ff",
+          "border:1px solid rgba(120,170,255,.3)",
+          "border-radius:10px",
+          "padding:8px 10px",
+          "font:inherit",
+          "outline:none"
+        ].join(";");
+        const bar = doc.createElement("div");
+        bar.style.cssText = "display:flex;gap:10px;justify-content:flex-end;margin-top:12px";
+        const cancel = doc.createElement("button");
+        cancel.type = "button";
+        cancel.textContent = "取消";
+        cancel.style.cssText = "padding:7px 16px;border-radius:9px;border:1px solid rgba(120,170,255,.35);background:transparent;color:#cfe0ff;cursor:pointer;font:inherit";
+        const ok = doc.createElement("button");
+        ok.type = "button";
+        ok.textContent = opts.okText || "开始";
+        ok.style.cssText = "padding:7px 18px;border-radius:9px;border:0;background:#3b6dff;color:#fff;cursor:pointer;font:inherit";
+        const onKey = (e) => {
+          if (e && e.key === "Escape") {
+            e.preventDefault?.();
+            finish(null);
+            return;
+          }
+          if (e && e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault?.();
+            finish(String(input.value || ""));
+          }
+        };
+        cancel.addEventListener("click", () => finish(null));
+        ok.addEventListener("click", () => finish(String(input.value || "")));
+        wrap.addEventListener("mousedown", (e) => {
+          if (e && e.target === wrap) finish(null);
+        });
+        input.addEventListener("keydown", onKey);
+        bar.appendChild(cancel);
+        bar.appendChild(ok);
+        box.appendChild(title);
+        box.appendChild(input);
+        box.appendChild(bar);
+        wrap.appendChild(box);
+        doc.body.appendChild(wrap);
+        setTimeout(() => {
+          try {
+            input.focus();
+          } catch (e) {
+          }
+        }, 0);
+      } catch (e) {
+        try {
+          if (wrap) wrap.remove();
+        } catch (e2) {
+        }
+        resolve(null);
+      }
+    });
+  }
+
   // src/shared/time.ts
   var DAY_MS = 864e5;
   function applyPeriod(hour, word) {
@@ -5983,12 +6095,12 @@
       host.bubble("测试语音：主人听得到吗？", 4e3);
       host.speak("测试语音，主人听得到吗？");
     });
-    table.define("remind-add", (host) => {
-      const msg = window.prompt("提醒什么？（可以一起说时间，如「明天9点提醒我开会」）");
+    table.define("remind-add", async (host) => {
+      const msg = await promptText({ title: "提醒什么？", placeholder: "可以一起说时间，如「明天9点提醒我开会」", multiline: false, okText: "下一步" });
       if (!msg) return;
       let parsed = parseDue(msg);
       if (!parsed) {
-        const ans = window.prompt("什么时候提醒？（如 9点 / 明天9点 / 半小时后 / 20分钟后 / 每天9点）", "5分钟后");
+        const ans = await promptText({ title: "什么时候提醒？", placeholder: "如 9点 / 明天9点 / 半小时后 / 20分钟后 / 每天9点", defaultValue: "5分钟后", multiline: false, okText: "定" });
         if (!ans) return;
         parsed = parseDue(ans);
         if (!parsed) {
@@ -7167,11 +7279,12 @@
         }
         text = String(r.text || "").trim();
       } else {
-        let raw = null;
-        try {
-          raw = typeof window !== "undefined" && typeof window.prompt === "function" ? window.prompt("也可以直接把稿子贴进来（一次最多 " + MAX_SCRIPT_CHARS + " 字）：", "") : null;
-        } catch (e) {
-        }
+        const raw = await promptText({
+          title: "把稿子贴进来（一次最多 " + MAX_SCRIPT_CHARS + " 字，Ctrl+Enter 开始）",
+          placeholder: "在这里粘贴稿子……",
+          multiline: true,
+          maxLength: MAX_SCRIPT_CHARS
+        });
         text = str(raw).trim();
       }
       if (!text) return;
@@ -7218,14 +7331,10 @@
       } catch (e) {
       }
     });
-    table.definePrefix("wake-word:", (host, val) => {
+    table.definePrefix("wake-word:", async (host, val) => {
       const word = str(val).trim();
       if (word === "custom") {
-        let input = null;
-        try {
-          input = typeof window !== "undefined" && typeof window.prompt === "function" ? window.prompt("唤醒词（1–12 字）", "大肥鱼") : null;
-        } catch (e) {
-        }
+        const input = await promptText({ title: "唤醒词（1–12 字）", placeholder: "比如：大肥鱼", defaultValue: "大肥鱼", multiline: false, maxLength: 12, okText: "保存" });
         if (input == null) {
           host.bubble("没改唤醒词");
           return;
@@ -7259,11 +7368,12 @@
         }
         text = String(r.text || "").trim();
       } else {
-        let raw = null;
-        try {
-          raw = typeof window !== "undefined" && typeof window.prompt === "function" ? window.prompt("也可以直接把稿子贴进来（8000 字以内）：", "") : null;
-        } catch (e) {
-        }
+        const raw = await promptText({
+          title: "把稿子贴进来（8000 字以内，Ctrl+Enter 开始）",
+          placeholder: "在这里粘贴要校对的稿子……",
+          multiline: true,
+          maxLength: 8e3
+        });
         text = str(raw).trim();
       }
       if (!text) return;

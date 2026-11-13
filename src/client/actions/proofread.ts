@@ -9,6 +9,7 @@ import { str } from '../util.js'
 import { isSupportedDocName, pickDocument, readDocumentText } from '../doc-text.js'
 import { noteWork } from '../nervous/index.js'
 import type { ActionHost, ActionTable } from '../actions.js'
+import { promptText } from './prompt-modal.js'
 
 export function registerProofreadActions(table: ActionTable<ActionHost>): void {
   table.define('proofread', async (host) => {
@@ -26,12 +27,13 @@ export function registerProofreadActions(table: ActionTable<ActionHost>): void {
       if (!r.ok) { host.bubble('读不了这个文档：' + String(r.error || '读取失败'), 8000); return }
       text = String(r.text || '').trim()
     } else {
-      let raw: any = null
-      try {
-        raw = typeof window !== 'undefined' && typeof (window as any).prompt === 'function'
-          ? (window as any).prompt('也可以直接把稿子贴进来（8000 字以内）：', '')
-          : null
-      } catch (e) { }
+      // 桌面端是 Electron，window.prompt 不弹框；改用自绘输入框
+      const raw = await promptText({
+        title: '把稿子贴进来（8000 字以内，Ctrl+Enter 开始）',
+        placeholder: '在这里粘贴要校对的稿子……',
+        multiline: true,
+        maxLength: 8000,
+      })
       text = str(raw).trim()
     }
     if (!text) return
