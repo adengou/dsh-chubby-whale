@@ -111,7 +111,6 @@ export function createToolWatch(opts: {
           const ms = Math.min(90000, Math.max(18000, spoken.length * 320))
           try { opts.bubble(text, ms) } catch (err) { }
           // 语音一次念完整首 + 出处 + 后缀
-          const spoken = src.join("") + (source ? "。" + source : "") + tail
           try { if (opts.speak) opts.speak(spoken) } catch (err) { }
         }
         continue
