@@ -33,6 +33,7 @@ import { createChatHandler } from './host/routes/chat.js'
 import { createProofreadHandler } from './host/routes/proofread.js'
 import { createHostCollector } from './host/nervous/collector.js'
 import { buildPoemIndex, matchPoemKeyword } from './host/poem-index.js'
+import { matchPoem } from './host/poem-echo.js'
 import type { PoemIndex, PoemSource } from './host/poem-index.js'
 import { createNervousHandler } from './host/routes/nervous.js'
 import { createChatStreamHandler } from './host/routes/chat-stream.js'
@@ -225,22 +226,37 @@ export function apply(ctx: any, rawConfig?: any): void {
       poemIndex = buildPoemIndex(((chunk && chunk.items) || []) as PoemSource[])
     } catch (e) { poemIndex = null }
   })()
+  /** 按出处查整首（主库 + data/poets 目录合并后的诗库）；桌面弹幕与手机端共用 */
+  const findFullPoem = async (title: string, author: string): Promise<string[] | null> => {
+    try {
+      const chunk = await dataPort.readPoemsChunk(0)
+      const hit = (chunk.items || []).find((p: any) => String(p.title || '') === title && (!author || String(p.author || '') === author))
+      return hit && Array.isArray(hit.lines) && hit.lines.length ? hit.lines.map((x: any) => String(x)) : null
+    } catch (e) { return null }
+  }
   const hostCollector = createHostCollector({
     keywordEcho: (text: string) => {
       const hit = matchPoemKeyword(text, poemIndex)
       return hit ? { theme: '关键词', line: hit.line, title: hit.title, author: hit.author } : null
     },
-    // 诗词弹幕：按出处查整首（主库 + data/poets 目录合并后的诗库）
-    findPoem: async (title: string, author: string) => {
-      try {
-        const chunk = await dataPort.readPoemsChunk(0)
-        const hit = (chunk.items || []).find((p: any) => String(p.title || '') === title && (!author || String(p.author || '') === author))
-        return hit && Array.isArray(hit.lines) && hit.lines.length ? hit.lines.map((x: any) => String(x)) : null
-      } catch (e) { return null }
-    },
+    findPoem: findFullPoem,
   })
   /** 诗词弹幕的唯一入口：鲸鱼聊天路由把主人原话递进来（DSH 输入框不经过这里） */
   const noteUserChat = (text: string): void => { try { hostCollector.noteUserChat(text) } catch (e) { } }
+
+  /** 手机端诗词回复（方案 A）：命中关键词/意境 → 整首文本；同时同步桌面气泡/朗读 */
+  const mobilePoemEcho = async (text: string): Promise<string | null> => {
+    try {
+      const kw = poemIndex ? matchPoemKeyword(text, poemIndex) : null
+      const echo = kw || matchPoem(text)
+      if (!echo) return null
+      const full = await findFullPoem(echo.title, echo.author)
+      const body = (full && full.length ? full : [echo.line]).join('\n')
+      const cite = echo.title ? '\n——' + (echo.author ? echo.author : '') + '《' + echo.title + '》' : ''
+      try { noteUserChat(text) } catch (e) { }
+      return '咕噜……' + body + cite
+    } catch (e) { return null }
+  }
 
   const chat = createChatHandler({
     getKey,    loadHistory: (n?: number) => memoryModule.loadRecent(n || 24),
@@ -506,7 +522,7 @@ export function apply(ctx: any, rawConfig?: any): void {
   // 与桌宠共用同一个宿主、同一份模型配置；rawConfig.mobile === false 可整体关掉。
   const mobileOptions = rawConfig && typeof rawConfig === 'object' ? rawConfig.mobile : undefined
   if (mobileOptions !== false) {
-    const mount = () => mountWhaleMobile(ctx, mobileOptions && typeof mobileOptions === 'object' ? mobileOptions : {})
+    const mount = () => mountWhaleMobile(ctx, Object.assign({}, mobileOptions && typeof mobileOptions === 'object' ? mobileOptions : {}, { poemEcho: mobilePoemEcho }))
     if (typeof ctx.effect === 'function') ctx.effect(mount, 'chubby-whale: whale-mobile')
     else mount()
   }

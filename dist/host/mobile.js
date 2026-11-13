@@ -78,7 +78,7 @@ export function mountWhaleMobile(ctx, options = {}) {
     logger.info(`模型：${chatModel}${apiKey ? '（复用桌宠的 Key）' : '（尚未配置 Key）'}`);
     const store = createStore({ filePath: stateFile, logger });
     const modules = {
-        chat: createChatModule({ llm, store, clock, logger, config: Object.assign({ systemPrompt: buildSystemPrompt('') }, options.chat || {}) }),
+        chat: createChatModule({ llm, store, clock, logger, config: Object.assign({ systemPrompt: buildSystemPrompt(''), poemEcho: options.poemEcho }, options.chat || {}) }),
         story: createStoryModule({ llm, store, clock, logger, config: options.story || {} }),
         reminder: createReminderModule({ store, clock, logger, config: options.reminder || {} }),
     };

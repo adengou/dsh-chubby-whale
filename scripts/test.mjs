@@ -3735,6 +3735,30 @@ try {
   ok('能加载聊天面板位置用例', false, String(e.message))
 }
 
+
+// ---------- 70 手机端诗词回复（方案 A） ----------
+console.log('\n[70] 手机端诗词回复')
+try {
+  const { createChatModule } = await import('../src/mobile/modules/chat/index.ts')
+  let llmCalls = 0
+  const mod = createChatModule({
+    llm: { async *stream() { llmCalls++; throw new Error('不该调模型') } },
+    store: { get: async () => null, set: async () => {} },
+    clock: { now: () => Date.now() },
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    config: { systemPrompt: 'test', poemEcho: async () => '咕噜……红藕香残玉簟秋。\n——李清照《一剪梅》' },
+  })
+  const out = await mod.send({ text: '春残' })
+  ok('命中诗词直接回复整首（不调模型）', out && out.text.includes('红藕香残玉簟秋') && llmCalls === 0, JSON.stringify(out))
+  const hist = await mod.history(out.conversationId)
+  ok('诗词回复写入手机会话历史', hist.length === 2 && hist[1].role === 'assistant' && hist[1].text.includes('一剪梅'), JSON.stringify(hist).slice(0, 160))
+  const src = readFileSync('src/index.ts', 'utf8')
+  const mob = readFileSync('src/host/mobile.ts', 'utf8')
+  ok('宿主注入手机诗词回调', src.includes('mobilePoemEcho') && mob.includes('poemEcho: options.poemEcho'))
+} catch (e) {
+  ok('能加载手机诗词用例', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

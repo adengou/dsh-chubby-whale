@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.21";
+  var VERSION = "1.4.22";
 
   // src/client/styles.ts
   var W = 240;

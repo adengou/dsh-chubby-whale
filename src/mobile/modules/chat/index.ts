@@ -352,6 +352,27 @@ export function createChatModule(deps) {
       await persist();
       if (disposed) return;
 
+      // 手机端诗词弹幕（2026-11-14 方案 A）：命中关键词/意境时直接把整首作为回复，
+      // 不再调模型；同时由宿主回调同步桌面气泡/朗读。
+      let poemReply = null
+      try {
+        if (typeof config.poemEcho === 'function') {
+          const r = await config.poemEcho(text)
+          if (r && String(r).trim()) poemReply = String(r).trim()
+        }
+      } catch (e) { poemReply = null }
+      if (poemReply) {
+        const assistantAt = readNow(clock)
+        conv.messages.push({ role: 'assistant', text: poemReply, at: assistantAt })
+        trimMessages(conv)
+        conv.lastAt = assistantAt
+        await persist()
+        if (disposed) return
+        yield { type: 'delta', text: poemReply }
+        yield { type: 'done', text: poemReply, conversationId }
+        return
+      }
+
       const messages = conv.messages.slice(-historyLimit).map((m) => ({ role: m.role, text: m.text }));
       const llmOptions = { system: resolveSystem(request.system), messages, signal: abortController.signal };
       if (maxTokens !== undefined) llmOptions.maxTokens = maxTokens;
