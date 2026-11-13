@@ -11646,7 +11646,7 @@
                 speakText(text, { rate: narrationRate() });
               } catch (e) {
               }
-            }, 1500);
+            }, 8e3);
           } catch (e) {
           }
         }, []);

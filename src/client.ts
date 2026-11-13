@@ -717,7 +717,9 @@ registerCapsuleActions(actions)
           localStorage.setItem(DAY, day)
           // 气泡 + 语音（1 秒后冒，1.5 秒后念，避开开场问候）
           setTimeout(() => { try { showBubble(text, 22000) } catch (e) { } }, 1000)
-          setTimeout(() => { try { speakText(text, { rate: narrationRate() }) } catch (e) { } }, 1500)
+          // 语音放到 8 秒后：3 秒时开场问候会念一句、紧接着「今日一句」再念一句，
+          // 1.5 秒就开口必被它们打断（实测「念不完」）
+          setTimeout(() => { try { speakText(text, { rate: narrationRate() }) } catch (e) { } }, 8000)
         } catch (e) { }
       }, [])
 
