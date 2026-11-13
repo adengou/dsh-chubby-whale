@@ -163,20 +163,33 @@ export function createHostCollector(opts) {
     /**
      * 从 user/message 事件里取用户文本：只用于本地主题匹配，
      * 不入缓冲、不落盘、不外传——命中后只推一条匹配结果。
+     *
+     * 结构依据（app.asar 里的类型声明，不是猜的）：
+     *   UserMessage extends MessageBase { role: 'user' }
+     *   MessageBase { id, content: readonly ContentBlock[], source }
+     * 所以文本在 **event.data.content** 的 text 块里，不是 event.data.message。
      */
     function userTextOf(event) {
         try {
-            const m = event && event.data && event.data.message;
-            if (typeof m === 'string')
-                return m;
-            if (m && typeof m === 'object') {
-                if (typeof m.text === 'string')
-                    return m.text;
-                const content = m.content;
-                if (Array.isArray(content)) {
-                    return content.map((b) => (b && typeof b.text === 'string' ? b.text : '')).join('\n');
-                }
-            }
+            const d = event && event.data;
+            if (!d)
+                return '';
+            const pick = (blocks) => {
+                if (!Array.isArray(blocks))
+                    return '';
+                return blocks.map((b) => (b && typeof b.text === 'string' ? b.text : '')).filter(Boolean).join('\n');
+            };
+            const fromContent = pick(d.content);
+            if (fromContent)
+                return fromContent;
+            // 兼容：某些版本可能把消息包一层
+            const fromMessage = pick(d.message && d.message.content);
+            if (fromMessage)
+                return fromMessage;
+            if (typeof d.text === 'string')
+                return d.text;
+            if (typeof d.message === 'string')
+                return d.message;
         }
         catch (e) { }
         return '';
