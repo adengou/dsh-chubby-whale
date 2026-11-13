@@ -2791,8 +2791,7 @@
     "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)",
     "鲸落（导出记忆胶囊）": "Whale Fall (Export Memory Capsule)",
     "接住漂来的鲸（导入胶囊）": "Catch a Drifting Whale (Import Capsule)",
-    "数据与统计 ▸": "Data & Stats ▸",
-    "意见反馈…": "Send feedback…"
+    "数据与统计 ▸": "Data & Stats ▸"
   };
   deepFreeze(EN_MAP);
   var STAGE_EN = {
@@ -2978,8 +2977,7 @@
         item("使用统计", "stats"),
         sub("设置 ▸", [
           item("查看当前配置", "config-view")
-        ]),
-        item("意见反馈…", "feedback")
+        ])
       ]),
       item("提醒管理…", "remind-manage"),
       item("唤醒恢复", "wake-recover"),
@@ -8021,53 +8019,6 @@
     });
   }
 
-  // src/client/actions/feedback.ts
-  var GITEE_REPO = "https://gitee.com/adengou/dsh-chubby-whale";
-  var URL_BODY_MAX = 1500;
-  function buildIssueUrl(text) {
-    const body = Array.from(String(text || ""));
-    const clipped = body.slice(0, URL_BODY_MAX).join("");
-    const tail = body.length > URL_BODY_MAX ? "\n\n（内容较长，已截断；完整内容见本地反馈文件）" : "";
-    const title = "反馈：" + (Array.from(String(text || "").trim()).slice(0, 30).join("") || "使用问题");
-    return GITEE_REPO + "/issues/new?issue[title]=" + encodeURIComponent(title) + "&issue[description]=" + encodeURIComponent(clipped + tail);
-  }
-  function registerFeedbackActions(table) {
-    table.define("feedback", async (host) => {
-      const raw = await promptText({
-        title: "意见反馈（多行，Ctrl+Enter 提交）",
-        placeholder: "遇到什么问题、希望怎么改，都可以写在这里……",
-        multiline: true,
-        maxLength: 4e3,
-        okText: "提交"
-      });
-      const text = String(raw || "").trim();
-      if (!text) return;
-      let sent = false;
-      try {
-        const r = await postJson("/feedback", { text }, { timeout: 3e4 });
-        sent = !!(r && r.ok && r.sent === "smtp");
-      } catch (e) {
-      }
-      let opened = false;
-      try {
-        window.open(buildIssueUrl(text), "_blank");
-        opened = true;
-      } catch (e) {
-      }
-      if (opened) {
-        host.bubble(
-          (sent ? "反馈已发出，" : "") + "同时打开了 Gitee 反馈页：登录后点「创建」即可提交；本机也留了一份。",
-          9e3
-        );
-      } else {
-        host.bubble(
-          sent ? "反馈已发出，谢谢！" : "反馈已记录（本机保存）。打开 Gitee → 我的仓库 → Issues 也能提。",
-          8e3
-        );
-      }
-    });
-  }
-
   // data/persona.json
   var persona_default = {
     name: "饭团",
@@ -10942,7 +10893,6 @@
       registerProofreadActions(actions);
       registerNervousActions(actions);
       registerCapsuleActions(actions);
-      registerFeedbackActions(actions);
       const CLIENT_ID = (() => {
         try {
           const v2 = sessionStorage.getItem("chubby-client-id");

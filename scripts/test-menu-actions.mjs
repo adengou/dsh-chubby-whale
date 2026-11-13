@@ -305,7 +305,6 @@ try {
     import('../src/client/actions/proofread.ts'),
     import('../src/client/actions/nervous.ts'),
     import('../src/client/actions/capsule.ts'),
-    import('../src/client/actions/feedback.ts'),
   ])
   const t = createActionTable()
   mods[0].registerCultureActions(t)

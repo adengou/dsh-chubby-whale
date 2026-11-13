@@ -475,7 +475,6 @@ try {
     proofread: fn,
     nervous: fn,
     memory: { handleMemory: fn },
-    feedback: { handleFeedback: fn },
   }
   const table = createRouteTable(stub)
   const paths = table.map((r) => r.path)
@@ -664,7 +663,6 @@ try {
     import('../src/client/actions/proofread.ts'),
     import('../src/client/actions/nervous.ts'),
     import('../src/client/actions/capsule.ts'),
-    import('../src/client/actions/feedback.ts'),
   ])
   const table = createActionTable()
   mods[0].registerCultureActions(table)

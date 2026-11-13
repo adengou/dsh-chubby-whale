@@ -24,7 +24,6 @@ import { registerVoiceActions } from './client/actions/voice.js'
 import { registerProofreadActions } from './client/actions/proofread.js'
 import { registerNervousActions } from './client/actions/nervous.js'
 import { registerCapsuleActions } from './client/actions/capsule.js'
-import { registerFeedbackActions } from './client/actions/feedback.js'
 import { createPersona, applyServerMood } from './client/persona.js'
 import { attachNervous, nervousEnabled } from './client/nervous/index.js'
 import { createDeduper } from './client/text.js'
@@ -103,7 +102,6 @@ registerSkinActions(actions)
     registerProofreadActions(actions)
     registerNervousActions(actions)
 registerCapsuleActions(actions)
-registerFeedbackActions(actions)
 
 
 

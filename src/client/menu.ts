@@ -143,7 +143,6 @@ export const EN_MAP: Record<string, string> = {
   '鲸落（导出记忆胶囊）': 'Whale Fall (Export Memory Capsule)',
   '接住漂来的鲸（导入胶囊）': 'Catch a Drifting Whale (Import Capsule)',
   '数据与统计 ▸': 'Data & Stats ▸',
-  '意见反馈…': 'Send feedback…',
 }
 deepFreeze(EN_MAP)
 
@@ -387,7 +386,6 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
       sub('设置 ▸', [
         item('查看当前配置', 'config-view'),
       ]),
-      item('意见反馈…', 'feedback'),
     ]),
     item('提醒管理…', 'remind-manage'),
     item('唤醒恢复', 'wake-recover'),
