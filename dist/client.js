@@ -12254,7 +12254,7 @@
               const maid = document.body.hasAttribute("data-dsh-maid-atelier");
               layer.style.display = maid ? "none" : "block";
               layer.style.backgroundImage = 'url("/api/chubby-whale/skin?n=' + index + '")';
-              layer.style.opacity = "0.38";
+              layer.style.opacity = "0.18";
             } catch (e) {
             }
             showBubble("背景 " + (index + 1) + "/" + BG_GALLERY.length + " ～", 2e3);
