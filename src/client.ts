@@ -30,6 +30,7 @@ import { createDeduper } from './client/text.js'
 import { getJson } from './client/http.js'
 import { createMelodyPlayer } from './client/melody.js'
 import { createBubble, clearBubbleTimer, ensureBubbleStyle } from './client/bubble.js'
+import { createBubbleScheduler } from './client/bubble-queue.js'
 import { createNarrationLock } from './client/narration.js'
 import { createBusyLock, createEpoch } from './client/busy.js'
 import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag, endDrag, bindDragInput } from './client/stage.js'
@@ -523,7 +524,7 @@ registerSkinActions(actions)
           reminderPoller: () => reminderPollerRef.current,
           stopTts: () => stopTts(),
           stopMelody: () => melody.stop(),
-          clearBubble: () => { clearBubbleTimer(bubbleRef.current); clearBubbleTimer(poemBubbleRef.current); clearBubbleTimer(personaBubbleRef.current); clearBubbleTimer(toolBubbleRef.current) },
+          clearBubble: () => { try { bubbleScheduler.clear() } catch (e) { } clearBubbleTimer(bubbleRef.current); clearBubbleTimer(poemBubbleRef.current); clearBubbleTimer(personaBubbleRef.current); clearBubbleTimer(toolBubbleRef.current) },
         })
       }, [])
 
@@ -535,11 +536,15 @@ registerSkinActions(actions)
         xOffset: W / 2,
         onHide: () => { try { restoreIdleStatus() } catch (e) { } },
       })
-      function showBubble(text: string, ms = 2400): void { bubble.show(text, ms) }
+      // 气泡调度器：同一时间只有一条线路活着，按优先级排队（诗词>对话>persona>解说）
+      const bubbleScheduler = createBubbleScheduler()
+      function showBubble(text: string, ms = 2400): void {
+        bubbleScheduler.enqueue({ lane: 'main', text, ms, start: () => bubble.show(text, ms), stop: () => bubble.hide() })
+      }
       /** persona 台词（问候/饥饿/今日一句）：走独立线，不占对话主气泡 */
       function sayPersonaLine(text: string, ms = 4000): void {
         if (!text) return
-        try { personaBubble.show(text, ms) } catch (e) { }
+        bubbleScheduler.enqueue({ lane: 'persona', text, ms, start: () => personaBubble.show(text, ms), stop: () => personaBubble.hide() })
         try {
           if (localStorage.getItem('chubby-voice') === 'off') return
           const v: any = bridge.ensure()
@@ -1700,9 +1705,14 @@ registerSkinActions(actions)
       R.useEffect(() => {
         const watch = createToolWatch({
           bubble: (text: string, ms?: number) => {
-            try { poemLockUntil = Date.now() + (Number(ms) || 18000); poemBubble.show(text, ms) } catch (e) { }
+            const dur = Number(ms) || 18000
+            try { poemLockUntil = Date.now() + dur } catch (e) { }
+            bubbleScheduler.enqueue({ lane: 'poem', text, ms: dur, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() })
           },
-          toolBubble: (text: string, ms?: number) => { try { toolBubble.show(text, ms) } catch (e) { } },
+          toolBubble: (text: string, ms?: number) => {
+            const dur = Number(ms) || 5200
+            try { bubbleScheduler.enqueue({ lane: 'tool', text, ms: dur, start: () => toolBubble.show(text, dur), stop: () => toolBubble.hide() }) } catch (e) { }
+          },
           enabled: () => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } },
           poemEnabled: () => { try { return localStorage.getItem('chubby-poem-echo') !== 'off' } catch (e) { return false } },
           speak: (t: string) => { try { speakText(t, { rate: narrationRate() }) } catch (e) { } },

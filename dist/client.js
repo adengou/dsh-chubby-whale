@@ -8692,6 +8692,94 @@
     return { show, hide, dismissStatus };
   }
 
+  // src/client/bubble-queue.ts
+  var LANE_PRIORITY = Object.freeze({
+    poem: 4,
+    main: 3,
+    persona: 2,
+    tool: 1
+  });
+  function insertIndex(queue, item2) {
+    const p = LANE_PRIORITY[item2.lane];
+    let i = 0;
+    while (i < queue.length && LANE_PRIORITY[queue[i].lane] >= p) i++;
+    return i;
+  }
+  function createBubbleScheduler(timers) {
+    const st = timers ? timers.setTimeout : (fn, ms2) => setTimeout(fn, ms2);
+    const ct = timers ? timers.clearTimeout : (t) => clearTimeout(t);
+    const queue = [];
+    let current2 = null;
+    let timer = null;
+    function pump() {
+      if (current2) {
+        const top = queue[0];
+        if (!top || LANE_PRIORITY[top.lane] <= LANE_PRIORITY[current2.lane]) return;
+        const preempted = current2;
+        current2 = null;
+        if (timer) {
+          try {
+            ct(timer);
+          } catch (e) {
+          }
+        }
+        timer = null;
+        try {
+          preempted.stop();
+        } catch (e) {
+        }
+        queue.splice(insertIndex(queue, preempted), 0, preempted);
+      }
+      const next = queue.shift();
+      if (!next) return;
+      current2 = next;
+      try {
+        next.start();
+      } catch (e) {
+      }
+      timer = st(() => {
+        timer = null;
+        if (current2 !== next) return;
+        current2 = null;
+        try {
+          next.stop();
+        } catch (e) {
+        }
+        pump();
+      }, next.ms);
+    }
+    function enqueue(item2) {
+      if (!item2 || !item2.text) return false;
+      if (current2 && current2.lane === item2.lane && current2.text === item2.text) return false;
+      for (const q of queue) if (q.lane === item2.lane && q.text === item2.text) return false;
+      queue.splice(insertIndex(queue, item2), 0, item2);
+      pump();
+      return true;
+    }
+    function clear() {
+      if (timer) {
+        try {
+          ct(timer);
+        } catch (e) {
+        }
+      }
+      timer = null;
+      if (current2) {
+        try {
+          current2.stop();
+        } catch (e) {
+        }
+      }
+      current2 = null;
+      queue.length = 0;
+    }
+    return {
+      enqueue,
+      clear,
+      status: () => ({ running: current2 ? current2.lane : null, queued: queue.length })
+    };
+  }
+
   // src/client/narration.ts
   var NARRATE_MIN_MS = 8e3;
   var NARRATE_MAX_MS = 5 * 60 * 1e3;
@@ -11443,6 +11531,10 @@
             stopTts: () => stopTts(),
             stopMelody: () => melody.stop(),
             clearBubble: () => {
+              try {
+                bubbleScheduler.clear();
+              } catch (e) {
+              }
               clearBubbleTimer(bubbleRef.current);
               clearBubbleTimer(poemBubbleRef.current);
               clearBubbleTimer(personaBubbleRef.current);
@@ -11462,15 +11554,13 @@
             }
           }
         });
+        const bubbleScheduler = createBubbleScheduler();
         function showBubble(text, ms2 = 2400) {
-          bubble.show(text, ms2);
+          bubbleScheduler.enqueue({ lane: "main", text, ms: ms2, start: () => bubble.show(text, ms2), stop: () => bubble.hide() });
         }
         function sayPersonaLine(text, ms2 = 4e3) {
           if (!text) return;
-          try {
-            personaBubble.show(text, ms2);
-          } catch (e) {
-          }
+          bubbleScheduler.enqueue({ lane: "persona", text, ms: ms2, start: () => personaBubble.show(text, ms2), stop: () => personaBubble.hide() });
           try {
             if (localStorage.getItem("chubby-voice") === "off") return;
             const v = bridge.ensure();
@@ -12844,15 +12934,17 @@
         R.useEffect(() => {
           const watch = createToolWatch({
             bubble: (text, ms2) => {
+              const dur = Number(ms2) || 18e3;
               try {
-                poemLockUntil = Date.now() + (Number(ms2) || 18e3);
-                poemBubble.show(text, ms2);
+                poemLockUntil = Date.now() + dur;
               } catch (e) {
               }
+              bubbleScheduler.enqueue({ lane: "poem", text, ms: dur, start: () => poemBubble.show(text, dur), stop: () => poemBubble.hide() });
             },
             toolBubble: (text, ms2) => {
+              const dur = Number(ms2) || 5200;
               try {
-                toolBubble.show(text, ms2);
+                bubbleScheduler.enqueue({ lane: "tool", text, ms: dur, start: () => toolBubble.show(text, dur), stop: () => toolBubble.hide() });
               } catch (e) {
               }
             },
