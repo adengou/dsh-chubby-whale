@@ -84,6 +84,23 @@ function matchBracketedTitle(text: string): string {
 }
 
 /**
+ * 朝代前缀：「宋·雨霖铃」「唐 静夜思」→ 去掉「宋·/唐 」。
+ * 语音识别常把「背宋·雨霖铃」听成「《宋·雨霖铃》」，带朝代的标题在诗库里查不到。
+ */
+const DYNASTY_PREFIX = /^(先秦|秦|西汉|东汉|汉|三国|魏|西晋|东晋|晋|南北朝|隋|唐|五代|南唐|北宋|南宋|宋|元|明|清|近代|现代)\s*[·•・.、:：\-]\s*/
+
+/**
+ * 把「《宋·雨霖铃》。」这类输入归一成诗库里的写法「雨霖铃」：
+ * 去书名号/引号 → 去朝代前缀 → 去空白与句读。
+ * 内部函数，只服务 detectIntent（不新增对外符号）。
+ */
+function normalizePoemTitle(raw: string): string {
+  let t = String(raw || '').replace(/[《》〈〉「」『』""'']/g, ' ').trim()
+  t = t.replace(DYNASTY_PREFIX, '')
+  return t.replace(BARE_STRIP, '').trim()
+}
+
+/**
  * 「整句就是书名」的判定（别名表里的书名都是日常词，必须卡严）。
  *
  * 旧实现只比长度：`bare.length <= book.length + 1`，于是**任何**比书名长一个字的句子都算点播——
@@ -146,7 +163,7 @@ export function detectIntent(rawText: string): Intent {
   if (poemTitles().length === 0) ensurePoemTitles()
   const byTitle = matchPoemTitle(t)
   if (byTitle) {
-    const bare = t.replace(BARE_STRIP, '')
+    const bare = normalizePoemTitle(t)
     const asks = bare === byTitle || /背|念|吟|朗读|朗诵|来(一)?首|听(一)?首|讲(一)?首|放(一)?首/.test(t)
     if (asks) return { kind: 'poem', title: byTitle }
   }
@@ -156,8 +173,13 @@ export function detectIntent(rawText: string): Intent {
   //    直接交给宿主 /poem?title= 做「完整标题优先、其次包含」匹配；
   //    宿主明确说没匹配到时，由路由照实回「诗库里没有《X》」，不回落随机（不拿别的凑数）。
   if (!NOT_POEM_TARGET.test(t)) {
-    const bracketed = matchBracketedTitle(t)
+    // 书名号里的标题先归一（去《》、去「宋·」这类朝代前缀），再判断：
+    //   · 有点播动词 → 点播；
+    //   · 没有动词，但归一后的标题在诗名索引里（《雨霖铃》/《宋·雨霖铃》这种「整句就是报诗名」）→ 也算点播；
+    //   · 《小王子》这种索引里没有的，照旧交给模型。
+    const bracketed = normalizePoemTitle(matchBracketedTitle(t))
     if (bracketed && POEM_VERB.test(t)) return { kind: 'poem', title: bracketed }
+    if (bracketed && matchPoemTitle(bracketed)) return { kind: 'poem', title: bracketed }
 
     // ② 念诗 / 背诗（含只问一句「背诵」——旧实现漏了它，整句被交给模型瞎答）
     if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗|背诵/.test(t)) return { kind: 'poem' }

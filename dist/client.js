@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.9";
+  var VERSION = "1.4.10";
 
   // src/client/styles.ts
   var W = 240;
@@ -9808,6 +9808,12 @@
     const m = /[《〈]([^》〉]{1,12})[》〉]/.exec(t);
     return m ? m[1].trim() : "";
   }
+  var DYNASTY_PREFIX = /^(先秦|秦|西汉|东汉|汉|三国|魏|西晋|东晋|晋|南北朝|隋|唐|五代|南唐|北宋|南宋|宋|元|明|清|近代|现代)\s*[·•・.、:：\-]\s*/;
+  function normalizePoemTitle(raw) {
+    let t = String(raw || "").replace(/[《》〈〉「」『』""'']/g, " ").trim();
+    t = t.replace(DYNASTY_PREFIX, "");
+    return t.replace(BARE_STRIP, "").trim();
+  }
   function isBareBookName(bare, book, alias) {
     if (!bare) return false;
     if (bare === book) return true;
@@ -9836,13 +9842,14 @@
     if (poemTitles().length === 0) ensurePoemTitles();
     const byTitle = matchPoemTitle(t);
     if (byTitle) {
-      const bare = t.replace(BARE_STRIP, "");
+      const bare = normalizePoemTitle(t);
       const asks = bare === byTitle || /背|念|吟|朗读|朗诵|来(一)?首|听(一)?首|讲(一)?首|放(一)?首/.test(t);
       if (asks) return { kind: "poem", title: byTitle };
     }
     if (!NOT_POEM_TARGET.test(t)) {
-      const bracketed = matchBracketedTitle(t);
+      const bracketed = normalizePoemTitle(matchBracketedTitle(t));
       if (bracketed && POEM_VERB.test(t)) return { kind: "poem", title: bracketed };
+      if (bracketed && matchPoemTitle(bracketed)) return { kind: "poem", title: bracketed };
       if (/背(一)?(首|下)?诗|念(一)?(首|下)?诗|来首诗|背诗|念诗|讲首诗|背诵/.test(t)) return { kind: "poem" };
     }
     if (/典故|成语/.test(t)) {
@@ -9869,6 +9876,7 @@
   var CULTURE_TIMEOUT_MS = 2e4;
   var POEM_TIMEOUT_MS = 15e3;
   function createLocalRouter(host) {
+    let lastPoemAsk = { title: "", at: 0 };
     function takeOver() {
       if (!host.abortChat) return;
       try {
@@ -9930,7 +9938,17 @@
         return true;
       }
       const hit = detectIntent(rawText);
-      if (!hit) return false;
+      if (!hit) {
+        const asksAgain = /背|念|朗诵|朗读/.test(rawText) && !/(不|别|甭|勿|无需)/.test(rawText);
+        if (asksAgain && lastPoemAsk.title && Date.now() - lastPoemAsk.at < 12e4) {
+          takeOver();
+          host.bubble("（点播）好，念《" + lastPoemAsk.title + "》", 3e3, { transient: true });
+          fetchPoem("?title=" + encodeURIComponent(lastPoemAsk.title), (p) => recitePoem(host, p), lastPoemAsk.title);
+          return true;
+        }
+        return false;
+      }
+      if (hit.kind === "poem" && hit.title) lastPoemAsk = { title: hit.title, at: Date.now() };
       takeOver();
       if (hit.kind === "poem") {
         const wantTitle = String(hit.title || "").trim();

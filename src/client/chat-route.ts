@@ -61,6 +61,8 @@ export type LocalRouter = {
 }
 
 export function createLocalRouter(host: LocalRouteHost): LocalRouter {
+  /** 最近一次「点了名」的诗词请求：追问「叫你背呀」时接着背这首（2 分钟内有效） */
+  let lastPoemAsk = { title: '', at: 0 }
   /**
    * 接住这条消息 = 不再送模型：先把上一轮还在等的聊天请求打断。
    * 不打断的话，等回复期间点「背首诗／讲个典故／说书」，旧回复回来照旧会
@@ -140,7 +142,23 @@ export function createLocalRouter(host: LocalRouteHost): LocalRouter {
     }
 
     const hit = detectIntent(rawText)
-    if (!hit) return false
+    if (!hit) {
+      /**
+       * 追问：「叫你背呀！」「快念」这类没有诗名、也没有标准点播句式的句子。
+       * 语音里主人先报了诗名（《宋·雨霖铃》），下一句催促时不能又交给模型——
+       * 模型只会回「本鲸去诗库里翻」，不会真的背。这里 2 分钟内接着背刚才那首。
+       * 否定式（别背了）不接。
+       */
+      const asksAgain = /背|念|朗诵|朗读/.test(rawText) && !/(不|别|甭|勿|无需)/.test(rawText)
+      if (asksAgain && lastPoemAsk.title && Date.now() - lastPoemAsk.at < 120000) {
+        takeOver()
+        host.bubble('（点播）好，念《' + lastPoemAsk.title + '》', 3000, { transient: true })
+        fetchPoem('?title=' + encodeURIComponent(lastPoemAsk.title), (p) => recitePoem(host, p), lastPoemAsk.title)
+        return true
+      }
+      return false
+    }
+    if (hit.kind === 'poem' && hit.title) lastPoemAsk = { title: hit.title, at: Date.now() }
     // 命中点播（念诗 / 典故 / 说书）后才打断旧聊天：没命中的消息照旧交给模型，
     // 绝不能在这里提前 abort，否则普通提问会把自己的请求打断。
     takeOver()

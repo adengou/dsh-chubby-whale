@@ -570,6 +570,15 @@ async function runSuite(mod, ctx) {
     ok('route：「背诵《梦》」带 title 参数（书名号标题不必先有索引）',
       hit === true && ctx.fetches.some((u) => pathOf(u).indexOf('title=' + encodeURIComponent('梦')) >= 0) && calls.recite[0] === '雨霖铃',
       ctx.fetches.map(pathOf).join(','))
+    // 追问：先报诗名（带朝代/书名号），下一句只催「叫你背呀」——必须接着背刚才那首
+    hit = await run('《宋·雨霖铃》。')
+    ok('route：「《宋·雨霖铃》。」整句报诗名 → 本地念诗（带朝代前缀也能归一）',
+      hit === true && calls.recite[0] === '雨霖铃', JSON.stringify(calls.recite))
+    hit = await run('叫你背呀！')
+    ok('route：追问「叫你背呀！」2 分钟内接着背刚才那首',
+      hit === true && calls.recite[0] === '雨霖铃', JSON.stringify(calls.recite))
+    hit = await run('别背了')
+    ok('route：否定式追问不接（别背了 → 交给模型）', hit === false, 'hit=' + hit)
     hit = await run('讲个典故')
     ok('route：「讲个典故」取 chengyu 池，播报仍说「典故」（不按数据池名念成成语）',
       hit === true && ctx.fetches.some((u) => pathOf(u) === '/culture?type=chengyu') &&
