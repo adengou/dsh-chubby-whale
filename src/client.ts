@@ -662,13 +662,32 @@ registerCapsuleActions(actions)
         return () => { try { window.removeEventListener('paste', onPaste, true) } catch (e) { } }
       }, [])
 
+      // 活动检测：专注奖励要判断「在不在」，原来只有拖动鱼才更新 lastActivity，
+      // 跑到专注判定里永远是 false —— 动鼠标/键盘/滚轮都算「在」
+      R.useEffect(() => {
+        let last = 0
+        const mark = (): void => {
+          const now = Date.now()
+          if (now - last < 2000) return
+          last = now
+          try { lastActivityRef.current = now } catch (e) { }
+        }
+        const evs = ['pointermove', 'pointerdown', 'keydown', 'wheel', 'scroll', 'touchstart']
+        for (const ev of evs) { try { window.addEventListener(ev, mark, { passive: true, capture: true }) } catch (e) { } }
+        return () => { for (const ev of evs) { try { window.removeEventListener(ev, mark, true) } catch (e) { } } }
+      }, [])
+
       // ===== 专注奖励（反向驯化）：连续专注 45 分钟才叼一首诗，切走就重置 ===== 
       R.useEffect(() => {
         const timer = setInterval(() => {
           try {
             const now = Date.now()
             const active = now - lastActivityRef.current < 60000
-            const r = updateFocus(focusStateRef.current, { now, active })
+            // 调试开关：验证专注奖励时可临时调小阈值（localStorage 里是正数才生效）
+            let dbgMs = 0
+            try { dbgMs = Number(localStorage.getItem('chubby-focus-threshold-ms') || 0) } catch (e) { }
+            const opts = (dbgMs > 0 && Number.isFinite(dbgMs)) ? { thresholdMs: dbgMs } : undefined
+            const r = updateFocus(focusStateRef.current, { now, active }, opts)
             focusStateRef.current = r.state
             if (r.reward) {
               getJson('/poem').then((d: any) => {

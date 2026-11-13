@@ -11568,11 +11568,44 @@
           };
         }, []);
         R.useEffect(() => {
+          let last = 0;
+          const mark = () => {
+            const now = Date.now();
+            if (now - last < 2e3) return;
+            last = now;
+            try {
+              lastActivityRef.current = now;
+            } catch (e) {
+            }
+          };
+          const evs = ["pointermove", "pointerdown", "keydown", "wheel", "scroll", "touchstart"];
+          for (const ev of evs) {
+            try {
+              window.addEventListener(ev, mark, { passive: true, capture: true });
+            } catch (e) {
+            }
+          }
+          return () => {
+            for (const ev of evs) {
+              try {
+                window.removeEventListener(ev, mark, true);
+              } catch (e) {
+              }
+            }
+          };
+        }, []);
+        R.useEffect(() => {
           const timer = setInterval(() => {
             try {
               const now = Date.now();
               const active = now - lastActivityRef.current < 6e4;
-              const r = updateFocus(focusStateRef.current, { now, active });
+              let dbgMs = 0;
+              try {
+                dbgMs = Number(localStorage.getItem("chubby-focus-threshold-ms") || 0);
+              } catch (e) {
+              }
+              const opts = dbgMs > 0 && Number.isFinite(dbgMs) ? { thresholdMs: dbgMs } : void 0;
+              const r = updateFocus(focusStateRef.current, { now, active }, opts);
               focusStateRef.current = r.state;
               if (r.reward) {
                 getJson("/poem").then((d) => {
