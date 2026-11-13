@@ -708,7 +708,8 @@ registerCapsuleActions(actions)
           const LAST = 'chubby-last-seen'
           const DAY = 'chubby-diary-day'
           const now = Date.now()
-          const last = Number(localStorage.getItem(LAST) || 0)
+          // TEMP-VERIFY：验证期首次打开也按「离线 3 小时」算，方便看日记（验完改回）
+          const last = Number(localStorage.getItem(LAST) || 0) || (now - 3 * 3600 * 1000)
           localStorage.setItem(LAST, String(now))
           const day = new Date(now).toISOString().slice(0, 10)
           if (!last || localStorage.getItem(DAY) === day) return
