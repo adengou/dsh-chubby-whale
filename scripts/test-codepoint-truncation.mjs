@@ -168,6 +168,8 @@ console.log('\n[4] client/dropzone.ts buildTextPrompt：拖进来的文件内容
 console.log('\n[5] client/actions/system.ts 提醒菜单：用户文本 → POST /reminders（落 reminders.json）')
 {
   const system = await imp('src/client/actions/system.ts')
+  // 提醒的输入框是自绘 DOM（桌面端 window.prompt 不可用），测试通过实现注入喂输入
+  const promptModal = await imp('src/client/actions/prompt-modal.ts')
   const handlers = new Map()
   const prefixes = new Map()
   const table = {
@@ -181,23 +183,22 @@ console.log('\n[5] client/actions/system.ts 提醒菜单：用户文本 → POST
   system.registerSystemActions(table)
   ok('remind-add 已注册', handlers.has('remind-add'))
 
-  /** 走一遍「提醒」菜单：第一次 prompt 给正文，第二次 prompt 给时间（正文里没有时间词） */
+  /** 走一遍「提醒」菜单：第一次输入给正文，第二次给时间（正文里没有时间词） */
   async function remind(requestText) {
     const posts = []
     const bubbles = []
     const answers = [requestText, '20分钟后']
-    const prevWindow = globalThis.window
     const prevFetch = globalThis.fetch
-    globalThis.window = { prompt: () => answers.shift() }
+    promptModal.setPromptTextImpl(async () => (answers.length ? answers.shift() : null))
     globalThis.fetch = (url, init) => {
       posts.push({ url: String(url), body: JSON.parse(String(init && init.body)) })
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) })
     }
     try {
-      handlers.get('remind-add')({ bubble: (t) => bubbles.push(t) }, 'remind-add')
+      await handlers.get('remind-add')({ bubble: (t) => bubbles.push(t) }, 'remind-add')
       await new Promise((resolve) => setTimeout(resolve, 10))
     } finally {
-      globalThis.window = prevWindow
+      promptModal.setPromptTextImpl(null)
       globalThis.fetch = prevFetch
     }
     return { posts, bubbles }
