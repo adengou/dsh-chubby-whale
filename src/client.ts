@@ -8,6 +8,7 @@ import { W, H, CW, CH, SX, SY, VERSION, stageStyle, stageTransform, canvasStyle,
 import { buildMenu, tr } from './client/menu.js'
 import { digest as digestBelly, chewPlan, type BellyState } from './client/belly.js'
 import { pickWhaleWord } from './client/whale-speak.js'
+import { createToolWatch } from './client/tool-watch.js'
 import { updateFocus, type FocusState } from './client/focus-reward.js'
 import { buildDiary } from './client/diary.js'
 import { stopProgress } from './client/narration-progress.js'
@@ -1344,6 +1345,12 @@ registerCapsuleActions(actions)
         setMenu(null)
         if (action === 'skin-bg') { applySkinBg(pickRandomBg()); return }
         if (action === 'skin-bg-reset') { resetSkinBg(); return }
+        if (action === 'tool-narrator') {
+          const on = (() => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } })()
+          try { localStorage.setItem('chubby-tool-narrator', on ? 'off' : 'on') } catch (e) { }
+          showBubble(on ? '鲸式解说：关（DSH 干活时本鲸不吭声）' : '鲸式解说：开（它干活时本鲸嘀咕两句）', 3000)
+          return
+        }
         if (action === 'skin-fixed') {
           const next = !skinFixed()
           setSkinFixed(next)
@@ -1618,6 +1625,16 @@ registerCapsuleActions(actions)
         if (!canvas) return
         animRef.current = createAnimator({ canvas, imgSrc: '/api/chubby-whale/asset?v=' + Date.now(), cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current })
         animRef.current.start()
+      // 工具调用实况解说（方向 7）：3 秒轮询 /nervous，tool/call 事件交给 tool-narrator 决定要不要冒一句
+      R.useEffect(() => {
+        const watch = createToolWatch({
+          bubble: (text: string, ms?: number) => { try { showBubble(text, ms) } catch (e) { } },
+          enabled: () => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } },
+        })
+        watch.start()
+        return () => { try { watch.stop() } catch (e) { } }
+      }, [])
+
       // 后台定时随机换背景（每 5 分钟；固定开关打开时不换）
       try { if (!autoSkinStarted) { autoSkinStarted = true; startAutoSkin() } } catch (e) { }
       // 首次安装提示：版权与素材来源（每台浏览器只提示一次，详见仓库 NOTICE）
@@ -1675,7 +1692,7 @@ registerCapsuleActions(actions)
       // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去。
       // 可见项清单在渲染时同步算一次（键盘高亮与屏幕顺序共用这一份，不各算一套）。
       const menuItems = menu
-        ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
+        ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), toolNarratorOn: (() => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime()))
         : []
       const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : []
       menuEntriesRef.current = menuEntries

@@ -143,6 +143,8 @@ export const EN_MAP: Record<string, string> = {
   '鲸落（导出记忆胶囊）': 'Whale Fall (Export Memory Capsule)',
   '接住漂来的鲸（导入胶囊）': 'Catch a Drifting Whale (Import Capsule)',
   '数据与统计 ▸': 'Data & Stats ▸',
+  '鲸式解说：开': 'Whale commentary: on',
+  '鲸式解说：关': 'Whale commentary: off',
 }
 deepFreeze(EN_MAP)
 
@@ -235,7 +237,10 @@ export interface MenuState {
   storyBooks?: string[]
   /** 书单是否已经拉过：拉过但为空 → 菜单显示「书单没取到，稍后再试」 */
   storyBooksTried?: boolean
-  /** 固定背景开关（true = 不随机） */
+  /** 鲸式解说开关（默认开） */
+  toolNarratorOn?: boolean
+
+/** 固定背景开关（true = 不随机） */
   skinFixed?: boolean
   /** 说书连播开关（缺省视为开：讲完一段自动接下一段） */
   storyAuto?: boolean
@@ -290,6 +295,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     // ── 吃饭与看图 ──
     item('固定背景：' + (state.skinFixed ? '开' : '关'), 'skin-fixed'),
     item('恢复默认背景', 'skin-bg-reset'),
+    item('鲸式解说：' + (state.toolNarratorOn === false ? '关' : '开'), 'tool-narrator'),
     item('成长：' + growthText, 'growth'),
     item('投喂一碗', 'feed'),
     item('看张图…', 'vision'),

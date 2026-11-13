@@ -2791,7 +2791,9 @@
     "音色：Sonia（英·女·英式）": "Voice: Sonia (EN-GB F)",
     "鲸落（导出记忆胶囊）": "Whale Fall (Export Memory Capsule)",
     "接住漂来的鲸（导入胶囊）": "Catch a Drifting Whale (Import Capsule)",
-    "数据与统计 ▸": "Data & Stats ▸"
+    "数据与统计 ▸": "Data & Stats ▸",
+    "鲸式解说：开": "Whale commentary: on",
+    "鲸式解说：关": "Whale commentary: off"
   };
   deepFreeze(EN_MAP);
   var STAGE_EN = {
@@ -2882,6 +2884,7 @@
       // ── 吃饭与看图 ──
       item("固定背景：" + (state.skinFixed ? "开" : "关"), "skin-fixed"),
       item("恢复默认背景", "skin-bg-reset"),
+      item("鲸式解说：" + (state.toolNarratorOn === false ? "关" : "开"), "tool-narrator"),
       item("成长：" + growthText, "growth"),
       item("投喂一碗", "feed"),
       item("看张图…", "vision"),
@@ -3092,6 +3095,446 @@
     const word = pool[hits % pool.length];
     hits++;
     return word;
+  }
+
+  // src/client/http.ts
+  var API_BASE = "/api/chubby-whale";
+  var DEFAULT_TIMEOUT_MS = 15e3;
+  function apiUrl(path) {
+    const p = String(path || "");
+    if (!p) return API_BASE;
+    if (/^(https?:)?\/\//.test(p)) return p;
+    if (p.indexOf("/api/") === 0) return p;
+    return API_BASE + (p.charAt(0) === "/" ? p : "/" + p);
+  }
+  function clientHeaders(clientId, extra) {
+    const h = Object.assign({}, extra || {});
+    if (clientId) h["x-client-id"] = clientId;
+    return h;
+  }
+  function budgetOf(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return n;
+  }
+  function makeAbortController() {
+    try {
+      const AC = typeof AbortController !== "undefined" ? AbortController : null;
+      if (AC) return new AC();
+    } catch (e) {
+    }
+    return null;
+  }
+  function timeoutError(ms2) {
+    const msg = "请求超时（" + ms2 + "ms）";
+    try {
+      const D = typeof DOMException !== "undefined" ? DOMException : null;
+      if (D) return new D(msg, "TimeoutError");
+    } catch (e) {
+    }
+    const err = new Error(msg);
+    err.name = "TimeoutError";
+    return err;
+  }
+  function abortReasonOf(src) {
+    if (src && src.reason !== void 0) return src.reason;
+    try {
+      const D = typeof DOMException !== "undefined" ? DOMException : null;
+      if (D) return new D("aborted", "AbortError");
+    } catch (e) {
+    }
+    const err = new Error("aborted");
+    err.name = "AbortError";
+    return err;
+  }
+  function fetchWithBudget(url, init, useDefault) {
+    const o = Object.assign({}, init || {});
+    const hasExplicit = o.timeout !== void 0 && o.timeout !== null;
+    const wanted = hasExplicit ? budgetOf(o.timeout) : useDefault && !o.signal ? DEFAULT_TIMEOUT_MS : 0;
+    delete o.timeout;
+    const external = o.signal;
+    const canListen = !!external && typeof external.addEventListener === "function";
+    if (!wanted && !canListen) return fetch(url, o);
+    const ctrl = wanted ? makeAbortController() : null;
+    const detach = [];
+    if (ctrl) {
+      o.signal = ctrl.signal;
+      if (external) {
+        if (external.aborted) {
+          try {
+            ctrl.abort();
+          } catch (e) {
+          }
+        } else if (typeof external.addEventListener === "function") {
+          const forward = () => {
+            try {
+              ctrl.abort();
+            } catch (e) {
+            }
+          };
+          try {
+            external.addEventListener("abort", forward);
+            detach.push(() => {
+              try {
+                external.removeEventListener("abort", forward);
+              } catch (e) {
+              }
+            });
+          } catch (e) {
+          }
+        }
+      }
+    } else if (external) {
+      o.signal = external;
+    }
+    return new Promise((resolve, reject) => {
+      let done = false;
+      let timer = null;
+      const cleanup = () => {
+        while (detach.length) {
+          const fn = detach.pop();
+          try {
+            if (fn) fn();
+          } catch (e) {
+          }
+        }
+      };
+      const finish = (fn, v) => {
+        if (done) return;
+        done = true;
+        try {
+          if (timer) clearTimeout(timer);
+        } catch (e) {
+        }
+        cleanup();
+        fn(v);
+      };
+      if (wanted) {
+        timer = setTimeout(() => {
+          if (ctrl) {
+            try {
+              ctrl.abort();
+            } catch (e) {
+            }
+          }
+          finish(reject, timeoutError(wanted));
+        }, wanted);
+        try {
+          if (timer && typeof timer.unref === "function") timer.unref();
+        } catch (e) {
+        }
+      }
+      if (canListen) {
+        const onAbort = () => {
+          finish(reject, abortReasonOf(external));
+        };
+        if (external.aborted) {
+          onAbort();
+          return;
+        }
+        try {
+          external.addEventListener("abort", onAbort);
+          detach.push(() => {
+            try {
+              external.removeEventListener("abort", onAbort);
+            } catch (e) {
+            }
+          });
+        } catch (e) {
+        }
+      }
+      let pending;
+      try {
+        pending = fetch(url, o);
+      } catch (e) {
+        finish(reject, e);
+        return;
+      }
+      Promise.resolve(pending).then(
+        (r) => finish(resolve, r),
+        (e) => finish(reject, e)
+      );
+    });
+  }
+  function getJson(path, init) {
+    return fetchWithBudget(apiUrl(path), init, true).then((r) => r.json());
+  }
+  function postInit(body, init) {
+    const o = Object.assign({}, init || {});
+    o.method = "POST";
+    if (body !== void 0) {
+      o.headers = Object.assign({ "content-type": "application/json" }, o.headers || {});
+      o.body = JSON.stringify(body);
+    }
+    return o;
+  }
+  function postRaw(path, body, init) {
+    return fetchWithBudget(apiUrl(path), postInit(body, init), false);
+  }
+  function postJson(path, body, init) {
+    return fetchWithBudget(apiUrl(path), postInit(body, init), true).then((r) => r.json());
+  }
+  function delJson(path, init) {
+    const o = Object.assign({}, init || {});
+    o.method = "DELETE";
+    return fetchWithBudget(apiUrl(path), o, true).then((r) => r.json());
+  }
+  function timeoutSignal(ms2) {
+    try {
+      const n = Number(ms2);
+      if (!Number.isFinite(n) || n <= 0) return void 0;
+      const AS = typeof AbortSignal !== "undefined" ? AbortSignal : null;
+      if (AS && typeof AS.timeout === "function") return AS.timeout(n);
+    } catch (e) {
+    }
+    return void 0;
+  }
+
+  // src/client/tool-narrator.ts
+  var LINE_GAP_MS = 15e3;
+  var SAME_LINE_MS = 3e4;
+  var BURST_WINDOW_MS = 6e4;
+  var BURST_MIN_COUNT = 3;
+  var NEVER_AT = Number.NEGATIVE_INFINITY;
+  var RECENT_MAX = 3;
+  var RECENT = /* @__PURE__ */ Symbol("tool-narrator/recent");
+  var CLASS_KEYWORDS = [
+    ["file", ["read", "cat", "view", "open", "browse", "ls", "list"]],
+    ["edit", ["write", "edit", "create", "patch", "apply"]],
+    ["shell", ["bash", "shell", "exec", "run", "command", "terminal", "pwsh", "cmd"]],
+    ["web", ["web", "search", "fetch", "http", "browse"]],
+    ["search", ["grep", "glob", "find", "rg"]],
+    ["plan", ["task", "todo", "plan"]]
+  ];
+  var POOLS = {
+    file: [
+      { single: "咕噜……它在翻你的抽屉。", burst: "它在翻好几个抽屉，咕噜咕噜。" },
+      { single: "它把贝壳一片片翻过来看。", burst: "贝壳一片接一片，它翻得尾巴都翘了。" },
+      { single: "又低头翻你的小箱子，本鲸看着呢。", burst: "箱子一个接一个，本鲸的泡泡都看困了。" }
+    ],
+    edit: [
+      { single: "它拿笔在纸上涂涂改改。", burst: "它连着改了好几处，泡泡都冒歪了。" },
+      { single: "咕噜，它给贝壳补了一笔。", burst: "补完一片又一片，它手都没停。" },
+      { single: "它动笔了，本鲸不吵它。", burst: "改了一处又一处，本鲸在边上看着。" }
+    ],
+    shell: [
+      { single: "这个泡泡吹得有点久。", burst: "泡泡一个接一个，吹个不停。" },
+      { single: "咕噜……它沉下去了，还没浮上来。", burst: "它连着往下潜，本鲸的尾巴都摆累了。" },
+      { single: "它在海底敲敲打打，本鲸等着。", burst: "海底的泡泡冒了一串又一串。" }
+    ],
+    web: [
+      { single: "又去别人家海里捞东西了。", burst: "它一趟一趟往别人家海里跑。" },
+      { single: "咕噜，它游到很远的海面去了。", burst: "别人家的浪，它一浪接一浪地翻。" },
+      { single: "它探头看别人家的浪，本鲸不跟。", burst: "别人家海里的东西快被它捞遍了。" }
+    ],
+    search: [
+      { single: "咕噜……它把头埋进沙子里找东西。", burst: "它在沙子里翻来翻去，找了好几样。" },
+      { single: "它在珊瑚缝里扒拉，尾巴一甩一甩。", burst: "一片沙接一片沙，它扒拉个没完。" },
+      { single: "它眯着眼在沙里挑，本鲸帮不上。", burst: "它把整片海底都筛了一遍，咕噜。" }
+    ],
+    plan: [
+      { single: "它在小本本上划了一道。", burst: "它把清单划了好几遍，咕噜。" },
+      { single: "咕噜，它把要做的事排成一排。", burst: "一条接一条，本鲸都替它眼晕。" },
+      { single: "它低头数泡泡，数得很认真。", burst: "它的小本本快写满了，咕噜。" }
+    ],
+    other: [
+      { single: "咕噜……它在忙些本鲸看不懂的。", burst: "它围着同一个泡泡转了好几圈。" },
+      { single: "它围着个泡泡转，本鲸先不打扰。", burst: "一阵接一阵，本鲸的尾巴都看愣了。" },
+      { single: "它又伸手够什么东西了，咕噜。", burst: "它忙得泡泡直冒，咕噜咕噜。" }
+    ]
+  };
+  function mod(n, m) {
+    const r = n % m;
+    return r < 0 ? r + m : r;
+  }
+  function hashTool(name) {
+    let h = 2166136261;
+    for (let i = 0; i < name.length; i++) {
+      h ^= name.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+  function classifyTool(name) {
+    const lower = name.toLowerCase();
+    let kind = "other";
+    let bestAt = Infinity;
+    for (const group of CLASS_KEYWORDS) {
+      for (const key of group[1]) {
+        const at = lower.indexOf(key);
+        if (at >= 0 && at < bestAt) {
+          bestAt = at;
+          kind = group[0];
+        }
+      }
+    }
+    return kind;
+  }
+  function finiteOr2(value, fallback) {
+    return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  }
+  function recentOf(state) {
+    if (!state || typeof state !== "object") return [];
+    const raw = state[RECENT];
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const item2 of raw) {
+      if (!item2 || typeof item2.line !== "string" || !item2.line) continue;
+      const at = finiteOr2(item2.at, NaN);
+      if (!Number.isFinite(at)) continue;
+      out.push({ line: item2.line, at });
+    }
+    return out.slice(-RECENT_MAX);
+  }
+  function attachRecent(state, recent) {
+    try {
+      Object.defineProperty(state, RECENT, { value: recent, enumerable: false, configurable: true });
+    } catch (e) {
+    }
+    return state;
+  }
+  function normalizeState(prev) {
+    const p = prev && typeof prev === "object" ? prev : {};
+    const count = Math.floor(finiteOr2(p.burstCount, 0));
+    const state = {
+      lastAt: finiteOr2(p.lastAt, 0),
+      lastTool: typeof p.lastTool === "string" ? p.lastTool : "",
+      lastLineAt: finiteOr2(p.lastLineAt, NEVER_AT),
+      burstStartAt: finiteOr2(p.burstStartAt, 0),
+      burstCount: count > 0 ? count : 0
+    };
+    return attachRecent(state, recentOf(prev));
+  }
+  function pickLine(kind, tool, at, seq, burst, recent) {
+    const pool = POOLS[kind];
+    const ordinal = typeof seq === "number" && Number.isFinite(seq) ? Math.trunc(seq) : Math.floor(at / LINE_GAP_MS);
+    const base = mod(hashTool(tool.toLowerCase()) + ordinal, pool.length);
+    const blocked = /* @__PURE__ */ new Set();
+    for (const item2 of recent) blocked.add(item2.line);
+    for (let i = 0; i < pool.length; i++) {
+      const pair = pool[mod(base + i, pool.length)];
+      const line = burst ? pair.burst : pair.single;
+      if (!blocked.has(line)) return line;
+    }
+    return burst ? pool[base].burst : pool[base].single;
+  }
+  function narrateTool(prev, input) {
+    const base = normalizeState(prev);
+    const tool = input && typeof input.tool === "string" ? input.tool.trim() : "";
+    const at = input && typeof input.at === "number" && Number.isFinite(input.at) ? input.at : NaN;
+    if (!tool || !Number.isFinite(at)) return { state: base, line: null };
+    const kind = classifyTool(tool);
+    const prevKind = base.lastTool ? classifyTool(base.lastTool) : null;
+    const sameRun = prevKind === kind && base.burstCount > 0 && at >= base.burstStartAt && at - base.burstStartAt < BURST_WINDOW_MS;
+    const burstStartAt = sameRun ? base.burstStartAt : at;
+    const burstCount = sameRun ? base.burstCount + 1 : 1;
+    const recent = recentOf(base).filter((item2) => at - item2.at >= 0 && at - item2.at < SAME_LINE_MS);
+    if (at - base.lastLineAt < LINE_GAP_MS) {
+      const state2 = attachRecent({
+        lastAt: at,
+        lastTool: tool,
+        lastLineAt: base.lastLineAt,
+        burstStartAt,
+        burstCount
+      }, recent);
+      return { state: state2, line: null };
+    }
+    const burst = burstCount >= BURST_MIN_COUNT;
+    const line = pickLine(kind, tool, at, input.seq, burst, recent);
+    const state = attachRecent({
+      lastAt: at,
+      lastTool: tool,
+      lastLineAt: at,
+      burstStartAt,
+      burstCount
+    }, [...recent, { line, at }].slice(-RECENT_MAX));
+    return { state, line };
+  }
+
+  // src/client/tool-watch.ts
+  var PATH = "/nervous";
+  var INTERVAL_MS = 3e3;
+  function createToolWatch(opts) {
+    const interval = Number(opts.intervalMs) > 0 ? Number(opts.intervalMs) : INTERVAL_MS;
+    let timer = null;
+    let running = false;
+    let listener = null;
+    let state = null;
+    let cursor = 0;
+    let baselineSet = false;
+    let inflight2 = false;
+    function deliver(events) {
+      if (!Array.isArray(events) || !listener) return;
+      if (!baselineSet) {
+        baselineSet = true;
+        for (const e of events) {
+          const at = Number(e && e.at);
+          if (Number.isFinite(at) && at > cursor) cursor = at;
+        }
+        return;
+      }
+      for (const e of events) {
+        const at = Number(e && e.at);
+        if (!Number.isFinite(at) || at <= cursor) continue;
+        cursor = at;
+        const d = e && e.data || {};
+        if (e && e.type === "host" && d.name === "tool/call" && d.tool) {
+          try {
+            const r = narrateTool(state, { tool: String(d.tool), at, seq: Number(d.seq) || 0 });
+            state = r.state;
+            if (r.line) {
+              try {
+                listener(r.line);
+              } catch (err) {
+              }
+            }
+          } catch (err) {
+          }
+        }
+      }
+    }
+    function poll() {
+      if (!running || inflight2 || !listener) return;
+      if (!opts.enabled()) return;
+      inflight2 = true;
+      let pending;
+      try {
+        pending = getJson(PATH, { cache: "no-store" });
+      } catch (e) {
+        inflight2 = false;
+        return;
+      }
+      pending.then((d) => {
+        if (d && d.ok && Array.isArray(d.events)) deliver(d.events);
+      }).catch(() => {
+      }).then(() => {
+        inflight2 = false;
+      });
+    }
+    function start() {
+      if (running) return;
+      running = true;
+      listener = (line) => {
+        try {
+          opts.bubble(line, 5200);
+        } catch (e) {
+        }
+      };
+      poll();
+      timer = setInterval(poll, interval);
+    }
+    function stop() {
+      running = false;
+      listener = null;
+      if (timer) {
+        try {
+          clearInterval(timer);
+        } catch (e) {
+        }
+      }
+      timer = null;
+    }
+    return { start, stop };
   }
 
   // src/client/focus-reward.ts
@@ -4829,199 +5272,6 @@
     } catch (e) {
       return false;
     }
-  }
-
-  // src/client/http.ts
-  var API_BASE = "/api/chubby-whale";
-  var DEFAULT_TIMEOUT_MS = 15e3;
-  function apiUrl(path) {
-    const p = String(path || "");
-    if (!p) return API_BASE;
-    if (/^(https?:)?\/\//.test(p)) return p;
-    if (p.indexOf("/api/") === 0) return p;
-    return API_BASE + (p.charAt(0) === "/" ? p : "/" + p);
-  }
-  function clientHeaders(clientId, extra) {
-    const h = Object.assign({}, extra || {});
-    if (clientId) h["x-client-id"] = clientId;
-    return h;
-  }
-  function budgetOf(v) {
-    const n = Number(v);
-    if (!Number.isFinite(n) || n <= 0) return 0;
-    return n;
-  }
-  function makeAbortController() {
-    try {
-      const AC = typeof AbortController !== "undefined" ? AbortController : null;
-      if (AC) return new AC();
-    } catch (e) {
-    }
-    return null;
-  }
-  function timeoutError(ms2) {
-    const msg = "请求超时（" + ms2 + "ms）";
-    try {
-      const D = typeof DOMException !== "undefined" ? DOMException : null;
-      if (D) return new D(msg, "TimeoutError");
-    } catch (e) {
-    }
-    const err = new Error(msg);
-    err.name = "TimeoutError";
-    return err;
-  }
-  function abortReasonOf(src) {
-    if (src && src.reason !== void 0) return src.reason;
-    try {
-      const D = typeof DOMException !== "undefined" ? DOMException : null;
-      if (D) return new D("aborted", "AbortError");
-    } catch (e) {
-    }
-    const err = new Error("aborted");
-    err.name = "AbortError";
-    return err;
-  }
-  function fetchWithBudget(url, init, useDefault) {
-    const o = Object.assign({}, init || {});
-    const hasExplicit = o.timeout !== void 0 && o.timeout !== null;
-    const wanted = hasExplicit ? budgetOf(o.timeout) : useDefault && !o.signal ? DEFAULT_TIMEOUT_MS : 0;
-    delete o.timeout;
-    const external = o.signal;
-    const canListen = !!external && typeof external.addEventListener === "function";
-    if (!wanted && !canListen) return fetch(url, o);
-    const ctrl = wanted ? makeAbortController() : null;
-    const detach = [];
-    if (ctrl) {
-      o.signal = ctrl.signal;
-      if (external) {
-        if (external.aborted) {
-          try {
-            ctrl.abort();
-          } catch (e) {
-          }
-        } else if (typeof external.addEventListener === "function") {
-          const forward = () => {
-            try {
-              ctrl.abort();
-            } catch (e) {
-            }
-          };
-          try {
-            external.addEventListener("abort", forward);
-            detach.push(() => {
-              try {
-                external.removeEventListener("abort", forward);
-              } catch (e) {
-              }
-            });
-          } catch (e) {
-          }
-        }
-      }
-    } else if (external) {
-      o.signal = external;
-    }
-    return new Promise((resolve, reject) => {
-      let done = false;
-      let timer = null;
-      const cleanup = () => {
-        while (detach.length) {
-          const fn = detach.pop();
-          try {
-            if (fn) fn();
-          } catch (e) {
-          }
-        }
-      };
-      const finish = (fn, v) => {
-        if (done) return;
-        done = true;
-        try {
-          if (timer) clearTimeout(timer);
-        } catch (e) {
-        }
-        cleanup();
-        fn(v);
-      };
-      if (wanted) {
-        timer = setTimeout(() => {
-          if (ctrl) {
-            try {
-              ctrl.abort();
-            } catch (e) {
-            }
-          }
-          finish(reject, timeoutError(wanted));
-        }, wanted);
-        try {
-          if (timer && typeof timer.unref === "function") timer.unref();
-        } catch (e) {
-        }
-      }
-      if (canListen) {
-        const onAbort = () => {
-          finish(reject, abortReasonOf(external));
-        };
-        if (external.aborted) {
-          onAbort();
-          return;
-        }
-        try {
-          external.addEventListener("abort", onAbort);
-          detach.push(() => {
-            try {
-              external.removeEventListener("abort", onAbort);
-            } catch (e) {
-            }
-          });
-        } catch (e) {
-        }
-      }
-      let pending;
-      try {
-        pending = fetch(url, o);
-      } catch (e) {
-        finish(reject, e);
-        return;
-      }
-      Promise.resolve(pending).then(
-        (r) => finish(resolve, r),
-        (e) => finish(reject, e)
-      );
-    });
-  }
-  function getJson(path, init) {
-    return fetchWithBudget(apiUrl(path), init, true).then((r) => r.json());
-  }
-  function postInit(body, init) {
-    const o = Object.assign({}, init || {});
-    o.method = "POST";
-    if (body !== void 0) {
-      o.headers = Object.assign({ "content-type": "application/json" }, o.headers || {});
-      o.body = JSON.stringify(body);
-    }
-    return o;
-  }
-  function postRaw(path, body, init) {
-    return fetchWithBudget(apiUrl(path), postInit(body, init), false);
-  }
-  function postJson(path, body, init) {
-    return fetchWithBudget(apiUrl(path), postInit(body, init), true).then((r) => r.json());
-  }
-  function delJson(path, init) {
-    const o = Object.assign({}, init || {});
-    o.method = "DELETE";
-    return fetchWithBudget(apiUrl(path), o, true).then((r) => r.json());
-  }
-  function timeoutSignal(ms2) {
-    try {
-      const n = Number(ms2);
-      if (!Number.isFinite(n) || n <= 0) return void 0;
-      const AS = typeof AbortSignal !== "undefined" ? AbortSignal : null;
-      if (AS && typeof AS.timeout === "function") return AS.timeout(n);
-    } catch (e) {
-    }
-    return void 0;
   }
 
   // src/client/melody.ts
@@ -7013,7 +7263,7 @@
   }
 
   // src/client/nervous/host-sense.ts
-  var PATH = "/nervous";
+  var PATH2 = "/nervous";
   var DEFAULT_INTERVAL_MS = 3e3;
   var MIN_INTERVAL_MS = 500;
   var MAX_INTERVAL_MS = 10 * 60 * 1e3;
@@ -7070,7 +7320,7 @@
       inflight2 = true;
       let pending;
       try {
-        pending = getJson(PATH, { cache: "no-store" });
+        pending = getJson(PATH2, { cache: "no-store" });
       } catch (e) {
         inflight2 = false;
         return;
@@ -12306,6 +12556,21 @@
             resetSkinBg();
             return;
           }
+          if (action === "tool-narrator") {
+            const on = (() => {
+              try {
+                return localStorage.getItem("chubby-tool-narrator") !== "off";
+              } catch (e) {
+                return false;
+              }
+            })();
+            try {
+              localStorage.setItem("chubby-tool-narrator", on ? "off" : "on");
+            } catch (e) {
+            }
+            showBubble(on ? "鲸式解说：关（DSH 干活时本鲸不吭声）" : "鲸式解说：开（它干活时本鲸嘀咕两句）", 3e3);
+            return;
+          }
           if (action === "skin-fixed") {
             const next = !skinFixed();
             setSkinFixed(next);
@@ -12608,6 +12873,30 @@
           if (!canvas) return;
           animRef.current = createAnimator({ canvas, imgSrc: "/api/chubby-whale/asset?v=" + Date.now(), cw: CW, ch: CH, sx: SX, sy: SY, state: talkRef.current, look: lookRef.current });
           animRef.current.start();
+          R.useEffect(() => {
+            const watch = createToolWatch({
+              bubble: (text, ms2) => {
+                try {
+                  showBubble(text, ms2);
+                } catch (e) {
+                }
+              },
+              enabled: () => {
+                try {
+                  return localStorage.getItem("chubby-tool-narrator") !== "off";
+                } catch (e) {
+                  return false;
+                }
+              }
+            });
+            watch.start();
+            return () => {
+              try {
+                watch.stop();
+              } catch (e) {
+              }
+            };
+          }, []);
           try {
             if (!autoSkinStarted) {
               autoSkinStarted = true;
@@ -12674,7 +12963,13 @@
           return () => clearInterval(timer);
         }, []);
         const recoverProps = recover.dot(hidden);
-        const menuItems = menu ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())) : [];
+        const menuItems = menu ? buildMenu(VERSION, Object.assign({ skinFixed: skinFixed(), toolNarratorOn: (() => {
+          try {
+            return localStorage.getItem("chubby-tool-narrator") !== "off";
+          } catch (e) {
+            return false;
+          }
+        })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried }, readMenuRuntime())) : [];
         const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : [];
         menuEntriesRef.current = menuEntries;
         function renderItems(items) {
