@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.20";
+  var VERSION = "1.4.21";
 
   // src/client/styles.ts
   var W = 240;
@@ -133,14 +133,12 @@
   });
   var CHAT_PANEL_W = 340;
   var CHAT_PANEL_H = 380;
-  var chatPanelStyle = (open) => {
+  var chatPanelStyle = (open, pos) => {
     const vp = viewportSize();
     const right = vp.w > 0 ? Math.min(236, Math.max(8, vp.w - CHAT_PANEL_W - 8)) : 236;
     const bottom = vp.h > 0 ? Math.min(146, Math.max(8, vp.h - CHAT_PANEL_H)) : 146;
-    return {
+    const base = {
       position: "fixed",
-      right,
-      bottom,
       width: CHAT_PANEL_W,
       background: "linear-gradient(180deg, rgba(18,40,74,0.98), rgba(10,24,46,0.98))",
       border: "1px solid rgba(93,160,240,0.55)",
@@ -152,6 +150,12 @@
       zIndex: 1e4,
       display: open ? "block" : "none"
     };
+    if (pos) {
+      const left = Math.min(Math.max(8, pos.x), Math.max(8, vp.w - CHAT_PANEL_W - 8));
+      const top = Math.min(Math.max(8, pos.y), Math.max(8, vp.h - CHAT_PANEL_H - 8));
+      return { ...base, left, top };
+    }
+    return { ...base, right, bottom };
   };
   var headStyle = {
     display: "flex",
@@ -3849,6 +3853,33 @@
   var progressActive = defaultProgress.active;
   var progressIndex = defaultProgress.index;
   var bumpProgress = defaultProgress.bump;
+
+  // src/client/chat-panel-pos.ts
+  var PANEL_POS_KEY = "chubby-chat-panel-pos";
+  var PANEL_MARGIN = 8;
+  function finite(n) {
+    const v = Number(n);
+    return Number.isFinite(v) ? v : null;
+  }
+  function savePanelPos(pos) {
+    try {
+      if (!pos) {
+        localStorage.removeItem(PANEL_POS_KEY);
+        return;
+      }
+      localStorage.setItem(PANEL_POS_KEY, JSON.stringify({ x: Math.round(pos.x), y: Math.round(pos.y) }));
+    } catch (e) {
+    }
+  }
+  function clampPanelPos(pos, w, h, vw, vh) {
+    const pw = Math.max(0, finite(w) || 0);
+    const ph = Math.max(0, finite(h) || 0);
+    const maxX = Math.max(PANEL_MARGIN, (finite(vw) || 0) - pw - PANEL_MARGIN);
+    const maxY = Math.max(PANEL_MARGIN, (finite(vh) || 0) - ph - PANEL_MARGIN);
+    const x = Math.min(Math.max(PANEL_MARGIN, finite(pos && pos.x) || 0), maxX);
+    const y = Math.min(Math.max(PANEL_MARGIN, finite(pos && pos.y) || 0), maxY);
+    return { x: Math.round(x), y: Math.round(y) };
+  }
 
   // src/shared/text.ts
   function clipCodePoints(value, max) {
@@ -9395,26 +9426,26 @@
   var SQUASH_MAX = 0.18;
   var LAUNCH_MIN = 1.2;
   var BOUNCE_MIN = 2.2;
-  function finite(v, fallback = 0) {
+  function finite2(v, fallback = 0) {
     return Number.isFinite(v) ? v : fallback;
   }
   function createFlight() {
     return { vx: 0, vy: 0, resting: true, squashAge: SQUASH_MS };
   }
   function launch(vx, vy) {
-    const x = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, finite(vx)));
-    const y = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, finite(vy)));
+    const x = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, finite2(vx)));
+    const y = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, finite2(vy)));
     return { vx: x, vy: y, moving: Math.hypot(x, y) >= LAUNCH_MIN };
   }
   function stepFlight(f, pos, b, dtScale = 1, dtMs = 16.67) {
-    const k = Math.min(4, Math.max(0.25, finite(dtScale, 1)));
-    const ms2 = Math.min(100, Math.max(0, finite(dtMs, 16.67)));
+    const k = Math.min(4, Math.max(0.25, finite2(dtScale, 1)));
+    const ms2 = Math.min(100, Math.max(0, finite2(dtMs, 16.67)));
     if (f.squashAge < SQUASH_MS) f.squashAge = Math.min(SQUASH_MS, f.squashAge + ms2);
-    if (f.resting) return { pos: { x: finite(pos.x), y: finite(pos.y) }, bounce: "none" };
+    if (f.resting) return { pos: { x: finite2(pos.x), y: finite2(pos.y) }, bounce: "none" };
     const vy0 = f.vy;
     f.vy += GRAVITY * k;
-    let x = finite(pos.x) + f.vx * k;
-    let y = finite(pos.y) + (vy0 + f.vy) / 2 * k;
+    let x = finite2(pos.x) + f.vx * k;
+    let y = finite2(pos.y) + (vy0 + f.vy) / 2 * k;
     let bounce = "none";
     if (x < b.minX) {
       x = b.minX;
@@ -9451,12 +9482,12 @@
         }
       }
     }
-    x = finite(x, b.minX);
-    y = finite(y, b.minY);
+    x = finite2(x, b.minX);
+    y = finite2(y, b.minY);
     return { pos: { x, y }, bounce };
   }
   function squashScale(ageMs) {
-    const a = Math.max(0, finite(ageMs, SQUASH_MS));
+    const a = Math.max(0, finite2(ageMs, SQUASH_MS));
     if (a >= SQUASH_MS) return { sx: 1, sy: 1 };
     const q = a / SQUASH_MS;
     const damp = Math.exp(-4.2 * q);
@@ -11544,12 +11575,21 @@
     const { h, lang } = ctx;
     return h(
       "div",
-      { ref: ctx.panelRef, style: chatPanelStyle(ctx.open) },
+      { ref: ctx.panelRef, style: chatPanelStyle(ctx.open, ctx.panelPos || null) },
       h(
         "div",
-        { style: headStyle },
+        { style: { ...headStyle, cursor: "move", userSelect: "none" }, onPointerDown: ctx.onPanelDragStart },
         h("span", null, lang === "en" ? "Fat Whale · Chat" : "肥鲸 · 聊天"),
-        h("span", { style: { cursor: "pointer", color: "#9FD8FF", padding: "0 4px" }, onClick: ctx.onClose }, "✕")
+        h("span", {
+          style: { cursor: "pointer", color: "#9FD8FF", padding: "0 4px" },
+          onPointerDown: (e) => {
+            try {
+              e.stopPropagation();
+            } catch (err) {
+            }
+          },
+          onClick: ctx.onClose
+        }, "✕")
       ),
       h(
         "div",
@@ -11892,6 +11932,9 @@
           }
         })());
         const [chatOpen, setChatOpen] = R.useState(false);
+        const [panelPos, setPanelPos] = R.useState(null);
+        const panelPosRef = R.useRef(null);
+        panelPosRef.current = panelPos;
         const chatOpenRef = R.useRef(false);
         chatOpenRef.current = chatOpen;
         const [messages, setMessages] = R.useState([]);
@@ -13583,6 +13626,58 @@
           }, 6e4);
           return () => clearInterval(timer);
         }, []);
+        const startPanelDrag = (e) => {
+          try {
+            if (!e || typeof e.button === "number" && e.button !== 0) return;
+            const panel = chatPanelRef.current;
+            if (!panel || !panel.getBoundingClientRect) return;
+            const rect = panel.getBoundingClientRect();
+            const startX = Number(e.clientX) || 0;
+            const startY = Number(e.clientY) || 0;
+            const move = (ev) => {
+              try {
+                const vp = { w: window.innerWidth, h: window.innerHeight };
+                const next = clampPanelPos(
+                  { x: rect.left + (Number(ev.clientX) || 0) - startX, y: rect.top + (Number(ev.clientY) || 0) - startY },
+                  rect.width || 340,
+                  rect.height || 380,
+                  vp.w,
+                  vp.h
+                );
+                panelPosRef.current = next;
+                setPanelPos(next);
+              } catch (err) {
+              }
+            };
+            const up = () => {
+              try {
+                window.removeEventListener("pointermove", move);
+              } catch (err) {
+              }
+              try {
+                window.removeEventListener("pointerup", up);
+              } catch (err) {
+              }
+              try {
+                savePanelPos(panelPosRef.current);
+              } catch (err) {
+              }
+            };
+            try {
+              window.addEventListener("pointermove", move);
+            } catch (err) {
+            }
+            try {
+              window.addEventListener("pointerup", up);
+            } catch (err) {
+            }
+            try {
+              e.preventDefault();
+            } catch (err) {
+            }
+          } catch (err) {
+          }
+        };
         const recoverProps = recover.dot(hidden);
         const menuItems = menu ? buildMenu(VERSION, Object.assign({ melodies, skinFixed: skinFixed(), toolNarratorOn: (() => {
           try {
@@ -13702,6 +13797,8 @@
               bodyRef,
               inputRef,
               panelRef: chatPanelRef,
+              panelPos,
+              onPanelDragStart: startPanelDrag,
               onClose: () => setChatOpen(false),
               onInputChange: (v) => setInput(v),
               onKeyDown: (e) => {

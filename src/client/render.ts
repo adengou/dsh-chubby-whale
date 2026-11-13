@@ -235,6 +235,10 @@ export type ChatPanelCtx = {
   inputRef?: any
   /** 面板根节点 ref（有入场动画时按 animationend 决定聚焦时机） */
   panelRef?: any
+  /** 拖动后的面板左上角；null = 默认右下角 */
+  panelPos?: { x: number; y: number } | null
+  /** 标题栏按下：开始拖动 */
+  onPanelDragStart?: (e: any) => void
   onClose: () => void
   onInputChange: (v: string) => void
   onKeyDown: (e: any) => void
@@ -244,10 +248,14 @@ export type ChatPanelCtx = {
 /** 聊天面板：标题栏 + 消息列表 + 输入行（结构与旧 JSX 逐项一致） */
 export function renderChatPanel(ctx: ChatPanelCtx): any {
   const { h, lang } = ctx
-  return h('div', { ref: ctx.panelRef, style: chatPanelStyle(ctx.open) },
-    h('div', { style: headStyle },
+  return h('div', { ref: ctx.panelRef, style: chatPanelStyle(ctx.open, ctx.panelPos || null) },
+    h('div', { style: { ...headStyle, cursor: 'move', userSelect: 'none' }, onPointerDown: ctx.onPanelDragStart },
       h('span', null, lang === 'en' ? 'Fat Whale · Chat' : '肥鲸 · 聊天'),
-      h('span', { style: { cursor: 'pointer', color: '#9FD8FF', padding: '0 4px' }, onClick: ctx.onClose }, '✕'),
+      h('span', {
+        style: { cursor: 'pointer', color: '#9FD8FF', padding: '0 4px' },
+        onPointerDown: (e: any) => { try { e.stopPropagation() } catch (err) { } },
+        onClick: ctx.onClose,
+      }, '✕'),
     ),
     h('div', { ref: ctx.bodyRef, style: bodyStyle },
       ctx.messages.length === 0

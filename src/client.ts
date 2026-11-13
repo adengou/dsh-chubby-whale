@@ -13,6 +13,7 @@ import { updateFocus, type FocusState } from './client/focus-reward.js'
 import { buildDiary } from './client/diary.js'
 import { stopProgress } from './client/narration-progress.js'
 import { narrationRate, chatRate } from './client/rates.js'
+import { clampPanelPos, readPanelPos, savePanelPos, type PanelPos } from './client/chat-panel-pos.js'
 import { handleFileDrop } from './client/dropzone.js'
 import { createAnimator } from './client/anim.js'
 import { DEFAULT_GROWTH, fetchGrowth, lookFor, lookForGrowth, parseGrowth } from './client/look.js'
@@ -389,6 +390,10 @@ registerSkinActions(actions)
       const [balanceText, setBalanceText] = R.useState('')
       const [lang, setLang] = R.useState((() => { try { return localStorage.getItem('chubby-lang') || 'zh' } catch { return 'zh' } })())
       const [chatOpen, setChatOpen] = R.useState(false)
+      // 聊天面板拖动位置：null = 默认右下角；拖动标题栏后持久化
+      const [panelPos, setPanelPos] = R.useState(null as PanelPos | null)
+      const panelPosRef = R.useRef(null as PanelPos | null)
+      panelPosRef.current = panelPos
       // 粘贴监听的 effect 只挂一次，需要同步读最新开关（聊天面板关着时不接粘贴）
       const chatOpenRef = R.useRef(false)
       chatOpenRef.current = chatOpen
@@ -1819,6 +1824,36 @@ registerSkinActions(actions)
       }, [])
 
 
+        const startPanelDrag = (e: any): void => {
+          try {
+            if (!e || (typeof e.button === 'number' && e.button !== 0)) return
+            const panel = chatPanelRef.current
+            if (!panel || !panel.getBoundingClientRect) return
+            const rect = panel.getBoundingClientRect()
+            const startX = Number(e.clientX) || 0
+            const startY = Number(e.clientY) || 0
+            const move = (ev: any): void => {
+              try {
+                const vp = { w: window.innerWidth, h: window.innerHeight }
+                const next = clampPanelPos(
+                  { x: rect.left + (Number(ev.clientX) || 0) - startX, y: rect.top + (Number(ev.clientY) || 0) - startY },
+                  rect.width || 340, rect.height || 380, vp.w, vp.h,
+                )
+                panelPosRef.current = next
+                setPanelPos(next)
+              } catch (err) { }
+            }
+            const up = (): void => {
+              try { window.removeEventListener('pointermove', move) } catch (err) { }
+              try { window.removeEventListener('pointerup', up) } catch (err) { }
+              try { savePanelPos(panelPosRef.current) } catch (err) { }
+            }
+            try { window.addEventListener('pointermove', move) } catch (err) { }
+            try { window.addEventListener('pointerup', up) } catch (err) { }
+            try { e.preventDefault() } catch (err) { }
+          } catch (err) { }
+        }
+
       // ===== 渲染 =====
       // 隐藏时右下角留一个极小的「○」恢复点（点一下回来，不刷新页面）
       const recoverProps = recover.dot(hidden)
@@ -1887,7 +1922,7 @@ registerSkinActions(actions)
         h('div', { ref: chatRootRef, style: { display: 'contents' } },
           renderChatPanel({
             h, lang, open: chatOpen, messages, input, busy, bodyRef,
-            inputRef, panelRef: chatPanelRef,
+            inputRef, panelRef: chatPanelRef, panelPos, onPanelDragStart: startPanelDrag,
             onClose: () => setChatOpen(false),
             onInputChange: (v: string) => setInput(v),
             onKeyDown: (e: any) => {

@@ -3713,6 +3713,28 @@ try {
   ok('能加载语音聊天默认值用例', false, String(e.message))
 }
 
+
+// ---------- 69 聊天面板浮动拖动（位置钳制 + 接线） ----------
+console.log('\n[69] 聊天面板浮动位置')
+try {
+  const posMod = await import('../src/client/chat-panel-pos.ts')
+  const vp = { w: 1000, h: 700 }
+  const c1 = posMod.clampPanelPos({ x: 999, y: 999 }, 340, 380, vp.w, vp.h)
+  ok('越界位置钳到右下留白内', c1.x === 652 && c1.y === 312, JSON.stringify(c1))
+  const c2 = posMod.clampPanelPos({ x: -50, y: -50 }, 340, 380, vp.w, vp.h)
+  ok('负坐标钳到 8px 留白', c2.x === 8 && c2.y === 8, JSON.stringify(c2))
+  const c3 = posMod.clampPanelPos({ x: 100, y: 100 }, 2000, 2000, vp.w, vp.h)
+  ok('面板比视口大时贴左上角', c3.x === 8 && c3.y === 8, JSON.stringify(c3))
+  const stylesSrc = readFileSync('src/client/styles.ts', 'utf8')
+  const renderSrc = readFileSync('src/client/render.ts', 'utf8')
+  const clientSrc = readFileSync('src/client.ts', 'utf8')
+  ok('chatPanelStyle 支持拖动位置', stylesSrc.indexOf('chatPanelStyle = (open: boolean, pos?') >= 0)
+  ok('标题栏接上拖动回调', renderSrc.indexOf('onPanelDragStart') >= 0 && renderSrc.indexOf("cursor: 'move'") >= 0)
+  ok('拖动结束持久化位置', clientSrc.indexOf('savePanelPos(panelPosRef.current)') >= 0 && clientSrc.indexOf('clampPanelPos(') >= 0)
+} catch (e) {
+  ok('能加载聊天面板位置用例', false, String(e.message))
+}
+
 console.log('\n────────────────────')
 console.log('  通过 ' + pass + ' 项，失败 ' + fail + ' 项')
 if (fail > 0) process.exit(1)

@@ -150,14 +150,12 @@ const CHAT_PANEL_H = 380
  * 这里按视口把 right/bottom 收进来（桌面尺寸下取值与原来完全一致）。
  * 注意：窗口 resize 后要到下一次重渲染才重新计算（菜单同理），不追求逐帧跟手。
  */
-export const chatPanelStyle = (open: boolean) => {
+export const chatPanelStyle = (open: boolean, pos?: { x: number; y: number } | null) => {
   const vp = viewportSize()
   const right = vp.w > 0 ? Math.min(236, Math.max(8, vp.w - CHAT_PANEL_W - 8)) : 236
   const bottom = vp.h > 0 ? Math.min(146, Math.max(8, vp.h - CHAT_PANEL_H)) : 146
-  return {
+  const base = {
     position: 'fixed' as const,
-    right,
-    bottom,
     width: CHAT_PANEL_W,
     background: 'linear-gradient(180deg, rgba(18,40,74,0.98), rgba(10,24,46,0.98))',
     border: '1px solid rgba(93,160,240,0.55)',
@@ -169,6 +167,13 @@ export const chatPanelStyle = (open: boolean) => {
     zIndex: 10000,
     display: open ? 'block' : 'none',
   }
+  if (pos) {
+    // 主人拖动过标题栏：用 left/top，不再钉在右下角；位置在拖动时已钳制，这里只兜一层。
+    const left = Math.min(Math.max(8, pos.x), Math.max(8, vp.w - CHAT_PANEL_W - 8))
+    const top = Math.min(Math.max(8, pos.y), Math.max(8, vp.h - CHAT_PANEL_H - 8))
+    return { ...base, left, top }
+  }
+  return { ...base, right, bottom }
 }
 
 export const headStyle = {
