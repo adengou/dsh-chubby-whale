@@ -43,6 +43,7 @@ export * as voice from './src/client/actions/voice.ts'
 export * as actions from './src/client/actions.ts'
 export * as menu from './src/client/menu.ts'
 export * as render from './src/client/render.ts'
+export * as promptModal from './src/client/actions/prompt-modal.ts'
 `
 const BUNDLE = join(TMP, 'bundle.mjs')
 try {
@@ -316,7 +317,7 @@ function json200Body() {
 // ======================================================================
 console.log('\n[E] voice.ts 唤醒词：气泡与实际生效时机同源')
 try {
-  const { voice, actions, menu, render } = await fresh()
+  const { voice, actions, menu, render, promptModal } = await fresh()
   const tbl = actions.createActionTable()
   voice.registerVoiceActions(tbl)
 
@@ -347,9 +348,9 @@ try {
   ok('恢复默认不再补"等重开"提示', bubbles[0] === '唤醒词：默认（大肥鱼/肥鲸等）', bubbles[0])
 
   // E4：自定义词走 prompt，存的是 trim 后的值，气泡照抄存储口径
+  // （输入框是自绘 DOM，不再用 window.prompt；测试通过 setPromptTextImpl 注入返回值）
   bubbles = []
-  const realPrompt = globalThis.window
-  globalThis.window = { prompt: () => '   自定义词   ' }
+  promptModal.setPromptTextImpl(async () => '   自定义词   ')
   await tbl.run('wake-word:custom', {
     bubble: (t) => bubbles.push(String(t)),
     wakeInfo: () => ({ words: ['自定义词'] }),
@@ -359,14 +360,13 @@ try {
 
   // E5：取消 prompt → 不改
   bubbles = []
-  globalThis.window = { prompt: () => null }
+  promptModal.setPromptTextImpl(async () => null)
   await tbl.run('wake-word:custom', {
     bubble: (t) => bubbles.push(String(t)),
     wakeInfo: () => ({ words: ['自定义词'] }),
   })
   ok('取消 prompt → 只提示没改', bubbles[0] === '没改唤醒词' && storage.getItem('chubby-wake-word') === '自定义词', bubbles.join(' | '))
-  if (realPrompt === undefined) delete globalThis.window
-  else globalThis.window = realPrompt
+  promptModal.setPromptTextImpl(null)
 
   // E6：音色动作写的键与菜单读的键是同一个（菜单显示同源）
   const voiceHost = { bubble: () => { }, setTtsVoice: (n) => { storage.setItem('chubby-tts-voice', n) }, previewVoice: () => { } }

@@ -24,7 +24,21 @@ export type PromptOptions = {
   okText?: string
 }
 
+/** 测试钩子：替换输入框实现（生产环境不调用；传 null 恢复默认 DOM 输入框） */
+let overrideImpl: ((opts: PromptOptions) => Promise<string | null> | string | null) | null = null
+
+export function setPromptTextImpl(fn: ((opts: PromptOptions) => Promise<string | null> | string | null) | null): void {
+  overrideImpl = fn
+}
+
 export function promptText(opts: PromptOptions): Promise<string | null> {
+  if (overrideImpl) {
+    try { return Promise.resolve(overrideImpl(opts)) } catch (e) { return Promise.resolve(null) }
+  }
+  return showPrompt(opts)
+}
+
+function showPrompt(opts: PromptOptions): Promise<string | null> {
   return new Promise((resolve) => {
     let settled = false
     const finish = (value: string | null): void => {
