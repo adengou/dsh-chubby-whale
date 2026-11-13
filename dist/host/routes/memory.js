@@ -14,29 +14,42 @@ import { sendJson } from '../respond.js';
 const MAX_TOPICS = 8;
 /** 单个主题词上限（字） */
 const MAX_TOPIC_CHARS = 8;
-/** 从摘要里提取主题词：按标点切分，取中文片段，去重、截断 */
+/**
+ * 从摘要里提取主题词。
+ *
+ * 教训（2026-11-13）：早先按标点切片段，切出来的是「主人称呼肥鲸为小」这种句子碎片，
+ * 被主人一眼识破是胡说。改成中文分词（Intl.Segmenter）抽 2-4 字的词、去停用词、按词频取前 8，
+ * 宁可比原来短、比原来少，也不能把长句碎片当主题。
+ */
+/** 元话语/虚词/代词：出现在摘要里也不该被当成主题 */
+const TOPIC_STOP = new Set(['主人', '称呼', '提到', '说到', '聊到', '讲到', '问到', '说到过', '我', '你', '他', '她', '它', '我们', '你们', '他们', '的', '了', '吗', '呢', '吧', '啊', '哦', '呀', '和', '与', '在', '是', '有', '就', '也', '都', '很', '要', '会', '说', '问', '提', '到', '把', '被', '给', '让', '这', '那', '什么', '怎么', '一个', '一下', '可以', '应该', '然后', '所以', '但是', '因为', '如果', '还是', '就是', '已经', '没有', '不是', '这个', '那个', '一些', '这样', '那样', '喜欢', '还有', '最近', '也在', '觉得', '知道', '现在', '今天', '昨天', '明天', '时候', '问题', '事情', '东西', '地方', '一样', '一起', '一直', '总是', '可能', '需要', '希望', '感觉', '认为', '表示', '进行', '使用', '开始', '结束', '接着', '最后', '一些', '这种', '那种', '比较', '非常', '特别', '真的', '有点', '一点', '几个', '两个', '三个', '然后', '所以', '但是', '因为', '如果', '还是', '已经', '没有', '不是']);
 function extractTopics(summary) {
-    const raw = String(summary || '');
-    if (!raw.trim())
+    const raw = String(summary || '').trim();
+    if (!raw)
         return [];
-    const pieces = raw.split(/[，。；、,.;!?！？\s\n\r\t]+/);
-    const out = [];
-    const seen = new Set();
-    for (const p of pieces) {
-        const w = p.replace(/^[：:（(【\[]+|[）)】\]]+$/g, '').trim();
-        if (!w)
-            continue;
-        if (!/^\p{Script=Han}+$/u.test(w))
-            continue; // 只留纯中文片段，混英文的不当主题
-        const clipped = Array.from(w).slice(0, MAX_TOPIC_CHARS).join('');
-        if (!clipped || seen.has(clipped))
-            continue;
-        seen.add(clipped);
-        out.push(clipped);
-        if (out.length >= MAX_TOPICS)
-            break;
+    const freq = new Map();
+    try {
+        const seg = new Intl.Segmenter('zh', { granularity: 'word' });
+        for (const part of seg.segment(raw)) {
+            if (!part.isWordLike)
+                continue;
+            const w = String(part.segment || '').trim();
+            if (!/^\p{Script=Han}{2,4}$/u.test(w))
+                continue;
+            if (TOPIC_STOP.has(w))
+                continue;
+            freq.set(w, (freq.get(w) || 0) + 1);
+        }
     }
-    return out;
+    catch (e) {
+        return [];
+    }
+    // 先按词频、再按长度：主题词优先挑出现多、字数短的
+    const words = Array.from(freq.entries())
+        .sort((a, b) => (b[1] - a[1]) || (a[0].length - b[0].length))
+        .slice(0, 8)
+        .map((x) => x[0]);
+    return words;
 }
 export function createMemoryHandlers(opts) {
     async function handleMemory(req, res) {
