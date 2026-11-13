@@ -11520,9 +11520,10 @@
             const LAST = "chubby-last-seen";
             const DAY = "chubby-diary-day";
             const now = Date.now();
-            const last = now - 3 * 3600 * 1e3;
+            const last = Number(localStorage.getItem(LAST) || 0);
             localStorage.setItem(LAST, String(now));
             const day = new Date(now).toISOString().slice(0, 10);
+            if (!last || localStorage.getItem(DAY) === day) return;
             const text = buildDiary({ now, lastSeenAt: last, summary: "", intimacy: 0 });
             if (!text) return;
             localStorage.setItem(DAY, day);

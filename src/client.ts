@@ -703,17 +703,16 @@ registerCapsuleActions(actions)
           const LAST = 'chubby-last-seen'
           const DAY = 'chubby-diary-day'
           const now = Date.now()
-          // TEMP-VERIFY：验证期无视 last-seen 与「今天写过」标记，强制按离线 3 小时试一次（验完改回）
-          const last = now - 3 * 3600 * 1000
+          const last = Number(localStorage.getItem(LAST) || 0)
           localStorage.setItem(LAST, String(now))
           const day = new Date(now).toISOString().slice(0, 10)
+          // 每天最多一篇：今天已经递过就不再打扰
+          if (!last || localStorage.getItem(DAY) === day) return
           const text = buildDiary({ now, lastSeenAt: last, summary: '', intimacy: 0 })
           if (!text) return
           localStorage.setItem(DAY, day)
-          // 气泡 + 语音（1 秒后冒，1.5 秒后念，避开开场问候）
+          // 气泡 1 秒后冒；语音 8 秒后念（给开场问候/今日一句让路，否则会被打断）
           setTimeout(() => { try { showBubble(text, 22000) } catch (e) { } }, 1000)
-          // 语音放到 8 秒后：3 秒时开场问候会念一句、紧接着「今日一句」再念一句，
-          // 1.5 秒就开口必被它们打断（实测「念不完」）
           setTimeout(() => { try { speakText(text, { rate: narrationRate() }) } catch (e) { } }, 8000)
         } catch (e) { }
       }, [])
