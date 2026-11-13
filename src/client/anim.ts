@@ -523,8 +523,8 @@ export function createAnimator(opts: {
       if (sleepy) drawZZZ(t)
       // 说话嘴动：正弦连续开合（周期约 1.2 秒），比原来的二值跳变更自然
       if (t < state.talkUntil && !sleepy) {
-        const phase = Math.sin(t / 130)               // -1..1
-        const open = phase * 0.5 + 0.5                // 0..1，1 = 张到最大
+        const phase = Math.sin(t / 150)               // -1..1，周期约 0.94 秒
+        const open = phase * 0.35 + 0.5               // 0.15..0.85，张嘴幅度收小
         drawMouth(1 - open)                           // 传「闭嘴程度」
       }
       drawSplashes(dt)

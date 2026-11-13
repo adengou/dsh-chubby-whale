@@ -107,8 +107,8 @@
 
         // 说话嘴动（正弦连续开合，周期约 1.2 秒，与电脑端同一套）
         if (t < talkUntil) {
-          var phase = Math.sin(t / 130)
-          drawMouth(1 - (phase * 0.5 + 0.5))
+          var phase = Math.sin(t / 150)
+          drawMouth(1 - (phase * 0.35 + 0.5))
         }
       } finally {
         ctx.restore()
