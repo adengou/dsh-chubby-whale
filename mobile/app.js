@@ -2024,8 +2024,9 @@ function init() {
         return Math.min(Math.max(-span, v), span);
       };
       const applyPos = () => {
-        petEl.style.marginLeft = posX + 'px';
-        petEl.style.marginTop = posY + 'px';
+        // left/top 相对定位：只改变绘制位置，不参与 flex 布局（margin 会被挤压变形）
+        petEl.style.left = posX + 'px';
+        petEl.style.top = posY + 'px';
       };
       const savePos = () => {
         try { localStorage.setItem(POS_KEY, JSON.stringify({ x: posX, y: posY })) } catch (e) { }
