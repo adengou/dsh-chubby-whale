@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.1";
+  var VERSION = "1.4.2";
 
   // src/client/styles.ts
   var W = 240;
@@ -5321,7 +5321,18 @@
   }
 
   // src/client/actions/prompt-modal.ts
+  var overrideImpl = null;
   function promptText(opts) {
+    if (overrideImpl) {
+      try {
+        return Promise.resolve(overrideImpl(opts));
+      } catch (e) {
+        return Promise.resolve(null);
+      }
+    }
+    return showPrompt(opts);
+  }
+  function showPrompt(opts) {
     return new Promise((resolve) => {
       let settled = false;
       const finish = (value) => {
