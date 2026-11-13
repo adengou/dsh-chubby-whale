@@ -101,22 +101,15 @@ export function createToolWatch(opts: {
           const title = String((d as any).title || "").trim()
           const author = String((d as any).author || "").trim()
           const source = title ? (author ? author + "《" + title + "》" : "《" + title + "》") : ""
-          // 每 2 句一条字幕、依次显示：整首塞一条太长，气泡会显示不全
-          const chunks: string[][] = []
-          for (let i = 0; i < src.length; i += 2) chunks.push(src.slice(i, i + 2))
-          if (!chunks.length) chunks.push([line])
-          let delay = 0
-          chunks.forEach((seg, idx) => {
-            const isLast = idx === chunks.length - 1
-            const head = idx === 0 ? "咕噜……" : ""
-            const cite = isLast && source ? "\n——" + source + "。" : ""
-            const end = isLast ? tail : ""
-            const text = head + seg.join("\n") + cite + end
-            const segMs = Math.min(30000, Math.max(6000, (seg.join("").length + (isLast ? 20 : 0)) * 320))
-            if (delay === 0) { try { opts.bubble(text, segMs) } catch (err) { } }
-            else { setTimeout(() => { try { opts.bubble(text, segMs) } catch (err) { } }, delay) }
-            delay += segMs
-          })
+          // 整首一条气泡（不再每 2 句切换——切换会让字幕「跳跃」）；
+          // 气泡在 CSS 里带 max-height + 滚动，长词也能看全。
+          const body = src.join("\n")
+          const cite = source ? "\n——" + source + "。" : ""
+          const text = "咕噜……" + body + cite + tail
+          // 时长按整首字数算（慢速每字约 320ms，下限 18s、上限 90s）
+          const spoken = body + (source ? "。" + source : "") + tail
+          const ms = Math.min(90000, Math.max(18000, spoken.length * 320))
+          try { opts.bubble(text, ms) } catch (err) { }
           // 语音一次念完整首 + 出处 + 后缀
           const spoken = src.join("") + (source ? "。" + source : "") + tail
           try { if (opts.speak) opts.speak(spoken) } catch (err) { }
