@@ -116,15 +116,22 @@ export function buildPoemIndex(poems) {
                 seen.add(key);
                 const list = idx.get(key);
                 const entry = { title, author, line };
-                if (list)
+                if (list) {
+                    // 太泛的词（已经横跨太多首诗）不再收：留在索引里只会让任何输入都命中
+                    if (list.length >= MAX_HITS_PER_WORD)
+                        continue;
                     list.push(entry);
-                else
+                }
+                else {
                     idx.set(key, [entry]);
+                }
             }
         }
     }
     return idx;
 }
+/** 太泛的词：出现在超过这么多首诗里就不当关键词（否则几乎任何话都能命中） */
+const MAX_HITS_PER_WORD = 30;
 /** 词哈希（用于多首同词时的确定性轮换） */
 function hashWord(w) {
     let h = 0;

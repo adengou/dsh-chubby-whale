@@ -3469,6 +3469,8 @@
     离别: ["。别难过。"],
     离别酒: ["。别难过。"]
   };
+  var POEM_COOLDOWN_MS = 5 * 60 * 1e3;
+  var lastPoemAt = 0;
   var poemTailSeq = 0;
   function poemTail(theme, line) {
     const special = POEM_TAILS_BY_THEME[theme] || [];
@@ -3507,6 +3509,10 @@
         if (e && e.type === "host" && d.name === "poem-echo" && d.line) {
           const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true;
           if (poemOn) {
+            if (Date.now() - lastPoemAt < POEM_COOLDOWN_MS) {
+              continue;
+            }
+            lastPoemAt = Date.now();
             const line = String(d.line);
             const full = Array.isArray(d.full) ? d.full.map((x) => String(x)).filter(Boolean) : [];
             const src = full.length ? full : [line];

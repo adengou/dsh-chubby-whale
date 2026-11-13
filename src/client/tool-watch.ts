@@ -31,6 +31,11 @@ const POEM_TAILS_BY_THEME: Record<string, string[]> = {
   离别酒: ['。别难过。'],
 }
 
+/** 诗词冷却：两次诗词弹幕至少隔这么久（本意是偶尔冒一句，不是每句话都冒） */
+const POEM_COOLDOWN_MS = 5 * 60 * 1000
+/** 上次诗词弹幕时间 */
+let lastPoemAt = 0
+
 /** 后缀轮换计数：每次触发 +1，保证不会每次都同一句 */
 let poemTailSeq = 0
 
@@ -101,6 +106,9 @@ export function createToolWatch(opts: {
       if (e && e.type === 'host' && d.name === 'poem-echo' && d.line) {
         const poemOn = opts.poemEnabled ? !!opts.poemEnabled() : true
         if (poemOn) {
+          // 冷却期内不再冒诗：避免「每输入一句都触发」
+          if (Date.now() - lastPoemAt < POEM_COOLDOWN_MS) { continue }
+          lastPoemAt = Date.now()
           const line = String(d.line)
           const full = Array.isArray((d as any).full) ? (d as any).full.map((x: any) => String(x)).filter(Boolean) : []
           const src = full.length ? full : [line]
