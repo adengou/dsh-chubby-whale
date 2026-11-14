@@ -122,7 +122,9 @@ try {
   const P_VOICE = P_SET + '\u0000' + '语音与耳朵 ▸'
   const P_RATE = '说书语速：-35% ▸'
   const P_ACTIONS = P_SET + '\u0000' + '行为开关 ▸'
-  const cases = ['', P_CULTURE, P_CULTURE + '\u0000' + P_COUPLET, P_SET, P_DISPLAY, P_VOICE, P_VOICE + '\u0000' + '换个声音 ▸', P_VOICE + '\u0000' + P_RATE, P_ACTIONS]
+  // 2026-11-14 WhaleWorks v0.1：一级「施工队 ▸」（设置之后），只复制模板/显示路径
+  const P_CREW = '施工队 ▸'
+  const cases = ['', P_CULTURE, P_CULTURE + '\u0000' + P_COUPLET, P_SET, P_DISPLAY, P_VOICE, P_VOICE + '\u0000' + '换个声音 ▸', P_VOICE + '\u0000' + P_RATE, P_ACTIONS, P_CREW]
   let aligned = true
   let indexOk = true
   const detail = []
@@ -141,7 +143,7 @@ try {
       if (e.kind === 'item' && row && typeof row.props.onClick === 'function' && !e.action) aligned = false
     }
   }
-  ok('九种展开状态下，可见项数量与渲染行一致', aligned && detail.length === 0, detail.join(' | '))
+  ok('十种展开状态下，可见项数量与渲染行一致', aligned && detail.length === 0, detail.join(' | '))
   ok('可见项 index 连续重编号（高亮可寻址）', indexOk)
 
   // 二级菜单路径：必须带父级才展开（不越级）
@@ -343,6 +345,7 @@ try {
     setPath + '\u0000' + '行为开关 ▸',
     setPath + '\u0000' + '数据与维护 ▸',
     '数据与统计 ▸',
+    '施工队 ▸',
   ]
   const visible = openPaths.flatMap((subOpen) => listMenuEntries(items, { tr, lang: 'zh', subOpen }))
   const dead = visible.filter((e) => e.kind === 'item' && !t.has(e.action))

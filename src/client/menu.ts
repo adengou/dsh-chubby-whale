@@ -4,8 +4,8 @@ import { normalizeVoiceName } from './voice.js'
  * client/menu.ts —— 菜单数据（1:1 复刻 C# 版 的 menu.ps1，含中英双语）
  *
  * 层级约定（2026-11-14 重构）：
- *   · 一级只放高频命令：说话、看图/读文档、干活、喂饭、成长、提醒、内容、曲子、
- *     位置、数据统计、账本、退出；
+ *   · 一级只放高频命令：设置、施工队（WhaleWorks 模板只读）、说话、看图/读文档、干活、喂饭、
+ *     成长、提醒、内容、曲子、位置、数据统计、账本、退出；
  *   · 所有开关/选择类（语言、音色、语音、语速、外观、缓存、行为开关、维护入口）
  *     统一收进一级「设置 ▸」，内部再分四组：
  *     显示与语言 / 语音与耳朵 / 行为开关 / 数据与维护。
@@ -68,6 +68,11 @@ export const EN_MAP: Record<string, string> = {
   '数据导入…': 'Import data…',
   '使用统计': 'Usage stats',
   '设置 ▸': 'Settings ▸',
+  '施工队 ▸': 'Construction crew ▸',
+  '复制开工单': 'Copy work order',
+  '复制工人卡': 'Copy worker card',
+  '复制验收单': 'Copy acceptance sheet',
+  '施工规范…': 'Construction guide…',
   '显示与语言 ▸': 'Display & language ▸',
   '语音与耳朵 ▸': 'Voice & hearing ▸',
   '行为开关 ▸': 'Behavior toggles ▸',
@@ -387,6 +392,14 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
         item('清空聊天缓存…', 'cache-clear'),
         item('清除记忆…', 'clear-memory'),
       ]),
+    ]),
+    // ══ 一级：施工队（鲸群营造 v0.1）══
+    // 只复制模板 / 显示规范路径：小鲸只读监理，不自动建任务、不改任务板。
+    sub('施工队 ▸', [
+      item('复制开工单', 'whale-works:brief'),
+      item('复制工人卡', 'whale-works:worker-card'),
+      item('复制验收单', 'whale-works:acceptance'),
+      item('施工规范…', 'whale-works:guide'),
     ]),
     sep(),
     // ══ 一级：高频命令（开关/选择类一律不放在这一层）══

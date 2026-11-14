@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.5.3";
+  var VERSION = "1.6.0";
 
   // src/client/styles.ts
   var W = 240;
@@ -2713,6 +2713,11 @@
     "数据导入…": "Import data…",
     "使用统计": "Usage stats",
     "设置 ▸": "Settings ▸",
+    "施工队 ▸": "Construction crew ▸",
+    "复制开工单": "Copy work order",
+    "复制工人卡": "Copy worker card",
+    "复制验收单": "Copy acceptance sheet",
+    "施工规范…": "Construction guide…",
     "显示与语言 ▸": "Display & language ▸",
     "语音与耳朵 ▸": "Voice & hearing ▸",
     "行为开关 ▸": "Behavior toggles ▸",
@@ -2960,6 +2965,14 @@
           item("清空聊天缓存…", "cache-clear"),
           item("清除记忆…", "clear-memory")
         ])
+      ]),
+      // ══ 一级：施工队（鲸群营造 v0.1）══
+      // 只复制模板 / 显示规范路径：小鲸只读监理，不自动建任务、不改任务板。
+      sub("施工队 ▸", [
+        item("复制开工单", "whale-works:brief"),
+        item("复制工人卡", "whale-works:worker-card"),
+        item("复制验收单", "whale-works:acceptance"),
+        item("施工规范…", "whale-works:guide")
       ]),
       sep(),
       // ══ 一级：高频命令（开关/选择类一律不放在这一层）══
@@ -6360,6 +6373,316 @@
     return null;
   }
 
+  // src/shared/whale-works.ts
+  var PREFIX_RE = /^\[([A-Za-z]{1,4})(\d{0,2})\]\s*([\s\S]*)$/;
+  function parsePrefix(title) {
+    const miss = { role: "none", branchKey: "", label: title, token: "" };
+    if (title === "") return { role: "none", branchKey: "", label: "", token: "" };
+    const match = PREFIX_RE.exec(title);
+    if (match === null) return miss;
+    const letters = match[1].toUpperCase();
+    const digits = match[2];
+    const label = match[3].trim();
+    if (digits.length > 0) {
+      if (letters === "V") return { role: "verify", branchKey: "", label, token: "V" + digits };
+      if (letters === "D") return { role: "director", branchKey: "", label, token: "D" + digits };
+      if (letters === "E") return { role: "engineering", branchKey: "", label, token: "E" + digits };
+      if (letters === "FIX") return { role: "fix", branchKey: "", label, token: "FIX" + digits };
+      return letters.length === 1 ? { role: "leaf", branchKey: letters, label, token: letters + digits } : miss;
+    }
+    if (letters === "V") return { role: "verify", branchKey: "", label, token: "V" };
+    if (letters === "D") return { role: "director", branchKey: "", label, token: "D" };
+    if (letters === "E") return { role: "engineering", branchKey: "", label, token: "E" };
+    if (letters === "FIX") return { role: "fix", branchKey: "", label, token: "FIX" };
+    if (letters.length === 1) return { role: "branch", branchKey: letters, label, token: letters };
+    return miss;
+  }
+  function readStrings(value) {
+    return Array.isArray(value) ? value.filter((item2) => typeof item2 === "string") : [];
+  }
+  function readSubject(value) {
+    return typeof value === "string" ? value : "";
+  }
+  function readId(task) {
+    return typeof task.id === "string" ? task.id : "";
+  }
+  function isTaskCompleted(task) {
+    return task.status === "completed";
+  }
+  function decidePhase(input) {
+    if (input.totalTasks === 0) return "idle";
+    if (input.hasErrorWarning) return "warn";
+    if (input.acceptance.signed) return "done";
+    if (input.acceptance.pending) return "verify";
+    if (input.blockedCount > 0) return "blocked";
+    if (input.activeCount > 0) return "working";
+    if (input.waitingCount > 0) return "waiting";
+    return input.completedTasks === input.totalTasks ? "done" : "working";
+  }
+  function buildChipText(input) {
+    if (input.totalTasks === 0) return "暂无施工";
+    if (input.signed) return "验收通过";
+    const parts = [];
+    if (input.branchTotal > 0) {
+      parts.push("施工 " + input.branchDone + "/" + input.branchTotal + " 分支");
+    } else {
+      parts.push("暂无分支");
+    }
+    if (input.verifyOpenCount > 0) parts.push(input.verifyOpenCount + " 待验");
+    if (input.warningCount > 0) parts.push(input.warningCount + " 警告");
+    return parts.join(" · ");
+  }
+  function inspectWhaleWorks(tasks) {
+    const list = Array.isArray(tasks) ? tasks : [];
+    const parsed = [];
+    const verifyTasks = [];
+    const branchTasksByKey = /* @__PURE__ */ new Map();
+    const leavesByKey = /* @__PURE__ */ new Map();
+    const accumulatorByKey = /* @__PURE__ */ new Map();
+    let totalTasks = 0;
+    let completedTasks = 0;
+    let activeCount = 0;
+    let waitingCount = 0;
+    let blockedCount = 0;
+    for (const task of list) {
+      if (task === null || task === void 0 || task.status === "deleted") continue;
+      totalTasks++;
+      if (isTaskCompleted(task)) completedTasks++;
+      else if (task.status === "in_progress") activeCount++;
+      else if (task.status === "pending") {
+        if (task.ready === true) waitingCount++;
+        else blockedCount++;
+      }
+      const title = readSubject(task.subject).trim();
+      const prefix = parsePrefix(title);
+      const item2 = {
+        task,
+        id: readId(task),
+        role: prefix.role,
+        branchKey: prefix.branchKey,
+        label: prefix.label,
+        token: prefix.token,
+        title
+      };
+      parsed.push(item2);
+      if (item2.role === "verify") verifyTasks.push(item2);
+      if (item2.role === "branch" || item2.role === "leaf") {
+        const key = item2.branchKey;
+        let accumulator = accumulatorByKey.get(key);
+        if (accumulator === void 0) {
+          accumulator = { key, label: "", total: 0, done: 0, active: 0, waiting: 0, blocked: 0 };
+          accumulatorByKey.set(key, accumulator);
+        }
+        accumulator.total++;
+        if (isTaskCompleted(task)) accumulator.done++;
+        else if (task.status === "in_progress") accumulator.active++;
+        else if (task.status === "pending") {
+          if (task.ready === true) accumulator.waiting++;
+          else accumulator.blocked++;
+        } else {
+          accumulator.blocked++;
+        }
+        if (item2.role === "branch" && accumulator.label === "" && item2.label !== "") {
+          accumulator.label = item2.label;
+        }
+        if (item2.role === "branch") {
+          const bucket = branchTasksByKey.get(key);
+          if (bucket === void 0) branchTasksByKey.set(key, [item2]);
+          else bucket.push(item2);
+        } else {
+          const bucket = leavesByKey.get(key);
+          if (bucket === void 0) leavesByKey.set(key, [item2]);
+          else bucket.push(item2);
+        }
+      }
+    }
+    const verifyOpen = verifyTasks.filter((item2) => !isTaskCompleted(item2.task));
+    const hasAcceptanceTask = verifyTasks.length > 0;
+    const signed = hasAcceptanceTask && verifyOpen.length === 0;
+    const pending = hasAcceptanceTask && !signed;
+    const acceptance = { hasTask: hasAcceptanceTask, signed, pending };
+    const branchKeys = [...accumulatorByKey.keys()].sort();
+    const branches = branchKeys.map((key) => {
+      const acc2 = accumulatorByKey.get(key);
+      return {
+        key: acc2.key,
+        label: acc2.label !== "" ? acc2.label : "分支 " + acc2.key,
+        total: acc2.total,
+        done: acc2.done,
+        active: acc2.active,
+        waiting: acc2.waiting,
+        blocked: acc2.blocked,
+        hasAcceptance: signed && acc2.total > 0 && acc2.done === acc2.total
+      };
+    });
+    const warnings = [];
+    for (const leaf of parsed) {
+      if (leaf.role !== "leaf") continue;
+      const parents = branchTasksByKey.get(leaf.branchKey) ?? [];
+      if (parents.length === 0) continue;
+      const parentIds = new Set(parents.map((parent) => parent.id));
+      const blockers = readStrings(leaf.task.blockedBy).filter((id) => parentIds.has(id));
+      if (blockers.length === 0) continue;
+      const uniqueBlockers = [...new Set(blockers)];
+      warnings.push({
+        code: "LEAF_BLOCKED_BY_PARENT",
+        level: "error",
+        message: "叶子 [" + leaf.token + "] " + leaf.id + " 的 blockedBy 指向父分支任务 " + uniqueBlockers.join("、") + "：父任务要等叶子完成、叶子又在等父任务，形成死锁。",
+        taskIds: [leaf.id, ...uniqueBlockers]
+      });
+    }
+    for (const key of branchKeys) {
+      const parents = (branchTasksByKey.get(key) ?? []).filter((item2) => isTaskCompleted(item2.task));
+      const openLeaves = (leavesByKey.get(key) ?? []).filter(
+        (item2) => !isTaskCompleted(item2.task)
+      );
+      if (parents.length === 0 || openLeaves.length === 0) continue;
+      const parentIds = parents.map((item2) => item2.id);
+      const leafIds = openLeaves.map((item2) => item2.id);
+      warnings.push({
+        code: "BRANCH_DONE_WITH_OPEN_LEAVES",
+        level: "warn",
+        message: "分支 [" + key + "] 已完成，但还有 " + leafIds.length + " 个叶子未完成：" + leafIds.join("、") + "；分支完成不等于叶子完成。",
+        taskIds: [...parentIds, ...leafIds]
+      });
+    }
+    if (!hasAcceptanceTask) {
+      if (totalTasks > 0 && completedTasks === totalTasks) {
+        warnings.push({
+          code: "ACCEPTANCE_MISSING",
+          level: "error",
+          message: totalTasks + " 个任务都已完成，但没有 [V] 验收任务：没有人签字，不能算竣工。",
+          taskIds: []
+        });
+      }
+    } else if (!signed) {
+      const openIds = verifyOpen.map((item2) => item2.id);
+      warnings.push({
+        code: "ACCEPTANCE_NOT_SIGNED",
+        level: "warn",
+        message: "验收任务 " + openIds.join("、") + " 还没签字：验收官不签字不能收工。",
+        taskIds: openIds
+      });
+    }
+    const scopeHolders = /* @__PURE__ */ new Map();
+    for (const item2 of parsed) {
+      if (isTaskCompleted(item2.task)) continue;
+      for (const raw of readStrings(item2.task.writeScopes)) {
+        const scope = raw.trim();
+        if (scope === "") continue;
+        let holders = scopeHolders.get(scope);
+        if (holders === void 0) {
+          holders = [];
+          scopeHolders.set(scope, holders);
+        }
+        if (!holders.includes(item2.id)) holders.push(item2.id);
+      }
+    }
+    for (const scope of [...scopeHolders.keys()].sort()) {
+      const holders = scopeHolders.get(scope);
+      if (holders.length < 2) continue;
+      warnings.push({
+        code: "WRITE_SCOPE_OVERLAP",
+        level: "warn",
+        message: "写作用域重叠：" + scope + "（" + holders.join("、") + " 同时声明）；advisory 不是锁，需要总监确认。",
+        taskIds: holders
+      });
+    }
+    const prefixHolders = /* @__PURE__ */ new Map();
+    for (const item2 of parsed) {
+      if (item2.token === "") continue;
+      let holders = prefixHolders.get(item2.token);
+      if (holders === void 0) {
+        holders = [];
+        prefixHolders.set(item2.token, holders);
+      }
+      holders.push(item2.id);
+    }
+    for (const token of [...prefixHolders.keys()].sort()) {
+      const holders = prefixHolders.get(token);
+      if (holders.length < 2) continue;
+      warnings.push({
+        code: "DUPLICATE_PREFIX",
+        level: "warn",
+        message: "前缀 [" + token + "] 重复出现 " + holders.length + " 次：" + holders.join("、") + "；同一层出现多个同名任务会混淆施工层级。",
+        taskIds: holders
+      });
+    }
+    for (const item2 of parsed) {
+      if (item2.title !== "") continue;
+      warnings.push({
+        code: "EMPTY_TITLE",
+        level: "warn",
+        message: "标题为空：" + (item2.id === "" ? "(无 id)" : item2.id) + " 无法判断施工层级，已归入未分类。",
+        taskIds: item2.id === "" ? [] : [item2.id]
+      });
+    }
+    const hasErrorWarning = warnings.some((warning) => warning.level === "error");
+    const phase = decidePhase({
+      totalTasks,
+      completedTasks,
+      hasErrorWarning,
+      acceptance,
+      blockedCount,
+      activeCount,
+      waitingCount
+    });
+    const branchDone = branches.filter((branch) => branch.total > 0 && branch.done === branch.total).length;
+    const chipText = buildChipText({
+      totalTasks,
+      signed,
+      branchTotal: branches.length,
+      branchDone,
+      verifyOpenCount: verifyOpen.length,
+      warningCount: warnings.length
+    });
+    return {
+      phase,
+      branches,
+      warnings,
+      acceptance,
+      chipText,
+      totalTasks,
+      completedTasks
+    };
+  }
+  var WHALE_WORKS_TEMPLATES = Object.freeze({
+    brief: [
+      "[E] {工程名} 开工单",
+      "目标：{一句话说明要达成什么}",
+      "范围：{做哪些}；不做：{明确不做什么}",
+      "验收：{验收标准}，由 {验收官} 独立签字",
+      "预算：{轮次/时间/成本上限}",
+      "产出：{交付物与路径}"
+    ].join("\n"),
+    workerCard: [
+      "[工卡] {分支}／{叶子任务名}",
+      "目标：{完成什么}",
+      "输入：{文件/资料/依赖任务 id}",
+      "输出：{产物路径}",
+      "写作用域：{只允许改的路径}",
+      "验收：{可复核的通过标准}",
+      "证据：{evidence/{task-id}.md 写什么}",
+      "上报：{包工头任务 id}；完成条件：{怎样算完成}"
+    ].join("\n"),
+    acceptance: [
+      "[V] 独立验收单",
+      "验收矩阵：{验收项} × {通过标准} × {证据位置}",
+      "复跑：{命令/步骤，逐项记录结果}",
+      "抽查：{随机抽查点}",
+      "签字：验收官 {名字} / {日期}",
+      "不通过：建 [FIX] 缺陷任务退回原包工头，不直接改 completed。"
+    ].join("\n"),
+    finalSummary: [
+      "鲸群营造 · 竣工摘要",
+      "分支：{A/B/C 各自完成情况}",
+      "验收：{验收结论与签字}",
+      "返工：{FIX 记录与结论}",
+      "未决：{遗留风险/待办}",
+      "版本：{版本号 / tag / 发布物}"
+    ].join("\n")
+  });
+
   // src/client/actions/data.ts
   var MAX_BACKUP_BYTES = 2 * 1024 * 1024;
   function backupFileName(now = /* @__PURE__ */ new Date()) {
@@ -6655,6 +6978,54 @@
   }
 
   // src/client/actions/system.ts
+  var WHALE_WORKS_GUIDE_PATH = "docs/鲸群营造-工程流程.md";
+  var WHALE_WORKS_COPY_FAIL = "复制失败，请手动打开 " + WHALE_WORKS_GUIDE_PATH;
+  function copyViaTextarea(text) {
+    let area = null;
+    try {
+      if (typeof document === "undefined" || !document.body || typeof document.createElement !== "function") return false;
+      area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.top = "-9999px";
+      area.style.left = "-9999px";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      try {
+        area.setSelectionRange(0, String(text).length);
+      } catch (e) {
+      }
+      return typeof document.execCommand === "function" && document.execCommand("copy") === true;
+    } catch (e) {
+      return false;
+    } finally {
+      try {
+        if (area && area.parentNode) area.parentNode.removeChild(area);
+      } catch (e) {
+      }
+    }
+  }
+  function copyPlainText(text) {
+    try {
+      const nav = typeof navigator === "undefined" ? null : navigator;
+      const clipboard = nav && nav.clipboard;
+      if (clipboard && typeof clipboard.writeText === "function") {
+        return Promise.resolve(clipboard.writeText(text)).then(() => true).catch(() => copyViaTextarea(text));
+      }
+    } catch (e) {
+    }
+    return Promise.resolve(copyViaTextarea(text));
+  }
+  function copyWhaleWorksTemplate(host, text, name) {
+    copyPlainText(text).then((ok) => {
+      host.bubble(ok ? "已复制：" + name : WHALE_WORKS_COPY_FAIL, ok ? 4e3 : 6e3);
+    }).catch(() => {
+      host.bubble(WHALE_WORKS_COPY_FAIL, 6e3);
+    });
+  }
   var KIND_BUCKETS = [
     { key: "chat", label: "聊天" },
     { key: "story", label: "说书" },
@@ -6967,6 +7338,18 @@
       } catch (e) {
         host.bubble("看板开关没存住", 4e3);
       }
+    });
+    table.define("whale-works:brief", (host) => {
+      copyWhaleWorksTemplate(host, WHALE_WORKS_TEMPLATES.brief, "开工单");
+    });
+    table.define("whale-works:worker-card", (host) => {
+      copyWhaleWorksTemplate(host, WHALE_WORKS_TEMPLATES.workerCard, "工人卡");
+    });
+    table.define("whale-works:acceptance", (host) => {
+      copyWhaleWorksTemplate(host, WHALE_WORKS_TEMPLATES.acceptance, "验收单");
+    });
+    table.define("whale-works:guide", (host) => {
+      host.bubble("施工规范：" + WHALE_WORKS_GUIDE_PATH + "（在本机用编辑器打开查看）", 8e3);
     });
     table.define("test-tts", (host) => {
       host.bubble("测试语音：主人听得到吗？", 4e3);
@@ -9292,6 +9675,18 @@
     let unsubscribe = null;
     let lastPresented = null;
     let running = false;
+    function readWhaleWorksChip(snapshot) {
+      try {
+        const report = inspectWhaleWorks(snapshot.tasks);
+        if (report.totalTasks <= 0) return null;
+        if (report.branches.length === 0 && !report.acceptance.hasTask && report.warnings.length === 0) {
+          return null;
+        }
+        return report.chipText;
+      } catch (e) {
+        return null;
+      }
+    }
     function onSnapshot(snapshot) {
       try {
         if (!enabled()) {
@@ -9300,6 +9695,7 @@
           return;
         }
         const summary = summarizeTeamBoard(snapshot, lastPresented, now());
+        const chipText = readWhaleWorksChip(snapshot);
         if (summary.phase === "empty" || summary.phase === "unavailable") {
           lastPresented = summary;
           options.surface.apply(null);
@@ -9317,7 +9713,14 @@
           return;
         }
         if (presentation !== null) {
-          options.surface.apply(presentation);
+          if (chipText !== null && presentation.ambient !== null) {
+            options.surface.apply({
+              ambient: { text: chipText, tone: presentation.ambient.tone },
+              ...presentation.alert === void 0 ? {} : { alert: presentation.alert }
+            });
+          } else {
+            options.surface.apply(presentation);
+          }
           lastPresented = summary;
         }
       } catch (e) {

@@ -12,8 +12,69 @@ import { VISION_PROMPT } from '../dropzone.js'
 import { imageToB64 } from '../image.js'
 import { parseDue, cleanReminderText } from '../../shared/time.js'
 import { clipCodePoints } from '../../shared/text.js'
+import { WHALE_WORKS_TEMPLATES } from '../../shared/whale-works.js'
 import { clearT } from '../util.js'
 import { exportBackup, importBackup } from './data.js'
+
+/** 鲸群营造施工规范（guide 动作只显示路径，不打开外部程序） */
+const WHALE_WORKS_GUIDE_PATH = 'docs/鲸群营造-工程流程.md'
+
+/** 复制失败时统一提示手动查规范；文案钉死，测试与提示同源 */
+const WHALE_WORKS_COPY_FAIL = '复制失败，请手动打开 ' + WHALE_WORKS_GUIDE_PATH
+
+/**
+ * 临时 textarea + execCommand('copy') 兜底（旧浏览器 / Clipboard API 被拒时）。
+ * 任何异常都返回 false，不把复制失败冒到动作分发层。
+ */
+function copyViaTextarea(text: string): boolean {
+  let area: any = null
+  try {
+    if (typeof document === 'undefined' || !document.body || typeof document.createElement !== 'function') return false
+    area = document.createElement('textarea')
+    area.value = text
+    // 只读 + 移出视口：不闪屏，也不会弹软键盘；隐藏（display:none）时 execCommand 选不中
+    area.setAttribute('readonly', '')
+    area.style.position = 'fixed'
+    area.style.top = '-9999px'
+    area.style.left = '-9999px'
+    area.style.opacity = '0'
+    document.body.appendChild(area)
+    area.focus()
+    area.select()
+    try { area.setSelectionRange(0, String(text).length) } catch (e) { }
+    return typeof document.execCommand === 'function' && document.execCommand('copy') === true
+  } catch (e) {
+    return false
+  } finally {
+    try { if (area && area.parentNode) area.parentNode.removeChild(area) } catch (e) { }
+  }
+}
+
+/**
+ * 写剪贴板：优先 navigator.clipboard.writeText，失败（不支持/无权限/非安全上下文/
+ * 返回 rejected Promise）再回退 textarea + execCommand。never rejects。
+ */
+function copyPlainText(text: string): Promise<boolean> {
+  try {
+    const nav: any = typeof navigator === 'undefined' ? null : navigator
+    const clipboard = nav && nav.clipboard
+    if (clipboard && typeof clipboard.writeText === 'function') {
+      return Promise.resolve(clipboard.writeText(text))
+        .then(() => true)
+        .catch(() => copyViaTextarea(text))
+    }
+  } catch (e) {
+    // navigator 读取或 writeText 同步抛错（策略禁用）→ 走兜底
+  }
+  return Promise.resolve(copyViaTextarea(text))
+}
+
+/** 施工队复制模板：成功说「已复制：<名字>」，失败指路规范文档。 */
+function copyWhaleWorksTemplate(host: ActionHost, text: string, name: string): void {
+  copyPlainText(text)
+    .then((ok) => { host.bubble(ok ? '已复制：' + name : WHALE_WORKS_COPY_FAIL, ok ? 4000 : 6000) })
+    .catch(() => { host.bubble(WHALE_WORKS_COPY_FAIL, 6000) })
+}
 
 /**
  * 鱼账本分桶（2026-11-07 B98）：展示顺序与中文名。
@@ -327,6 +388,21 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     } catch (e) {
       host.bubble('看板开关没存住', 4000)
     }
+  })
+
+  // —— 施工队（鲸群营造 v0.1）：只复制模板 / 显示规范路径 ——
+  // 小鲸只读监理：不调 team_task_*、不建任务、不改任务板；模板只读自 WHALE_WORKS_TEMPLATES。
+  table.define('whale-works:brief', (host) => {
+    copyWhaleWorksTemplate(host, WHALE_WORKS_TEMPLATES.brief, '开工单')
+  })
+  table.define('whale-works:worker-card', (host) => {
+    copyWhaleWorksTemplate(host, WHALE_WORKS_TEMPLATES.workerCard, '工人卡')
+  })
+  table.define('whale-works:acceptance', (host) => {
+    copyWhaleWorksTemplate(host, WHALE_WORKS_TEMPLATES.acceptance, '验收单')
+  })
+  table.define('whale-works:guide', (host) => {
+    host.bubble('施工规范：' + WHALE_WORKS_GUIDE_PATH + '（在本机用编辑器打开查看）', 8000)
   })
 
   // —— 语音试听 ——

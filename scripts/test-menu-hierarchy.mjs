@@ -146,6 +146,7 @@ console.log('\n[A] 一级菜单：只剩高频命令，设置放在最上面，�
 const topLabels = visibleTop(TOP).map((it) => it.label)
 const EXPECT_TOP = [
   '设置 ▸',
+  '施工队 ▸',
   '跟她说两句',
   '阅读文档 ▸',
   '公文校对…',
@@ -175,8 +176,8 @@ const setIdx = visibleTop(TOP).findIndex((it) => it.label === '设置 ▸')
 ok('「设置 ▸」在最上面（第 1 项）', setIdx === 0, 'index=' + setIdx + ' / 共 ' + visibleTop(TOP).length + ' 项')
 ok('「让它游走（退出）」是最后一项', topLabels[topLabels.length - 1] === '让它游走（退出）')
 const topActions = new Set(visibleTop(TOP).filter((it) => it.type === 'item').map((it) => it.action))
-ok('一级子菜单只有 设置/阅读文档/文化气/选本书/弹首曲子/数据与统计',
-  eq(topLabels.filter((l) => l.endsWith('▸')), ['设置 ▸', '阅读文档 ▸', '文化气 ▸', '选本书 ▸', '弹首曲子 ▸', '数据与统计 ▸']))
+ok('一级子菜单只有 设置/施工队/阅读文档/文化气/选本书/弹首曲子/数据与统计',
+  eq(topLabels.filter((l) => l.endsWith('▸')), ['设置 ▸', '施工队 ▸', '阅读文档 ▸', '文化气 ▸', '选本书 ▸', '弹首曲子 ▸', '数据与统计 ▸']))
 
 // ======================================================================
 console.log('\n[B] 设置 → 四个分组：分组、组内顺序、每个条目落位')
@@ -271,9 +272,13 @@ const SETTINGS_ONLY = [
 }
 
 // ======================================================================
-console.log('\n[D] 动作全集与重构前一致：117 个 action 一个不少、一个不多')
+console.log('\n[D] 动作全集：设置重构前的 117 个 + 施工队 4 个 = 121 个，一个不少、一个不多')
 // 重构前（git 1.5.1）用 8 种状态跑出的 action 全集，逐字固化在这里；
-// 这是一次「只搬家不换货」的验收口径：任何 action 改名/丢失/新增都会在这里报警。
+// 这是一次「只搬家不换货」的验收口径：任何 action 改名/丢失都会在这里报警。
+// 2026-11-14 WhaleWorks v0.1 接入：菜单新增一级「施工队 ▸」的 4 个只读模板动作
+// （whale-works:brief / worker-card / acceptance / guide），因此全集是 121 而不是 117。
+// 除这 4 个之外，任何新增/改名/丢失仍然报警。
+const WHALE_WORKS_ACTIONS = ['whale-works:brief', 'whale-works:worker-card', 'whale-works:acceptance', 'whale-works:guide']
 const BEFORE_ACTIONS = [
   'bigger', 'briefing-card', 'cache-clear', 'cache-toggle', 'chat-lang:auto', 'chat-lang:en', 'chat-lang:zh',
   'chat-rate:+0%', 'chat-rate:+10%', 'chat-rate:-10%', 'chat-rate:-15%', 'chat-rate:-20%', 'chat-rate:-30%',
@@ -302,13 +307,14 @@ const BEFORE_ACTIONS = [
 ]
 // 与基线同口径的多状态见文件头部 STATES（覆盖开关两态、书单两态、曲目/语速不同档位）
 {
+  const EXPECT_ACTIONS = BEFORE_ACTIONS.concat(WHALE_WORKS_ACTIONS)
   const actual = new Set()
   for (const st of STATES) walk(buildMenu('9.9.9', st), (it) => { if (it && it.type === 'item') actual.add(it.action) })
-  const missing = BEFORE_ACTIONS.filter((a) => !actual.has(a))
-  const extra = [...actual].filter((a) => BEFORE_ACTIONS.indexOf(a) < 0)
-  ok('重构前后 action 总数都是 ' + BEFORE_ACTIONS.length, actual.size === BEFORE_ACTIONS.length, '实际 ' + actual.size)
+  const missing = EXPECT_ACTIONS.filter((a) => !actual.has(a))
+  const extra = [...actual].filter((a) => EXPECT_ACTIONS.indexOf(a) < 0)
+  ok('设置重构前 117 个 + 施工队 4 个 = ' + EXPECT_ACTIONS.length + ' 个 action', actual.size === EXPECT_ACTIONS.length, '实际 ' + actual.size)
   ok('重构前有、现在全部还在（无改名字/丢失）', missing.length === 0, missing.join(','))
-  ok('没有新增 action（只搬家不换货）', extra.length === 0, extra.join(','))
+  ok('新增的只有施工队 4 个只读动作', extra.length === 0, extra.join(','))
 }
 
 // ======================================================================
