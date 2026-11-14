@@ -481,6 +481,41 @@ try {
     return flat.length === 3
   })())
 
+  // 真实菜单的三级子菜单（2026-11-14 重构：设置 → 语音与耳朵 → 说书语速）：
+  // 渲染层的路径展开必须支持多层父路径，否则键盘 Enter 只能打开第一层。
+  {
+    const { buildMenu } = await import('../src/client/menu.ts')
+    const real = buildMenu('9.9.9', {})
+    const P_SET = '设置 ▸'
+    const P_VOICE = P_SET + '\u0000' + '语音与耳朵 ▸'
+    const P_RATE = P_VOICE + '\u0000' + '说书语速：-35% ▸'
+    const topEntries = render.listMenuEntries(real, { tr, lang: 'zh', subOpen: '' })
+    ok('真实菜单：收起时设置内部项不出现', !topEntries.some((e) => e.label === '语音朗读：关') && topEntries.some((e) => e.label === P_SET))
+    const setEntries = render.listMenuEntries(real, { tr, lang: 'zh', subOpen: P_SET })
+    ok('真实菜单：一级展开「设置」出现四个分组', ['显示与语言 ▸', '语音与耳朵 ▸', '行为开关 ▸', '数据与维护 ▸'].every((l) => setEntries.some((e) => e.label === l)))
+    const deep = render.listMenuEntries(real, { tr, lang: 'zh', subOpen: P_RATE })
+    const rateParent = deep.find((e) => e.kind === 'sub' && e.label === '说书语速：-35% ▸')
+    ok('真实菜单：三级父路径逐级展开（设置 → 语音与耳朵 → 说书语速）',
+      !!rateParent && rateParent.open === true && rateParent.parentPath === P_VOICE &&
+      !!deep[rateParent.index + 1] && deep[rateParent.index + 1].action === 'story-rate:-25%',
+      rateParent ? 'parent@' + rateParent.index + ' / ' + deep[rateParent.index + 1]?.action : '没有父项')
+    const tree = render.renderMenuItems(real, {
+      h, tr, lang: 'zh', subOpen: P_RATE, focusIndex: -1, onToggleSub() { }, onAction() { },
+    })
+    const rows = []
+    const walkRows = (nodes) => {
+      for (const n of nodes) {
+        if (Array.isArray(n)) { walkRows(n); continue }
+        if (!n || typeof n !== 'object') continue
+        if (n.props && n.props.role === 'menuitem') rows.push(n)
+        if (Array.isArray(n.children)) walkRows(n.children)
+      }
+    }
+    walkRows(tree)
+    ok('真实菜单：三级展开时可见项与渲染行仍逐项对齐',
+      rows.length === deep.length && rows.every((r, i) => r.props['aria-label'] === deep[i].label), rows.length + ' / ' + deep.length)
+  }
+
   const realLS = globalThis.localStorage
   globalThis.localStorage = { getItem() { throw new Error('storage disabled') }, setItem() { throw new Error('storage disabled') } }
   try {

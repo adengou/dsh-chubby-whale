@@ -219,7 +219,7 @@ async function groupMenu(ok) {
     const entries = listMenuEntries(items, { tr, lang: 'zh', subOpen: '' })
     check('全收起时子项不越级出现', !entries.some((e) => e.label === '春联') && !entries.some((e) => e.label === '随机一副'))
     check('全收起时且没有展开状态的子菜单', entries.filter((e) => e.kind === 'sub').every((e) => e.open === false))
-    check('顶层首项 = 界面语言 ▸', entries[0] && entries[0].kind === 'sub' && entries[0].label === '界面语言 ▸')
+    check('顶层首项 = 跟她说两句', entries[0] && entries[0].kind === 'item' && entries[0].label === '跟她说两句')
   }
 
   {

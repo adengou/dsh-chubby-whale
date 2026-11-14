@@ -116,8 +116,13 @@ try {
   // 子菜单 label 自带「 ▸」（menu.ts 的构造约定），路径就是完整 label、父级用 NUL 分隔
   const P_CULTURE = '文化气 ▸'
   const P_COUPLET = '出个对联 ▸'
+  // 2026-11-14 重构：语言/音色/语速都收进 设置 → 显示与语言 / 语音与耳朵
+  const P_SET = '设置 ▸'
+  const P_DISPLAY = P_SET + '\u0000' + '显示与语言 ▸'
+  const P_VOICE = P_SET + '\u0000' + '语音与耳朵 ▸'
   const P_RATE = '说书语速：-35% ▸'
-  const cases = ['', P_CULTURE, P_CULTURE + '\u0000' + P_COUPLET, '换个声音 ▸', P_CULTURE + '\u0000' + P_RATE]
+  const P_ACTIONS = P_SET + '\u0000' + '行为开关 ▸'
+  const cases = ['', P_CULTURE, P_CULTURE + '\u0000' + P_COUPLET, P_SET, P_DISPLAY, P_VOICE, P_VOICE + '\u0000' + '换个声音 ▸', P_VOICE + '\u0000' + P_RATE, P_ACTIONS]
   let aligned = true
   let indexOk = true
   const detail = []
@@ -136,7 +141,7 @@ try {
       if (e.kind === 'item' && row && typeof row.props.onClick === 'function' && !e.action) aligned = false
     }
   }
-  ok('五种展开状态下，可见项数量与渲染行一致', aligned && detail.length === 0, detail.join(' | '))
+  ok('九种展开状态下，可见项数量与渲染行一致', aligned && detail.length === 0, detail.join(' | '))
   ok('可见项 index 连续重编号（高亮可寻址）', indexOk)
 
   // 二级菜单路径：必须带父级才展开（不越级）
@@ -147,6 +152,15 @@ try {
   ok('二级菜单子项紧跟父项（Enter 后高亮不越级）', atRandom === atParent + 1)
   const orphan = listMenuEntries(items, { tr, lang: 'zh', subOpen: P_COUPLET })
   ok('只给子菜单名（缺父路径）不展开', orphan.every((e) => e.label !== '随机一副'))
+
+  // 三级菜单路径（设置 → 语音与耳朵 → 说书语速）：逐级展开，子项紧跟父项
+  const deep3 = listMenuEntries(items, { tr, lang: 'zh', subOpen: P_VOICE + '\u0000' + P_RATE })
+  const rateParent = deep3.findIndex((e) => e.kind === 'sub' && e.label === P_RATE)
+  const rateLeaf = deep3.findIndex((e) => e.action === 'story-rate:-25%')
+  ok('三级菜单（设置 → 语音与耳朵 → 说书语速）能展开',
+    rateParent >= 0 && deep3[rateParent].open === true && rateLeaf === rateParent + 1, '父 ' + rateParent + ' / 子 ' + rateLeaf)
+  const orphan3 = listMenuEntries(items, { tr, lang: 'zh', subOpen: P_RATE })
+  ok('三级菜单只给末级名（缺父路径）不展开', orphan3.every((e) => e.action !== 'story-rate:-25%'))
 
   // 分隔线与不可见项不占高亮序号
   const topLevel = listMenuEntries(items, { tr, lang: 'zh', subOpen: '' })
@@ -319,9 +333,20 @@ try {
   const all = flattenItems(items)
   const empties = all.filter((it) => it.type === 'item' && !String(it.action || '').trim())
   ok('没有「有空动作」的菜单项', empties.length === 0, empties.map((x) => x.label).join(','))
-  const visible = listMenuEntries(items, { tr, lang: 'zh', subOpen: '文化气' })
+  // 可见项覆盖：顶层 + 文化气展开 + 设置四个分组各自展开（重构后开关/选择全在设置里）
+  const setPath = '设置 ▸'
+  const openPaths = ['', '文化气 ▸', setPath,
+    setPath + '\u0000' + '显示与语言 ▸',
+    setPath + '\u0000' + '语音与耳朵 ▸',
+    setPath + '\u0000' + '语音与耳朵 ▸\u0000' + '换个声音 ▸',
+    setPath + '\u0000' + '语音与耳朵 ▸\u0000' + '说书语速：-35% ▸',
+    setPath + '\u0000' + '行为开关 ▸',
+    setPath + '\u0000' + '数据与维护 ▸',
+    '数据与统计 ▸',
+  ]
+  const visible = openPaths.flatMap((subOpen) => listMenuEntries(items, { tr, lang: 'zh', subOpen }))
   const dead = visible.filter((e) => e.kind === 'item' && !t.has(e.action))
-  ok('可见项（含展开的二级菜单）全部有处理器', dead.length === 0, dead.map((x) => x.label + '(' + x.action + ')').join(' | '))
+  ok('可见项（含展开的三级菜单）全部有处理器', dead.length === 0, dead.map((x) => x.label + '(' + x.action + ')').join(' | '))
   ok('动作表规模合理', t.actions().length >= 40, '精确 ' + t.actions().length + ' / 前缀 ' + t.prefixes().length)
 } catch (e) {
   ok('动作覆盖可验证', false, String(e && e.message))

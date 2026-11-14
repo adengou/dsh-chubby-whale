@@ -2,6 +2,14 @@ import { deepFreeze } from '../shared/immutable.js'
 import { normalizeVoiceName } from './voice.js'
 /**
  * client/menu.ts —— 菜单数据（1:1 复刻 C# 版 的 menu.ps1，含中英双语）
+ *
+ * 层级约定（2026-11-14 重构）：
+ *   · 一级只放高频命令：说话、看图/读文档、干活、喂饭、成长、提醒、内容、曲子、
+ *     位置、数据统计、账本、退出；
+ *   · 所有开关/选择类（语言、音色、语音、语速、外观、缓存、行为开关、维护入口）
+ *     统一收进一级「设置 ▸」，内部再分四组：
+ *     显示与语言 / 语音与耳朵 / 行为开关 / 数据与维护。
+ *   · 本次只调整树的位置与层级，action 字符串与处理逻辑一律不变。
  */
 export type MenuItem =
   | { type: 'item'; label: string; action: string; note?: string }
@@ -60,6 +68,10 @@ export const EN_MAP: Record<string, string> = {
   '数据导入…': 'Import data…',
   '使用统计': 'Usage stats',
   '设置 ▸': 'Settings ▸',
+  '显示与语言 ▸': 'Display & language ▸',
+  '语音与耳朵 ▸': 'Voice & hearing ▸',
+  '行为开关 ▸': 'Behavior toggles ▸',
+  '数据与维护 ▸': 'Data & maintenance ▸',
   '查看当前配置': 'View current config',
   '提醒管理…': 'Manage reminders…',
   '唤醒恢复': 'Wake recovery',
@@ -200,6 +212,17 @@ export function tr(label: string, lang: string): string {
       return label.slice(prefix.length) === '开' ? pair[0] : pair[1]
     }
   }
+  // 动态标题前缀兼容（保持 tr 契约）：菜单现在用的是静态「界面语言 ▸」「聊天语言 ▸」，
+  // 但若以后把当前值拼进标题（如「界面语言：中文 ▸」），前缀与取值都要能译，
+  // 不能因为 title 是运行时拼的就把中文漏到英文界面里。
+  if (label.startsWith('界面语言：') || label.startsWith('聊天语言：')) {
+    const head = label.startsWith('界面语言：') ? 'Interface language: ' : 'Chat language: '
+    const rest = label.slice(5)
+    const tail = rest.endsWith(' ▸') ? ' ▸' : ''
+    const value = tail ? rest.slice(0, -2) : rest
+    const valueEn: Record<string, string> = { '中文': 'Chinese', 'English': 'English', '自动': 'Auto' }
+    return head + (valueEn[value] || value) + tail
+  }
   // 说书语速（运行时拼百分比）与连播（带说明括注）：动态标签，按前缀翻
   if (label.startsWith('说书语速：')) return label.replace('说书语速：', 'Story speed: ')
   if (label.startsWith('连播：')) return label.indexOf('开') >= 0 ? 'Auto-continue: on' : 'Auto-continue: off'
@@ -303,82 +326,29 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
   return [
 
     sep(),
-    // ── 界面语言（主人定的位置：标题栏下方第一行）──
-    sub('界面语言 ▸', [
-      item('中文', 'lang:zh'),
-      item('English', 'lang:en'),
-    ]),
-    // ── 吃饭与看图 ──
-    item('固定背景：' + (state.skinFixed ? '开' : '关'), 'skin-fixed'),
-    item('恢复默认背景', 'skin-bg-reset'),
-    item('鲸式解说：' + (state.toolNarratorOn === false ? '关' : '开'), 'tool-narrator'),
-    item('诗词弹幕：' + (state.poemEchoOn === false ? '关' : '开'), 'poem-echo'),
-    item('成长：' + growthText, 'growth'),
-    item('投喂一碗', 'feed'),
+    // ══ 一级：高频命令（开关/选择类一律不放在这一层）══
+    // ── 说话、看图、干活 ──
+    item('跟她说两句', 'type'),
     sub('阅读文档 ▸', [
       item('看张图…', 'vision'),
       item('读文档…', 'read-doc'),
     ]),
     item('公文校对…', 'proofread'),
-    item('神经感知：' + (nervousOn ? '开' : '关'), 'nervous'),
-    item('鲸鱼看板：' + (state.teamBoardOn === false ? '关' : '开'), 'team-board'),
-    item('神经感知：看一眼状态', 'nervous-status'),
     sep(),
-    // ── 曲子 ──
-    sub('弹首曲子 ▸', (state.melodies && state.melodies.length ? state.melodies : MELODIES).map((m) => item('弹《' + m + '》', 'music:' + m))),
-    item('停止弹奏', 'music-stop'),
+    // ── 吃饭与成长 ──
+    item('投喂一碗', 'feed'),
+    item('成长：' + growthText, 'growth'),
     sep(),
-    // ── 说话与耳朵（语音类全放一起）──
-    item('跟她说两句', 'type'),
-    item('联网搜索：' + (state.webSearchOn ? '开' : '关'), 'web-search'),
-    item(voiceOn ? '语音朗读：开' : '语音朗读：关', 'voice'),
-    item('停止说话', 'tts-stop'),
-    item('把稿子念成音频…', 'voice-export'),
-    sub('换个声音 ▸', [
-      ...VOICE_ITEMS.map(([voice, label]) => item(voiceTick(voice) + label, 'voice:' + voice)),
-      item(voiceTick('auto') + '自动（按语言选音色）', 'voice:auto'),
-    ]),
-    sub('唤醒词 ▸', [
-      item('默认（大肥鱼/肥鲸等）', 'wake-word:'),
-      item('大肥鱼', 'wake-word:大肥鱼'),
-      item('肥鲸', 'wake-word:肥鲸'),
-      item('小鲸', 'wake-word:小鲸'),
-      item('自定义…', 'wake-word:custom'),
-    ]),
-    item('语音待命：' + (earOn ? '开' : '关'), 'wake'),
-    item('语音聊天：' + (voiceChatOn ? '开' : '关'), 'chatmode'),
-    item('流式回复：' + (state.streamOn === false ? '关' : '开'), 'stream-toggle'),
-    item('端点检测：经典/自适应', 'endpoint'),
-    item('耳朵自检（听力诊断）', 'ear-check'),
-    sep(),
-    // ── 语言 ──
-    sub('聊天语言 ▸', [
-      item((chatLang === 'auto' ? '✓ ' : '') + '自动', 'chat-lang:auto'),
-      item((chatLang === 'zh' ? '✓ ' : '') + '中文', 'chat-lang:zh'),
-      item((chatLang === 'en' ? '✓ ' : '') + 'English', 'chat-lang:en'),
-    ]),
-    sep(),
-    // ── 位置与大小 ──
-    item('让她歇会儿', 'pause'),
-    item('回碗里待着', 'home'),
-    item('长大一点', 'bigger'),
-    item('变小一点', 'smaller'),
-    sep(),
-    // ── 饭点提醒 ──
+    // ── 饭点提醒（高频命令保留一级）──
     item('记个饭点…', 'remind-add'),
     item('提醒清单…', 'remind-list'),
     sep(),
-    // ── 文化气 ──
+    // ── 文化气：只留内容命令；连播与四类语速是开关/选择，已收进「设置」──
     sub('文化气 ▸', [
       item('说书（连载）', 'culture-story'),
-      item('连播：' + (state.storyAuto === false ? '关' : '开') + '（讲完一段自动接下一段）', 'story-auto'),
-      rateSub('说书语速：', 'story-rate:', state.storyRate || '-35%', STORY_RATE_ITEMS),
       item('接着说', 'culture-story-next'),
       item('从头讲这本书', 'story-reset'),
       item('念首诗', 'poem'),
-      rateSub('聊天语速：', 'chat-rate:', state.chatRate || '-15%', CHAT_RATE_ITEMS),
-      rateSub('叙述语速：', 'narration-rate:', state.narrationRate || '-25%', NARRATION_RATE_ITEMS),
-      rateSub('念诗语速：', 'poem-rate:', state.poemRate || '-25%', NARRATION_RATE_ITEMS),
       item('讲个民间故事', 'culture-tale'),
       item('讲个典故', 'culture-allusion'),
       item('成语辨析', 'culture-idiom'),
@@ -397,32 +367,94 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
         item('数字', 'culture-couplet:数字'),
       ]),
     ]),
-    sep(),
     // ── 每日内容（说书选本 / 每日一句 / 今日简报）──
     sub('选本书 ▸', bookItems),
     item('今日一句', 'daily-line'),
     item('今日简报', 'briefing-card'),
     sep(),
-    // ── 数据与统计：导出/导入/鲸落/统计/配置，统一收进一个子菜单 ──
+    // ── 曲子 ──
+    sub('弹首曲子 ▸', (state.melodies && state.melodies.length ? state.melodies : MELODIES).map((m) => item('弹《' + m + '》', 'music:' + m))),
+    item('停止弹奏', 'music-stop'),
+    sep(),
+    // ── 位置（高频命令保留；大小调节是选择类，收进「设置 → 显示与语言」）──
+    item('让她歇会儿', 'pause'),
+    item('回碗里待着', 'home'),
+    sep(),
+    // ── 数据与统计（高频命令保留；只读配置归「设置 → 数据与维护」）──
     sub('数据与统计 ▸', [
       item('数据导出…', 'data-export'),
       item('数据导入…', 'data-import'),
       // 鲸落胶囊：只打包摘要里的抽象主题，不含对话原文
       item('使用统计', 'stats'),
-      sub('设置 ▸', [
+    ]),
+    item('鱼粮账本', 'fishfood'),
+    sep(),
+    // ══ 一级：设置（所有开关/选择类统一收在这里，放在靠近底部）══
+    sub('设置 ▸', [
+      // ── 显示与语言：语言、背景、大小 ──
+      sub('显示与语言 ▸', [
+        sub('界面语言 ▸', [
+          item('中文', 'lang:zh'),
+          item('English', 'lang:en'),
+        ]),
+        sub('聊天语言 ▸', [
+          item((chatLang === 'auto' ? '✓ ' : '') + '自动', 'chat-lang:auto'),
+          item((chatLang === 'zh' ? '✓ ' : '') + '中文', 'chat-lang:zh'),
+          item((chatLang === 'en' ? '✓ ' : '') + 'English', 'chat-lang:en'),
+        ]),
+        item('固定背景：' + (state.skinFixed ? '开' : '关'), 'skin-fixed'),
+        item('恢复默认背景', 'skin-bg-reset'),
+        item('长大一点', 'bigger'),
+        item('变小一点', 'smaller'),
+      ]),
+      // ── 语音与耳朵：语音开关、音色、唤醒、语速 ──
+      sub('语音与耳朵 ▸', [
+        item(voiceOn ? '语音朗读：开' : '语音朗读：关', 'voice'),
+        item('停止说话', 'tts-stop'),
+        item('语音待命：' + (earOn ? '开' : '关'), 'wake'),
+        item('语音聊天：' + (voiceChatOn ? '开' : '关'), 'chatmode'),
+        item('流式回复：' + (state.streamOn === false ? '关' : '开'), 'stream-toggle'),
+        sub('换个声音 ▸', [
+          ...VOICE_ITEMS.map(([voice, label]) => item(voiceTick(voice) + label, 'voice:' + voice)),
+          item(voiceTick('auto') + '自动（按语言选音色）', 'voice:auto'),
+        ]),
+        sub('唤醒词 ▸', [
+          item('默认（大肥鱼/肥鲸等）', 'wake-word:'),
+          item('大肥鱼', 'wake-word:大肥鱼'),
+          item('肥鲸', 'wake-word:肥鲸'),
+          item('小鲸', 'wake-word:小鲸'),
+          item('自定义…', 'wake-word:custom'),
+        ]),
+        item('端点检测：经典/自适应', 'endpoint'),
+        item('耳朵自检（听力诊断）', 'ear-check'),
+        item('把稿子念成音频…', 'voice-export'),
+        rateSub('说书语速：', 'story-rate:', state.storyRate || '-35%', STORY_RATE_ITEMS),
+        rateSub('聊天语速：', 'chat-rate:', state.chatRate || '-15%', CHAT_RATE_ITEMS),
+        rateSub('叙述语速：', 'narration-rate:', state.narrationRate || '-25%', NARRATION_RATE_ITEMS),
+        rateSub('念诗语速：', 'poem-rate:', state.poemRate || '-25%', NARRATION_RATE_ITEMS),
+      ]),
+      // ── 行为开关：解说、弹幕、感知、看板、联网、缓存、连播 ──
+      sub('行为开关 ▸', [
+        item('鲸式解说：' + (state.toolNarratorOn === false ? '关' : '开'), 'tool-narrator'),
+        item('诗词弹幕：' + (state.poemEchoOn === false ? '关' : '开'), 'poem-echo'),
+        item('神经感知：' + (nervousOn ? '开' : '关'), 'nervous'),
+        item('神经感知：看一眼状态', 'nervous-status'),
+        item('鲸鱼看板：' + (state.teamBoardOn === false ? '关' : '开'), 'team-board'),
+        item('联网搜索：' + (state.webSearchOn ? '开' : '关'), 'web-search'),
+        item(chatCacheOn ? '聊天缓存：开' : '聊天缓存：关', 'cache-toggle'),
+        item('连播：' + (state.storyAuto === false ? '关' : '开') + '（讲完一段自动接下一段）', 'story-auto'),
+      ]),
+      // ── 数据与维护：只读配置、提醒管理、唤醒恢复、清缓存、清记忆 ──
+      sub('数据与维护 ▸', [
         item('查看当前配置', 'config-view'),
+        item('提醒管理…', 'remind-manage'),
+        item('唤醒恢复', 'wake-recover'),
+        item('清空聊天缓存…', 'cache-clear'),
+        item('清除记忆…', 'clear-memory'),
       ]),
     ]),
-    item('提醒管理…', 'remind-manage'),
-    item('唤醒恢复', 'wake-recover'),
     sep(),
-    // ── 记忆、缓存与退出 ──
-    item('清除记忆…', 'clear-memory'),
-    item('清空聊天缓存…', 'cache-clear'),
-    item(chatCacheOn ? '聊天缓存：开' : '聊天缓存：关', 'cache-toggle'),
+    // ── 退出（永远在最底下，减少误点）──
     item('让它游走（退出）', 'hide'),
-    sep(),
-    // ── 账本与版本（版本永远在最底下）──
-    item('鱼粮账本', 'fishfood'),
   ]
 }
