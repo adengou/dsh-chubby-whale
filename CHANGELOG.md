@@ -2,6 +2,21 @@
 
 本文件格式遵循 Keep a Changelog，版本号遵循语义化版本。版本号唯一来源是 `package.json`；「未发布」一节记录已进 `main`、尚未发版的内容，发版时整节改为 `## [X.Y.Z] - YYYY-MM-DD`。
 
+## [1.5.0] - 2026-11-14
+
+### 新增（鲸鱼看板：AgentTeam 活体摘要）
+- 任务板投影 `agentTeam` 变成鱼身上的常驻小挂件：任务总数、在做、等人接、卡住；只读，不碰任务写操作。
+- 子 Agent 等待审批时，一次性提醒「有个子 Agent 在等你批东西」；只显示计数/提示，不泄漏 reason 或工具名。
+- 全部完成时只庆祝一次「鲸群回巢了」，并触发一次收工动画意图；首次加载已全部完成不补播。
+- 独立挂件 + 气泡调度器新增通用 `team` 线路（低于 persona，高于 tool）；常驻状态不排队，提醒才走调度器。
+- 会话级只读探针读取公开 `useProjection('agentTeam')` 与 pending approval，不读日志、不轮询、不调用任务服务。
+- 菜单新增「鲸鱼看板：开/关」；任务板空/Team 未启用/投影不可用时完全静默（错误只提示一次）。
+- 文档 `docs/鲸鱼看板.md`；测试 `test-team-board` / `test-team-source` / `test-team-surface` / `test-team-watch`。
+
+### 变更
+- `bubble-queue` 新增通用 `team` 线路（poem > voice > main > persona > team > tool）；现有线路数值未变。
+- 气泡数量从 5 个增加到 6 个（新增看板提醒元素），客户端粘合测试同步更新。
+
 ## [1.4.25] - 2026-11-14
 
 ### 调整（撤销鱼身文件拖放，改为菜单「阅读文档」）

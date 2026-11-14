@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.25";
+  var VERSION = "1.5.0";
 
   // src/client/styles.ts
   var W = 240;
@@ -2816,6 +2816,7 @@
     "语音聊天：": ["Voice chat: on", "Voice chat: off"],
     "流式回复：": ["Streaming replies: on", "Streaming replies: off"],
     "神经感知：": ["Nervous system: on", "Nervous system: off"],
+    "鲸鱼看板：": ["Whale board: on", "Whale board: off"],
     "鲸式解说：": ["Whale commentary: on", "Whale commentary: off"],
     "联网搜索：": ["Web search: on", "Web search: off"],
     "诗词弹幕：": ["Poem commentary: on", "Poem commentary: off"]
@@ -2903,6 +2904,7 @@
       ]),
       item("公文校对…", "proofread"),
       item("神经感知：" + (nervousOn ? "开" : "关"), "nervous"),
+      item("鲸鱼看板：" + (state.teamBoardOn === false ? "关" : "开"), "team-board"),
       item("神经感知：看一眼状态", "nervous-status"),
       sep(),
       // ── 曲子 ──
@@ -6936,6 +6938,16 @@
         host.bubble("打不开文件选择", 4e3);
       }
     });
+    table.define("team-board", (host) => {
+      try {
+        const cur = localStorage.getItem("chubby-team-board") !== "off";
+        localStorage.setItem("chubby-team-board", cur ? "off" : "on");
+        if (typeof host.refreshTeamBoard === "function") host.refreshTeamBoard();
+        host.bubble(cur ? "鲸鱼看板关啦，任务板还在后台跑" : "鲸鱼看板开啦，会跟着任务板冒泡", 4e3);
+      } catch (e) {
+        host.bubble("看板开关没存住", 4e3);
+      }
+    });
     table.define("test-tts", (host) => {
       host.bubble("测试语音：主人听得到吗？", 4e3);
       host.speak("测试语音，主人听得到吗？");
@@ -8270,13 +8282,13 @@
           return;
         }
         const on2 = setCustomWakeWord(String(input));
-        const stored2 = String(input).trim().slice(0, 12);
-        host.bubble(on2 ? "唤醒词：" + stored2 + wakeHint(host, [stored2]) : "唤醒词：默认（大肥鱼/肥鲸等）" + wakeHint(host, WAKE_WORDS));
+        const stored3 = String(input).trim().slice(0, 12);
+        host.bubble(on2 ? "唤醒词：" + stored3 + wakeHint(host, [stored3]) : "唤醒词：默认（大肥鱼/肥鲸等）" + wakeHint(host, WAKE_WORDS));
         return;
       }
       const on = setCustomWakeWord(word);
-      const stored = word.slice(0, 12);
-      host.bubble(on ? "唤醒词：" + stored + wakeHint(host, [stored]) : "唤醒词：默认（大肥鱼/肥鲸等）" + wakeHint(host, WAKE_WORDS));
+      const stored2 = word.slice(0, 12);
+      host.bubble(on ? "唤醒词：" + stored2 + wakeHint(host, [stored2]) : "唤醒词：默认（大肥鱼/肥鲸等）" + wakeHint(host, WAKE_WORDS));
     });
   }
 
@@ -8914,6 +8926,7 @@
     voice: 4,
     main: 3,
     persona: 2,
+    team: 1.5,
     tool: 1
   });
   var MAX_QUEUED = 64;
@@ -9102,6 +9115,886 @@
       clear,
       status: () => ({ running: current2 ? current2.lane : null, queued: queue.length })
     };
+  }
+
+  // src/shared/team-board.ts
+  var DEFAULT_COOLDOWN_MS = 6e4;
+  var ERROR_ALERT_TTL = 6e3;
+  var ERROR_ALERT_RANK = 10;
+  var APPROVAL_ALERT_TTL = 6e3;
+  var APPROVAL_ALERT_RANK = 20;
+  var DONE_ALERT_TTL = 12e3;
+  var DONE_ALERT_RANK = 15;
+  function buildFingerprint(phase, counts, activeTaskId, stuckTaskIds, approvalIds) {
+    const stuck = [...stuckTaskIds].sort().join(",");
+    const approvals = [...approvalIds].sort().join(",");
+    return [
+      "phase=" + phase,
+      "total=" + counts.total,
+      "inProgress=" + counts.inProgress,
+      "readyPending=" + counts.readyPending,
+      "blockedPending=" + counts.blockedPending,
+      "completed=" + counts.completed,
+      "approvals=" + counts.approvals,
+      "active=" + (activeTaskId === void 0 ? "" : activeTaskId),
+      "stuck=" + stuck,
+      "approvalIds=" + approvals
+    ].join("|");
+  }
+  function summarizeTeamBoard(snapshot, previous, now) {
+    const tasks = snapshot.tasks ?? [];
+    const approvals = snapshot.approvals ?? [];
+    let total = 0;
+    let inProgress = 0;
+    let readyPending = 0;
+    let blockedPending = 0;
+    let completed = 0;
+    let firstInProgress;
+    let firstReadyPending;
+    const stuckTaskIds = [];
+    for (const task of tasks) {
+      if (task.status === "deleted") continue;
+      total++;
+      if (task.status === "in_progress") {
+        inProgress++;
+        if (firstInProgress === void 0) firstInProgress = task;
+      } else if (task.status === "completed") {
+        completed++;
+      } else if (task.status === "pending") {
+        if (task.ready === true) {
+          readyPending++;
+          if (firstReadyPending === void 0) firstReadyPending = task;
+        } else {
+          blockedPending++;
+          stuckTaskIds.push(task.id);
+        }
+      }
+    }
+    const approvalIds = [];
+    const seenApprovalIds = /* @__PURE__ */ new Set();
+    for (const approval of approvals) {
+      if (!seenApprovalIds.has(approval.id)) {
+        seenApprovalIds.add(approval.id);
+        approvalIds.push(approval.id);
+      }
+    }
+    const phase = !snapshot.available ? "unavailable" : snapshot.failure ? "error" : !snapshot.enabled ? "unavailable" : approvals.length > 0 ? "approval" : total === 0 ? "empty" : completed === total ? "done" : inProgress > 0 ? "working" : blockedPending > 0 ? "blocked" : readyPending > 0 ? "waiting" : "empty";
+    const activeView = firstInProgress ?? firstReadyPending;
+    let activeTask;
+    if (activeView !== void 0) {
+      activeTask = { id: activeView.id, subject: activeView.subject };
+      if (activeView.ownerName !== void 0) activeTask.ownerName = activeView.ownerName;
+    }
+    const counts = {
+      total,
+      inProgress,
+      readyPending,
+      blockedPending,
+      completed,
+      approvals: approvals.length
+    };
+    return {
+      phase,
+      counts,
+      ...activeTask === void 0 ? {} : { activeTask },
+      stuckTaskIds,
+      approvalIds,
+      fingerprint: buildFingerprint(phase, counts, activeTask?.id, stuckTaskIds, approvalIds),
+      capturedAt: now
+    };
+  }
+  function buildAmbient(summary) {
+    const c = summary.counts;
+    if (c.total <= 0) return null;
+    const parts = [];
+    if (c.inProgress > 0) parts.push(c.inProgress + " 个在做");
+    if (c.readyPending > 0) parts.push(c.readyPending + " 个等人接");
+    if (c.blockedPending > 0) parts.push(c.blockedPending + " 个卡住了");
+    const text = parts.length > 0 ? c.total + " 个任务：" + parts.join("，") : c.total + " 个任务：全部完成";
+    const tone = c.blockedPending > 0 || summary.stuckTaskIds.length > 0 ? "warn" : "normal";
+    return { text, tone };
+  }
+  function shouldShowAmbient(summary, previous, now, options) {
+    if (previous === null) return true;
+    if (previous.fingerprint === summary.fingerprint) return false;
+    const cooldownMs = options.cooldownMs === void 0 ? DEFAULT_COOLDOWN_MS : options.cooldownMs;
+    return now - previous.capturedAt >= cooldownMs;
+  }
+  function presentTeamSummary(summary, previous, now, options) {
+    if (options.enabled === false) return null;
+    const phase = summary.phase;
+    if (phase === "unavailable" || phase === "empty") return null;
+    let alert;
+    if (phase === "error") {
+      if (previous?.phase !== "error") {
+        alert = {
+          key: "team:error",
+          text: "看板暂不可用",
+          ttl: ERROR_ALERT_TTL,
+          rank: ERROR_ALERT_RANK
+        };
+      }
+    } else if (phase === "approval") {
+      const seen = new Set(previous === null ? [] : previous.approvalIds);
+      const freshApprovalId = summary.approvalIds.find((id) => !seen.has(id));
+      if (freshApprovalId !== void 0) {
+        alert = {
+          key: "team:approval:" + freshApprovalId,
+          text: "有个子 Agent 在等你批东西",
+          ttl: APPROVAL_ALERT_TTL,
+          rank: APPROVAL_ALERT_RANK
+        };
+      }
+    } else if (phase === "done") {
+      if (previous !== null && previous.phase !== "done") {
+        alert = {
+          key: "team:done:" + summary.fingerprint,
+          text: "鲸群回巢了",
+          ttl: DONE_ALERT_TTL,
+          rank: DONE_ALERT_RANK,
+          anim: "settle"
+        };
+      }
+    }
+    let ambient = null;
+    if (phase !== "error" && shouldShowAmbient(summary, previous, now, options)) {
+      ambient = buildAmbient(summary);
+    }
+    if (ambient === null && alert === void 0) return null;
+    return alert === void 0 ? { ambient } : { ambient, alert };
+  }
+
+  // src/client/team-watch.ts
+  function createTeamWatch(options) {
+    const now = typeof options.now === "function" ? options.now : () => Date.now();
+    const enabled = typeof options.enabled === "function" ? options.enabled : () => true;
+    const quiet = typeof options.quiet === "function" ? options.quiet : () => false;
+    let unsubscribe = null;
+    let lastPresented = null;
+    let running = false;
+    function onSnapshot(snapshot) {
+      try {
+        if (!enabled()) {
+          lastPresented = null;
+          options.surface.apply(null);
+          return;
+        }
+        const summary = summarizeTeamBoard(snapshot, lastPresented, now());
+        if (summary.phase === "empty" || summary.phase === "unavailable") {
+          lastPresented = summary;
+          options.surface.apply(null);
+          return;
+        }
+        const presentation = presentTeamSummary(summary, lastPresented, now(), {
+          enabled: true,
+          quiet: quiet(),
+          ...options.cooldownMs === void 0 ? {} : { cooldownMs: options.cooldownMs }
+        });
+        if (presentation !== null) {
+          options.surface.apply(presentation);
+          lastPresented = summary;
+        }
+      } catch (e) {
+      }
+    }
+    function start() {
+      if (running) return;
+      running = true;
+      try {
+        unsubscribe = options.source.subscribe(onSnapshot);
+      } catch (e) {
+        running = false;
+        unsubscribe = null;
+      }
+    }
+    function stop() {
+      running = false;
+      const off = unsubscribe;
+      unsubscribe = null;
+      try {
+        if (off) off();
+      } catch (e) {
+      }
+      try {
+        options.surface.apply(null);
+      } catch (e) {
+      }
+      lastPresented = null;
+    }
+    return { start, stop };
+  }
+
+  // src/client/team-status-bubble.ts
+  var TEAM_STATUS_Z_INDEX = 2147483e3;
+  var TEAM_STATUS_MAX_WIDTH = 240;
+  function validRect(rect) {
+    return !!rect && Number.isFinite(rect.left) && Number.isFinite(rect.top) && Number.isFinite(rect.width) && Number.isFinite(rect.height);
+  }
+  function createTeamStatusBubble(opts = {}) {
+    const doc = opts.doc || (typeof document !== "undefined" ? document : null);
+    const zIndex = opts.zIndex !== void 0 && Number.isFinite(opts.zIndex) ? opts.zIndex : TEAM_STATUS_Z_INDEX;
+    let el = null;
+    let destroyed = false;
+    let tone = "normal";
+    let dim = false;
+    let lastRect = null;
+    function place(rect) {
+      if (!el) return;
+      try {
+        const viewportWidth = typeof window !== "undefined" && Number.isFinite(window.innerWidth) ? window.innerWidth : 1024;
+        const left = Math.min(
+          Math.max(8, rect.left + rect.width * 0.62),
+          Math.max(8, viewportWidth - TEAM_STATUS_MAX_WIDTH - 8)
+        );
+        el.style.left = left + "px";
+        el.style.top = rect.top + 8 + "px";
+      } catch (e) {
+      }
+    }
+    function applyTone() {
+      if (!el) return;
+      try {
+        el.style.border = tone === "warn" ? "1px solid rgba(255,196,84,0.95)" : tone === "muted" ? "1px solid rgba(255,255,255,0.10)" : "1px solid rgba(255,255,255,0.18)";
+        el.setAttribute("data-tone", tone);
+      } catch (e) {
+      }
+    }
+    function applyOpacity() {
+      if (!el) return;
+      try {
+        const base = tone === "muted" ? 0.72 : 1;
+        el.style.opacity = String(dim ? Math.min(base, 0.45) : base);
+      } catch (e) {
+      }
+    }
+    function ensureEl() {
+      if (destroyed) return null;
+      if (el) return el;
+      if (!doc || typeof doc.createElement !== "function") return null;
+      try {
+        const node = doc.createElement("div");
+        node.className = "chubby-team-status";
+        if (node.setAttribute) {
+          node.setAttribute("aria-hidden", "true");
+          node.setAttribute("role", "presentation");
+          node.setAttribute("data-tone", tone);
+        }
+        const s = node.style;
+        s.position = "fixed";
+        s.display = "none";
+        s.left = "0px";
+        s.top = "0px";
+        s.zIndex = String(zIndex);
+        s.maxWidth = TEAM_STATUS_MAX_WIDTH + "px";
+        s.padding = "5px 9px";
+        s.borderRadius = "8px";
+        s.background = "rgba(20,28,45,0.72)";
+        s.color = "#ffffff";
+        s.font = '12px/1.5 "Microsoft YaHei","Leelawadee UI",Tahoma,sans-serif';
+        s.boxShadow = "0 4px 12px rgba(0,0,0,0.28)";
+        s.pointerEvents = "none";
+        s.userSelect = "none";
+        s.whiteSpace = "pre-wrap";
+        s.wordBreak = "break-word";
+        s.overflowWrap = "anywhere";
+        s.transition = "opacity .15s";
+        s.opacity = "1";
+        if (doc.body && typeof doc.body.appendChild === "function") doc.body.appendChild(node);
+        el = node;
+        applyTone();
+        applyOpacity();
+        if (lastRect) place(lastRect);
+        return el;
+      } catch (e) {
+        return null;
+      }
+    }
+    function show(text, nextTone) {
+      if (destroyed) return;
+      const node = ensureEl();
+      if (!node) return;
+      try {
+        tone = nextTone || "normal";
+        node.textContent = text == null ? "" : String(text);
+        applyTone();
+        applyOpacity();
+        node.style.display = "block";
+        if (opts.position) {
+          let rect = null;
+          try {
+            rect = opts.position();
+          } catch (e) {
+            rect = null;
+          }
+          if (validRect(rect)) {
+            lastRect = rect;
+            place(rect);
+          }
+        }
+      } catch (e) {
+      }
+    }
+    function hide() {
+      if (!el) return;
+      try {
+        el.style.display = "none";
+      } catch (e) {
+      }
+    }
+    function updatePosition(rect) {
+      if (destroyed || !validRect(rect)) return;
+      lastRect = rect;
+      const node = ensureEl();
+      if (!node) return;
+      place(rect);
+    }
+    function setDim(next) {
+      dim = !!next;
+      applyOpacity();
+    }
+    function destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      const node = el;
+      el = null;
+      lastRect = null;
+      if (!node) return;
+      try {
+        if (typeof node.remove === "function") node.remove();
+        else if (node.parentNode && typeof node.parentNode.removeChild === "function") {
+          node.parentNode.removeChild(node);
+        }
+      } catch (e) {
+      }
+    }
+    return { show, hide, updatePosition, destroy, setDim };
+  }
+
+  // src/client/team-surface.ts
+  var ALERT_DEDUPE_MS = 1e4;
+  function toMs(value) {
+    const n = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return n;
+  }
+  function createTeamSurface(deps) {
+    let disposed = false;
+    let dimTimer = null;
+    let alertActive = false;
+    let lastAlertKey = "";
+    let lastAlertAt = 0;
+    function log(msg) {
+      try {
+        if (deps.logger) deps.logger(msg);
+      } catch (e) {
+      }
+    }
+    function safe(fn, what) {
+      try {
+        fn();
+      } catch (e) {
+        log("team-surface: " + what + " 失败：" + String(e && e.message || e));
+      }
+    }
+    function clearDimTimer() {
+      if (dimTimer === null) return;
+      try {
+        clearTimeout(dimTimer);
+      } catch (e) {
+      }
+      dimTimer = null;
+    }
+    function setDim(dim) {
+      safe(() => {
+        const status = deps.status;
+        if (status && typeof status.setDim === "function") status.setDim(dim);
+      }, "setDim");
+    }
+    function armDimTimer(ms2) {
+      clearDimTimer();
+      try {
+        dimTimer = setTimeout(() => {
+          dimTimer = null;
+          if (!disposed) setDim(false);
+        }, ms2);
+        if (dimTimer && typeof dimTimer.unref === "function") dimTimer.unref();
+      } catch (e) {
+        log("team-surface: armDimTimer 失败：" + String(e && e.message || e));
+      }
+    }
+    function refreshPosition() {
+      if (!deps.position) return;
+      let rect = null;
+      try {
+        rect = deps.position();
+      } catch (e) {
+        log("team-surface: position() 失败：" + String(e && e.message || e));
+        return;
+      }
+      if (!rect) return;
+      safe(() => deps.status.updatePosition(rect), "updatePosition");
+    }
+    function showAmbient(ambient) {
+      if (!ambient) {
+        safe(() => deps.status.hide(), "status.hide");
+        return;
+      }
+      safe(() => deps.status.show(ambient.text, ambient.tone), "status.show");
+      refreshPosition();
+    }
+    function startAlert(text, ms2) {
+      if (disposed) return;
+      alertActive = true;
+      setDim(true);
+      armDimTimer(ms2);
+      safe(() => deps.alert.show(text, ms2), "alert.show");
+    }
+    function stopAlert() {
+      alertActive = false;
+      clearDimTimer();
+      setDim(false);
+      safe(() => deps.alert.hide(), "alert.hide");
+    }
+    function enqueueAlert(alert) {
+      if (!alert) return;
+      const text = alert.text == null ? "" : String(alert.text);
+      if (!text) return;
+      const key = String(alert.key || "") || "text:" + text;
+      const now = Date.now();
+      if (key === lastAlertKey && now - lastAlertAt < ALERT_DEDUPE_MS) {
+        log("team-surface: 同一提醒 key 去重：" + key);
+        return;
+      }
+      lastAlertKey = key;
+      lastAlertAt = now;
+      const ms2 = toMs(alert.ttl);
+      const rank = typeof alert.rank === "number" && Number.isFinite(alert.rank) ? alert.rank : 0;
+      const entry = {
+        lane: "team",
+        rank,
+        text,
+        ms: ms2,
+        key,
+        replaceKey: key,
+        start: () => startAlert(text, ms2),
+        stop: () => stopAlert()
+      };
+      safe(() => deps.scheduler.enqueue(entry), "scheduler.enqueue");
+    }
+    function apply2(presentation) {
+      if (disposed) return;
+      if (!presentation) {
+        safe(() => deps.status.hide(), "status.hide");
+        return;
+      }
+      showAmbient(presentation.ambient || null);
+      if (presentation.alert) enqueueAlert(presentation.alert);
+    }
+    function dispose() {
+      if (disposed) return;
+      disposed = true;
+      clearDimTimer();
+      if (alertActive) {
+        alertActive = false;
+        safe(() => deps.alert.hide(), "alert.hide");
+      }
+      safe(() => deps.status.destroy(), "status.destroy");
+      lastAlertKey = "";
+      lastAlertAt = 0;
+    }
+    return { apply: apply2, reposition: refreshPosition, dispose };
+  }
+
+  // src/client/team-source.ts
+  var TEAM_PROJECTION_KEY = "agentTeam";
+  var TEAM_PROBE_SLOT = "conversation.input.overlay";
+  var TEAM_PROBE_FALLBACK_SLOT = "conversation.input.dock";
+  var TEAM_PROBE_ID = "chubby-whale-team-probe";
+  var MAX_SESSION_DEPTH = 8;
+  var TASK_STATUSES = ["pending", "in_progress", "completed", "deleted"];
+  var listeners = /* @__PURE__ */ new Set();
+  var probeMounts = /* @__PURE__ */ new Map();
+  var approvalFirstSeen = /* @__PURE__ */ new Map();
+  var stored = null;
+  function isRecord(value) {
+    return typeof value === "object" && value !== null;
+  }
+  function isTaskStatus(value) {
+    return typeof value === "string" && TASK_STATUSES.indexOf(value) >= 0;
+  }
+  function toStringArray(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    for (const item2 of value) {
+      if (typeof item2 === "string") out.push(item2);
+    }
+    return out;
+  }
+  function normalizeTask(value) {
+    if (!isRecord(value)) return null;
+    const raw = value;
+    const id = typeof raw.id === "string" ? raw.id : typeof raw.id === "number" && Number.isFinite(raw.id) ? String(raw.id) : "";
+    if (id === "") return null;
+    if (!isTaskStatus(raw.status)) return null;
+    const revision = typeof raw.revision === "number" && Number.isFinite(raw.revision) ? raw.revision : 0;
+    const task = {
+      id,
+      revision,
+      subject: typeof raw.subject === "string" ? raw.subject : "",
+      description: typeof raw.description === "string" ? raw.description : "",
+      status: raw.status,
+      blockedBy: toStringArray(raw.blockedBy),
+      writeScopes: toStringArray(raw.writeScopes),
+      ready: raw.ready === true,
+      writeScopeWarnings: toStringArray(raw.writeScopeWarnings)
+    };
+    if (typeof raw.ownerId === "string") task.ownerId = raw.ownerId;
+    if (typeof raw.ownerName === "string") task.ownerName = raw.ownerName;
+    return task;
+  }
+  function buildSnapshot(projection, approvals, now) {
+    const raw = isRecord(projection) ? projection : void 0;
+    const tasks = [];
+    if (raw !== void 0 && Array.isArray(raw.tasks)) {
+      for (const item2 of raw.tasks) {
+        const task = normalizeTask(item2);
+        if (task !== null) tasks.push(task);
+      }
+    }
+    const failure = raw !== void 0 && typeof raw.failure === "string" ? raw.failure : void 0;
+    const snapshot = {
+      available: raw !== void 0,
+      enabled: raw !== void 0 && raw.enabled === true,
+      ...failure === void 0 ? {} : { failure },
+      tasks: Object.freeze(tasks),
+      approvals: Object.freeze(approvals.slice()),
+      capturedAt: now
+    };
+    return Object.freeze(snapshot);
+  }
+  function approvalSignatureOf(approvals) {
+    return approvals.map((approval) => [
+      approval.sessionId,
+      approval.id,
+      approval.toolName === void 0 ? "" : approval.toolName,
+      String(approval.at)
+    ].join("\0")).join("");
+  }
+  function approvalFirstSeenKey(approval) {
+    return approval.sessionId + "\0" + approval.id;
+  }
+  function stampApprovals(inputs, now) {
+    const stamped = [];
+    const seen = /* @__PURE__ */ new Set();
+    const touchedSessions = /* @__PURE__ */ new Set();
+    for (const input of inputs) {
+      if (input === null || typeof input !== "object") continue;
+      if (typeof input.id !== "string" || input.id === "") continue;
+      if (typeof input.sessionId !== "string" || input.sessionId === "") continue;
+      touchedSessions.add(input.sessionId);
+      const key = approvalFirstSeenKey(input);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      let at = typeof input.at === "number" && Number.isFinite(input.at) ? input.at : approvalFirstSeen.get(key);
+      if (at === void 0) at = now;
+      approvalFirstSeen.set(key, at);
+      stamped.push({
+        id: input.id,
+        ...typeof input.toolName === "string" && input.toolName !== "" ? { toolName: input.toolName } : {},
+        at,
+        sessionId: input.sessionId
+      });
+    }
+    for (const key of [...approvalFirstSeen.keys()]) {
+      const separator = key.indexOf("\0");
+      const sessionId = separator < 0 ? "" : key.slice(0, separator);
+      if (touchedSessions.has(sessionId) && !seen.has(key)) approvalFirstSeen.delete(key);
+    }
+    stamped.sort((left, right) => {
+      if (left.sessionId !== right.sessionId) return left.sessionId < right.sessionId ? -1 : 1;
+      if (left.id === right.id) return 0;
+      return left.id < right.id ? -1 : 1;
+    });
+    return stamped;
+  }
+  function notifyListeners(snapshot) {
+    for (const listener of [...listeners]) {
+      try {
+        listener(snapshot);
+      } catch (error) {
+        try {
+          console.error("[chubby-whale] team-source 订阅回调失败：", error);
+        } catch (ignored) {
+        }
+      }
+    }
+  }
+  function publishSnapshot(input) {
+    const now = Date.now();
+    const sessionId = typeof input.sessionId === "string" && input.sessionId !== "" ? input.sessionId : void 0;
+    const approvals = stampApprovals(Array.isArray(input.approvals) ? input.approvals : [], now);
+    const signature = approvalSignatureOf(approvals);
+    if (stored !== null && stored.sessionId === sessionId && stored.projection === input.projection && stored.approvalSignature === signature) {
+      return stored.snapshot;
+    }
+    const snapshot = buildSnapshot(input.projection, approvals, now);
+    stored = { sessionId, projection: input.projection, approvalSignature: signature, snapshot };
+    notifyListeners(snapshot);
+    return snapshot;
+  }
+  function clearSnapshot(sessionId) {
+    if (stored === null) return;
+    if (sessionId !== void 0 && stored.sessionId !== sessionId) return;
+    const cleared = stored.sessionId;
+    stored = null;
+    if (cleared === void 0) {
+      approvalFirstSeen.clear();
+      return;
+    }
+    const prefix = cleared + "\0";
+    for (const key of [...approvalFirstSeen.keys()]) {
+      if (key.startsWith(prefix)) approvalFirstSeen.delete(key);
+    }
+  }
+  function retainProbe(sessionId) {
+    probeMounts.set(sessionId, (probeMounts.get(sessionId) ?? 0) + 1);
+  }
+  function releaseProbe(sessionId) {
+    const count = probeMounts.get(sessionId) ?? 0;
+    if (count <= 1) {
+      probeMounts.delete(sessionId);
+      clearSnapshot(sessionId);
+      return;
+    }
+    probeMounts.set(sessionId, count - 1);
+  }
+  var teamProbeBridge = Object.freeze({
+    setSnapshot(input) {
+      return publishSnapshot(input);
+    },
+    clear(sessionId) {
+      clearSnapshot(sessionId);
+    }
+  });
+  function latestTeamProbeSnapshot() {
+    return stored === null ? null : stored.snapshot;
+  }
+  function latestTeamProbeSessionId() {
+    return stored === null ? null : stored.sessionId ?? null;
+  }
+  function collectSessionIds(list, rootSessionId) {
+    if (rootSessionId === void 0) return [];
+    const ids = [rootSessionId];
+    const visited = /* @__PURE__ */ new Set([rootSessionId]);
+    if (!isRecord(list)) return ids;
+    const projections = list.projectionsBySession;
+    if (!isRecord(projections)) return ids;
+    let frontier = [rootSessionId];
+    for (let depth = 0; depth < MAX_SESSION_DEPTH && frontier.length > 0; depth++) {
+      const next = [];
+      for (const parentId of frontier) {
+        const entry = projections[parentId];
+        if (!isRecord(entry)) continue;
+        const values = entry.values;
+        if (!isRecord(values)) continue;
+        const catalog = values.subagentCatalog;
+        if (!Array.isArray(catalog)) continue;
+        for (const row of catalog) {
+          if (!isRecord(row)) continue;
+          const childId = typeof row.id === "string" ? row.id : "";
+          if (childId === "" || visited.has(childId)) continue;
+          visited.add(childId);
+          ids.push(childId);
+          next.push(childId);
+        }
+      }
+      frontier = next;
+    }
+    return ids;
+  }
+  function readMainViewFlag(list, sessionId) {
+    if (!isRecord(list)) return "unknown";
+    const byId = list.byId;
+    if (!isRecord(byId)) return "unknown";
+    const row = byId[sessionId];
+    if (!isRecord(row)) return "unknown";
+    const retainedBy = row.retainedBy;
+    if (!isRecord(retainedBy)) return "unknown";
+    const count = retainedBy.mainView;
+    if (typeof count !== "number" || !Number.isFinite(count)) return "no";
+    return count > 0 ? "yes" : "no";
+  }
+  function selectPendingInteractions(state, sessionIds) {
+    const found = [];
+    if (sessionIds.length === 0 || !isRecord(state)) return found;
+    const statuses = state;
+    if (typeof statuses.get !== "function") return found;
+    for (const sessionId of sessionIds) {
+      const status = statuses.get(sessionId);
+      if (!isRecord(status)) continue;
+      const interaction = status.pendingInteraction;
+      if (isRecord(interaction)) found.push(interaction);
+    }
+    return found;
+  }
+  function samePendingInteractions(left, right) {
+    if (left === right) return true;
+    if (left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index++) {
+      const a = left[index];
+      const b = right[index];
+      if (a === b) continue;
+      if (a.kind !== b.kind || a.key !== b.key || a.sessionId !== b.sessionId || a.toolName !== b.toolName) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function toApprovalInputs(interactions, fallbackSessionId) {
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const interaction of interactions) {
+      if (interaction.kind !== "approval") continue;
+      const id = typeof interaction.key === "string" ? interaction.key : "";
+      if (id === "") continue;
+      const sessionId = typeof interaction.sessionId === "string" && interaction.sessionId !== "" ? interaction.sessionId : fallbackSessionId;
+      const key = sessionId + "\0" + id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id,
+        ...typeof interaction.toolName === "string" && interaction.toolName !== "" ? { toolName: interaction.toolName } : {},
+        sessionId
+      });
+    }
+    out.sort((left, right) => {
+      if (left.sessionId !== right.sessionId) return left.sessionId < right.sessionId ? -1 : 1;
+      if (left.id === right.id) return 0;
+      return left.id < right.id ? -1 : 1;
+    });
+    return out;
+  }
+  function createTeamProbe(R) {
+    const hasEffects = !!R && typeof R.useEffect === "function";
+    return function TeamProbe(props) {
+      const source = isRecord(props) ? props : {};
+      const sessionId = typeof source.sessionId === "string" && source.sessionId !== "" ? source.sessionId : void 0;
+      const useProjection = source.useProjection;
+      const useSessionStatus = source.useSessionStatus;
+      const useSessions = source.useSessions;
+      const projection = typeof useProjection === "function" && hasEffects ? useProjection(TEAM_PROJECTION_KEY) : void 0;
+      let listSignature = sessionId === void 0 ? "" : sessionId;
+      let mainViewFlag = "unknown";
+      if (typeof useSessions === "function" && hasEffects) {
+        listSignature = useSessions((state) => sessionId === void 0 ? "" : readMainViewFlag(state, sessionId) + "" + collectSessionIds(state, sessionId).join(""));
+      }
+      let sessionIds = [];
+      if (listSignature !== "") {
+        const separator = listSignature.indexOf("");
+        const flag = separator < 0 ? "" : listSignature.slice(0, separator);
+        if (flag === "yes" || flag === "no") mainViewFlag = flag;
+        const idsPart = separator < 0 ? listSignature : listSignature.slice(separator + 1);
+        sessionIds = idsPart === "" ? [] : idsPart.split("");
+      }
+      let interactions = [];
+      if (typeof useSessionStatus === "function" && hasEffects) {
+        interactions = useSessionStatus(
+          (state) => selectPendingInteractions(state, sessionIds),
+          samePendingInteractions
+        );
+      }
+      const approvalInputs = toApprovalInputs(interactions, sessionId ?? "");
+      const approvalsSignature = approvalInputs.map((approval) => approval.sessionId + "\0" + approval.id + "\0" + (approval.toolName ?? "")).join("");
+      if (hasEffects) {
+        R.useEffect(() => {
+          if (sessionId === void 0) return void 0;
+          retainProbe(sessionId);
+          return () => {
+            releaseProbe(sessionId);
+          };
+        }, [sessionId]);
+        R.useEffect(() => {
+          if (sessionId === void 0) return;
+          if (typeof useProjection !== "function") return;
+          if (mainViewFlag === "no") {
+            clearSnapshot(sessionId);
+            return;
+          }
+          publishSnapshot({ sessionId, projection, approvals: approvalInputs });
+        }, [projection, sessionId, approvalsSignature, mainViewFlag]);
+      }
+      return null;
+    };
+  }
+  function createTeamSource(options = {}) {
+    const filter = typeof options.sessionId === "string" && options.sessionId !== "" ? options.sessionId : void 0;
+    return {
+      subscribe(callback) {
+        if (typeof callback !== "function") return () => {
+        };
+        const listener = (snapshot) => {
+          if (filter !== void 0 && latestTeamProbeSessionId() !== filter) return;
+          callback(snapshot);
+        };
+        listeners.add(listener);
+        const current2 = latestTeamProbeSnapshot();
+        if (current2 !== null && (filter === void 0 || latestTeamProbeSessionId() === filter)) {
+          try {
+            callback(current2);
+          } catch (error) {
+            try {
+              console.error("[chubby-whale] team-source 首次回调失败：", error);
+            } catch (ignored) {
+            }
+          }
+        }
+        let active = true;
+        return () => {
+          if (!active) return;
+          active = false;
+          listeners.delete(listener);
+        };
+      }
+    };
+  }
+  function registerProbeInSlot(slots, slotName, probe) {
+    const descriptor = { name: slotName, id: TEAM_PROBE_ID, order: 0 };
+    const register = () => slots.register(descriptor, probe);
+    if (typeof slots.inject === "function") {
+      slots.inject(slotName, register);
+      return;
+    }
+    register();
+  }
+  function registerTeamProbe(ctx, R, options = {}) {
+    const slots = isRecord(ctx) ? ctx.slots : void 0;
+    if (!slots || typeof slots.register !== "function") {
+      try {
+        console.warn("[chubby-whale] team-source：ctx.slots 不可用，鲸鱼看板探针未注册");
+      } catch (ignored) {
+      }
+      return;
+    }
+    const probe = createTeamProbe(R);
+    const slotName = typeof options.slot === "string" && options.slot !== "" ? options.slot : TEAM_PROBE_SLOT;
+    try {
+      registerProbeInSlot(slots, slotName, probe);
+      return;
+    } catch (error) {
+      try {
+        console.warn("[chubby-whale] team-source：探针槽位 " + slotName + " 注册失败，尝试备选槽位", error);
+      } catch (ignored) {
+      }
+    }
+    if (slotName === TEAM_PROBE_FALLBACK_SLOT) return;
+    try {
+      registerProbeInSlot(slots, TEAM_PROBE_FALLBACK_SLOT, probe);
+    } catch (error) {
+      try {
+        console.warn("[chubby-whale] team-source：备选槽位注册也失败，鲸鱼看板没有数据源", error);
+      } catch (ignored) {
+      }
+    }
   }
 
   // src/client/narration.ts
@@ -11941,6 +12834,9 @@
         const personaBubbleTextRef = R.useRef(null);
         const voiceBubbleRef = R.useRef(null);
         const voiceBubbleTextRef = R.useRef(null);
+        const teamAlertBubbleRef = R.useRef(null);
+        const teamAlertBubbleTextRef = R.useRef(null);
+        const teamWatchRef = R.useRef(null);
         const bubbleTextRef = R.useRef(null);
         const bridgeRef = hookApi.useLazyRef(() => createVoiceBridge({
           narration,
@@ -12144,6 +13040,103 @@
           pos: () => ({ x: posRef.current.x, y: posRef.current.y - 22 }),
           xOffset: W / 2
         });
+        const teamAlertBubble = createBubble({
+          el: () => teamAlertBubbleRef.current,
+          textEl: () => teamAlertBubbleTextRef.current,
+          pos: () => posRef.current,
+          xOffset: W / 2
+        });
+        function teamBoardEnabled() {
+          try {
+            return localStorage.getItem("chubby-team-board") !== "off";
+          } catch (e) {
+            return true;
+          }
+        }
+        R.useEffect(() => {
+          let status = null;
+          let surface = null;
+          let watch = null;
+          let raf = 0;
+          let lastReposition = 0;
+          try {
+            const position = () => {
+              try {
+                const el = stageRef.current;
+                if (!el || typeof el.getBoundingClientRect !== "function") return null;
+                const r = el.getBoundingClientRect();
+                return { left: r.left, top: r.top, width: r.width, height: r.height };
+              } catch (e) {
+                return null;
+              }
+            };
+            status = createTeamStatusBubble({ doc: document, position });
+            surface = createTeamSurface({
+              scheduler: bubbleScheduler,
+              alert: {
+                show: (text, ms2) => {
+                  try {
+                    teamAlertBubble.show(text, ms2);
+                  } catch (e) {
+                  }
+                },
+                hide: () => {
+                  try {
+                    teamAlertBubble.hide();
+                  } catch (e) {
+                  }
+                }
+              },
+              status,
+              position
+            });
+            watch = createTeamWatch({
+              source: createTeamSource(),
+              surface,
+              enabled: teamBoardEnabled
+            });
+            teamWatchRef.current = watch;
+            watch.start();
+            const follow = () => {
+              try {
+                const now = Date.now();
+                if (now - lastReposition >= 100) {
+                  lastReposition = now;
+                  try {
+                    if (surface && typeof surface.reposition === "function") surface.reposition();
+                  } catch (e) {
+                  }
+                }
+                raf = requestAnimationFrame(follow);
+              } catch (e) {
+              }
+            };
+            if (typeof requestAnimationFrame === "function") raf = requestAnimationFrame(follow);
+          } catch (e) {
+            try {
+              console.warn("[chubby-whale] 看板装配失败：", e);
+            } catch (e2) {
+            }
+          }
+          return () => {
+            try {
+              if (raf) cancelAnimationFrame(raf);
+            } catch (e) {
+            }
+            try {
+              if (watch) watch.stop();
+            } catch (e) {
+            }
+            try {
+              if (surface) surface.dispose();
+            } catch (e) {
+            }
+            try {
+              teamWatchRef.current = null;
+            } catch (e) {
+            }
+          };
+        }, []);
         function showVoiceBubble(text, ms2 = 3e3) {
           if (!text) return;
           bubbleScheduler.enqueue({ lane: "voice", text, ms: ms2, transient: true, key: "voice:status", staleAfter: 4e3, start: () => voiceBubble.show(text, ms2), stop: () => voiceBubble.hide() });
@@ -12813,6 +13806,16 @@
             try {
               handleFileDrop(file, { showBubble, speakText }).catch(() => {
               });
+            } catch (e) {
+            }
+          },
+          refreshTeamBoard: () => {
+            try {
+              const w = teamWatchRef.current;
+              if (w) {
+                w.stop();
+                w.start();
+              }
             } catch (e) {
             }
           },
@@ -13655,7 +14658,7 @@
           } catch (e) {
             return false;
           }
-        })() }, readMenuRuntime())) : [];
+        })(), teamBoardOn: teamBoardEnabled() }, readMenuRuntime())) : [];
         const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : [];
         menuEntriesRef.current = menuEntries;
         function renderItems(items) {
@@ -13720,6 +14723,7 @@
           h("div", { ref: poemBubbleRef, className: "chubby-bubble chubby-bubble-poem" }, h("div", { ref: poemBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           h("div", { ref: personaBubbleRef, className: "chubby-bubble chubby-bubble-persona" }, h("div", { ref: personaBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           h("div", { ref: toolBubbleRef, className: "chubby-bubble chubby-bubble-tool" }, h("div", { ref: toolBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+          h("div", { ref: teamAlertBubbleRef, className: "chubby-bubble chubby-bubble-team" }, h("div", { ref: teamAlertBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           h("div", { ref: voiceBubbleRef, className: "chubby-bubble chubby-bubble-voice" }, h("div", { ref: voiceBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           recoverProps ? h("div", Object.assign({}, recoverProps, { style: recoverDotStyle }), "○") : null,
           menu ? h(
@@ -13806,6 +14810,14 @@
                 console.error("[chubby-whale] overlay 注册失败：", e);
               }
             };
+            try {
+              registerTeamProbe(ctx, R);
+            } catch (e) {
+              try {
+                console.warn("[chubby-whale] team probe 注册失败：", e);
+              } catch (e2) {
+              }
+            }
             try {
               slots.inject("shell.overlay", doRegister);
               setTimeout(() => {

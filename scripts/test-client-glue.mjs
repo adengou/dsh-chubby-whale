@@ -247,8 +247,8 @@ async function runSuite(mod, ctx) {
     // `.chubby-bubble>div` 依赖「每个气泡恰好一个内层文字 div」（也就是 client.ts 的 textEl）
     const bubbleRenderLines = readFileSync(join(SRC, 'client.ts'), 'utf8').split('\n')
       .filter((l) => l.indexOf("className: 'chubby-bubble") >= 0)
-    ok('bubble：5 个气泡各有一个内层文字 div（>div 滚动层对得上）',
-      bubbleRenderLines.length === 5 &&
+    ok('bubble：6 个气泡各有一个内层文字 div（>div 滚动层对得上）',
+      bubbleRenderLines.length === 6 &&
       bubbleRenderLines.every((l) => (l.match(/h\('div', \{ ref: \w+, style: BUBBLE_TEXT_STYLE \}\)/g) || []).length === 1),
       bubbleRenderLines.length + ' 行')
 

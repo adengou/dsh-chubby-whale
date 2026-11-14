@@ -62,6 +62,8 @@ export type ActionHost = {
   isHidden: () => boolean
   /** 菜单「阅读文档」：选中的文件交给宿主同一条 OCR/文件解析链路 */
   handleFileDrop?: (file: any) => void
+  /** 菜单「鲸鱼看板」开关后立即重算一次（没有数据源时可为空） */
+  refreshTeamBoard?: () => void
   /** 恢复显示（隐藏时的「○」恢复点、Ctrl+Shift+W、菜单「叫鲸鱼回来」共用） */
   recover: () => void
   /** 打开提醒管理面板：列序号并接住下一条输入（数字=删 / d=顺延） */

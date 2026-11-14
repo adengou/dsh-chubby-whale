@@ -49,12 +49,13 @@ try {
     return { lane, text, ms, start: () => log.push('start:' + lane + ':' + text), stop: () => log.push('stop:' + lane + ':' + text) }
   }
 
-  console.log('\n[1] 常量（五条线：poem > voice > main > persona > tool）')
-  ok('优先级 poem > voice > main > persona > tool',
+  console.log('\n[1] 常量（六条线：poem > voice > main > persona > team > tool）')
+  ok('优先级 poem > voice > main > persona > team > tool',
     LANE_PRIORITY.poem > LANE_PRIORITY.voice && LANE_PRIORITY.voice > LANE_PRIORITY.main &&
-    LANE_PRIORITY.main > LANE_PRIORITY.persona && LANE_PRIORITY.persona > LANE_PRIORITY.tool,
+    LANE_PRIORITY.main > LANE_PRIORITY.persona && LANE_PRIORITY.persona > LANE_PRIORITY.team &&
+    LANE_PRIORITY.team > LANE_PRIORITY.tool,
     JSON.stringify(LANE_PRIORITY))
-  ok('线路集合正好五条（含语音线）', Object.keys(LANE_PRIORITY).sort().join(',') === 'main,persona,poem,tool,voice', Object.keys(LANE_PRIORITY).join(','))
+  ok('线路集合正好六条（含语音线与 team 线）', Object.keys(LANE_PRIORITY).sort().join(',') === 'main,persona,poem,team,tool,voice', Object.keys(LANE_PRIORITY).join(','))
 
   console.log('\n[2] 同一时间只有一条活着（按优先级）')
   {

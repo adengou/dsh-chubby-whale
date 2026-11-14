@@ -317,6 +317,18 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     } catch (e) { host.bubble('打不开文件选择', 4000) }
   })
 
+  // —— 鲸鱼看板：只切显示开关，不碰 AgentTeam ——
+  table.define('team-board', (host) => {
+    try {
+      const cur = localStorage.getItem('chubby-team-board') !== 'off'
+      localStorage.setItem('chubby-team-board', cur ? 'off' : 'on')
+      if (typeof host.refreshTeamBoard === 'function') host.refreshTeamBoard()
+      host.bubble(cur ? '鲸鱼看板关啦，任务板还在后台跑' : '鲸鱼看板开啦，会跟着任务板冒泡', 4000)
+    } catch (e) {
+      host.bubble('看板开关没存住', 4000)
+    }
+  })
+
   // —— 语音试听 ——
   table.define('test-tts', (host) => {
     host.bubble('测试语音：主人听得到吗？', 4000)

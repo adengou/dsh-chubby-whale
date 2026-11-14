@@ -163,6 +163,7 @@ const TOGGLE_EN: Record<string, [string, string]> = {
   '语音聊天：': ['Voice chat: on', 'Voice chat: off'],
   '流式回复：': ['Streaming replies: on', 'Streaming replies: off'],
   '神经感知：': ['Nervous system: on', 'Nervous system: off'],
+  '鲸鱼看板：': ['Whale board: on', 'Whale board: off'],
   '鲸式解说：': ['Whale commentary: on', 'Whale commentary: off'],
   '联网搜索：': ['Web search: on', 'Web search: off'],
   '诗词弹幕：': ['Poem commentary: on', 'Poem commentary: off'],
@@ -269,6 +270,8 @@ export interface MenuState {
   nervousOn?: boolean
   /** 联网搜索开关（缺省关；打开后聊天可搜网页并附来源） */
   webSearchOn?: boolean
+  /** 鲸鱼看板开关（缺省开：只在 AgentTeam 启用且有任务时显示） */
+  teamBoardOn?: boolean
 }
 
 export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
@@ -318,6 +321,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
     ]),
     item('公文校对…', 'proofread'),
     item('神经感知：' + (nervousOn ? '开' : '关'), 'nervous'),
+    item('鲸鱼看板：' + (state.teamBoardOn === false ? '关' : '开'), 'team-board'),
     item('神经感知：看一眼状态', 'nervous-status'),
     sep(),
     // ── 曲子 ──

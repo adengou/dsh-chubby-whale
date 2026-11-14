@@ -32,6 +32,10 @@ import { getJson } from './client/http.js'
 import { createMelodyPlayer } from './client/melody.js'
 import { createBubble, clearBubbleTimer, ensureBubbleStyle } from './client/bubble.js'
 import { createBubbleScheduler } from './client/bubble-queue.js'
+import { createTeamWatch } from './client/team-watch.js'
+import { createTeamStatusBubble } from './client/team-status-bubble.js'
+import { createTeamSurface } from './client/team-surface.js'
+import { createTeamSource, registerTeamProbe } from './client/team-source.js'
 import { createNarrationLock } from './client/narration.js'
 import { createBusyLock, createEpoch } from './client/busy.js'
 import { clampPos, homePos as calcHomePos, createDragState, beginDrag, moveDrag, endDrag, bindDragInput } from './client/stage.js'
@@ -420,6 +424,10 @@ registerSkinActions(actions)
       // 语音线：语音识别的临时状态（听到/识别中/麦克风失败），不和对话正文抢主气泡
       const voiceBubbleRef = R.useRef(null)
       const voiceBubbleTextRef = R.useRef(null)
+      // 看板提醒线（走调度器 team 线路；常驻看板是独立 DOM，不在这里）
+      const teamAlertBubbleRef = R.useRef(null)
+      const teamAlertBubbleTextRef = R.useRef(null)
+      const teamWatchRef = R.useRef(null as any)
       const bubbleTextRef = R.useRef(null)
 
       // 语音桥：回调只在 voice-bridge 里建一份（待命 effect 与菜单「唤醒」共用）。
@@ -601,7 +609,73 @@ registerSkinActions(actions)
         pos: () => ({ x: posRef.current.x, y: posRef.current.y - 22 }),
         xOffset: W / 2,
       })
-      /** 语音状态（听到/识别中/麦克风失败）：走语音线，标 transient——被正文压掉后不再补播 */
+      // 看板提醒线：一次性提醒（审批/完成）走调度器；常驻看板用独立挂件。
+      const teamAlertBubble = createBubble({
+        el: () => teamAlertBubbleRef.current,
+        textEl: () => teamAlertBubbleTextRef.current,
+        pos: () => posRef.current,
+        xOffset: W / 2,
+      })
+      /** 菜单开关：缺省开；显式 'off' 才关 */
+      function teamBoardEnabled(): boolean {
+        try { return localStorage.getItem('chubby-team-board') !== 'off' } catch (e) { return true }
+      }
+      // 看板装配：source（会话级投影探针）→ watch（纯摘要/展示意图）→ surface（独立挂件/提醒）
+      R.useEffect(() => {
+        let status: any = null
+        let surface: any = null
+        let watch: any = null
+        let raf = 0
+        let lastReposition = 0
+        try {
+          const position = (): any => {
+            try {
+              const el = stageRef.current
+              if (!el || typeof el.getBoundingClientRect !== 'function') return null
+              const r = el.getBoundingClientRect()
+              return { left: r.left, top: r.top, width: r.width, height: r.height }
+            } catch (e) { return null }
+          }
+          status = createTeamStatusBubble({ doc: document, position })
+          surface = createTeamSurface({
+            scheduler: bubbleScheduler,
+            alert: {
+              show: (text: string, ms?: number) => { try { teamAlertBubble.show(text, ms) } catch (e) { } },
+              hide: () => { try { teamAlertBubble.hide() } catch (e) { } },
+            },
+            status,
+            position,
+          })
+          watch = createTeamWatch({
+            source: createTeamSource(),
+            surface,
+            enabled: teamBoardEnabled,
+          })
+          teamWatchRef.current = watch
+          watch.start()
+          // 鱼会走/被拖/被甩：低频跟随，避免每帧写样式
+          const follow = (): void => {
+            try {
+              const now = Date.now()
+              if (now - lastReposition >= 100) {
+                lastReposition = now
+                try { if (surface && typeof surface.reposition === 'function') surface.reposition() } catch (e) { }
+              }
+              raf = requestAnimationFrame(follow)
+            } catch (e) { }
+          }
+          if (typeof requestAnimationFrame === 'function') raf = requestAnimationFrame(follow)
+        } catch (e) {
+          try { console.warn('[chubby-whale] 看板装配失败：', e) } catch (e2) { }
+        }
+        return () => {
+          try { if (raf) cancelAnimationFrame(raf) } catch (e) { }
+          try { if (watch) watch.stop() } catch (e) { }
+          try { if (surface) surface.dispose() } catch (e) { }
+          try { teamWatchRef.current = null } catch (e) { }
+        }
+      }, [])
+
       function showVoiceBubble(text: string, ms = 3000): void {
         if (!text) return
         // 合并键 + 排队过期：连续几次识别只留最新一条；等太久（比如正念着长诗）就不补播了
@@ -1172,6 +1246,7 @@ registerSkinActions(actions)
         storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
         homePos: () => homePos(),
         handleFileDrop: (file: any) => { try { handleFileDrop(file, { showBubble, speakText }).catch(() => { }) } catch (e) { } },
+        refreshTeamBoard: () => { try { const w = teamWatchRef.current; if (w) { w.stop(); w.start() } } catch (e) { } },
         // 缩放：0.7–1.4，step 0.1；state 与 scaleRef 一起改（气泡定位读 scaleRef）
         nudgeScale: (delta) => {
           const s = Math.max(0.7, Math.min(1.4, (scaleRef.current || 1) + delta))
@@ -1833,7 +1908,7 @@ registerSkinActions(actions)
       // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去。
       // 可见项清单在渲染时同步算一次（键盘高亮与屏幕顺序共用这一份，不各算一套）。
       const menuItems = menu
-        ? buildMenu(VERSION, Object.assign({ melodies, skinFixed: skinFixed(), toolNarratorOn: (() => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried, webSearchOn: (() => { try { return localStorage.getItem('chubby-web-search') === 'on' } catch (e) { return false } })() }, readMenuRuntime()))
+        ? buildMenu(VERSION, Object.assign({ melodies, skinFixed: skinFixed(), toolNarratorOn: (() => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried, webSearchOn: (() => { try { return localStorage.getItem('chubby-web-search') === 'on' } catch (e) { return false } })(), teamBoardOn: teamBoardEnabled() }, readMenuRuntime()))
         : []
       const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : []
       menuEntriesRef.current = menuEntries
@@ -1874,6 +1949,7 @@ registerSkinActions(actions)
         h('div', { ref: poemBubbleRef, className: 'chubby-bubble chubby-bubble-poem' }, h('div', { ref: poemBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         h('div', { ref: personaBubbleRef, className: 'chubby-bubble chubby-bubble-persona' }, h('div', { ref: personaBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         h('div', { ref: toolBubbleRef, className: 'chubby-bubble chubby-bubble-tool' }, h('div', { ref: toolBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+        h('div', { ref: teamAlertBubbleRef, className: 'chubby-bubble chubby-bubble-team' }, h('div', { ref: teamAlertBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         h('div', { ref: voiceBubbleRef, className: 'chubby-bubble chubby-bubble-voice' }, h('div', { ref: voiceBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         recoverProps ? h('div', Object.assign({}, recoverProps, { style: recoverDotStyle }), '○') : null,
         menu ? h('div', menuRootProps({ menu, lang }),
@@ -1943,6 +2019,8 @@ registerSkinActions(actions)
               console.error('[chubby-whale] overlay 注册失败：', e)
             }
           }
+          // 注册看板探针：会话级 slot，只读 agentTeam 投影；失败不影响宠物本体
+          try { registerTeamProbe(ctx, R) } catch (e) { try { console.warn('[chubby-whale] team probe 注册失败：', e) } catch (e2) { } }
           try {
             slots.inject('shell.overlay', doRegister)
             // 有些版本 inject 只登记不立即执行：兜一次延迟注册（重复注册会被内部 try/catch 吃掉）
