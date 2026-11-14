@@ -116,6 +116,39 @@ console.log('\n[4] 没有 dataTransfer 也不炸')
   dispose()
 }
 
+console.log('\n[5] DOM 目标兜底：坐标判定放过、落点在鱼身上仍接住')
+{
+  const doc = {
+    listeners: [],
+    addEventListener(type, fn, capture) { this.listeners.push({ type, fn, capture: !!capture }) },
+    removeEventListener(type, fn, capture) { const i = this.listeners.findIndex((l) => l.type === type && l.fn === fn && l.capture === !!capture); if (i >= 0) this.listeners.splice(i, 1) },
+    fire(type, ev) { for (const l of this.listeners.filter((x) => x.type === type)) l.fn(ev) },
+  }
+  const win = makeWin()
+  win.document = doc
+  const got = []
+  const fish = { id: 'fish' }
+  const dispose = M.bindFileDropCapture({
+    win,
+    hitTest: () => false,
+    targetTest: (t) => t === fish,
+    onFile: (f) => got.push(f),
+  })
+  const one = { name: 'a.png' }
+  const ev = makeDropEvent([one]); ev.target = fish
+  win.fire('dragover', ev)
+  ok('window 捕获按 targetTest 放行 dragover', ev.prevented >= 1)
+  win.fire('drop', ev)
+  eq('window 捕获按 targetTest 接住 drop', got, [one])
+  const ev2 = makeDropEvent([one]); ev2.target = fish
+  doc.fire('dragover', ev2)
+  ok('document 捕获兜底 dragover', ev2.prevented >= 1)
+  doc.fire('drop', ev2)
+  eq('document 捕获兜底接住 drop', got, [one, one])
+  dispose()
+  ok('dispose 摘掉 document 监听', doc.listeners.length === 0, '剩 ' + doc.listeners.length)
+}
+
 rmSync(TMP, { recursive: true, force: true })
 console.log('\n' + '='.repeat(48))
 console.log(`通过 ${pass} 项 / 失败 ${fail} 项`)

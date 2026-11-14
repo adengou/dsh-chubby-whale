@@ -698,6 +698,13 @@ registerSkinActions(actions)
               return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad
             } catch (e) { return false }
           },
+          targetTest: (target: any): boolean => {
+            try {
+              if (hiddenRef.current) return false
+              const el = stageRef.current
+              return !!(el && target && (el === target || (typeof el.contains === 'function' && el.contains(target))))
+            } catch (e) { return false }
+          },
           onFile: (file: any): void => {
             try { handleFileDrop(file, { showBubble, speakText }).catch(() => { }) } catch (e2) { }
           },

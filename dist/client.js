@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.22";
+  var VERSION = "1.4.23";
 
   // src/client/styles.ts
   var W = 240;
@@ -11225,13 +11225,16 @@
     const win = opts.win;
     if (!win || !win.addEventListener) return () => {
     };
-    const onDragOverCapture = (e) => {
-      if (!opts.hitTest(e.clientX, e.clientY)) return;
-      e.preventDefault();
-      e.stopPropagation();
+    const doc = win.document || null;
+    const accept = (e) => {
+      try {
+        if (opts.hitTest(e.clientX, e.clientY)) return true;
+        if (typeof opts.targetTest === "function") return !!opts.targetTest(e.target);
+      } catch (e2) {
+      }
+      return false;
     };
-    const onDropCapture = (e) => {
-      if (!opts.hitTest(e.clientX, e.clientY)) return;
+    const handle = (e) => {
       e.preventDefault();
       e.stopPropagation();
       const dt = e.dataTransfer;
@@ -11246,8 +11249,30 @@
       } catch (e2) {
       }
     };
+    const onDragOverCapture = (e) => {
+      if (!accept(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onDropCapture = (e) => {
+      if (!accept(e)) return;
+      handle(e);
+    };
+    const onDocDragOver = (e) => {
+      if (typeof opts.targetTest !== "function" || !opts.targetTest(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onDocDrop = (e) => {
+      if (typeof opts.targetTest !== "function" || !opts.targetTest(e.target)) return;
+      handle(e);
+    };
     win.addEventListener("dragover", onDragOverCapture, true);
     win.addEventListener("drop", onDropCapture, true);
+    if (doc && doc.addEventListener) {
+      doc.addEventListener("dragover", onDocDragOver, true);
+      doc.addEventListener("drop", onDocDrop, true);
+    }
     return () => {
       try {
         win.removeEventListener("dragover", onDragOverCapture, true);
@@ -11256,6 +11281,16 @@
       try {
         win.removeEventListener("drop", onDropCapture, true);
       } catch (e) {
+      }
+      if (doc && doc.removeEventListener) {
+        try {
+          doc.removeEventListener("dragover", onDocDragOver, true);
+        } catch (e) {
+        }
+        try {
+          doc.removeEventListener("drop", onDocDrop, true);
+        } catch (e) {
+        }
       }
     };
   }
@@ -12253,6 +12288,15 @@
                 const r = el.getBoundingClientRect();
                 const pad = 12;
                 return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+              } catch (e) {
+                return false;
+              }
+            },
+            targetTest: (target) => {
+              try {
+                if (hiddenRef.current) return false;
+                const el = stageRef.current;
+                return !!(el && target && (el === target || typeof el.contains === "function" && el.contains(target)));
               } catch (e) {
                 return false;
               }

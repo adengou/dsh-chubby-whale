@@ -20,6 +20,8 @@ export function bindFileDropCapture(opts: {
   win: any
   /** 命中判定（一般用鱼的包围盒加点容差） */
   hitTest: (x: number, y: number) => boolean
+  /** 目标命中判定：外部拖放落在 canvas/stage 子节点上时，按 DOM 目标兜底（坐标可能缺失/不准） */
+  targetTest?: (target: any) => boolean
   /** 命中后交出的文件（可能为 undefined） */
   onFile: (file: any) => void
   /**
@@ -31,14 +33,16 @@ export function bindFileDropCapture(opts: {
   const win = opts.win
   if (!win || !win.addEventListener) return () => { }
 
-  // React 的 onDrop 走冒泡阶段，宿主会先接走文件；这里用捕获阶段抢过来
-  const onDragOverCapture = (e: any): void => {
-    if (!opts.hitTest(e.clientX, e.clientY)) return
-    e.preventDefault()
-    e.stopPropagation()
+  const doc = win.document || null
+  /** 坐标命中 或 事件目标落在鱼身上（后者兜底外部拖放 clientX/Y 缺失/不准） */
+  const accept = (e: any): boolean => {
+    try {
+      if (opts.hitTest(e.clientX, e.clientY)) return true
+      if (typeof opts.targetTest === 'function') return !!opts.targetTest(e.target)
+    } catch (e2) { }
+    return false
   }
-  const onDropCapture = (e: any): void => {
-    if (!opts.hitTest(e.clientX, e.clientY)) return
+  const handle = (e: any): void => {
     e.preventDefault()
     e.stopPropagation()
     const dt = e.dataTransfer
@@ -50,11 +54,39 @@ export function bindFileDropCapture(opts: {
     } catch (e2) { }
     try { opts.onFile(file) } catch (e2) { }
   }
+  // React 的 onDrop 走冒泡阶段，宿主会先接走文件；这里用捕获阶段抢过来
+  const onDragOverCapture = (e: any): void => {
+    if (!accept(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  const onDropCapture = (e: any): void => {
+    if (!accept(e)) return
+    handle(e)
+  }
+  // document 捕获：window 捕获若因坐标判定放过，落点确实在鱼身上时仍能接住
+  const onDocDragOver = (e: any): void => {
+    if (typeof opts.targetTest !== 'function' || !opts.targetTest(e.target)) return
+    e.preventDefault()
+    e.stopPropagation()
+  }
+  const onDocDrop = (e: any): void => {
+    if (typeof opts.targetTest !== 'function' || !opts.targetTest(e.target)) return
+    handle(e)
+  }
   win.addEventListener('dragover', onDragOverCapture, true)
   win.addEventListener('drop', onDropCapture, true)
+  if (doc && doc.addEventListener) {
+    doc.addEventListener('dragover', onDocDragOver, true)
+    doc.addEventListener('drop', onDocDrop, true)
+  }
   return () => {
     try { win.removeEventListener('dragover', onDragOverCapture, true) } catch (e) { }
     try { win.removeEventListener('drop', onDropCapture, true) } catch (e) { }
+    if (doc && doc.removeEventListener) {
+      try { doc.removeEventListener('dragover', onDocDragOver, true) } catch (e) { }
+      try { doc.removeEventListener('drop', onDocDrop, true) } catch (e) { }
+    }
   }
 }
 
