@@ -1,6 +1,6 @@
 # dsh-chubby-whale（肥鲸）
 
-[LICENSE](LICENSE) | [NOTICE（版权与素材来源）](NOTICE)
+[LICENSE](LICENSE) | [NOTICE（版权与素材来源）](NOTICE) | [素材许可说明（LICENSE-ASSETS）](LICENSE-ASSETS.md)
 [![Gitee](https://gitee.com/adengou/dsh-chubby-whale/badge/star.svg?theme=dark)](https://gitee.com/adengou/dsh-chubby-whale)
 
 DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下角。可拖拽（带惯性、位置记忆）、会眨眼、能说话、能说书念诗弹琴，也能听懂你说话。
@@ -16,6 +16,9 @@ DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下�
 | 镜像（GitHub） | <https://github.com/adengou/dsh-chubby-whale> |
 | npm 包 | <https://www.npmjs.com/package/dsh-chubby-whale> |
 | 更新日志 | [CHANGELOG.md](CHANGELOG.md) |
+
+> **版本现状（2026-11-14）**：Gitee 主仓库为开发主线（当前 1.7.x）；GitHub 镜像与 npm 目前停在 1.6.0，
+> 尚未同步 1.7.x。安装前请以各渠道实际版本为准，不要默认三渠道同版。
 
 > 语音待命的信号处理设计与调参：见 [docs/耳朵算法.md](docs/耳朵算法.md)
 > 发版规范（Gitee 必发；GitHub / npm 可达时同步同一版本）：见 [docs/发布规范.md](docs/发布规范.md)
@@ -51,14 +54,22 @@ dsh web
 2. 添加索引 URL：`https://gitee.com/adengou/dsh-chubby-whale/raw/main/market-index.json`；
 3. 在市场里找到「肥鲸 · Chubby Whale」，点安装即可（安装源固定到 Git 提交，可复现）。
 
-装完刷新页面即可看到肥鲸。Key 不随包分发，需要自己配：
+装完刷新页面即可看到肥鲸。Key 不随包分发，需要自己配。**配置要放在「插件包根目录」的 `config.json`**，具体位置取决于安装方式：
 
 ```jsonc
-// ~/.dsh/plugins/dsh-chubby-whale/config.json   （或包安装目录下的 config.json）
+// ① 手动 link 安装（dsh plugin add link:<本目录>）：
+//    ~/.dsh/plugins/dsh-chubby-whale/config.json（这个目录本身就是插件包根目录）
+// ② 市场 / npm 安装：
+//    <插件包安装目录>/config.json
+//    例如 <profile>/node_modules/dsh-chubby-whale/config.json
 {
   "deepseekKey": "sk-..."         // 聊天 + 语音识别（官方 ASR），一个 Key 全包
 }
 ```
+
+> 桌面端只读插件包根目录；手机页在包内没有配置时，会额外回退读
+> `$DSH_HOME/plugins/dsh-chubby-whale/config.json`（README 里的手动安装路径）。
+> 如果你不确定包根目录在哪，直接把 `config.json` 放在启动插件时使用的那份插件目录里。
 
 也可用环境变量：`CHUBBY_WHALE_DEEPSEEK_KEY`（最后才回退到通用名 `DEEPSEEK_API_KEY`）。
 
@@ -102,7 +113,7 @@ dsh plugin --profile web remove dsh-chubby-whale
 | 语音 | 文字转语音（9 种音色、可关、可停）、语音待命（常驻听写）、语音聊天开关；**稿子分段合成并导出 mp3 + srt 逐句字幕**（支持 txt/md/json/log/csv/docx，单次 ≤20000 字）；时长估算按语种分离（中文按字/英文按词） |
 | 文化 | 说书（17 本古籍，念原文、进度记忆、不重复、**进度按数据源隔离**）、念诗（737 首）、典故（261）、成语（834）、民间故事（696）、对联（51 副 11 类）；**选本书 ▸ 书单**、**今日一句**、**今日简报** |
 | 音乐 | 11 首曲子 Web Audio 合成播放（含升降号与低/高音） |
-| 工具 | 提醒（口语时间：9点 / 明天9点 / 半小时后 / 每天8点；**管理面板**：回数字删除、回 `d` 顺延 10 分钟）、看图、拖文件（图片识别 / 文本总结）、**公文校对**（贴文本或选 docx，独立路由外呼，不写聊天记忆）、成长与亲密度、鱼粮账本、余额、清除记忆、**数据导出/导入**、**使用统计** |
+| 工具 | 提醒（口语时间：9点 / 明天9点 / 半小时后 / 每天8点；**管理面板**：回数字删除、回 `d` 顺延 10 分钟）、看图、拖文件（图片识别 / 文本总结）、成长与亲密度、鱼粮账本、余额、清除记忆、**数据导出/导入**、**使用统计** |
 | 官方全家桶 | **OCR**（截图/表格/PDF 取准确文字，拖图时自动先取字再问答）、**文件解析**（拖入 PDF/Word/PPT 由官方服务端解析后整份问答）、**联网搜索**（菜单开关，默认关；问到实时的事会查网页并附来源） |
 | 天气 | 问「上海今天天气怎么样」「北京天气」→ 宿主查 wttr.in（免费、不需 Key），气泡 + 朗读，按温度给一句穿衣提醒；**查不到就说没查到，不编温度**；「天气晚来秋」这类诗句不劫持 |
 | 感知 | **神经感知**（可一键关）：只读感知主人活动、昼夜与宿主事件（`session/event`、`agent/status`），归约成「唤醒 × 心情」二维情绪再映射表情；事件流本地环形缓冲，宿主事件带冷却与会话聚焦；**夜潜**把昨天的事件反刍成一句梦话（数据不足就闭嘴） |
@@ -192,7 +203,7 @@ dsh plugin --profile web add link:<本目录>
 
 ## 配置
 
-复制 `config.example.json` 为 `config.json`（`config.json` 已被 git 忽略，不会误提交）：
+把 `config.example.json` 复制成 `config.json`，放在**插件包根目录**（见上方安装方式；`config.json` 已被 git 忽略，不会误提交）：
 
 ```json
 {

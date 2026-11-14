@@ -14,13 +14,16 @@
  *
  * 设计原则（每一条都是被之前的 bug 教育的）：
  *   ① 只有一个状态机：状态转移只有一处在改，杜绝"标志卡住没人清"
- *   ② 录音不靠"判句"：固定 6 秒窗口，窗口结束就上传；
- *      只在"已检测到说话且安静 700ms"时提前收尾（把它当加速，不当必要条件）
+ *   ② 录音不靠"判句"：固定 4.5 秒窗口，窗口结束就上传；
+ *      只在"已检测到说话且安静 450ms"时提前收尾（把它当加速，不当必要条件）
  *   ③ 每段必带电平信息：整段峰值 < -35dBFS 直接丢，不浪费识别额度
- *   ④ 所有网络请求都有硬超时（ASR 15s / TTS 20s / 对话由调用方负责）
+ *   ④ 所有网络请求都有硬超时（ASR 首试 20s / 超时重试 12s / TTS 20s / 对话由调用方负责）
  *   ⑤ 朗读队列有看门狗：不依赖 onended 回调，按音频元素真实状态复位
  *   ⑥ 回声防护三层：TTS 期间物理闭麦 + 说完 700ms 静音窗 + 文本回声比对
  *   ⑦ 每个可能"静默失败"的地方都有计数（stats），出问题看数字就知道卡在哪
+ *   ⑧ 录音与 ASR 解耦（2026-11 一句一落延迟优化）：一段录音被取走后立刻重启录音，
+ *      ASR 在后台跑 —— 识别慢只影响"这一段要不要上传"，不再让耳朵停摆。
+ *      单飞策略仍是忙则丢（不排队），丢段计数与诊断保留。
  *
  * 2026-11-06 算法审计补丁见各补丁点的注释（令牌守卫 / 超时降级 / FileReader onerror /
  * 分块不劈词 / 丢弃计数只记一次）。
@@ -51,6 +54,7 @@ import {
   type LevelBox,
 } from './voice/recorder.js'
 import type { VoiceStatus, VoiceStats } from './voice/status.js'
+import type { SegmentMeta } from '../shared/sentence-boundary.js'
 import { clearI } from './util.js'
 
 // 对外公开接口保持原路径可导入（voice-bridge 等只依赖 ./voice.js）
@@ -59,8 +63,12 @@ export { TTS_VOICES, DEFAULT_VOICE, normalizeVoiceName, readStoredVoiceName } fr
 
 
 export type VoiceOptions = {
-  /** 识别到一句有效的话（已过滤回声/重复/黑名单） */
-  onHeard: (text: string) => void
+  /**
+   * 识别到一句有效的话（已过滤回声/重复/黑名单）。
+   * meta 是本段收尾快照（pauseMs/speechMs/winMs）：上层自己判断要不要把句号降级成逗号
+   * （代笔面板用它纠偏断句；语音聊天忽略）。meta 可能缺省，旧调用方行为不变。
+   */
+  onHeard: (text: string, meta?: SegmentMeta) => void
   /** 状态变化（用来显示「在听…/在想…/在说…」） */
   onStatus?: (s: VoiceStatus) => void
   /** 诊断信息（失败原因等） */
@@ -98,11 +106,56 @@ export type Voice = {
   status: () => VoiceStatus
 }
 
-// 录音端点参数（WINDOW_MS / EARLY_STOP_QUIET / MIN_SPEECH_MS / SILENT_PEAK_DB）与
+// 录音端点参数（WINDOW_MS / EARLY_STOP_QUIET / MIN_SPEECH_MS / TICK_MS / SILENT_PEAK_DB）与
 // TTS 计时参数（TTS_TIMEOUT_MS / TTS_ZOMBIE_MS / ECHO_MUTE_MS）已分别搬到
 // voice/recorder.ts 与 voice/tts-queue.ts，避免常量与实现分居两处。
-const ASR_TIMEOUT_MS = 30000        // 识别上传硬超时（2026-11-06：15s 常被慢接口打满 → 超时 AbortError；TTS 的 20s 在 tts-queue.ts）
+
+// ---- ASR 传输超时策略（2026-11 延迟审查）----
+// 一句一落最怕"一次挂死独占单飞锁"：旧值首试 30s + 超时重试 30s = 最坏 60s，
+// 这段时间里后续每一段都只能按忙则丢被丢掉（耳朵在录，但没有一句进得去聊天）。
+// 现在：首试 20s（兼顾冷启动/慢网；历史上 15s 曾被慢接口打满，所以不退回 15s），
+// 超时重试用更短的 12s —— 首试已经等了 20s，重试只负责捡一次瞬时抖动，
+// 再等满 20s 只会把"卡住"翻倍。最坏 32s 是有界值（旧值 60s），不是无界等待。
+// 改这里必须同步 scripts/test-voice-latency.mjs 的口径断言。
+const ASR_TIMEOUT_MS = 20000
+const ASR_RETRY_TIMEOUT_MS = 12000
+/** 单段识别最坏等待（首试 + 一次重试）：写进诊断面板，测试也按它兜底 */
+const ASR_MAX_WAIT_MS = ASR_TIMEOUT_MS + ASR_RETRY_TIMEOUT_MS
 const ASR_RETRY_ONCE = true         // 超时/网络错误自动重试一次（识别失败不再直接算丢）
+
+/** 第 attempt 次上传的硬超时（0=首试，1=超时重试）。抽成函数，避免两处各写一个魔数 */
+function asrTimeoutForAttempt(attempt: number): number {
+  return attempt > 0 ? ASR_RETRY_TIMEOUT_MS : ASR_TIMEOUT_MS
+}
+
+/**
+ * 一段录音收尾后多久重启下一段（0 = 立刻，下一个宏任务）。
+ * 录音与 ASR 解耦后没有任何理由再等服务端 —— 旧实现在 ASR 的 finally 里 scheduleNext(150)。
+ */
+const NEXT_WINDOW_DELAY_MS = 0
+
+/** 「下一段录音什么时候真正开始」的延迟记录（一段录音的收尾对象持有，beginWindow 回填） */
+type SegmentRetiming = { restartAt: number; restartMs: number }
+
+/**
+ * 一段录音的收尾快照。为什么必须有：录音与 ASR 解耦后，下一段会在 ASR 返回前
+ * 就重置活的 seg 状态；识别侧若继续读 `seg`，winMs/峰值/APE 会被下一段污染。
+ */
+type SegmentSnapshot = {
+  /** 段号（与 echoFilter 的段级去重共用） */
+  id: number
+  /** 本段真实录音时长（ms，收尾时刻 - 起点；不含 ASR 等待） */
+  winMs: number
+  peakDb: number
+  speechMs: number
+  quietMs: number
+  /** 收尾时的 APE 帧快照（classic 模式为 null） */
+  ape: any
+  /** 收尾判定的墙钟时刻（延迟诊断的 speechEndAt；真说完 ≈ 此值 - quietMs） */
+  endedWallAt: number
+  /** 下一段重启记录：beginWindow 落地时回填，用于证明/度量"ASR 没堵住录音" */
+  retiming: SegmentRetiming
+}
 
 // 噪声判定与宿主共用一份（shared/noise.ts），避免两边各写一套、缓存又把噪声写进去
 
@@ -198,6 +251,23 @@ export function createVoice(opts: VoiceOptions): Voice {
   // 诊断字段先落 0：控制台 __chubbyWhale.ttsFailCount / ttsCooldownUntil 一开始就可读
   ttsSyncDiag()
 
+  // ---- 段落延迟诊断（2026-11 一句一落延迟审查）----
+  // 只覆盖写最近一段的紧凑对象（不 console、不建数组、不刷屏），排障看：
+  //   __chubbyWhale.voiceLatency = { count, busyDropped, maxWaitMs, last: {...} }
+  // last 里是段落的墙钟时间戳与相对耗时：speechEndAt（收尾判定）/ asrStartAt（真正开始上传）/
+  // asrDoneAt（识别返回）/ heardAt（交给上层），以及 recRestartAt/recRestartMs（下一段录音
+  // 真正开始的时刻/延迟 —— 它应该远小于 asrMs，证明录音没被 ASR 堵住）。
+  let latencyCount = 0
+  let busyDropCount = 0
+  function syncVoiceLatency(patch: any): void {
+    try {
+      const w: any = (window as any).__chubbyWhale || ((window as any).__chubbyWhale = {})
+      const prev: any = w.voiceLatency && typeof w.voiceLatency === 'object' ? w.voiceLatency : {}
+      w.voiceLatency = { ...prev, ...patch, count: latencyCount, busyDropped: busyDropCount, maxWaitMs: ASR_MAX_WAIT_MS }
+    } catch (e) { }
+  }
+  syncVoiceLatency({})   // 建实例即可读（count / busyDropped / maxWaitMs 先落 0）
+
   // ---- 状态机（去重与回调隔离在 status.ts，转移判定仍只在这里） ----
   const statusHolder = createStatusHolder((s: VoiceStatus) => {
     try { opts.onStatus && opts.onStatus(s) } catch (e) { }
@@ -233,6 +303,8 @@ export function createVoice(opts: VoiceOptions): Voice {
   let curSegId = 0
   let tickTimer: any = null
   let restartTimer: any = null
+  /** 已委托给 restartTimer 的「下一段重启」（beginWindow 落地时回填真正开始时刻并清空） */
+  let pendingRestart: { armedAt: number; retiming: SegmentRetiming } | null = null
 
   // ---- ASR 并发治理（2026-11-07 B78）----
   // ① 单飞：同一时刻最多一个识别请求在途（docs/并发纪律.md 规则 2）。
@@ -339,24 +411,54 @@ export function createVoice(opts: VoiceOptions): Voice {
     } catch (e) { }
   }
 
+  /** 只在错误补救路径用（rec.onerror / beginWindow 起录失败）；正常续录走 armNextWindow */
   function scheduleNext(ms: number): void {
     if (!running) return
     if (restartTimer) clearTimeout(restartTimer)
+    // 被错误补救路径覆盖掉的排期：上一段的重启委托不再由这个定时器落地，丢弃即可
+    pendingRestart = null
     restartTimer = setTimeout(() => { restartTimer = null; beginWindow() }, ms)
   }
 
+  /**
+   * 一段录音收尾后，立刻把「下一段录音」排上（录音与 ASR 解耦的唯一入口）。
+   * 旧实现要等 ASR 的 finally 才 scheduleNext(150)：识别期间耳朵完全停摆，
+   * 主人接着说的一句会整段丢掉 —— 一句一落"反应慢"的主因之一。
+   * 守卫（一条都不能少）：
+   *   · 已停止 / 没有录音器 → 不排；
+   *   · 当前已有段在录 → 不排（绝不能为了排下一段把正在录的这一段 stop 掉，那会丢半句）；
+   *   · 已有排期（restartTimer）→ 不重复排（onstop 与错误补救路径可能同时触发）。
+   */
+  function armNextWindow(retiming: SegmentRetiming): void {
+    if (!running || !rec) return
+    if (rec.state !== 'inactive') return
+    if (restartTimer) return
+    pendingRestart = { armedAt: Date.now(), retiming }
+    restartTimer = setTimeout(() => { restartTimer = null; beginWindow() }, NEXT_WINDOW_DELAY_MS)
+  }
+
   function beginWindow(): void {
+    // 上一段收尾时委托的重启：在这里记下"下一段真正开始录"的时刻（延迟诊断）
+    const pending = pendingRestart
+    pendingRestart = null
+    if (pending) {
+      const at = Date.now()
+      pending.retiming.restartAt = at
+      pending.retiming.restartMs = at - pending.armedAt
+    }
     curSegId = ++segSeq
     if (!running || !rec) return
     try {
-      if (rec.state !== 'inactive') { try { rec.stop() } catch (e) { } scheduleNext(200); return }
+      if (rec.state !== 'inactive') {
+        // 陈旧定时器撞上正在录的段：不停它、也绝不再起第二个录音器；
+        // 当前段的 onstop 会自然把下一段续上。
+        return
+      }
       // 每段复位：计数器不清会出现"完全听不到"（修过的真 bug）
       resetSegmentState(seg, performance.now())
       ape.resetSegment()
       diag.setApe(null)
       rec.start()
-      scheduleNext(0)  // 占位：下面立刻换成 tick 循环
-      if (restartTimer) { clearTimeout(restartTimer); restartTimer = null }
       tick()
     } catch (e: any) {
       stats.lastError = 'beginWindow: ' + String(e && e.name)
@@ -410,30 +512,34 @@ export function createVoice(opts: VoiceOptions): Voice {
     }
   }
 
-  async function onWindowDone(blob: Blob): Promise<void> {
-    const thisSegId = curSegId
+  async function onWindowDone(blob: Blob, snap: SegmentSnapshot): Promise<void> {
+    const thisSegId = snap.id
     // 已停止（关语音待命/卸载）：这段不能再上传，也不能把状态从 idle 回写成
     // recognizing/listening —— 那正是"关了还在听"的来源。
     if (!running) return
-    // 已知没配识别 Key：直接跳过，不再上传（否则每句话都白打一次请求）
-    if (asrNoKey) { stats.skippedSilent++; scheduleNext(150); return }
+    // 已知没配识别 Key：直接跳过，不再上传（否则每句话都白打一次请求）。
+    // 不再 scheduleNext：下一段录音已在 onstop 里提前排上（录音/ASR 解耦）。
+    if (asrNoKey) { stats.skippedSilent++; return }
     stats.windows++
     // 太安静：直接丢（识别服务对静音会编词，浪费钱还制造幻觉）
     // levelDead（analyser 不可用）时没有可信电平，跳过静音判定，只按体积/回声窗兜底。
+    // 注意：这里全部读 snap（收尾快照）—— 下一段可能已经开始录，活的 seg 已复位。
     if (!levelDead) {
       if (epMode === 'ape') {
-        if (!hadApeSpeech(diag.getApe())) { stats.skippedSilent++; scheduleNext(150); return }
-      } else if (isSilentPeak(seg.peakDb)) { stats.skippedSilent++; scheduleNext(150); return }
+        if (!hadApeSpeech(snap.ape)) { stats.skippedSilent++; return }
+      } else if (isSilentPeak(snap.peakDb)) { stats.skippedSilent++; return }
     }
-    if (Date.now() < mutedUntil) { stats.skippedSilent++; scheduleNext(150); return }
-    if (isTooSmallSegment(blob.size)) { stats.skippedSilent++; scheduleNext(150); return }
+    if (Date.now() < mutedUntil) { stats.skippedSilent++; return }
+    if (isTooSmallSegment(blob.size)) { stats.skippedSilent++; return }
 
     // 单飞闸门：上一段还没识别完，这一段直接丢（忙则丢，不排队 —— 理由见本文件「ASR 并发治理」段）
     if (asrBusy) {
       // 丢段也记账：否则「怎么好像漏了一句」只能翻 diag 流（2026-11-07）
+      busyDropCount++
       try { stats.asrBusyDropped = (stats.asrBusyDropped || 0) + 1 } catch (e) { }
       try { opts.onDiag && opts.onDiag({ stage: 'asr-busy-drop', hint: '上一段还在识别，这一段丢弃（不排队）' }) } catch (e) { }
-      scheduleNext(150)
+      // 延迟诊断只覆盖写"最近一次丢弃"，正常段不覆盖（不刷屏、不涨内存）
+      syncVoiceLatency({ lastDropped: { at: Date.now(), segId: thisSegId, winMs: snap.winMs, restartMs: snap.retiming.restartMs } })
       return
     }
     // 纪元在我这一轮开始时定死：之后每个 await 回来都要比一次（停止/重新待命/打断都会 +1）
@@ -441,14 +547,20 @@ export function createVoice(opts: VoiceOptions): Voice {
     asrBusy = true
     stats.uploaded++
     setStatus('recognizing')
+    const speechEndAt = snap.endedWallAt
+    let asrStartAt = 0
+    let asrDoneAt = 0
+    let attempt = 0
     try {
       // 编码协商 + Safari 的 mp4→WAV：上传前的容器转换都在这里（client/audio-codec.ts 提供纯函数）
       const wire = await prepareAudioForAsr(blob, { actx, recMime, onDiag: opts.onDiag })
       // await 之后第一件事：我还是当前那一轮吗？不是就静默收尾（不写缓存/状态/统计）
       if (myEpoch !== asrEpoch) return
       if (!wire || !wire.base64) { stats.asrFail++; stats.lastError = 'b64-empty'; return }
-      // 单次上传（带独立 AbortController，超时/停止都会中止）
-      const uploadOnce = async (): Promise<Response> => {
+      asrStartAt = Date.now()
+      // 单次上传（带独立 AbortController，超时/停止都会中止）；超时按尝试次数区分：
+      // 首试 20s、超时重试 12s（见文件上部 ASR 超时策略）
+      const uploadOnce = async (n: number): Promise<Response> => {
         const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
         if (ctl) asrAborts.add(ctl)
         try {
@@ -458,82 +570,139 @@ export function createVoice(opts: VoiceOptions): Voice {
             // format 必须带实际值：宿主按它决定 multipart 的 filename/Content-Type。
             // 白名单是 webm/wav/mp3（src/host/routes/asr.ts），mp4 不在其中 → hostAsrFormat 已回落成 webm。
             body: JSON.stringify({ audio: wire.base64, format: wire.format, lang: chatLangForAsr() }),
-          }, ASR_TIMEOUT_MS, ctl ? ctl.signal : undefined)
+          }, asrTimeoutForAttempt(n), ctl ? ctl.signal : undefined)
         } finally {
           if (ctl) asrAborts.delete(ctl)
         }
       }
       let res: Response
       try {
-        res = await uploadOnce()
+        res = await uploadOnce(attempt)
       } catch (e1: any) {
-        // 超时/网络抖动：自动重试一次（识别失败 3/4 的根因是 15s 硬超时）
+        // 超时/网络抖动：自动重试一次（识别失败的主要根因是硬超时）。
         // 纪元变了（停止/打断）就不重试：那是主动作废，不是接口慢，重试只会白烧额度。
         if (ASR_RETRY_ONCE && e1 && e1.name === 'AbortError' && running && myEpoch === asrEpoch) {
+          attempt = 1
           stats.asrRetry = (stats.asrRetry || 0) + 1
-          try { opts.onDiag && opts.onDiag({ stage: 'asr-retry', hint: '识别超时，重试一次' }) } catch (e) { }
-          res = await uploadOnce()
+          try {
+            opts.onDiag && opts.onDiag({
+              stage: 'asr-retry',
+              hint: '识别超时，重试一次（重试超时更短）',
+              timeoutMs: asrTimeoutForAttempt(1),
+            })
+          } catch (e) { }
+          res = await uploadOnce(attempt)
         } else {
           throw e1
         }
       }
       const data = await res.json()
+      asrDoneAt = Date.now()
       // 请求期间可能已经关掉语音待命/卸载：这时候不能再把结果当主人说话
       if (!running) return
       // 纪元对不上（停止/重新待命/打断）：这条结果属于上一轮，一律作废 ——
       // 不送聊天（onHeard）、不写诊断缓存（diag.setSegment）、不改状态、不写 NO_KEY 标记。
       if (myEpoch !== asrEpoch) return
+      // 段落延迟快照：speechEndAt 是收尾判定时刻（真说完 ≈ speechEndAt - quietMs），
+      // asrStartAt 是容器准备完、真正发请求的时刻，asrDoneAt 是响应体落地时刻。
+      // recRestartAt/recRestartMs 证明"下一段录音在 ASR 返回前就开始了"（解耦生效）。
+      const latency = {
+        segId: thisSegId,
+        speechEndAt,
+        asrStartAt,
+        asrDoneAt,
+        heardAt: 0,
+        quietMs: snap.quietMs,
+        encodeMs: asrStartAt - speechEndAt,
+        asrMs: asrDoneAt - asrStartAt,
+        e2eMs: asrDoneAt - speechEndAt,
+        perceivedMs: asrDoneAt - speechEndAt + snap.quietMs,
+        recRestartAt: snap.retiming.restartAt,
+        recRestartMs: snap.retiming.restartMs,
+        attempt,
+      }
       // 没配识别 Key：记一次、通知上层给一句提示，本次会话内不再重试
       if (data && data.error === 'NO_KEY') {
         stats.asrFail++
         stats.lastError = 'asr: NO_KEY'
         asrNoKey = true
+        syncVoiceLatency({ last: { ...latency, failed: 'NO_KEY' } })
         try { opts.onDiag && opts.onDiag({ stage: 'asr-no-key', hint: String(data.hint || '') }) } catch (e) { }
         return
       }
-      if (!data || !data.ok) { stats.asrFail++; stats.lastError = 'asr: ' + String((data && data.error) || 'failed'); return }
+      if (!data || !data.ok) {
+        stats.asrFail++
+        stats.lastError = 'asr: ' + String((data && data.error) || 'failed')
+        syncVoiceLatency({ last: { ...latency, failed: String((data && data.error) || 'failed') } })
+        return
+      }
+      latencyCount++
       try {
-        const cur = diag.getApe()
+        const cur = snap.ape
         diag.setSegment({
           mode: epMode,
           fmt: wire.format,
-          winMs: Math.round(performance.now() - seg.startedAt),
-          peMs: cur ? cur.speechMs : seg.speechMs,
-          quMs: cur ? cur.quietMs : seg.quietMs,
+          // winMs 用录音段真实时长（收尾时刻 - 起点）：解耦后 ASR 的等待不计入，
+          // 旧实现读活的 seg.startedAt，会把等待时间错算成"录音很长"。
+          winMs: snap.winMs,
+          peMs: cur ? cur.speechMs : snap.speechMs,
+          quMs: cur ? cur.quietMs : snap.quietMs,
           floor: cur ? Math.round(cur.floorDb) : null,
           target: cur ? cur.quietTargetMs : null,
           text: String(data.text || '').slice(0, 24),
+          latency,
         })
       } catch (e) { }
       const text = String(data.text || '').trim()
-      if (!text) return
+      if (!text) { syncVoiceLatency({ last: latency }); return }
       stats.asrTexts++
       // 丢弃原因只在这里记一次（过滤器内部不再动 stats：原来同一个事件会被记两遍）
       const verdict = echoFilter.accept(text, Date.now(), thisSegId)
       if (verdict.ok) {
         stats.heard++
         setStatus('thinking')
-        try { opts.onHeard(text) } catch (e) { }
+        // heardAt / e2eMs / perceivedMs 在真正交给上层前定格：这是一句"落地"的端到端耗时
+        latency.heardAt = Date.now()
+        latency.e2eMs = latency.heardAt - speechEndAt
+        latency.perceivedMs = latency.e2eMs + snap.quietMs
+        syncVoiceLatency({ last: latency })
+        // 断句元数据：用本段**收尾快照**里的尾部静音/说话时长（APE 模式取 APE 自己的累计；
+        // 经典模式取 accrueClassic 的累计）。代笔面板据此判断这句是不是"没等够就切出来的半句"。
+        const meta: SegmentMeta = {
+          pauseMs: snap.ape ? snap.ape.quietMs : snap.quietMs,
+          speechMs: snap.ape ? snap.ape.speechMs : snap.speechMs,
+          winMs: snap.winMs,
+        }
+        try { opts.onHeard(text, meta) } catch (e) { }
       } else if (verdict.reason === 'short') {
         stats.shortDropped = (stats.shortDropped || 0) + 1
+        syncVoiceLatency({ last: { ...latency, filtered: 'short' } })
       } else if (verdict.reason === 'dup') {
         stats.dupDropped = (stats.dupDropped || 0) + 1
+        syncVoiceLatency({ last: { ...latency, filtered: 'dup' } })
       } else {
         stats.echoDropped++
+        syncVoiceLatency({ last: { ...latency, filtered: String(verdict.reason || 'echo') } })
       }
     } catch (e: any) {
       // 早退（Stop/打断）导致的 abort 不是识别失败：纪元过期就静默收尾，别污染统计/诊断
       if (myEpoch !== asrEpoch) return
       stats.asrFail++
       stats.lastError = (e && e.name === 'AbortError' ? 'asr-ex: AbortError（超时/已停止）' : 'asr-ex: ' + String((e && e.name) || e))
+      syncVoiceLatency({
+        last: {
+          segId: thisSegId, speechEndAt, asrStartAt,
+          asrDoneAt: asrDoneAt || Date.now(), failed: stats.lastError,
+        },
+      })
     } finally {
       // 旧请求的 finally 不能回收新一轮的锁：只有纪元没变时才复位单飞标志与「在听」状态
       if (myEpoch === asrEpoch) {
         asrBusy = false
         if (statusHolder.get() === 'recognizing') setStatus('listening')
       }
-      // 只有录音器空闲时才排下一段：否则会打断正在录的段（会丢开头几个字）
-      if (!rec || rec.state === "inactive") scheduleNext(150)
+      // 这里刻意不再 scheduleNext：录音已在 onstop 里提前重启（armNextWindow）。
+      // ASR 回来的早晚都不影响下一段是否在录 —— 旧实现卡在这里，正是"一句一落慢"的根因。
     }
   }
 
@@ -962,6 +1131,8 @@ export function createVoice(opts: VoiceOptions): Voice {
     // 新一轮待命：ASR 纪元 +1，上一轮残留的请求（异常停掉没走 stop 的）一律作废
     asrEpoch++
     abortAsrFlight()
+    // 上一轮可能遗留的"下一段重启"委托：定时器已在 stop() 清掉，这里清引用即可
+    pendingRestart = null
     recMime = ''
     recFormat = 'webm'
     levelOk = false
@@ -1015,7 +1186,23 @@ export function createVoice(opts: VoiceOptions): Voice {
         // 写死会让后面的 format 归类拿到错误容器，Safari 的 mp4 就永远走不到转 wav 那条路。
         const blobType = String((rec && (rec as any).mimeType) || recMime || 'audio/webm')
         const blob = takeBlob(seg, blobType)
-        void onWindowDone(blob)
+        // 收段即快照：下一段马上就要开始录（seg 会被复位），识别侧只能读这份快照，
+        // 否则 winMs / 峰值 / APE 帧都会被下一段污染。
+        const endedAt = performance.now()
+        const snap: SegmentSnapshot = {
+          id: curSegId,
+          winMs: Math.round(endedAt - seg.startedAt),
+          peakDb: seg.peakDb,
+          speechMs: seg.speechMs,
+          quietMs: seg.quietMs,
+          ape: diag.getApe(),
+          endedWallAt: Date.now(),
+          retiming: { restartAt: 0, restartMs: 0 },
+        }
+        // 关键顺序：先把下一段录音排上（与 ASR 解耦），再去做可能很慢的识别。
+        // armNextWindow 自带"已在录/已排期"守卫，不会双开录音器、不会重复排期。
+        armNextWindow(snap.retiming)
+        void onWindowDone(blob, snap)
       }
       rec.onerror = (e: any) => { stats.lastError = 'recorder: ' + String(e && e.error && e.error.name) ; scheduleNext(800) }
       micOn(true)
@@ -1044,6 +1231,7 @@ export function createVoice(opts: VoiceOptions): Voice {
     abortAsrFlight()
     if (tickTimer) { clearTimeout(tickTimer); tickTimer = null }
     if (restartTimer) { clearTimeout(restartTimer); restartTimer = null }
+    pendingRestart = null
     if (ttsWatch) { clearInterval(ttsWatch); ttsWatch = null }
     // 朗读侧一起收：原来只停录音，说书/回复还在播、队列还留着，
     // 结果是"关了语音待命，声音没停、麦克风还被静音"，点菜单也不对。

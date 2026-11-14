@@ -21,9 +21,15 @@ import { createVoiceBridge } from './client/voice-bridge.js'
 import { createActionTable, registerSkinActions, type ActionHost } from './client/actions.js'
 import { registerCultureActions } from './client/actions/culture.js'
 import { parseBookList, registerContentActions } from './client/actions/content.js'
-import { registerSystemActions } from './client/actions/system.js'
+import { copyPlainText, registerSystemActions } from './client/actions/system.js'
+import { createCabinetPanel } from './client/cabinet-panel.js'
+import { createScribeSession } from './client/scribe-session.js'
+import { createScribePanel } from './client/scribe-panel.js'
+import { createScreenKeeper } from './client/screen-keeper.js'
+import { buildScribeDocx, SCRIBE_DOCX_MIME, scribeDocxFileName, scribeTxt } from './client/scribe-docx.js'
+import { buildCabinetPrompt } from './shared/cabinet.js'
+import type { SegmentMeta } from './shared/sentence-boundary.js'
 import { registerVoiceActions } from './client/actions/voice.js'
-import { registerProofreadActions } from './client/actions/proofread.js'
 import { registerNervousActions } from './client/actions/nervous.js'
 import { createPersona, applyServerMood } from './client/persona.js'
 import { attachNervous, nervousEnabled } from './client/nervous/index.js'
@@ -105,7 +111,6 @@ registerSkinActions(actions)
     registerContentActions(actions)
     registerSystemActions(actions)
     registerVoiceActions(actions)
-    registerProofreadActions(actions)
     registerNervousActions(actions)
 
 
@@ -276,6 +281,21 @@ registerSkinActions(actions)
       const posRef = R.useRef({ x: 0, y: 0 })
       const talkRef = R.useRef({ talkUntil: 0, hearts: [] as any[] })
       const voiceModeRef = R.useRef(false)
+      // ===== 代笔（小鲸代笔面板 · 一句一落）=====
+      // 面板里是一篇可编辑正文；语音整句只接进正文当前段落，不写聊天输入框、不自动发送。
+      //   · scribeSessionRef：纯状态机（正文 text 持久保留，保存/暂停都不清）；
+      //   · scribePanelRef：DOM 浮动面板（client/scribe-panel.ts），不占 React 状态；
+      //   · scribeStartedMicRef：这次代笔是否由本功能临时开了麦克风，暂停/关闭/卸载时释放。
+      const scribeSessionRef = hookApi.useLazyRef(() => createScribeSession({}))
+      const scribePanelRef = hookApi.useLazyRef(() => createScribePanel({
+        doc: typeof document === 'undefined' ? undefined : document,
+        onMic: () => { try { toggleScribeMic() } catch (e) { } },
+        onTextChange: (text: string) => { try { scribeSessionRef.current.setText(text) } catch (e) { } },
+        onClear: () => { try { clearScribe() } catch (e) { } },
+        onSave: (kind: 'txt' | 'docx', text: string) => saveScribe(kind, text),
+        onClose: () => { try { closeScribePanel() } catch (e) { } },
+      }))
+      const scribeStartedMicRef = R.useRef(false)
       // 持久化开关：朗读 / 语音待命 / 语音聊天（默认都开；ref 给回调同步读，state 驱动菜单）
       const voiceOnState = hookApi.usePersistentBool('chubby-voice')
       const voiceOnRef = voiceOnState.ref
@@ -292,6 +312,18 @@ registerSkinActions(actions)
       const voiceChatOnRef = voiceChatOnState.ref
       const voiceChatOn = voiceChatOnState.value
       const setVoiceChatOn = voiceChatOnState.set
+
+      // 保持亮屏（Screen Wake Lock；默认开：页面可见时不自动息屏）
+      const keepAwakeState = hookApi.usePersistentBool('chubby-keep-awake')
+      const screenKeeperRef = hookApi.useLazyRef(() => createScreenKeeper({}))
+      R.useEffect(() => {
+        const keeper = screenKeeperRef.current
+        keeper.setEnabled(keepAwakeState.value)
+        return () => { try { keeper.dispose() } catch (e) { } }
+      }, [])
+      R.useEffect(() => {
+        try { screenKeeperRef.current.setEnabled(keepAwakeState.value) } catch (e) { }
+      }, [keepAwakeState.value])
       const [balanceLabel, setBalanceLabel] = R.useState('--')
       // 聊天缓存开关（服务端持久化；这里只用于菜单显示与即时切换）
       const chatCacheOnRef = R.useRef(true)
@@ -444,6 +476,15 @@ registerSkinActions(actions)
         say: (text: string, ms?: number, opts?: any) => sayLine(text, ms, opts),
         sendText: (text: string, opts?: { voice?: boolean }) => sendText(text, opts),
         onVoiceHeard: () => { try { voiceModeRef.current = true } catch (e) { } },
+        // 代笔分流：active/paused 时代笔优先（暂停时说的话直接丢弃、不送给模型；
+        // 面板会提示「先点继续」）。识别结果只进面板，绝不写聊天输入框/自动发送。
+        scribe: () => {
+          try {
+            const st = scribeSessionRef.current.getState()
+            return st.active || st.paused
+          } catch (e) { return false }
+        },
+        onScribe: (text: string, meta?: SegmentMeta) => { try { handleScribeText(text, meta) } catch (e) { } },
         onSpeaking: (playing: boolean) => {
           ttsPlaying = playing
         },
@@ -454,6 +495,15 @@ registerSkinActions(actions)
         diag: dg,
       }))
       const bridge = bridgeRef.current
+
+      // 卸载收尾：代笔面板 DOM / 这次临时开的麦克风都要收掉，
+      // 别把面板与麦克风留给下一个实例（voice-bridge 自己的 dispose 在下面另一条 effect）。
+      R.useEffect(() => {
+        return () => {
+          try { scribePanelRef.current.destroy() } catch (e) { }
+          releaseScribeMic()
+        }
+      }, [])
 
       // 样式注入（气泡三角；样式常量在 client/bubble.ts）
       R.useEffect(() => {
@@ -714,6 +764,30 @@ registerSkinActions(actions)
       // 任何一次 setState（打开面板本身就会 setMenu）都会把 60 秒有效窗和序号一起清零。
       const reminderManagerRef = hookApi.useLazyRef(() => createReminderManager({ bubble: showBubble }))
       const reminderManager = reminderManagerRef.current
+      // ===== 鲸群推演室面板：lazy 只建一次（DOM 等第一次「开始推演…」才创建）=====
+      // onSubmit 只做三件事：buildCabinetPrompt 拼简报 → 写剪贴板 → 冒气泡并打开聊天面板。
+      // 不自动发消息：主人要自己把简报粘贴进对话发送；也不碰任务板。
+      // 复制失败 / 拼装失败都返回 false，面板会显示内联错误并保持打开。
+      const cabinetPanelRef = hookApi.useLazyRef(() => createCabinetPanel({
+        doc: typeof document === 'undefined' ? undefined : document,
+        onSubmit: async (input) => {
+          let prompt = ''
+          try {
+            prompt = buildCabinetPrompt(input).prompt
+          } catch (e) {
+            return false
+          }
+          const copied = await copyPlainText(prompt)
+          if (!copied) return false
+          showBubble('推演议题已复制：粘贴到对话里发送，本鲸再去召集四位视角～', 7000)
+          try { setChatOpen(true) } catch (e) { }
+          return true
+        },
+      }))
+      // 卸载时收掉面板：open 状态的遮罩 + document 级 Esc 监听都要撤（别留着抢按键）
+      R.useEffect(() => {
+        return () => { try { cabinetPanelRef.current.destroy() } catch (e) { } }
+      }, [])
       // 「让它游走」可逆：隐藏时右下角留「○」恢复点，Ctrl+Shift+W 也走同一条恢复路径（不刷新页面）
       const recover = createRecover({ recover: () => setHidden(false) })
       /** 焦点在输入框/可编辑区域时，全局快捷键让路（不能把主人正在输入的按键抢走） */
@@ -1258,6 +1332,11 @@ registerSkinActions(actions)
         isHidden: () => hidden,
         recover: () => { try { setHidden(false) } catch (e) { } },
         openReminders: () => { try { reminderManager.open() } catch (e) { } },
+        // 鲸群推演室：动作层只负责打开面板；议题 → 简报 → 剪贴板在 cabinetPanelRef 的 onSubmit 里
+        openCabinet: () => { try { cabinetPanelRef.current.open() } catch (e) { } },
+        // 代笔：菜单「打开代笔面板」= 只开面板（话筒/保存/清空都在面板里点）。
+        // 不再有「停止代笔」用户入口：暂停/关闭/卸载时释放临时麦克风，正文一直保留。
+        startScribe: () => { try { openScribePanel() } catch (e) { } },
         setChatOpen: (v) => setChatOpen(v),
         setVoiceMode: (v) => { voiceModeRef.current = v },
         setMessages: (v) => setMessages(v),
@@ -1311,6 +1390,9 @@ registerSkinActions(actions)
         },
         chatCacheOn: () => chatCacheOnRef.current,
         setChatCacheOn: (v) => { chatCacheOnRef.current = v; setChatCacheOn(v) },
+        keepAwake: () => keepAwakeState.ref.current,
+        setKeepAwake: (v) => keepAwakeState.set(v),
+        screenWakeSupported: () => screenKeeperRef.current.isSupported(),
         diag: dg,
       }
 
@@ -1606,6 +1688,197 @@ registerSkinActions(actions)
       }))
       const chat = chatRef.current
       // 旧调用点名称保留（拖放 / 语音 / 调试口都调 sendText）
+      // ===== 代笔（小鲸代笔面板 · 一句一落）=====
+      // 所有句子只落进面板；不写聊天输入框、不调 sendText、不自动发送。
+      /** 用会话快照刷新面板（状态/句子/按钮） */
+      function refreshScribePanel(): void {
+        try {
+          const session = scribeSessionRef.current
+          const panel = scribePanelRef.current
+          if (!session || !panel) return
+          panel.update(session.getState())
+        } catch (e) { }
+      }
+
+      /** 面板内提示一行（保存结果以外的情况，例如麦克风没开成） */
+      function scribeNotice(text: string, isError = true): void {
+        try { scribePanelRef.current.notice(text, isError) } catch (e) { }
+      }
+
+      /** 菜单「打开代笔面板」：只开面板，不自动开麦；开始/暂停/保存在面板里点 */
+      function openScribePanel(): void {
+        try {
+          scribePanelRef.current.open()
+          refreshScribePanel()
+        } catch (e) { }
+      }
+
+      /** 释放这次代笔临时开的麦克风（语音待命本来就开着时不关） */
+      function releaseScribeMic(): void {
+        if (scribeStartedMicRef.current && !earOnRef.current) {
+          try { bridge.stop() } catch (e) { }
+        }
+        scribeStartedMicRef.current = false
+      }
+
+      /** 麦克风启动失败：暂停听写 + 面板提示 + 释放临时麦克风（不假装在听） */
+      function scribeMicFailed(message: string): void {
+        try { scribeSessionRef.current.pause() } catch (e) { }
+        refreshScribePanel()
+        scribeNotice(message || '麦克风没打开：看看权限？')
+        releaseScribeMic()
+      }
+
+      /**
+       * 确保代笔在听：语音待命开着就复用；关着就临时开麦（pause/关闭/卸载时释放）。
+       * 启动期间主人已暂停/关面板的话，回调里把临时麦克风放掉，别让麦克风悬着。
+       */
+      function ensureScribeMic(): void {
+        const tempMic = !earOnRef.current
+        if (tempMic) scribeStartedMicRef.current = true
+        try {
+          bridge.start().then((v: any) => {
+            try {
+              const cur = scribeSessionRef.current.getState()
+              if (!cur.active) { if (tempMic) releaseScribeMic(); return }
+              // 麦克风没真正开成（status 仍 idle）：如实告诉主人，不假装在听
+              if (v && typeof v.status === 'function' && v.status() === 'idle') {
+                scribeMicFailed('麦克风没打开：' + String((v.stats && v.stats.lastError) || '看看权限？'))
+                return
+              }
+              showVoiceBubble('代笔中：说一句，直接接在正文里', 3000)
+            } catch (e) { }
+          }).catch((e: any) => {
+            scribeMicFailed('麦克风没打开：' + String((e && e.message) || e || '看看权限？'))
+          })
+        } catch (e: any) {
+          scribeMicFailed('麦克风没打开：' + String((e && e.message) || e))
+        }
+      }
+
+      /** 话筒：没在听 → 开始/继续；正在听 → 暂停（正文都保留） */
+      function toggleScribeMic(): void {
+        const session = scribeSessionRef.current
+        if (!session) return
+        if (session.getState().active) pauseScribeRecording()
+        else startScribeRecording()
+      }
+
+      /** 开始（或从暂停继续）听写：正文保留，麦克风由 ensureScribeMic 负责 */
+      function startScribeRecording(): void {
+        const session = scribeSessionRef.current
+        if (!session) return
+        const st = session.getState()
+        if (st.active) return
+        if (st.paused) session.resume()
+        else session.start()
+        refreshScribePanel()
+        ensureScribeMic()
+      }
+
+      /** 暂停听写：正文保留；临时麦克风放掉省资源，继续时再开 */
+      function pauseScribeRecording(): void {
+        const session = scribeSessionRef.current
+        if (!session) return
+        session.pause()
+        refreshScribePanel()
+        releaseScribeMic()
+      }
+
+      /** 清空正文（只有主人点才清；保存后不清） */
+      function clearScribe(): void {
+        const session = scribeSessionRef.current
+        if (!session) return
+        session.clear()
+        refreshScribePanel()
+        scribeNotice('已清空正文', false)
+      }
+
+      /** 关闭面板：暂停听写 + 释放临时麦克风；正文永久保留在会话里，下次打开还在 */
+      function closeScribePanel(): void {
+        try {
+          const session = scribeSessionRef.current
+          const st = session.getState()
+          if (st.active) session.pause()
+          refreshScribePanel()
+          releaseScribeMic()
+          if (st.text && st.text.trim()) showVoiceBubble('代笔面板已收起：正文还在，下次打开接着写', 3000)
+        } catch (e) { }
+      }
+
+      /** voice-bridge 识别到一句：接进正文当前段落；被拒时（暂停/超限）在面板提示 */
+      function handleScribeText(text: string, meta?: SegmentMeta): void {
+        const session = scribeSessionRef.current
+        if (!session) return
+        let res: any = null
+        // meta 交给会话：没等够就切出来的半句会把句号降级成逗号（断句纠偏）
+        try { res = session.push(text, meta) } catch (e) { return }
+        if (!res || !res.ok) {
+          // 有可操作原因的（暂停、超限）刷新面板，让主人看到「点话筒继续/先清空」；
+          // 空句/重复没有提示价值，保持安静。
+          if (res && res.reason) { try { refreshScribePanel() } catch (e) { } }
+          return
+        }
+        try { refreshScribePanel() } catch (e) { }
+      }
+
+      /** 浏览器下载（对象 URL 用完回收；TXT/DOCX 共用） */
+      function downloadBlob(blob: Blob, name: string): void {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = name
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        setTimeout(() => { try { URL.revokeObjectURL(url) } catch (e) { } }, 15000)
+      }
+
+      /** 文件名时间戳：小鲸代笔-YYYYMMDD-HHmm */
+      function scribeStamp(now = new Date()): string {
+        const pad = (n: number): string => String(n).padStart(2, '0')
+        const d = now instanceof Date && !isNaN(now.getTime()) ? now : new Date()
+        return '小鲸代笔-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes())
+      }
+
+      /** 取当前正文保存（以 session.getText() 为准；面板传入的是同一份全文） */
+      function scribeSaveText(panelText: string): string {
+        try { return scribeSessionRef.current.getText() } catch (e) { return String(panelText == null ? '' : panelText) }
+      }
+
+      /**
+       * 面板「保存」：kind = 工具栏「保存类型」下拉当前值（默认 DOCX）；
+       * 点一下直接按当前类型存，不再二次弹选择。
+       */
+      function saveScribe(kind: 'txt' | 'docx', panelText: string): { ok: boolean; name?: string; error?: string } {
+        return kind === 'docx' ? saveScribeDocx(panelText) : saveScribeTxt(panelText)
+      }
+
+      /** 面板「保存 → TXT 文档」：正文原样存 .txt（保存随时可点，空正文也能存） */
+      function saveScribeTxt(panelText: string): { ok: boolean; name?: string; error?: string } {
+        const body = scribeSaveText(panelText)
+        try {
+          const name = scribeStamp() + '.txt'
+          downloadBlob(new Blob([scribeTxt(body)], { type: 'text/plain;charset=utf-8' }), name)
+          return { ok: true, name }
+        } catch (e: any) {
+          return { ok: false, error: String((e && e.message) || e || '保存失败') }
+        }
+      }
+
+      /** 面板「保存 → DOCX 文档」：最小 OOXML（client/scribe-docx.ts 纯函数生成） */
+      function saveScribeDocx(panelText: string): { ok: boolean; name?: string; error?: string } {
+        const body = scribeSaveText(panelText)
+        try {
+          const bytes = buildScribeDocx({ title: '小鲸代笔', text: body })
+          const name = scribeDocxFileName()
+          downloadBlob(new Blob([bytes as any], { type: SCRIBE_DOCX_MIME }), name)
+          return { ok: true, name }
+        } catch (e: any) {
+          return { ok: false, error: String((e && e.message) || e || '保存失败') }
+        }
+      }
+
       function sendText(rawText: string, opts?: { voice?: boolean }): Promise<boolean> {
         // 提醒管理面板最近打开 60 秒内：数字=删、d=顺延先接住；
         // 其余输入（正常对话）原样放行，绝不误吞（判断都在 client/reminder-manage.ts）
@@ -1908,7 +2181,7 @@ registerSkinActions(actions)
       // 菜单项递归渲染在 client/render.ts；这里只把闭包能力传进去。
       // 可见项清单在渲染时同步算一次（键盘高亮与屏幕顺序共用这一份，不各算一套）。
       const menuItems = menu
-        ? buildMenu(VERSION, Object.assign({ melodies, skinFixed: skinFixed(), toolNarratorOn: (() => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried, webSearchOn: (() => { try { return localStorage.getItem('chubby-web-search') === 'on' } catch (e) { return false } })(), teamBoardOn: teamBoardEnabled() }, readMenuRuntime()))
+        ? buildMenu(VERSION, Object.assign({ melodies, skinFixed: skinFixed(), toolNarratorOn: (() => { try { return localStorage.getItem('chubby-tool-narrator') !== 'off' } catch (e) { return false } })(), nervousOn: nervousEnabled(), voiceOn, earOn, voiceChatOn, chatCacheOn, narrationRate: narrationRate(), chatRate: chatRate(), balance: balanceLabel, growth: growthLabel, storyBooks, storyBooksTried, webSearchOn: (() => { try { return localStorage.getItem('chubby-web-search') === 'on' } catch (e) { return false } })(), teamBoardOn: teamBoardEnabled(), keepAwakeOn: keepAwakeState.value }, readMenuRuntime()))
         : []
       const menuEntries = menu ? listMenuEntries(menuItems, { tr, lang, subOpen }) : []
       menuEntriesRef.current = menuEntries

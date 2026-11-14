@@ -137,7 +137,6 @@ try {
     loadFishfood: () => ({}),
   })
   const configView = (await load('host/routes/config.ts')).createConfigViewHandler({})
-  const proofread = (await load('host/routes/proofread.ts')).createProofreadHandler({ key: () => '', model: 'stub' })
   const nervous = (await load('host/routes/nervous.ts')).createNervousHandler({
     collector: {
       start: () => [],
@@ -151,7 +150,7 @@ try {
 
   const sets = {
     misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles,
-    briefing, weather, tts, asr, ocr, parseDoc, personality, daily, backup, stats, configView, proofread, nervous,
+    briefing, weather, tts, asr, ocr, parseDoc, personality, daily, backup, stats, configView, nervous,
   }
 
   let produced = 0

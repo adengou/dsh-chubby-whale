@@ -37,6 +37,8 @@ export interface TeamStatusBubbleOptions {
   position?: () => TeamRect | null
   /** 自定义 z-index；默认 2147483000 */
   zIndex?: number
+  /** 「推演完成」这类收尾文案的自动消失时间；默认 8000ms，0=不自动隐藏 */
+  doneTtlMs?: number
 }
 
 export interface TeamStatusBubble {
@@ -79,6 +81,14 @@ export function createTeamStatusBubble(opts: TeamStatusBubbleOptions = {}): Team
   let tone: TeamTone = 'normal'
   let dim = false
   let lastRect: TeamRect | null = null
+  let doneTimer: any = 0
+  const doneTtlMs = opts.doneTtlMs === undefined ? 8000 : Math.max(0, Number(opts.doneTtlMs) || 0)
+
+  function clearDoneTimer(): void {
+    if (!doneTimer) return
+    try { clearTimeout(doneTimer) } catch (e) { }
+    doneTimer = 0
+  }
 
   /** 把坐标换算到鱼脚下：水平居中，纵向贴 stage 底沿 */
   function place(rect: TeamRect): void {
@@ -174,6 +184,7 @@ export function createTeamStatusBubble(opts: TeamStatusBubbleOptions = {}): Team
 
   function show(text: string, nextTone?: TeamTone): void {
     if (destroyed) return
+    clearDoneTimer()
     const node = ensureEl()
     if (!node) return
     try {
@@ -182,6 +193,10 @@ export function createTeamStatusBubble(opts: TeamStatusBubbleOptions = {}): Team
       applyTone()
       applyOpacity()
       node.style.display = 'block'
+      // 收尾摘要不是常驻任务板：到点自动消失，避免推演结束后一直挂在鱼脚下。
+      if (doneTtlMs > 0 && String(text || '').indexOf('推演完成') >= 0) {
+        doneTimer = setTimeout(() => { doneTimer = 0; try { hide() } catch (e) { } }, doneTtlMs)
+      }
       // 有 position 端口就顺手刷新一次；调用方也可以显式 updatePosition
       if (opts.position) {
         let rect: TeamRect | null = null
@@ -195,6 +210,7 @@ export function createTeamStatusBubble(opts: TeamStatusBubbleOptions = {}): Team
   }
 
   function hide(): void {
+    clearDoneTimer()
     if (!el) return
     try { el.style.display = 'none' } catch (e) { }
   }
@@ -214,6 +230,7 @@ export function createTeamStatusBubble(opts: TeamStatusBubbleOptions = {}): Team
 
   function destroy(): void {
     if (destroyed) return
+    clearDoneTimer()
     destroyed = true
     const node = el
     el = null

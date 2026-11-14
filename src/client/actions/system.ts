@@ -12,15 +12,12 @@ import { VISION_PROMPT } from '../dropzone.js'
 import { imageToB64 } from '../image.js'
 import { parseDue, cleanReminderText } from '../../shared/time.js'
 import { clipCodePoints } from '../../shared/text.js'
-import { WHALE_WORKS_TEMPLATES } from '../../shared/whale-works.js'
+import { CABINET_PROTOCOL } from '../../shared/cabinet.js'
 import { clearT } from '../util.js'
 import { exportBackup, importBackup } from './data.js'
 
-/** 鲸群营造施工规范（guide 动作只显示路径，不打开外部程序） */
-const WHALE_WORKS_GUIDE_PATH = 'docs/鲸群营造-工程流程.md'
-
-/** 复制失败时统一提示手动查规范；文案钉死，测试与提示同源 */
-const WHALE_WORKS_COPY_FAIL = '复制失败，请手动打开 ' + WHALE_WORKS_GUIDE_PATH
+/** 推演规则复制失败时的指路文案（与系统动作同源，测试直接钉住这句话） */
+const DECISION_LAB_COPY_FAIL = '复制失败，请手动打开 docs/鲸群推演室.md'
 
 /**
  * 临时 textarea + execCommand('copy') 兜底（旧浏览器 / Clipboard API 被拒时）。
@@ -53,8 +50,11 @@ function copyViaTextarea(text: string): boolean {
 /**
  * 写剪贴板：优先 navigator.clipboard.writeText，失败（不支持/无权限/非安全上下文/
  * 返回 rejected Promise）再回退 textarea + execCommand。never rejects。
+ *
+ * 导出给 client.ts 的推演提交用：面板确定议题后要一次性写进剪贴板，
+ * 复制策略只留这一份实现（两处各写一份必然漂移）。
  */
-function copyPlainText(text: string): Promise<boolean> {
+export function copyPlainText(text: string): Promise<boolean> {
   try {
     const nav: any = typeof navigator === 'undefined' ? null : navigator
     const clipboard = nav && nav.clipboard
@@ -67,13 +67,6 @@ function copyPlainText(text: string): Promise<boolean> {
     // navigator 读取或 writeText 同步抛错（策略禁用）→ 走兜底
   }
   return Promise.resolve(copyViaTextarea(text))
-}
-
-/** 施工队复制模板：成功说「已复制：<名字>」，失败指路规范文档。 */
-function copyWhaleWorksTemplate(host: ActionHost, text: string, name: string): void {
-  copyPlainText(text)
-    .then((ok) => { host.bubble(ok ? '已复制：' + name : WHALE_WORKS_COPY_FAIL, ok ? 4000 : 6000) })
-    .catch(() => { host.bubble(WHALE_WORKS_COPY_FAIL, 6000) })
 }
 
 /**
@@ -308,6 +301,17 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
       finish(!nowOn, '切换失败')
     }
   })
+  table.define('keep-awake', (host) => {
+    // 默认开：点一下切到关，再点回开。Screen Wake Lock 只保证页面可见时屏幕不休眠，
+    // 合盖/系统电源策略仍归操作系统，不假装能管系统级睡眠。
+    const nowOn = !host.keepAwake()
+    host.setKeepAwake(nowOn)
+    if (nowOn && host.screenWakeSupported && !host.screenWakeSupported()) {
+      host.bubble('保持亮屏：当前环境不支持；先用系统电源设置吧', 5000)
+      return
+    }
+    host.bubble(nowOn ? '保持亮屏：开（不自动息屏）' : '保持亮屏：关（按系统设置息屏）', 3000)
+  })
   table.define('clear-memory', (host) => {
     // 确认框本身可能被浏览器禁用/抛错：那种情况当作「没确认」，不执行
     let go = false
@@ -390,19 +394,23 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     }
   })
 
-  // —— 施工队（鲸群营造 v0.1）：只复制模板 / 显示规范路径 ——
-  // 小鲸只读监理：不调 team_task_*、不建任务、不改任务板；模板只读自 WHALE_WORKS_TEMPLATES。
-  table.define('whale-works:brief', (host) => {
-    copyWhaleWorksTemplate(host, WHALE_WORKS_TEMPLATES.brief, '开工单')
+  // —— 鲸群推演室（v0.1）：召开面板 / 复制推演规则 ——
+  // 「开始推演…」只打开 client/cabinet-panel.ts 的面板；拼简报、写剪贴板、开聊天面板
+  // 都在 client.ts 的 onSubmit 里。本处理器不自动发消息、不改任务板。
+  table.define('cabinet:open', (host) => {
+    try {
+      if (typeof host.openCabinet === 'function') host.openCabinet()
+      else host.bubble('推演面板没接上，试试重启桌宠', 4000)
+    } catch (e) {
+      host.bubble('推演面板打不开', 4000)
+    }
   })
-  table.define('whale-works:worker-card', (host) => {
-    copyWhaleWorksTemplate(host, WHALE_WORKS_TEMPLATES.workerCard, '工人卡')
-  })
-  table.define('whale-works:acceptance', (host) => {
-    copyWhaleWorksTemplate(host, WHALE_WORKS_TEMPLATES.acceptance, '验收单')
-  })
-  table.define('whale-works:guide', (host) => {
-    host.bubble('施工规范：' + WHALE_WORKS_GUIDE_PATH + '（在本机用编辑器打开查看）', 8000)
+  // 「复制推演规则」：把 shared/cabinet.ts 的 CABINET_PROTOCOL 原样写进剪贴板；
+  // 失败指路 docs/鲸群推演室.md（复制失败不能让主人无从下手）。
+  table.define('cabinet:protocol', (host) => {
+    copyPlainText(CABINET_PROTOCOL)
+      .then((ok) => { host.bubble(ok ? '推演规则已复制：粘贴给鱼就能按章程办事' : DECISION_LAB_COPY_FAIL, ok ? 6000 : 7000) })
+      .catch(() => { host.bubble(DECISION_LAB_COPY_FAIL, 7000) })
   })
 
   // —— 语音试听 ——

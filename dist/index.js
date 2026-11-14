@@ -27,7 +27,6 @@ import { estimateCostCny, readUsageSplit } from './shared/pricing.js';
 import { createSelfNarrativeWriter } from './host/personality-write.js';
 import { createPersonalityHandlers } from './host/routes/personality.js';
 import { createChatHandler } from './host/routes/chat.js';
-import { createProofreadHandler } from './host/routes/proofread.js';
 import { createHostCollector } from './host/nervous/collector.js';
 import { buildPoemIndex, matchPoemKeyword } from './host/poem-index.js';
 import { matchPoem } from './host/poem-echo.js';
@@ -261,7 +260,7 @@ export function apply(ctx, rawConfig) {
                 noteUserChat(text);
             }
             catch (e) { }
-            return '咕噜……' + body + cite;
+            return body + cite;
         }
         catch (e) {
             return null;
@@ -494,8 +493,6 @@ export function apply(ctx, rawConfig) {
         tts: () => ttsStatOf(),
         version: () => readPluginVersion(PLUGIN_DIR),
     });
-    // 公文校对：只借聊天用的 Key/模型，独立外呼，不写聊天记忆、不记账
-    const proofread = createProofreadHandler({ key: getKey, model: chatModel });
     // 记忆摘要只读视图：胶囊要用的是摘要与抽象主题词，绝不把 history 原文给出去
     // 神经感知的订阅在插件装配早期就建好了（hostCollector 见 dataPort 之后那段），
     // 这里只负责在 ctx.effect 里挂/摘订阅。
@@ -520,12 +517,12 @@ export function apply(ctx, rawConfig) {
     else {
         mountHostCollector();
     }
-    // 路由只拿收集器，不自己订阅（与 createProofreadHandler 一样由装配层注入依赖）
+    // 路由只拿收集器，不自己订阅（与其它路由一样由装配层注入依赖）
     const nervous = createNervousHandler({ collector: hostCollector });
     // 路径 → handler 的映射集中在 host/routes.ts，入口不再逐条写 reg(...)
     const routeTable = createRouteTable({
         misc, chat, chatStream, cacheToggle, story, reminders, culture, poem, poemTitles, briefing, weather, tts, asr, ocr, parseDoc, personality: personalityRoutes,
-        daily, backup, stats, configView, proofread, nervous,
+        daily, backup, stats, configView, nervous,
     });
     // 所有路由统一交给 ctx.effect 托管：插件热重载/禁用时先跑返回的清理器把旧路由摘掉，
     // 第二次 apply 才不会撞 dsh-host-webserver 的 duplicate 检查，旧 store/cache 闭包也不会留在路由表里。

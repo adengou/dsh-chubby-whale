@@ -6,7 +6,7 @@
  *     表格/截图里的数字、公文编号，让模型「猜」很容易错）；
  *   · PDF / Word / PowerPoint：**只走官方 Files API**（/parse-doc），拿 file_id 在聊天里引用。
  *     本文件不引任何 PDF/Office 解析库、也不碰 DecompressionStream/DOMParser——拖入这条路上
- *     没有「偷偷本地解」的备用分支（菜单「读文档 / 校对」仍走旧的 client/doc-text.ts，属历史遗留，
+ *     没有「偷偷本地解」的备用分支（菜单「读文档」「把稿子念成音频」仍走旧的 client/doc-text.ts，属历史遗留，
  *     不在拖入链路里）；
  *   · txt / md / json / log / csv：本地直接读（离线、免费，没必要上传）。
  *

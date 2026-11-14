@@ -60,7 +60,6 @@ export function buildWhaleMenu(state: WhaleMenuState): WhaleMenuItem[] {
     // 需求里的「工作」组：用「干活」保持鲸鱼娘口吻，功能名逐条写在括号里
     group('干活 ▸', [
       act('把稿子念成音频（语音导出）', 'voice-export'),
-      act('帮你挑挑错字（公文校对）', 'proofread'),
       act('记个钟点（加提醒）', 'remind-add'),
     ]),
     sep(),

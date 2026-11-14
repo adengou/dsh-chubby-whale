@@ -149,6 +149,40 @@ console.log('\n[5] 全部完成只庆祝一次（真实 done 转变）')
   ok('重复 done 不再提醒', afterAlerts === beforeAlerts, beforeAlerts + ' → ' + afterAlerts)
 }
 
+  console.log('\n[6] 推演任务板 → 脚下显示推演进度')
+  {
+    const source = makeSource()
+    const surface = makeSurface()
+    const watch = createTeamWatch({ source, surface, now: () => 6000, cooldownMs: 0 })
+    watch.start()
+    source.emit(snapshot([
+      task({ id: 'f', subject: '[FIN] 财务视角', status: 'completed' }),
+      task({ id: 'r', subject: '[RISK] 风险视角', status: 'completed' }),
+      task({ id: 'c', subject: '[CUST] 客户视角', status: 'in_progress' }),
+      task({ id: 'o', subject: '[OPP] 反方视角', status: 'pending' }),
+    ]))
+    const p = surface.calls.at(-1)
+    ok('推演任务板用推演进度替换普通计数', p && p.ambient && /^推演 2\/4/.test(p.ambient.text), JSON.stringify(p))
+  }
+
+  console.log('\n[7] 推演子集完成 + 其它任务未完成 → 不挂「推演完成」')
+  {
+    const source = makeSource()
+    const surface = makeSurface()
+    const watch = createTeamWatch({ source, surface, now: () => 7000, cooldownMs: 0 })
+    watch.start()
+    source.emit(snapshot([
+      task({ id: 'f', subject: '[FIN] 财务视角', status: 'completed' }),
+      task({ id: 'r', subject: '[RISK] 风险视角', status: 'completed' }),
+      task({ id: 'c', subject: '[CUST] 客户视角', status: 'completed' }),
+      task({ id: 'o', subject: '[OPP] 反方视角', status: 'completed' }),
+      task({ id: 'm', subject: '[MEMO] 汇总', status: 'completed' }),
+      task({ id: 'x', subject: '其它任务', status: 'in_progress' }),
+    ]))
+    const p = surface.calls.at(-1)
+    ok('推演子集完成不长期挂推演完成', !(p && p.ambient && String(p.ambient.text).includes('推演完成')), JSON.stringify(p))
+  }
+
 console.log('\n' + '='.repeat(48))
 try { rmSync(TMP, { recursive: true, force: true }) } catch (e) { }
 console.log(`通过 ${pass} 项 / 失败 ${fail} 项`)

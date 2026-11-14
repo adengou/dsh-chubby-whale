@@ -13,7 +13,7 @@
  *   2) client.ts：import、attach 的 useEffect、buildMenu 里的 nervousOn 字段
  *   3) client/menu.ts：MenuState.nervousOn、nervousOn 变量、菜单项、TOGGLE_EN 一行
  *   4) client/actions/nervous.ts + client.ts 里的 registerNervousActions
- *   5) actions/voice.ts 与 actions/proofread.ts 里的 noteWork 调用与 import
+ *   5) actions/voice.ts 里的 noteWork 调用与 import
  */
 import type { Persona, Mood } from '../persona.js'
 import { createAffectModel, faceOf } from './affect.js'
@@ -251,7 +251,7 @@ export function detachNervous(): void {
   s.listeners.length = 0
 }
 
-/** 供动作层打点：一次「干活了」的体会（朗读/校对/聊天开始时叫一声） */
+/** 供动作层打点：一次「干活了」的体会（朗读/聊天开始时叫一声） */
 export function noteWork(kind?: string): void {
   const s = current
   if (!s || !nervousEnabled()) return

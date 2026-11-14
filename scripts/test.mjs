@@ -473,7 +473,6 @@ try {
     stats: { handleStats: fn },
     misc: { handleAsset: fn, handleSkin: fn, handleState: fn, handleBalance: fn, handleStatus: fn, handleGrowth: fn, handleFishfood: fn, handlePet: fn, handleClearMemory: fn, handleCache: fn },
     configView: { handleConfig: fn },
-    proofread: fn,
     nervous: fn,
   }
   const table = createRouteTable(stub)
@@ -660,7 +659,6 @@ try {
     import('../src/client/actions/content.ts'),
     import('../src/client/actions/system.ts'),
     import('../src/client/actions/voice.ts'),
-    import('../src/client/actions/proofread.ts'),
     import('../src/client/actions/nervous.ts'),
   ])
   const table = createActionTable()
@@ -668,8 +666,7 @@ try {
   mods[1].registerContentActions(table)
   mods[2].registerSystemActions(table)
   mods[3].registerVoiceActions(table)
-  mods[4].registerProofreadActions(table)
-  mods[5].registerNervousActions(table)
+  mods[4].registerNervousActions(table)
   ;(await import('../src/client/actions.ts')).registerSkinActions(table)
 
   const menu = await import('../src/client/menu.ts')

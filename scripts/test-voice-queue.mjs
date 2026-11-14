@@ -87,8 +87,9 @@ import {
   TTS_QUEUE_MAX, capQueue, capQueueDetailed,
 } from './src/client/voice/tts-queue.js'
 import { createEchoFilter } from './src/client/voice/echo-filter.js'
+import { requiredQuietMs } from './src/shared/sentence-boundary.js'
 import {
-  WINDOW_MS, EARLY_STOP_QUIET, MIN_SPEECH_MS, SILENT_PEAK_DB, CLASSIC_SPEECH_DB, MUTED_SPEECH_DB,
+  WINDOW_MS, MIN_SPEECH_MS, SILENT_PEAK_DB, CLASSIC_SPEECH_DB, MUTED_SPEECH_DB,
   TICK_MS, TICK_ERROR_MS, LEVEL_PROBE_MS, MIN_SEGMENT_BYTES, APE_MIN_SPEECH_MS,
   readLevel, createSegmentState, resetSegmentState, addChunk, clearChunks, notePeak,
   accrueClassic, shouldStopClassic, shouldStopApeNoLevel, takeBlob, isTooSmallSegment,
@@ -105,7 +106,8 @@ export {
   ttsRetryDelayMs, narrationPauseFor, prefetchTargets, buildTtsJobs, isStaleToken,
   TTS_QUEUE_MAX, capQueue, capQueueDetailed,
   createEchoFilter,
-  WINDOW_MS, EARLY_STOP_QUIET, MIN_SPEECH_MS, SILENT_PEAK_DB, CLASSIC_SPEECH_DB, MUTED_SPEECH_DB,
+  requiredQuietMs,
+  WINDOW_MS, MIN_SPEECH_MS, SILENT_PEAK_DB, CLASSIC_SPEECH_DB, MUTED_SPEECH_DB,
   TICK_MS, TICK_ERROR_MS, LEVEL_PROBE_MS, MIN_SEGMENT_BYTES, APE_MIN_SPEECH_MS,
   readLevel, createSegmentState, resetSegmentState, addChunk, clearChunks, notePeak,
   accrueClassic, shouldStopClassic, shouldStopApeNoLevel, takeBlob, isTooSmallSegment,
@@ -339,36 +341,72 @@ group('recorder 电平读取', () => {
   ok('8bit 满幅 → 高于 -1 dBFS', byteFull.read === true && byteFull.db > -1, '实际 ' + byteFull.db)
 })
 
-group('recorder 经典端点累计', () => {
-  eq('TICK_MS', M.TICK_MS, 60)
+group('recorder 经典端点累计（2026-11-14 动态静音阈值）', () => {
+  // 固定 EARLY_STOP_QUIET 已移除：收尾静音按本段累计说话时长动态取（450~750ms），
+  // 实现唯一真源在 src/shared/sentence-boundary.ts 的 requiredQuietMs()。
+  eq('TICK_MS（60→45：判定粒度更细）', M.TICK_MS, 45)
   eq('TICK_ERROR_MS', M.TICK_ERROR_MS, 120)
   eq('LEVEL_PROBE_MS', M.LEVEL_PROBE_MS, 1200)
-  eq('WINDOW_MS', M.WINDOW_MS, 6000)
-  eq('EARLY_STOP_QUIET', M.EARLY_STOP_QUIET, 700)
-  eq('MIN_SPEECH_MS', M.MIN_SPEECH_MS, 400)
+  eq('WINDOW_MS（6000→4500：单段最长等待）', M.WINDOW_MS, 4500)
+  eq('固定 EARLY_STOP_QUIET 导出已移除（改为动态阈值）', M.EARLY_STOP_QUIET, undefined)
+  eq('MIN_SPEECH_MS（400→250：短命令也能过门槛）', M.MIN_SPEECH_MS, 250)
   eq('SILENT_PEAK_DB', M.SILENT_PEAK_DB, -35)
   eq('CLASSIC_SPEECH_DB', M.CLASSIC_SPEECH_DB, -45)
   eq('MUTED_SPEECH_DB', M.MUTED_SPEECH_DB, 0)
   eq('MIN_SEGMENT_BYTES', M.MIN_SEGMENT_BYTES, 1200)
   eq('APE_MIN_SPEECH_MS', M.APE_MIN_SPEECH_MS, 150)
 
-  const s = M.createSegmentState()
-  M.resetSegmentState(s, 0)
-  for (let i = 0; i < 7; i++) M.accrueClassic(s, -20, false)
-  eq('7 帧说话 → speechMs 420', [s.speechMs, s.quietMs], [420, 0])
-  for (let i = 0; i < 11; i++) M.accrueClassic(s, -60, false)
-  eq('静音 660ms 还不够 700', M.shouldStopClassic(s, 1000), '')
-  M.accrueClassic(s, -60, false)
-  eq('静音 720ms → quiet 收尾', M.shouldStopClassic(s, 1000), 'quiet')
-  eq('没说过话但到 6 秒 → timeout', M.shouldStopClassic(M.createSegmentState(), M.WINDOW_MS), 'timeout')
+  // 阈值曲线本身由 shared/sentence-boundary.ts 提供；这里只验端点行为与它对齐
+  eq('短语音阈值：270ms 说话 → 900ms', M.requiredQuietMs(270), 900)
+  eq('长语音阈值：4000ms 说话 → 600ms', M.requiredQuietMs(4000), 600)
+
+  // ---- 短语音：270ms 说话 → 要等 900ms 静音（20 帧 = 900ms）----
+  const shortS = M.createSegmentState()
+  M.resetSegmentState(shortS, 0)
+  for (let i = 0; i < 6; i++) M.accrueClassic(shortS, -20, false)   // 270ms 说话
+  for (let i = 0; i < 17; i++) M.accrueClassic(shortS, -60, false)  // 765ms 静音
+  eq('短语音静音 765ms 还不够 900（不许一刀切）', M.shouldStopClassic(shortS, 1000), '')
+  for (let i = 0; i < 3; i++) M.accrueClassic(shortS, -60, false)   // 900ms
+  eq('短语音静音 900ms → quiet 收尾', M.shouldStopClassic(shortS, 1000), 'quiet')
+
+  // ---- 长语音：4005ms 说话（89 帧）→ 600ms 静音（14 帧=630ms）----
+  const longS = M.createSegmentState()
+  M.resetSegmentState(longS, 0)
+  for (let i = 0; i < 89; i++) M.accrueClassic(longS, -20, false)   // 4005ms 说话
+  for (let i = 0; i < 13; i++) M.accrueClassic(longS, -60, false)   // 585ms 静音
+  eq('长语音静音 585ms 还不够 600', M.shouldStopClassic(longS, 1000), '')
+  M.accrueClassic(longS, -60, false)                                // 630ms
+  eq('长语音静音 630ms → quiet 收尾（长句不拖）', M.shouldStopClassic(longS, 1000), 'quiet')
+
+  // ---- 中间插值：1620ms 说话 → 需 823ms 静音；810ms 不行、855ms 行 ----
+  const midS = M.createSegmentState()
+  M.resetSegmentState(midS, 0)
+  for (let i = 0; i < 36; i++) M.accrueClassic(midS, -20, false)    // 1620ms 说话
+  for (let i = 0; i < 18; i++) M.accrueClassic(midS, -60, false)    // 810ms 静音
+  eq('插值语音静音 810ms 还不够 823', M.shouldStopClassic(midS, 1000), '')
+  M.accrueClassic(midS, -60, false)                                 // 855ms
+  eq('插值语音静音 855ms → quiet 收尾', M.shouldStopClassic(midS, 1000), 'quiet')
+
+  // ---- 最短语音门槛仍生效：225ms 说话就算静音等够也不收尾 ----
+  const tiny = M.createSegmentState()
+  M.resetSegmentState(tiny, 0)
+  for (let i = 0; i < 5; i++) M.accrueClassic(tiny, -20, false)     // 225ms < 250
+  for (let i = 0; i < 20; i++) M.accrueClassic(tiny, -60, false)    // 900ms
+  eq('说话不足 250ms：静音再久也不提前收尾', M.shouldStopClassic(tiny, 1000), '')
+
+  eq('没说过话但到 4.5 秒 → timeout', M.shouldStopClassic(M.createSegmentState(), M.WINDOW_MS), 'timeout')
   const s2 = M.createSegmentState()
   M.resetSegmentState(s2, 0)
   eq('差 1ms 不超时', M.shouldStopClassic(s2, M.WINDOW_MS - 1), '')
 
+  // ---- 短命令（说话 270ms）必须提前收尾，而不是等满 4.5 秒窗口 ----
+  eq('短命令在静音够了（900ms）后提前收尾', M.shouldStopClassic(shortS, 400), 'quiet')
+
   const muted = M.createSegmentState()
   M.resetSegmentState(muted, 0)
-  for (let i = 0; i < 12; i++) M.accrueClassic(muted, -5, true)
-  eq('闭麦期间一律按静音累计', [muted.speechMs, muted.quietMs], [0, 720])
+  for (let i = 0; i < 10; i++) M.accrueClassic(muted, -5, true)
+  eq('闭麦期间一律按静音累计', [muted.speechMs, muted.quietMs], [0, 450])
+  eq('闭麦段（没说话）永远等 timeout，不会按静音提前收尾', M.shouldStopClassic(muted, 1000), '')
 
   eq('APE 电平不可用且到窗口上限 → 强制收尾', M.shouldStopApeNoLevel(muted, true, M.WINDOW_MS), true)
   eq('APE 电平正常不强制收尾', M.shouldStopApeNoLevel(muted, false, 99999), false)

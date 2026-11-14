@@ -220,6 +220,22 @@ async function groupMenu(ok) {
     check('全收起时子项不越级出现', !entries.some((e) => e.label === '春联') && !entries.some((e) => e.label === '随机一副'))
     check('全收起时且没有展开状态的子菜单', entries.filter((e) => e.kind === 'sub').every((e) => e.open === false))
     check('顶层首项 = 设置 ▸', entries[0] && entries[0].kind === 'sub' && entries[0].label === '设置 ▸')
+    // 2026-11-14 鲸群推演室：一级「施工队 ▸」按主人要求删除，换成紧随设置之后的「推演 ▸」
+    check('顶层第二项 = 推演 ▸（施工队入口已删）', !!entries[1] && entries[1].kind === 'sub' && entries[1].label === '推演 ▸', entries[1] && entries[1].label)
+    const flatLabels = []
+    const flatActions = []
+    const walkAll = (arr) => {
+      for (const it of arr || []) {
+        if (!it || typeof it !== 'object') continue
+        if (it.label) flatLabels.push(it.label)
+        if (it.type === 'item' && it.action) flatActions.push(it.action)
+        if (Array.isArray(it.items)) walkAll(it.items)
+      }
+    }
+    walkAll(items)
+    check('整棵菜单树不再出现「施工队」', !flatLabels.some((l) => String(l).indexOf('施工队') >= 0))
+    check('整棵菜单树不再出现 whale-works:* 动作', !flatActions.some((a) => String(a).indexOf('whale-works:') === 0))
+    check('整棵菜单树含 cabinet:open / cabinet:protocol', flatActions.indexOf('cabinet:open') >= 0 && flatActions.indexOf('cabinet:protocol') >= 0)
   }
 
   {
@@ -343,6 +359,23 @@ async function groupMenu(ok) {
     check('client.ts 把 isTypingTarget 接给 bindMenuKeys', /bindMenuKeys\(\{[\s\S]{0,300}isTyping:\s*\(t[^)]*\)\s*=>\s*isTypingTarget\(t\)/.test(clientSrc))
     check('client.ts 的高亮序号来自渲染时算好的 menuEntriesRef', /count:\s*\(\)\s*=>\s*menuEntriesRef\.current\.length/.test(clientSrc) && /index:\s*\(\)\s*=>\s*menuFocusRef\.current/.test(clientSrc))
     check('渲染把 focusIndex 传给 renderMenuItems', /focusIndex:\s*menuFocus/.test(clientSrc))
+
+    // 鲸群推演室（2026-11-14）：菜单 → 面板 → 简报 → 剪贴板 → 开聊天面板，链路必须真接上
+    const actionsSrc = readFileSync(join(ROOT, 'src/client/actions.ts'), 'utf8')
+    const systemSrc = readFileSync(join(ROOT, 'src/client/actions/system.ts'), 'utf8')
+    check('ActionHost 增加最小接口 openCabinet', /openCabinet:\s*\(\)\s*=>\s*void/.test(actionsSrc))
+    check('client.ts host 接线 openCabinet → 面板 open', /openCabinet:\s*\(\)\s*=>\s*\{[\s\S]{0,120}cabinetPanelRef\.current\.open\(\)/.test(clientSrc))
+    check('client.ts lazy 建推演面板', /const cabinetPanelRef = hookApi\.useLazyRef\(\(\) => createCabinetPanel\(\{/.test(clientSrc))
+    check('client.ts onSubmit 调 buildCabinetPrompt 拼简报', /buildCabinetPrompt\(input\)/.test(clientSrc))
+    check('client.ts onSubmit 走 copyPlainText 写剪贴板', /copyPlainText\(prompt\)/.test(clientSrc))
+    check('client.ts 复制成功后冒「推演议题已复制」气泡并打开聊天面板', /推演议题已复制/.test(clientSrc) && /setChatOpen\(true\)/.test(clientSrc))
+    check('system.ts 注册 cabinet:open（只调 host.openCabinet）', /table\.define\('cabinet:open'[\s\S]{0,200}host\.openCabinet\(\)/.test(systemSrc))
+    check('system.ts 注册 cabinet:protocol（复制 CABINET_PROTOCOL）', /table\.define\('cabinet:protocol'[\s\S]{0,300}copyPlainText\(CABINET_PROTOCOL\)/.test(systemSrc))
+    check('system.ts 不再含 whale-works 动作', systemSrc.indexOf("'whale-works:") < 0)
+    // 边界：推演接入不得自动调 AgentTeam 工具
+    const cabinetSrc = readFileSync(join(ROOT, 'src/client/cabinet-panel.ts'), 'utf8')
+    const forbidden = /\bteam_task_[A-Za-z0-9_]*\s*\(|\b(?:createTask|updateTask|claimTask|deleteTask|reassignTask|completeTask)\s*\(/
+    check('推演面板 / 客户端 / 动作层没有任务板写调用', !forbidden.test(cabinetSrc) && !forbidden.test(systemSrc) && !forbidden.test(clientSrc))
   }
 
   return total

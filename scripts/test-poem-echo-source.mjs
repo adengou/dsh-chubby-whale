@@ -224,6 +224,9 @@ try {
     ok('鲸鱼聊天普通/流式两条请求都带 poem:true', (chatClientSrc.match(/poem: true/g) || []).length >= 2, String((chatClientSrc.match(/poem: true/g) || []).length))
     ok('collector.ts 不再读 user/message 做匹配（源码级硬约束）',
       !/event\.type\s*===\s*'user\/message'/.test(collectorSrc), '仍含 user/message 分支')
+    const toolWatchSrc = readFileSync(path.join(ROOT, 'src/client/tool-watch.ts'), 'utf8')
+    ok('诗词弹幕气泡不再带「咕噜……」前缀', !toolWatchSrc.includes('咕噜……'), '仍含前缀')
+    ok('手机端诗词回复不再带「咕噜……」前缀', !idxSrc.includes('咕噜……'), '仍含前缀')
   }
 } catch (e) {
   ok('用例未抛异常', false, String((e && e.stack) || e))

@@ -40,7 +40,6 @@ import type { createDailyHandler } from './routes/daily.js'
 import type { createBackupHandlers } from './routes/backup.js'
 import type { createStatsHandler } from './routes/stats.js'
 import type { createConfigViewHandler } from './routes/config.js'
-import type { createProofreadHandler } from './routes/proofread.js'
 import type { createNervousHandler } from './routes/nervous.js'
 
 /**
@@ -85,8 +84,6 @@ export interface HandlerSet {
   stats: ReturnType<typeof createStatsHandler>
   /** 只读配置视图：{ handleConfig }（不含 Key 内容） */
   configView: ReturnType<typeof createConfigViewHandler>
-  /** 公文校对：一次性外呼，不写聊天记忆 */
-  proofread: ReturnType<typeof createProofreadHandler>
   /** 神经感知第三层：宿主事件只读快照（客户端 3s 轮询一次） */
   nervous: ReturnType<typeof createNervousHandler>
 }
@@ -137,7 +134,6 @@ export function createRouteTable(h: HandlerSet): HttpRoute[] {
     // 可视化汇总（只读现有 store/cache）
     { path: '/api/chubby-whale/stats', handler: h.stats.handleStats },
     { path: '/api/chubby-whale/config', handler: h.configView.handleConfig },
-    { path: '/api/chubby-whale/proofread', handler: h.proofread },
     // 神经感知第三层：宿主事件只读快照（客户端按 at 去重后逐条喂给情绪模型）
     { path: '/api/chubby-whale/nervous', handler: h.nervous },
   ]

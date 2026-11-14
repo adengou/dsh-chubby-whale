@@ -127,7 +127,7 @@ export function createToolWatch(opts: {
           // 气泡在 CSS 里带 max-height + 滚动，长词也能看全。
           const body = src.join("\n")
           const cite = source ? "\n——" + source + "。" : ""
-          const text = "咕噜……" + body + cite + tail
+          const text = body + cite + tail
           // 时长按整首字数算（慢速每字约 320ms，下限 18s、上限 90s）
           const spoken = body + (source ? "。" + source : "") + tail
           const ms = Math.min(90000, Math.max(18000, spoken.length * 320))

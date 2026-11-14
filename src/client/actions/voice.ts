@@ -67,6 +67,10 @@ function saveBlob(blob: Blob, name: string): void {
 }
 
 export function registerVoiceActions(table: ActionTable<ActionHost>): void {
+  // —— 代笔（小鲸代笔面板 · 一句一落）：只负责打开面板 ——
+  // 话筒开始/暂停、保存、清空都在面板里由主人点；没有「停止代笔」入口。
+  table.define('scribe-start', (host) => { host.startScribe() })
+
   // —— 语音待命：开=建/启语音模块；关=停录音（实例留着复用）——
   table.define('wake', (host) => { host.toggleStandby() })
 

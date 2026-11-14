@@ -35,7 +35,7 @@ function ok(name, cond, detail = '') {
 
 // 已注册的动作白名单：与动作处理表对齐。菜单只能从这里取 id，多一个就是死项。
 const ACTIONS = new Set([
-  'voice', 'ear', 'voice-chat', 'voice-export', 'proofread',
+  'voice', 'ear', 'voice-chat', 'voice-export',
   'lang:zh', 'lang:en', 'chat-lang:zh', 'chat-lang:en',
   'skin-fixed', 'skin-bg-reset', 'story-books', 'story-auto',
   'poem', 'daily-line', 'briefing-card', 'remind-add', 'test-tts',
@@ -46,7 +46,7 @@ const ACTIONS = new Set([
 const REQUIRED = {
   '说话': ['voice', 'ear', 'voice-chat', 'test-tts'],
   '内容': ['poem', 'story-books', 'daily-line', 'briefing-card'],
-  '工作': ['voice-export', 'proofread', 'remind-add'],
+  '工作': ['voice-export', 'remind-add'],
   '账本': ['fishfood'],
   '皮肤': ['skin-fixed', 'skin-bg-reset'],
   '系统': ['clear-memory', 'quit'],

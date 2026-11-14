@@ -71,6 +71,11 @@ export type ActionHost = {
   setChatOpen: (v: boolean) => void
   setVoiceMode: (v: boolean) => void
   setMessages: (v: any) => void
+  /**
+   * 打开「鲸群推演室」议题面板（DOM 实现在 client/cabinet-panel.ts，接线在 client.ts）。
+   * 动作层只要求「能打开」这一件事：拼简报 / 复制 / 开聊天面板都由 client.ts 负责。
+   */
+  openCabinet: () => void
 
   // —— 余额 / 成长 / 语言 ——
   setBalance: (text: string, label: string) => void
@@ -99,10 +104,23 @@ export type ActionHost = {
   setVoiceOn: (v: boolean) => void
   /** 语音待命总开关：关=停录音；开=建/启语音模块 */
   toggleStandby: () => void
+  /**
+   * 代笔（小鲸代笔面板 · 一句一落）：打开/聚焦面板（不自动开始录音，
+   * 话筒开始/暂停、保存、清空都由面板按钮控制）。不写聊天输入框、不自动发送。
+   * 没有 stopScribe 用户入口：暂停/关闭/卸载时释放临时麦克风，正文一直保留。
+   */
+  startScribe: () => void
 
   // —— 聊天缓存开关 ——
   chatCacheOn: () => boolean
   setChatCacheOn: (v: boolean) => void
+
+  // —— 保持亮屏（Screen Wake Lock）——
+  /** 当前开关（默认开：不自动息屏） */
+  keepAwake: () => boolean
+  setKeepAwake: (v: boolean) => void
+  /** 当前环境是否支持 Screen Wake Lock；不支持时只提示、不假装生效 */
+  screenWakeSupported?: () => boolean
 
   // —— 诊断（合并进 window.__chubbyWhale） ——
   diag: (patch: any) => void

@@ -15,7 +15,7 @@ import { sendJson } from '../respond.js'
 import type { HostCollector } from '../nervous/collector.js'
 
 export interface NervousHandlerDeps {
-  /** 宿主事件收集器：index.ts 装配时构造后注入，路由内部不自建（与 createProofreadHandler 同一注入方式） */
+  /** 宿主事件收集器：index.ts 装配时构造后注入，路由内部不自建（与其它路由同一注入方式） */
   collector: HostCollector
 }
 

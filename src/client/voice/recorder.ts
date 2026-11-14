@@ -8,26 +8,51 @@
  * 采集与状态机（running / status / 何时开始录）仍留在 voice.ts —— 那块一动就会连带
  * 状态转移，按「宁可不抽」的纪律不硬拆。
  *
- * 行为与拆分前逐字对齐（常量、比较符、累加方式都没改）：
+ * 行为与拆分前逐字对齐（比较符、累加方式都没改；端点常量与判定策略在 2026-11 调整过，
+ * 调整依据见各常量说明）：
  *   · 静音门槛是 -35dBFS（20*log10(600/32768) ≈ -34.7，对齐 C# 版 SilenceGate）；
- *   · 经典端点：说话累计 ≥400ms 且静音累计 ≥700ms 才提前收尾，否则录满 6 秒；
+ *   · 经典端点：说话累计 ≥250ms 且静音累计 ≥**动态阈值**（短句 750ms、长句 450ms，
+ *     见 shared/sentence-boundary.ts 的 requiredQuietMs）才提前收尾，否则录满 4.5 秒；
  *   · 物理闭麦（muted）时阈值抬到 0dBFS：闭麦期间一律按静音累计（闭麦本来就收不到人声）。
+ *
+ * 2026-11-14 动态断句（修"一句一落切片太快"）：
+ *   固定 450ms 一刀切对短句太狠（尾音/拖腔没停就切走），对长句又不够快。现在收尾静音
+ *   按本段已累计的说话时长动态取值：≤800ms 语音要求 750ms 静音，≥4000ms 语音只需 450ms，
+ *   中间线性插值（实现只在 shared/sentence-boundary.ts 一处，client 其它地方不许再写死）。
+ *   WINDOW_MS 仍是 4500ms 硬上限。
+ *
+ * 2026-11 延迟审查（历史沿革，保留说明）：
+ *   · 提前收尾 700→450ms（现在下限 450、短句可到 750）：真说完到"判定说完"是每句的
+ *     固定延迟，700ms 太肉；动态化后短句多等一点防切碎，长句保持灵敏。
+ *   · 窗口上限 6000→4500ms：一句一落是短句交互，4.5 秒足够说一句；长句被上限
+ *     切开后由下一段继续录（录音/ASR 已解耦），不丢字，只是多一段识别。
+ *   · 最短语音 400→250ms：保留短命令（"停""别读了"）的检出概率；低于 250ms 的
+ *     人声仍会被当静音丢弃（防咳嗽/键盘声被识别成幻觉）。
+ *   · TICK 60→45ms：判定粒度从 60ms 降到 45ms，比 40ms 少一点定时器压力；
+ *     实际 setTimeout 有 1~5ms 漂移，真实静音时长会略长于标称值（偏保守，不容易切碎）。
  */
 
-/** 一段录音的硬上限（C# 版 MaxMs=6000） */
-export const WINDOW_MS = 6000
-/** 说完后连续静音多久提前收尾（C# 版 SilenceMs=700） */
-export const EARLY_STOP_QUIET = 700
-/** 至少累计这么多“说话帧”才算有效语音（C# 版 ms<400 直接丢） */
-export const MIN_SPEECH_MS = 400
+import { requiredQuietMs } from '../../shared/sentence-boundary.js'
+
+/**
+ * 一段录音的硬上限（C# 版 MaxMs=6000；2026-11 一句一落优化：6000→4500）
+ * 一句一落是短句交互，窗口越短"没检测到端点"时的最坏等待越短；
+ * 长句被这里切开后由下一段继续录，不丢字。
+ */
+export const WINDOW_MS = 4500
+/**
+ * 至少累计这么多“说话帧”才算有效语音（C# 版 ms<400 直接丢；2026-11：400→250）。
+ * 短命令（停 / 别读了）本身只有一两百毫秒，门槛太高就永远等不到提前收尾。
+ */
+export const MIN_SPEECH_MS = 250
 /** 整段峰值低于此值直接丢：静音送识别只会换来幻觉（C# 版 SilenceGate） */
 export const SILENT_PEAK_DB = -35
 /** 经典端点的说话帧门槛（dBFS） */
 export const CLASSIC_SPEECH_DB = -45
 /** 物理闭麦时的说话帧门槛：闭麦期间没有可信人声，一律按静音累计 */
 export const MUTED_SPEECH_DB = 0
-/** tick 间隔（与 APE 的 frameMs 一致） */
-export const TICK_MS = 60
+/** tick 间隔（与 APE 的 frameMs 对齐；2026-11：60→45，判定粒度更细） */
+export const TICK_MS = 45
 /** tick 抛错后的重试间隔 */
 export const TICK_ERROR_MS = 120
 /** 启动后多久还读不到任何电平 → 判定 analyser 不可用（自动播放策略挂起的典型表现） */
@@ -120,8 +145,9 @@ export function notePeak(s: SegmentState, db: number): void {
 }
 
 /**
- * 经典端点：按 60ms 一帧累计说话/静音时长。
- * 只用“帧数×TICK_MS”，不读真实时钟 —— 与拆分前完全一致（改成真实间隔会改判定时长）。
+ * 经典端点：按 TICK_MS 一帧累计说话/静音时长。
+ * 只用“帧数×TICK_MS”，不读真实时钟 —— 与拆分前一致（改成真实间隔会改判定时长；
+ * 真实 setTimeout 的 1~5ms 漂移只会让实际静音略长于标称值，方向偏保守）。
  */
 export function accrueClassic(s: SegmentState, db: number, muted: boolean): void {
   if (db > (muted ? MUTED_SPEECH_DB : CLASSIC_SPEECH_DB)) {
@@ -132,9 +158,15 @@ export function accrueClassic(s: SegmentState, db: number, muted: boolean): void
   }
 }
 
-/** 经典端点是否该收尾：返回 quiet / timeout / ''（两者同时成立时优先 quiet，同原实现） */
+/**
+ * 经典端点是否该收尾：返回 quiet / timeout / ''（两者同时成立时优先 quiet，同原实现）
+ *
+ * 静音阈值不是固定值：按本段累计说话时长取 requiredQuietMs(speechMs) ——
+ * 短语音多等（最多 750ms，防尾音/拖腔被切走），长语音少等（最快 450ms，别拖整段落地）。
+ * 阈值实现只在 shared/sentence-boundary.ts 一处；这里只调用，不写死数字。
+ */
 export function shouldStopClassic(s: SegmentState, now: number): 'quiet' | 'timeout' | '' {
-  if (s.speechMs >= MIN_SPEECH_MS && s.quietMs >= EARLY_STOP_QUIET) return 'quiet'
+  if (s.speechMs >= MIN_SPEECH_MS && s.quietMs >= requiredQuietMs(s.speechMs)) return 'quiet'
   if (now - s.startedAt >= WINDOW_MS) return 'timeout'
   return ''
 }

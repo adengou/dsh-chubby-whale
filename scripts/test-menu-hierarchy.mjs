@@ -8,8 +8,11 @@
  *      设置放在最上面、退出永远最后一个。
  *   B. 设置四组的分组结构、组内顺序、每个开关/选择都落在规定的组里。
  *   C. 所有开关/选择类 action 只能从设置子树抵达 —— 一级菜单不再散落任何一条。
- *   D. 动作字符串全集与重构前逐字一致（117 个，含随状态变化的曲目/书单/语速档位）——
- *      只调整树的位置与层级，不改变任何 action。
+ *   D. 动作字符串全集与重构前逐字一致（117 个，含随状态变化的曲目/书单/语速档位），
+ *      外加 2026-11-14 鲸群推演室新增的 cabinet:open / cabinet:protocol 2 个
+ *      与「小鲸代笔」新增的 scribe-start 1 个，再减去随后整体移除一项独立功能时
+ *      同步删除的 1 个动作 = 119 个；
+ *      只调整树的位置与层级，不改变其它 action。
  *   E. 三级子菜单路径能逐级展开（设置 → 语音与耳朵 → 说书语速），
  *      listMenuEntries 与 renderMenuItems 在每一层都对齐（键盘高亮不错项）。
  *   F. 中英双语：四个新分组标题与「界面语言：/聊天语言：」动态前缀都有译文，英文界面不漏中文。
@@ -146,10 +149,10 @@ console.log('\n[A] 一级菜单：只剩高频命令，设置放在最上面，�
 const topLabels = visibleTop(TOP).map((it) => it.label)
 const EXPECT_TOP = [
   '设置 ▸',
-  '施工队 ▸',
+  '推演 ▸',
+  '代笔 ▸',
   '跟她说两句',
   '阅读文档 ▸',
-  '公文校对…',
   '投喂一碗',
   '成长：熟悉（200）',
   '记个饭点…',
@@ -176,8 +179,42 @@ const setIdx = visibleTop(TOP).findIndex((it) => it.label === '设置 ▸')
 ok('「设置 ▸」在最上面（第 1 项）', setIdx === 0, 'index=' + setIdx + ' / 共 ' + visibleTop(TOP).length + ' 项')
 ok('「让它游走（退出）」是最后一项', topLabels[topLabels.length - 1] === '让它游走（退出）')
 const topActions = new Set(visibleTop(TOP).filter((it) => it.type === 'item').map((it) => it.action))
-ok('一级子菜单只有 设置/施工队/阅读文档/文化气/选本书/弹首曲子/数据与统计',
-  eq(topLabels.filter((l) => l.endsWith('▸')), ['设置 ▸', '施工队 ▸', '阅读文档 ▸', '文化气 ▸', '选本书 ▸', '弹首曲子 ▸', '数据与统计 ▸']))
+ok('一级子菜单只有 设置/推演/代笔/阅读文档/文化气/选本书/弹首曲子/数据与统计',
+  eq(topLabels.filter((l) => l.endsWith('▸')), ['设置 ▸', '推演 ▸', '代笔 ▸', '阅读文档 ▸', '文化气 ▸', '选本书 ▸', '弹首曲子 ▸', '数据与统计 ▸']))
+// 2026-11-14：主人明确「施工队 ▸」菜单没有实用性 → 从用户入口整组移除；
+// shared/whale-works.ts 内部模块保留（只读看板 chipText 仍用它），但菜单里一个字都不许再出现。
+{
+  const allLabels = []
+  const allActions = []
+  walk(TOP, (it) => {
+    if (!it) return
+    if (it.label) allLabels.push(it.label)
+    if (it.type === 'item' && it.action) allActions.push(it.action)
+  })
+  ok('菜单不再出现「施工队 ▸」（用户入口已删除）', !allLabels.some((l) => l.indexOf('施工队') >= 0), allLabels.filter((l) => l.indexOf('施工队') >= 0).join(','))
+  ok('菜单不再出现 whale-works:* 动作', !allActions.some((a) => String(a).indexOf('whale-works:') === 0), allActions.filter((a) => String(a).indexOf('whale-works:') === 0).join(','))
+  const cabinet = findSub(TOP, '推演 ▸')
+  const CABINET_CHILD = ['item:cabinet:open', 'item:cabinet:protocol']
+  ok('「推演 ▸」在「设置 ▸」之后，且组内顺序 = 开始推演… / 复制推演规则',
+    !!cabinet && eq(childSeq(cabinet), CABINET_CHILD) && topLabels.indexOf('推演 ▸') === topLabels.indexOf('设置 ▸') + 1,
+    show(childSeq(cabinet)))
+  const cabinetLabels = (cabinet ? cabinet.items : []).map((it) => it.label)
+  ok('推演两个条目文案正确', eq(cabinetLabels, ['开始推演…', '复制推演规则']), cabinetLabels.join(' / '))
+  // 2026-11-14 新方案：不做第三方窗口注入，改成「小鲸代笔面板」；入口紧跟在「推演 ▸」之后
+  // 2026-11-14 7 条改版：删除「停止代笔」用户入口（面板内只有话筒开始/暂停，没有停止）
+  const scribe = findSub(TOP, '代笔 ▸')
+  const SCRIBE_CHILD = ['item:scribe-start']
+  ok('「代笔 ▸」在「推演 ▸」之后，且只有「打开代笔面板」一项',
+    !!scribe && eq(childSeq(scribe), SCRIBE_CHILD) && topLabels.indexOf('代笔 ▸') === topLabels.indexOf('推演 ▸') + 1,
+    show(childSeq(scribe)))
+  const scribeLabels = (scribe ? scribe.items : []).map((it) => it.label)
+  ok('代笔条目文案正确、没有「停止代笔」', eq(scribeLabels, ['打开代笔面板']), scribeLabels.join(' / '))
+  ok('菜单全树不再出现「停止代笔」', !allLabels.some((l) => l.indexOf('停止代笔') >= 0))
+  // 旧草稿必须清干净：聊天麦克风/语音输入菜单/dictate 一项都不许回来
+  ok('菜单不再出现「语音输入（转文字）…」', !allLabels.some((l) => l.indexOf('语音输入') >= 0))
+  ok('菜单不再出现 dictate 动作', !allActions.some((a) => a === 'dictate'))
+  ok('菜单不再出现 scribe-stop 动作', !allActions.some((a) => a === 'scribe-stop'))
+}
 
 // ======================================================================
 console.log('\n[B] 设置 → 四个分组：分组、组内顺序、每个条目落位')
@@ -202,7 +239,7 @@ const EXPECT_CHILD = {
   ],
   '行为开关 ▸': [
     'item:tool-narrator', 'item:poem-echo', 'item:nervous', 'item:nervous-status',
-    'item:team-board', 'item:web-search', 'item:cache-toggle', 'item:story-auto',
+    'item:team-board', 'item:web-search', 'item:cache-toggle', 'item:keep-awake', 'item:story-auto',
   ],
   '数据与维护 ▸': [
     'item:config-view', 'item:remind-manage', 'item:wake-recover', 'item:cache-clear', 'item:clear-memory',
@@ -272,13 +309,16 @@ const SETTINGS_ONLY = [
 }
 
 // ======================================================================
-console.log('\n[D] 动作全集：设置重构前的 117 个 + 施工队 4 个 = 121 个，一个不少、一个不多')
+console.log('\n[D] 动作全集：设置重构前的 117 个 + 推演 2 个 + 代笔 1 个 - 已移除功能 1 个 = 120 个，一个不少、一个不多')
 // 重构前（git 1.5.1）用 8 种状态跑出的 action 全集，逐字固化在这里；
 // 这是一次「只搬家不换货」的验收口径：任何 action 改名/丢失都会在这里报警。
-// 2026-11-14 WhaleWorks v0.1 接入：菜单新增一级「施工队 ▸」的 4 个只读模板动作
-// （whale-works:brief / worker-card / acceptance / guide），因此全集是 121 而不是 117。
-// 除这 4 个之外，任何新增/改名/丢失仍然报警。
-const WHALE_WORKS_ACTIONS = ['whale-works:brief', 'whale-works:worker-card', 'whale-works:acceptance', 'whale-works:guide']
+// 2026-11-14 鲸群推演室接入：一级「施工队 ▸」整组 4 个 whale-works 动作被主人要求删除，
+// 换成年新增「推演 ▸」的 2 个动作（cabinet:open / cabinet:protocol）。
+// 同日「小鲸代笔」：一级「代笔 ▸」新增 1 个动作（scribe-start），
+// 未发布的 dictate（聊天输入听写草稿）整组移除；7 条改版又按主人要求删掉 scribe-stop。
+// 2026-11-14 再按主人要求整体移除一项独立功能，对应 1 个动作同步删除，
+// 因此全集是 117 + 2 + 1 - 1 = 120。除这些增删之外，任何新增/改名/丢失仍然报警。
+const EXTRA_ACTIONS = ['cabinet:open', 'cabinet:protocol', 'scribe-start', 'keep-awake']
 const BEFORE_ACTIONS = [
   'bigger', 'briefing-card', 'cache-clear', 'cache-toggle', 'chat-lang:auto', 'chat-lang:en', 'chat-lang:zh',
   'chat-rate:+0%', 'chat-rate:+10%', 'chat-rate:-10%', 'chat-rate:-15%', 'chat-rate:-20%', 'chat-rate:-30%',
@@ -295,7 +335,7 @@ const BEFORE_ACTIONS = [
   'narration-rate:-15%', 'narration-rate:-20%', 'narration-rate:-25%', 'narration-rate:-30%',
   'nervous', 'nervous-status', 'pause', 'poem', 'poem-echo',
   'poem-rate:-15%', 'poem-rate:-20%', 'poem-rate:-25%', 'poem-rate:-30%',
-  'proofread', 'read-doc', 'remind-add', 'remind-list', 'remind-manage', 'skin-bg-reset', 'skin-fixed',
+  'read-doc', 'remind-add', 'remind-list', 'remind-manage', 'skin-bg-reset', 'skin-fixed',
   'smaller', 'stats', 'story-auto', 'story-book:聊斋', 'story-book:西游记', 'story-books',
   'story-rate:-25%', 'story-rate:-30%', 'story-rate:-35%', 'story-rate:-40%', 'story-reset',
   'stream-toggle', 'team-board', 'tool-narrator', 'tts-stop', 'type', 'vision', 'voice', 'voice-export',
@@ -307,14 +347,14 @@ const BEFORE_ACTIONS = [
 ]
 // 与基线同口径的多状态见文件头部 STATES（覆盖开关两态、书单两态、曲目/语速不同档位）
 {
-  const EXPECT_ACTIONS = BEFORE_ACTIONS.concat(WHALE_WORKS_ACTIONS)
+  const EXPECT_ACTIONS = BEFORE_ACTIONS.concat(EXTRA_ACTIONS)
   const actual = new Set()
   for (const st of STATES) walk(buildMenu('9.9.9', st), (it) => { if (it && it.type === 'item') actual.add(it.action) })
   const missing = EXPECT_ACTIONS.filter((a) => !actual.has(a))
   const extra = [...actual].filter((a) => EXPECT_ACTIONS.indexOf(a) < 0)
-  ok('设置重构前 117 个 + 施工队 4 个 = ' + EXPECT_ACTIONS.length + ' 个 action', actual.size === EXPECT_ACTIONS.length, '实际 ' + actual.size)
+  ok('设置重构前 116 个（已扣除已移除功能）+ 推演 2 个 + 代笔 1 个 = ' + EXPECT_ACTIONS.length + ' 个 action', actual.size === EXPECT_ACTIONS.length, '实际 ' + actual.size)
   ok('重构前有、现在全部还在（无改名字/丢失）', missing.length === 0, missing.join(','))
-  ok('新增的只有施工队 4 个只读动作', extra.length === 0, extra.join(','))
+  ok('新增的只有推演 2 个 + 代笔 1 个 + 保持亮屏 1 个，施工队 4 个、dictate 1 个、scribe-stop 1 个与已移除功能 1 个已删干净', extra.length === 0, extra.join(','))
 }
 
 // ======================================================================
@@ -368,12 +408,19 @@ console.log('\n[E] 三级子菜单展开：设置 → 语音与耳朵 → 说书
 console.log('\n[F] 中英双语：新增分组与动态前缀都有译文，英文界面不漏中文')
 {
   ok('设置 ▸ → Settings ▸', tr('设置 ▸', 'en') === 'Settings ▸')
+  ok('推演 ▸ → Decision Lab ▸', tr('推演 ▸', 'en') === 'Decision Lab ▸', tr('推演 ▸', 'en'))
+  ok('开始推演… 有英文', tr('开始推演…', 'en') === 'Start a decision lab…', tr('开始推演…', 'en'))
+  ok('复制推演规则 有英文', tr('复制推演规则', 'en') === 'Copy lab protocol', tr('复制推演规则', 'en'))
+  ok('代笔 ▸ → Scribe ▸', tr('代笔 ▸', 'en') === 'Scribe ▸', tr('代笔 ▸', 'en'))
+  ok('打开代笔面板 有英文', tr('打开代笔面板', 'en') === 'Open the scribe panel', tr('打开代笔面板', 'en'))
+  ok('「停止代笔」译文已随入口一起移除', tr('停止代笔', 'en') === '停止代笔', tr('停止代笔', 'en'))
   ok('显示与语言 ▸ 有英文', tr('显示与语言 ▸', 'en') === 'Display & language ▸', tr('显示与语言 ▸', 'en'))
   ok('语音与耳朵 ▸ 有英文', tr('语音与耳朵 ▸', 'en') === 'Voice & hearing ▸', tr('语音与耳朵 ▸', 'en'))
   ok('行为开关 ▸ 有英文', tr('行为开关 ▸', 'en') === 'Behavior toggles ▸', tr('行为开关 ▸', 'en'))
   ok('数据与维护 ▸ 有英文', tr('数据与维护 ▸', 'en') === 'Data & maintenance ▸', tr('数据与维护 ▸', 'en'))
   ok('动态前缀「界面语言：」保持 tr 兼容', tr('界面语言：中文 ▸', 'en') === 'Interface language: Chinese ▸', tr('界面语言：中文 ▸', 'en'))
   ok('动态前缀「聊天语言：」保持 tr 兼容', tr('聊天语言：自动 ▸', 'en') === 'Chat language: Auto ▸', tr('聊天语言：自动 ▸', 'en'))
+  ok('旧听写菜单译文已移除（不再有语音输入入口）', tr('语音输入（转文字）…', 'en') === '语音输入（转文字）…', tr('语音输入（转文字）…', 'en'))
   ok('开关类译文沿用（语音朗读）', tr('语音朗读：关', 'en') === 'Voice output: off')
   ok('开关类译文沿用（行为开关新增位置不影响）', tr('鲸式解说：开', 'en') === 'Whale commentary: on')
   ok('语速类译文沿用（说书语速）', tr('说书语速：-35% ▸', 'en') === 'Story speed: -35% ▸')
@@ -400,12 +447,12 @@ console.log('\n[G] 数据层结构：开关文案跟 state 走、结构合法、
   const allOn = buildMenu('9.9.9', Object.assign({}, STATE, {
     voiceOn: true, earOn: true, voiceChatOn: true, streamOn: true, storyAuto: true,
     skinFixed: true, toolNarratorOn: true, poemEchoOn: true, nervousOn: true,
-    teamBoardOn: true, webSearchOn: true, chatCacheOn: true,
+    teamBoardOn: true, webSearchOn: true, chatCacheOn: true, keepAwakeOn: true,
   }))
   const allOff = buildMenu('9.9.9', Object.assign({}, STATE, {
     voiceOn: false, earOn: false, voiceChatOn: false, streamOn: false, storyAuto: false,
     skinFixed: false, toolNarratorOn: false, poemEchoOn: false, nervousOn: false,
-    teamBoardOn: false, webSearchOn: false, chatCacheOn: false,
+    teamBoardOn: false, webSearchOn: false, chatCacheOn: false, keepAwakeOn: false,
   }))
   const TOGGLES = [
     ['voice', '语音朗读：开', '语音朗读：关'],
@@ -419,13 +466,14 @@ console.log('\n[G] 数据层结构：开关文案跟 state 走、结构合法、
     ['team-board', '鲸鱼看板：开', '鲸鱼看板：关'],
     ['web-search', '联网搜索：开', '联网搜索：关'],
     ['cache-toggle', '聊天缓存：开', '聊天缓存：关'],
+    ['keep-awake', '保持亮屏：开', '保持亮屏：关'],
   ]
   const wrong = []
   for (const [action, onLabel, offLabel] of TOGGLES) {
     if (labelOf(allOn, action) !== onLabel) wrong.push(action + ' 开态=' + show(labelOf(allOn, action)))
     if (labelOf(allOff, action) !== offLabel) wrong.push(action + ' 关态=' + show(labelOf(allOff, action)))
   }
-  ok('11 个开关的两态文案都跟着 state 走', wrong.length === 0, wrong.slice(0, 4).join(' | '))
+  ok('12 个开关的两态文案都跟着 state 走', wrong.length === 0, wrong.slice(0, 4).join(' | '))
   ok('「连播」开关两态文案保留原括注', labelOf(allOn, 'story-auto') === '连播：开（讲完一段自动接下一段）' &&
     labelOf(allOff, 'story-auto') === '连播：关（讲完一段自动接下一段）', show(labelOf(allOff, 'story-auto')))
 

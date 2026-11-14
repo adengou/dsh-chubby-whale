@@ -20,6 +20,7 @@ import type { NarrationLock } from './narration.js'
 import { bumpProgress } from './narration-progress.js'
 import { createWakeGate, normalizeWakeText, loadCustomWakeWords, stripWakeWords, WAKE_WORDS } from './wake.js'
 import { isInterruptCommand } from '../shared/noise.js'
+import type { SegmentMeta } from '../shared/sentence-boundary.js'
 
 /**
  * 整句打断指令的判定已统一到 shared/noise.ts 的 isInterruptCommand()（2026-11-07 B93）：
@@ -108,6 +109,17 @@ export type VoiceBridgeHost = {
   diag: (patch: any) => void
   /** 语音聊天开关：关着时只听不接话（缺省视为开） */
   voiceChat?: () => boolean
+  /**
+   * 代笔模式（2026-11-14 方案变更：面板内一句一落，不做第三方窗口注入）：
+   * 命中时只把识别结果交给 onScribe，不送给模型、不写聊天输入框。
+   */
+  scribe?: () => boolean
+  /**
+   * 代笔结果：由客户端落进「小鲸代笔」面板（一句一行），不自动发送。
+   * meta 是语音收尾快照（尾部静音/说话时长/录音时长）——面板用它判断这句是否完整、
+   * 要不要把句号降级成逗号；非语音来源可能没有 meta。
+   */
+  onScribe?: (text: string, meta?: SegmentMeta) => void
   /** 当前是否正在朗读（打断词要看它决定要不要停） */
   speaking?: () => boolean
   /** 测试注入：替换 createVoice（默认用真模块） */
@@ -237,7 +249,7 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
     const v = make({
       // 建实例时就带上菜单里选的音色（原来没接，TTS 永远是默认晓伊）
       voiceName: pendingVoice,
-      onHeard: (text: string) => {
+      onHeard: (text: string, meta?: SegmentMeta) => {
         try { host.onVoiceHeard() } catch (e) { }
         // 叙述锁：念诗/说书拾到的话不当作新发言（只放行明确的"停"）
         try {
@@ -249,6 +261,20 @@ export function createVoiceBridge(host: VoiceBridgeHost): VoiceBridge {
             return
           }
         } catch (e) { }
+        // 代笔（面板内一句一落）：只把整句交给 onScribe，不送模型、不自动发送；
+        // 优先于语音聊天开关（代笔期间说的每一句都属于面板，不进对话）。
+        // meta（收尾快照）原样透传：面板用 pauseMs/speechMs 判断这句是真说完还是被切开的半句。
+        try {
+          if (host.scribe && host.scribe()) {
+            const scribeText = String(text || '').trim()
+            if (scribeText) {
+              try { host.onScribe && host.onScribe(scribeText, meta) } catch (e) { }
+              pushWake()
+              return
+            }
+          }
+        } catch (e) { }
+
         // 打断词直通唤醒门：正在朗读时主人喊"停"必须立刻停，
         // 不能先要求喊唤醒词（否则只能去点菜单「停止说话」）。
         if (tryInterrupt(text)) return

@@ -122,9 +122,11 @@ try {
   const P_VOICE = P_SET + '\u0000' + '语音与耳朵 ▸'
   const P_RATE = '说书语速：-35% ▸'
   const P_ACTIONS = P_SET + '\u0000' + '行为开关 ▸'
-  // 2026-11-14 WhaleWorks v0.1：一级「施工队 ▸」（设置之后），只复制模板/显示路径
-  const P_CREW = '施工队 ▸'
-  const cases = ['', P_CULTURE, P_CULTURE + '\u0000' + P_COUPLET, P_SET, P_DISPLAY, P_VOICE, P_VOICE + '\u0000' + '换个声音 ▸', P_VOICE + '\u0000' + P_RATE, P_ACTIONS, P_CREW]
+  // 2026-11-14 鲸群推演室：一级「推演 ▸」（设置之后，施工队已按主人要求整组删除）
+  const P_CABINET = '推演 ▸'
+  // 2026-11-14 小鲸代笔：一级「代笔 ▸」（推演之后；不做第三方窗口注入）
+  const P_SCRIBE = '代笔 ▸'
+  const cases = ['', P_CULTURE, P_CULTURE + '\u0000' + P_COUPLET, P_SET, P_DISPLAY, P_VOICE, P_VOICE + '\u0000' + '换个声音 ▸', P_VOICE + '\u0000' + P_RATE, P_ACTIONS, P_CABINET, P_SCRIBE]
   let aligned = true
   let indexOk = true
   const detail = []
@@ -318,7 +320,6 @@ try {
     import('../src/client/actions/content.ts'),
     import('../src/client/actions/system.ts'),
     import('../src/client/actions/voice.ts'),
-    import('../src/client/actions/proofread.ts'),
     import('../src/client/actions/nervous.ts'),
   ])
   const t = createActionTable()
@@ -326,10 +327,11 @@ try {
   mods[1].registerContentActions(t)
   mods[2].registerSystemActions(t)
   mods[3].registerVoiceActions(t)
-  mods[4].registerProofreadActions(t)
-  mods[5].registerNervousActions(t)
+  mods[4].registerNervousActions(t)
   const actionsMod = await import('../src/client/actions.ts')
   actionsMod.registerSkinActions(t)
+  const fsMod = await import('node:fs')
+  const actionsSrc = fsMod.readFileSync('src/client/actions.ts', 'utf8')
 
   const items = buildMenu('9.9.9', { storyBooks: ['聊斋'], storyBooksTried: true })
   const all = flattenItems(items)
@@ -345,11 +347,16 @@ try {
     setPath + '\u0000' + '行为开关 ▸',
     setPath + '\u0000' + '数据与维护 ▸',
     '数据与统计 ▸',
-    '施工队 ▸',
+    '推演 ▸',
+    '代笔 ▸',
   ]
   const visible = openPaths.flatMap((subOpen) => listMenuEntries(items, { tr, lang: 'zh', subOpen }))
   const dead = visible.filter((e) => e.kind === 'item' && !t.has(e.action))
   ok('可见项（含展开的三级菜单）全部有处理器', dead.length === 0, dead.map((x) => x.label + '(' + x.action + ')').join(' | '))
+  ok('代笔动作已注册（scribe-start）', t.has('scribe-start'))
+  ok('旧听写动作 dictate 已移除', t.has('dictate') === false)
+  ok('「停止代笔」动作 scribe-stop 已移除', t.has('scribe-stop') === false)
+  ok('ActionHost 只有 startScribe（没有 stopScribe 用户入口）', /startScribe\s*:\s*\(\)\s*=>\s*void/.test(actionsSrc) && !/stopScribe\s*:/.test(actionsSrc))
   ok('动作表规模合理', t.actions().length >= 40, '精确 ' + t.actions().length + ' / 前缀 ' + t.prefixes().length)
 } catch (e) {
   ok('动作覆盖可验证', false, String(e && e.message))

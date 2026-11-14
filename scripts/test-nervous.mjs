@@ -61,7 +61,7 @@ check('初始能量在 0-100', nervousEnergy() >= 0 && nervousEnergy() <= 100)
 // 4) noteWork 不抛错（打点入口）
 {
   let threw = false
-  try { noteWork('proofread') } catch (e) { threw = true }
+  try { noteWork('chat') } catch (e) { threw = true }
   check('noteWork 不抛错', threw === false)
 }
 
