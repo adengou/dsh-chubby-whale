@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.5.2";
+  var VERSION = "1.5.3";
 
   // src/client/styles.ts
   var W = 240;
@@ -2897,71 +2897,7 @@
     const books = Array.isArray(state.storyBooks) ? state.storyBooks.map((b) => String(b || "").trim()).filter(Boolean) : [];
     const bookItems = books.length ? books.map((b) => item(b, "story-book:" + b)) : [item(state.storyBooksTried ? "书单没取到，稍后再试" : "正在翻书单…", "story-books")];
     return [
-      sep(),
-      // ══ 一级：高频命令（开关/选择类一律不放在这一层）══
-      // ── 说话、看图、干活 ──
-      item("跟她说两句", "type"),
-      sub("阅读文档 ▸", [
-        item("看张图…", "vision"),
-        item("读文档…", "read-doc")
-      ]),
-      item("公文校对…", "proofread"),
-      sep(),
-      // ── 吃饭与成长 ──
-      item("投喂一碗", "feed"),
-      item("成长：" + growthText, "growth"),
-      sep(),
-      // ── 饭点提醒（高频命令保留一级）──
-      item("记个饭点…", "remind-add"),
-      item("提醒清单…", "remind-list"),
-      sep(),
-      // ── 文化气：只留内容命令；连播与四类语速是开关/选择，已收进「设置」──
-      sub("文化气 ▸", [
-        item("说书（连载）", "culture-story"),
-        item("接着说", "culture-story-next"),
-        item("从头讲这本书", "story-reset"),
-        item("念首诗", "poem"),
-        item("讲个民间故事", "culture-tale"),
-        item("讲个典故", "culture-allusion"),
-        item("成语辨析", "culture-idiom"),
-        sub("出个对联 ▸", [
-          item("随机一副", "culture-couplet"),
-          item("春联", "culture-couplet:春联"),
-          item("格言", "culture-couplet:格言"),
-          item("谐趣", "culture-couplet:谐趣"),
-          item("名胜", "culture-couplet:名胜"),
-          item("景观", "culture-couplet:景观"),
-          item("书院", "culture-couplet:书院"),
-          item("书房", "culture-couplet:书房"),
-          item("寿联", "culture-couplet:寿联"),
-          item("中药", "culture-couplet:中药"),
-          item("叠字", "culture-couplet:叠字"),
-          item("数字", "culture-couplet:数字")
-        ])
-      ]),
-      // ── 每日内容（说书选本 / 每日一句 / 今日简报）──
-      sub("选本书 ▸", bookItems),
-      item("今日一句", "daily-line"),
-      item("今日简报", "briefing-card"),
-      sep(),
-      // ── 曲子 ──
-      sub("弹首曲子 ▸", (state.melodies && state.melodies.length ? state.melodies : MELODIES).map((m) => item("弹《" + m + "》", "music:" + m))),
-      item("停止弹奏", "music-stop"),
-      sep(),
-      // ── 位置（高频命令保留；大小调节是选择类，收进「设置 → 显示与语言」）──
-      item("让她歇会儿", "pause"),
-      item("回碗里待着", "home"),
-      sep(),
-      // ── 数据与统计（高频命令保留；只读配置归「设置 → 数据与维护」）──
-      sub("数据与统计 ▸", [
-        item("数据导出…", "data-export"),
-        item("数据导入…", "data-import"),
-        // 鲸落胶囊：只打包摘要里的抽象主题，不含对话原文
-        item("使用统计", "stats")
-      ]),
-      item("鱼粮账本", "fishfood"),
-      sep(),
-      // ══ 一级：设置（所有开关/选择类统一收在这里，放在靠近底部）══
+      // ══ 一级：设置（所有开关/选择类统一收在这里，放在最上面）══
       sub("设置 ▸", [
         // ── 显示与语言：语言、背景、大小 ──
         sub("显示与语言 ▸", [
@@ -3025,6 +2961,69 @@
           item("清除记忆…", "clear-memory")
         ])
       ]),
+      sep(),
+      // ══ 一级：高频命令（开关/选择类一律不放在这一层）══
+      // ── 说话、看图、干活 ──
+      item("跟她说两句", "type"),
+      sub("阅读文档 ▸", [
+        item("看张图…", "vision"),
+        item("读文档…", "read-doc")
+      ]),
+      item("公文校对…", "proofread"),
+      sep(),
+      // ── 吃饭与成长 ──
+      item("投喂一碗", "feed"),
+      item("成长：" + growthText, "growth"),
+      sep(),
+      // ── 饭点提醒（高频命令保留一级）──
+      item("记个饭点…", "remind-add"),
+      item("提醒清单…", "remind-list"),
+      sep(),
+      // ── 文化气：只留内容命令；连播与四类语速是开关/选择，已收进「设置」──
+      sub("文化气 ▸", [
+        item("说书（连载）", "culture-story"),
+        item("接着说", "culture-story-next"),
+        item("从头讲这本书", "story-reset"),
+        item("念首诗", "poem"),
+        item("讲个民间故事", "culture-tale"),
+        item("讲个典故", "culture-allusion"),
+        item("成语辨析", "culture-idiom"),
+        sub("出个对联 ▸", [
+          item("随机一副", "culture-couplet"),
+          item("春联", "culture-couplet:春联"),
+          item("格言", "culture-couplet:格言"),
+          item("谐趣", "culture-couplet:谐趣"),
+          item("名胜", "culture-couplet:名胜"),
+          item("景观", "culture-couplet:景观"),
+          item("书院", "culture-couplet:书院"),
+          item("书房", "culture-couplet:书房"),
+          item("寿联", "culture-couplet:寿联"),
+          item("中药", "culture-couplet:中药"),
+          item("叠字", "culture-couplet:叠字"),
+          item("数字", "culture-couplet:数字")
+        ])
+      ]),
+      // ── 每日内容（说书选本 / 每日一句 / 今日简报）──
+      sub("选本书 ▸", bookItems),
+      item("今日一句", "daily-line"),
+      item("今日简报", "briefing-card"),
+      sep(),
+      // ── 曲子 ──
+      sub("弹首曲子 ▸", (state.melodies && state.melodies.length ? state.melodies : MELODIES).map((m) => item("弹《" + m + "》", "music:" + m))),
+      item("停止弹奏", "music-stop"),
+      sep(),
+      // ── 位置（高频命令保留；大小调节是选择类，收进「设置 → 显示与语言」）──
+      item("让她歇会儿", "pause"),
+      item("回碗里待着", "home"),
+      sep(),
+      // ── 数据与统计（高频命令保留；只读配置归「设置 → 数据与维护」）──
+      sub("数据与统计 ▸", [
+        item("数据导出…", "data-export"),
+        item("数据导入…", "data-import"),
+        // 鲸落胶囊：只打包摘要里的抽象主题，不含对话原文
+        item("使用统计", "stats")
+      ]),
+      item("鱼粮账本", "fishfood"),
       sep(),
       // ── 退出（永远在最底下，减少误点）──
       item("让它游走（退出）", "hide")

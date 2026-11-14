@@ -5,7 +5,7 @@
  * 设置内部再分「显示与语言 / 语音与耳朵 / 行为开关 / 数据与维护」四组。
  * 本文件钉住的正是这次重构最容易悄悄坏掉、且肉眼不容易发现的地方：
  *   A. 一级只剩高频命令：顺序固定、没有「：开/关」开关、没有语言/音色/语速/维护入口；
- *      设置放在靠近底部、退出永远最后一个。
+ *      设置放在最上面、退出永远最后一个。
  *   B. 设置四组的分组结构、组内顺序、每个开关/选择都落在规定的组里。
  *   C. 所有开关/选择类 action 只能从设置子树抵达 —— 一级菜单不再散落任何一条。
  *   D. 动作字符串全集与重构前逐字一致（117 个，含随状态变化的曲目/书单/语速档位）——
@@ -142,9 +142,10 @@ function sepProblems(items, where, out = []) {
 }
 
 // ======================================================================
-console.log('\n[A] 一级菜单：只剩高频命令，设置靠近底部，退出永远最后')
+console.log('\n[A] 一级菜单：只剩高频命令，设置放在最上面，退出永远最后')
 const topLabels = visibleTop(TOP).map((it) => it.label)
 const EXPECT_TOP = [
+  '设置 ▸',
   '跟她说两句',
   '阅读文档 ▸',
   '公文校对…',
@@ -162,7 +163,6 @@ const EXPECT_TOP = [
   '回碗里待着',
   '数据与统计 ▸',
   '鱼粮账本',
-  '设置 ▸',
   '让它游走（退出）',
 ]
 ok('一级菜单顺序与设计一致（高频命令 + 设置 + 退出）', eq(topLabels, EXPECT_TOP), topLabels.join(' / '))
@@ -172,11 +172,11 @@ ok('一级没有开关/选择类文案残留', topSwitchLike.length === 0, topSw
 const settings = findSub(TOP, '设置 ▸')
 ok('一级有「设置 ▸」子菜单', !!settings)
 const setIdx = visibleTop(TOP).findIndex((it) => it.label === '设置 ▸')
-ok('「设置 ▸」靠近底部（倒数第 2 项）', setIdx >= 0 && setIdx === visibleTop(TOP).length - 2, 'index=' + setIdx + ' / 共 ' + visibleTop(TOP).length + ' 项')
+ok('「设置 ▸」在最上面（第 1 项）', setIdx === 0, 'index=' + setIdx + ' / 共 ' + visibleTop(TOP).length + ' 项')
 ok('「让它游走（退出）」是最后一项', topLabels[topLabels.length - 1] === '让它游走（退出）')
 const topActions = new Set(visibleTop(TOP).filter((it) => it.type === 'item').map((it) => it.action))
-ok('一级子菜单只有 阅读文档/文化气/选本书/弹首曲子/数据与统计/设置',
-  eq(topLabels.filter((l) => l.endsWith('▸')), ['阅读文档 ▸', '文化气 ▸', '选本书 ▸', '弹首曲子 ▸', '数据与统计 ▸', '设置 ▸']))
+ok('一级子菜单只有 设置/阅读文档/文化气/选本书/弹首曲子/数据与统计',
+  eq(topLabels.filter((l) => l.endsWith('▸')), ['设置 ▸', '阅读文档 ▸', '文化气 ▸', '选本书 ▸', '弹首曲子 ▸', '数据与统计 ▸']))
 
 // ======================================================================
 console.log('\n[B] 设置 → 四个分组：分组、组内顺序、每个条目落位')
