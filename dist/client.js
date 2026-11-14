@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.4.23";
+  var VERSION = "1.4.25";
 
   // src/client/styles.ts
   var W = 240;
@@ -2729,6 +2729,8 @@
     "聊天语言 ▸": "Chat language ▸",
     "界面语言 ▸": "Interface language ▸",
     "看张图…": "Look at a picture…",
+    "阅读文档 ▸": "Read a file ▸",
+    "读文档…": "Read a document…",
     "停止说话": "Stop talking",
     "让她歇会儿": "Let her rest",
     "回碗里待着": "Back in the bowl",
@@ -2895,7 +2897,10 @@
       item("诗词弹幕：" + (state.poemEchoOn === false ? "关" : "开"), "poem-echo"),
       item("成长：" + growthText, "growth"),
       item("投喂一碗", "feed"),
-      item("看张图…", "vision"),
+      sub("阅读文档 ▸", [
+        item("看张图…", "vision"),
+        item("读文档…", "read-doc")
+      ]),
       item("公文校对…", "proofread"),
       item("神经感知：" + (nervousOn ? "开" : "关"), "nervous"),
       item("神经感知：看一眼状态", "nervous-status"),
@@ -6904,6 +6909,26 @@
             host.speakReply(reply);
           } catch (e) {
             host.bubble("图片处理失败", 4e3);
+          }
+        };
+        input.click();
+      } catch (e) {
+        host.bubble("打不开文件选择", 4e3);
+      }
+    });
+    table.define("read-doc", (host) => {
+      try {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.json,.log,.csv,image/*";
+        input.onchange = () => {
+          try {
+            const file = input.files && input.files[0];
+            if (!file) return;
+            if (typeof host.handleFileDrop === "function") host.handleFileDrop(file);
+            else host.bubble("文档入口没接上，试试重启桌宠", 4e3);
+          } catch (e) {
+            host.bubble("文件读不出来", 4e3);
           }
         };
         input.click();
@@ -11221,79 +11246,6 @@
   }
 
   // src/client/effects.ts
-  function bindFileDropCapture(opts) {
-    const win = opts.win;
-    if (!win || !win.addEventListener) return () => {
-    };
-    const doc = win.document || null;
-    const accept = (e) => {
-      try {
-        if (opts.hitTest(e.clientX, e.clientY)) return true;
-        if (typeof opts.targetTest === "function") return !!opts.targetTest(e.target);
-      } catch (e2) {
-      }
-      return false;
-    };
-    const handle = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const dt = e.dataTransfer;
-      const files = dt && dt.files ? dt.files : null;
-      const file = files && files[0];
-      try {
-        if (files && files.length > 1 && typeof opts.onMany === "function") opts.onMany(files.length);
-      } catch (e2) {
-      }
-      try {
-        opts.onFile(file);
-      } catch (e2) {
-      }
-    };
-    const onDragOverCapture = (e) => {
-      if (!accept(e)) return;
-      e.preventDefault();
-      e.stopPropagation();
-    };
-    const onDropCapture = (e) => {
-      if (!accept(e)) return;
-      handle(e);
-    };
-    const onDocDragOver = (e) => {
-      if (typeof opts.targetTest !== "function" || !opts.targetTest(e.target)) return;
-      e.preventDefault();
-      e.stopPropagation();
-    };
-    const onDocDrop = (e) => {
-      if (typeof opts.targetTest !== "function" || !opts.targetTest(e.target)) return;
-      handle(e);
-    };
-    win.addEventListener("dragover", onDragOverCapture, true);
-    win.addEventListener("drop", onDropCapture, true);
-    if (doc && doc.addEventListener) {
-      doc.addEventListener("dragover", onDocDragOver, true);
-      doc.addEventListener("drop", onDocDrop, true);
-    }
-    return () => {
-      try {
-        win.removeEventListener("dragover", onDragOverCapture, true);
-      } catch (e) {
-      }
-      try {
-        win.removeEventListener("drop", onDropCapture, true);
-      } catch (e) {
-      }
-      if (doc && doc.removeEventListener) {
-        try {
-          doc.removeEventListener("dragover", onDocDragOver, true);
-        } catch (e) {
-        }
-        try {
-          doc.removeEventListener("drop", onDocDrop, true);
-        } catch (e) {
-        }
-      }
-    };
-  }
   function bindOutsideClose(opts) {
     const doc = opts.doc;
     if (!doc || !doc.addEventListener) return () => {
@@ -12278,45 +12230,6 @@
           };
         }, []);
         R.useEffect(() => {
-          return bindFileDropCapture({
-            win: window,
-            hitTest: (x, y) => {
-              try {
-                if (hiddenRef.current) return false;
-                const el = stageRef.current;
-                if (!el) return false;
-                const r = el.getBoundingClientRect();
-                const pad = 12;
-                return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
-              } catch (e) {
-                return false;
-              }
-            },
-            targetTest: (target) => {
-              try {
-                if (hiddenRef.current) return false;
-                const el = stageRef.current;
-                return !!(el && target && (el === target || typeof el.contains === "function" && el.contains(target)));
-              } catch (e) {
-                return false;
-              }
-            },
-            onFile: (file) => {
-              try {
-                handleFileDrop(file, { showBubble, speakText }).catch(() => {
-                });
-              } catch (e2) {
-              }
-            },
-            onMany: (n) => {
-              try {
-                showBubble("一次先看一张哦～先看第一张（共 " + n + " 个）", 3200);
-              } catch (e2) {
-              }
-            }
-          });
-        }, []);
-        R.useEffect(() => {
           const onPaste = (e) => {
             try {
               if (!chatOpenRef.current) return;
@@ -12896,6 +12809,13 @@
           story,
           storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
           homePos: () => homePos2(),
+          handleFileDrop: (file) => {
+            try {
+              handleFileDrop(file, { showBubble, speakText }).catch(() => {
+              });
+            } catch (e) {
+            }
+          },
           // 缩放：0.7–1.4，step 0.1；state 与 scaleRef 一起改（气泡定位读 scaleRef）
           nudgeScale: (delta) => {
             const s = Math.max(0.7, Math.min(1.4, (scaleRef.current || 1) + delta));
@@ -13780,17 +13700,6 @@
                 }, 470);
               },
               onContextMenu,
-              onDragOver: (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              },
-              onDrop: (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-                handleFileDrop(file, { showBubble, speakText }).catch(() => {
-                });
-              },
               onClick: () => {
                 if (dragRef.current.moved > 8) return;
                 animRef.current?.talkFor(1200);

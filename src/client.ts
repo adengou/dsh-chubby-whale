@@ -44,7 +44,7 @@ import { createReminderPoller } from './client/reminders.js'
 import { createReminderManager } from './client/reminder-manage.js'
 import { createRecover } from './client/recover.js'
 import { createHooks } from './client/hooks.js'
-import { bindFileDropCapture, bindOutsideClose, bindResize, bindChatFocus, bindMenuKeys, createUnmountCleanup, startGreeting, startWatchdog } from './client/effects.js'
+import { bindOutsideClose, bindResize, bindChatFocus, bindMenuKeys, createUnmountCleanup, startGreeting, startWatchdog } from './client/effects.js'
 import { renderMenuItems, renderMenuHeader, renderChatPanel, readMenuRuntime, listMenuEntries, menuRootProps } from './client/render.js'
 import { evPrevent, evStop } from './client/util.js'
 
@@ -680,41 +680,6 @@ registerSkinActions(actions)
         return () => { try { unbind() } catch (e) { } }
       }, [])
 
-      // ===== 拖放：必须在【捕获阶段】抢在 HARNESS 自己的拖放处理之前 =====
-      // React 的 onDrop 走冒泡阶段，宿主的 drop 处理器会先接走文件，鱼永远收不到。
-      // 这里用 window 捕获监听 + 命中判定：落点在鱼身上才归鱼，其它位置仍交给宿主。
-      R.useEffect(() => {
-        return bindFileDropCapture({
-          win: window,
-          hitTest: (x: number, y: number): boolean => {
-            try {
-              // 游走隐藏时 display:none 的包围盒是全 0，若不拦，屏幕左上角十几像素内的
-              // 文件会被"看不见的鱼"吃掉。隐藏时一律不认。
-              if (hiddenRef.current) return false
-              const el = stageRef.current
-              if (!el) return false
-              const r = el.getBoundingClientRect()
-              const pad = 12   // 手抖一点也算命中
-              return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad
-            } catch (e) { return false }
-          },
-          targetTest: (target: any): boolean => {
-            try {
-              if (hiddenRef.current) return false
-              const el = stageRef.current
-              return !!(el && target && (el === target || (typeof el.contains === 'function' && el.contains(target))))
-            } catch (e) { return false }
-          },
-          onFile: (file: any): void => {
-            try { handleFileDrop(file, { showBubble, speakText }).catch(() => { }) } catch (e2) { }
-          },
-          onMany: (n: number): void => {
-            // 说清「只收第一张」，否则其余文件静默消失，主人会以为都发过去了
-            try { showBubble('一次先看一张哦～先看第一张（共 ' + n + ' 个）', 3200) } catch (e2) { }
-          },
-        })
-      }, [])
-
       // ===== 粘贴图片：与拖入文件走同一条链路（压缩 / 4MB 上限 / 失败气泡都在 dropzone）=====
       // 只在聊天面板内粘贴时接管（target 不在面板里就原样放行，不抢宿主页面自己的粘贴）；
       // 只认剪贴板里的图片文件，粘贴文字仍由输入框自己处理。
@@ -1206,6 +1171,7 @@ registerSkinActions(actions)
         story,
         storyState: { busy: storyBusyRef, narrating: storyNarratingRef, auto: storyAutoRef, book: storyBookRef },
         homePos: () => homePos(),
+        handleFileDrop: (file: any) => { try { handleFileDrop(file, { showBubble, speakText }).catch(() => { }) } catch (e) { } },
         // 缩放：0.7–1.4，step 0.1；state 与 scaleRef 一起改（气泡定位读 scaleRef）
         nudgeScale: (delta) => {
           const s = Math.max(0.7, Math.min(1.4, (scaleRef.current || 1) + delta))
@@ -1890,14 +1856,6 @@ registerSkinActions(actions)
             setTimeout(() => { try { applySquash(1, 1) } catch (e3) { } }, 470)
           },
           onContextMenu,
-          onDragOver: (e: any) => { e.preventDefault(); e.stopPropagation() },
-          onDrop: (e: any) => {
-            // 拖进来的文件：图片识别 / 文档总结（逻辑在 client/dropzone.ts）
-            e.preventDefault()
-            e.stopPropagation()
-            const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]
-            handleFileDrop(file, { showBubble, speakText }).catch(() => { })
-          },
           onClick: () => {
             if (dragRef.current.moved > 8) return
             animRef.current?.talkFor(1200)

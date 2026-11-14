@@ -299,6 +299,24 @@ export function registerSystemActions(table: ActionTable<ActionHost>): void {
     } catch (e) { host.bubble('打不开文件选择', 4000) }
   })
 
+  // —— 阅读文档：选文件 → 复用拖入链路的 OCR / 官方文件解析 ——
+  table.define('read-doc', (host) => {
+    try {
+      const input = (document as any).createElement('input')
+      input.type = 'file'
+      input.accept = '.pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.json,.log,.csv,image/*'
+      input.onchange = () => {
+        try {
+          const file = input.files && input.files[0]
+          if (!file) return
+          if (typeof host.handleFileDrop === 'function') host.handleFileDrop(file)
+          else host.bubble('文档入口没接上，试试重启桌宠', 4000)
+        } catch (e) { host.bubble('文件读不出来', 4000) }
+      }
+      input.click()
+    } catch (e) { host.bubble('打不开文件选择', 4000) }
+  })
+
   // —— 语音试听 ——
   table.define('test-tts', (host) => {
     host.bubble('测试语音：主人听得到吗？', 4000)
