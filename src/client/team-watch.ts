@@ -58,6 +58,14 @@ export function createTeamWatch(options: TeamWatchOptions): TeamWatch {
         ...(options.cooldownMs === undefined ? {} : { cooldownMs: options.cooldownMs }),
       })
 
+      // 任务板完成：收工庆祝仍走提醒，但脚下常驻看板不再保留「已完成」。
+      if (summary.phase === 'done') {
+        const doneAlert = presentation && presentation.alert ? { ambient: null, alert: presentation.alert } : null
+        options.surface.apply(doneAlert)
+        lastPresented = summary
+        return
+      }
+
       if (presentation !== null) {
         options.surface.apply(presentation)
         lastPresented = summary

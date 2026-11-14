@@ -80,19 +80,26 @@ export function createTeamStatusBubble(opts: TeamStatusBubbleOptions = {}): Team
   let dim = false
   let lastRect: TeamRect | null = null
 
-  /** 把「鱼头右上方」换算成 fixed 坐标：横向落在鱼身 62% 处，纵向贴头顶上沿 */
+  /** 把坐标换算到鱼脚下：水平居中，纵向贴 stage 底沿 */
   function place(rect: TeamRect): void {
     if (!el) return
     try {
       const viewportWidth = typeof window !== 'undefined' && Number.isFinite(window.innerWidth)
         ? window.innerWidth
         : 1024
+      const viewportHeight = typeof window !== 'undefined' && Number.isFinite(window.innerHeight)
+        ? window.innerHeight
+        : 768
       const left = Math.min(
-        Math.max(8, rect.left + rect.width * 0.62),
-        Math.max(8, viewportWidth - TEAM_STATUS_MAX_WIDTH - 8),
+        Math.max(8, rect.left + rect.width * 0.5),
+        Math.max(8, viewportWidth - TEAM_STATUS_MAX_WIDTH / 2 - 8),
+      )
+      const top = Math.min(
+        Math.max(8, rect.top + rect.height - 6),
+        Math.max(8, viewportHeight - 46),
       )
       el.style.left = left + 'px'
-      el.style.top = (rect.top + 8) + 'px'
+      el.style.top = top + 'px'
     } catch (e) { }
   }
 
@@ -102,10 +109,10 @@ export function createTeamStatusBubble(opts: TeamStatusBubbleOptions = {}): Team
     try {
       el.style.border =
         tone === 'warn'
-          ? '1px solid rgba(255,196,84,0.95)'
+          ? '1px solid rgba(214,137,22,0.9)'
           : tone === 'muted'
             ? '1px solid rgba(255,255,255,0.10)'
-            : '1px solid rgba(255,255,255,0.18)'
+            : '1px solid rgba(86,122,154,0.55)'
       el.setAttribute('data-tone', tone)
     } catch (e) { }
   }
@@ -142,16 +149,17 @@ export function createTeamStatusBubble(opts: TeamStatusBubbleOptions = {}): Team
       s.maxWidth = TEAM_STATUS_MAX_WIDTH + 'px'
       s.padding = '5px 9px'
       s.borderRadius = '8px'
-      s.background = 'rgba(20,28,45,0.72)'
-      s.color = '#ffffff'
-      s.font = '12px/1.5 "Microsoft YaHei","Leelawadee UI",Tahoma,sans-serif'
-      s.boxShadow = '0 4px 12px rgba(0,0,0,0.28)'
+      s.background = 'rgba(255,251,242,0.97)'
+      s.color = '#17324a'
+      s.font = '600 12.5px/1.45 "Microsoft YaHei","Leelawadee UI",Tahoma,sans-serif'
+      s.boxShadow = '0 6px 18px rgba(10,24,42,0.45), 0 0 0 1px rgba(255,255,255,0.35) inset'
       s.pointerEvents = 'none'
       s.userSelect = 'none'
       s.whiteSpace = 'pre-wrap'
       s.wordBreak = 'break-word'
       s.overflowWrap = 'anywhere'
-      s.transition = 'opacity .15s'
+      s.transition = 'opacity .15s, transform .15s'
+        s.transform = 'translateX(-50%)'
       s.opacity = '1'
       if (doc.body && typeof doc.body.appendChild === 'function') doc.body.appendChild(node)
       el = node

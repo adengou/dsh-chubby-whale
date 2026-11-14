@@ -56,14 +56,14 @@ export const TEAM_PROJECTION_KEY = 'agentTeam'
  * 探针槽位：composer 卡片内的浮层列表（list / session）。
  * 选择它而不是根作用域 shell.overlay，是因为根作用域拿不到会话级标准 hook。
  */
-export const TEAM_PROBE_SLOT = 'conversation.input.overlay'
+export const TEAM_PROBE_SLOT = 'conversation.session.header.actions'
 
 /**
  * 备选槽位：composer 卡片上方的整行列表（list / session）。
  * 该槽位需要 InputZone（session + input 都存在）才渲染，可用性略弱于 overlay，
  * 仅当宿主版本没有 overlay 声明时由调用方显式指定。
  */
-export const TEAM_PROBE_FALLBACK_SLOT = 'conversation.input.dock'
+export const TEAM_PROBE_FALLBACK_SLOT = 'conversation.input.overlay'
 
 /** list 槽位按 id 分格，注册 id 必须稳定且唯一。 */
 export const TEAM_PROBE_ID = 'chubby-whale-team-probe'
@@ -564,11 +564,6 @@ export function createTeamProbe(R: any): (props: any) => any {
       R.useEffect(() => {
         if (sessionId === undefined) return
         if (typeof useProjection !== 'function') return
-        if (mainViewFlag === 'no') {
-          // 侧栏子会话等非主视图实例：不能覆盖主看板；若此前误发过同会话快照就清掉。
-          clearSnapshot(sessionId)
-          return
-        }
         publishSnapshot({ sessionId, projection, approvals: approvalInputs })
       }, [projection, sessionId, approvalsSignature, mainViewFlag])
     }
@@ -640,8 +635,8 @@ export interface RegisterTeamProbeOptions {
   readonly slot?: string
 }
 
-function registerProbeInSlot(slots: any, slotName: string, probe: (props: any) => any): void {
-  const descriptor = { name: slotName, id: TEAM_PROBE_ID, order: 0 }
+function registerProbeInSlot(slots: any, slotName: string, probe: (props: any) => any, id = TEAM_PROBE_ID): void {
+  const descriptor = { name: slotName, id, order: 0 }
   const register = () => slots.register(descriptor, probe)
   if (typeof slots.inject === 'function') {
     // 与官方插件一致：inject 等到槽位声明出现后再注册，并返回 disposer。
@@ -676,18 +671,16 @@ export function registerTeamProbe(ctx: any, R: any, options: RegisterTeamProbeOp
     : TEAM_PROBE_SLOT
   try {
     registerProbeInSlot(slots, slotName, probe)
-    return
   } catch (error) {
     try {
       console.warn('[chubby-whale] team-source：探针槽位 ' + slotName + ' 注册失败，尝试备选槽位', error)
     } catch (ignored) { /* console 不可用就算了 */ }
   }
-  if (slotName === TEAM_PROBE_FALLBACK_SLOT) return
-  try {
-    registerProbeInSlot(slots, TEAM_PROBE_FALLBACK_SLOT, probe)
-  } catch (error) {
-    try {
-      console.warn('[chubby-whale] team-source：备选槽位注册也失败，鲸鱼看板没有数据源', error)
-    } catch (ignored) { /* console 不可用就算了 */ }
+  if (slotName !== TEAM_PROBE_FALLBACK_SLOT) {
+    try { registerProbeInSlot(slots, TEAM_PROBE_FALLBACK_SLOT, probe, TEAM_PROBE_ID + '-fallback') } catch (error) {
+      try {
+        console.warn('[chubby-whale] team-source：备选槽位注册失败，鲸鱼看板可能没有数据源', error)
+      } catch (ignored) { /* console 不可用就算了 */ }
+    }
   }
 }

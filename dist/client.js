@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.5.0";
+  var VERSION = "1.5.1";
 
   // src/client/styles.ts
   var W = 240;
@@ -9290,6 +9290,12 @@
           quiet: quiet(),
           ...options.cooldownMs === void 0 ? {} : { cooldownMs: options.cooldownMs }
         });
+        if (summary.phase === "done") {
+          const doneAlert = presentation && presentation.alert ? { ambient: null, alert: presentation.alert } : null;
+          options.surface.apply(doneAlert);
+          lastPresented = summary;
+          return;
+        }
         if (presentation !== null) {
           options.surface.apply(presentation);
           lastPresented = summary;
@@ -9342,19 +9348,24 @@
       if (!el) return;
       try {
         const viewportWidth = typeof window !== "undefined" && Number.isFinite(window.innerWidth) ? window.innerWidth : 1024;
+        const viewportHeight = typeof window !== "undefined" && Number.isFinite(window.innerHeight) ? window.innerHeight : 768;
         const left = Math.min(
-          Math.max(8, rect.left + rect.width * 0.62),
-          Math.max(8, viewportWidth - TEAM_STATUS_MAX_WIDTH - 8)
+          Math.max(8, rect.left + rect.width * 0.5),
+          Math.max(8, viewportWidth - TEAM_STATUS_MAX_WIDTH / 2 - 8)
+        );
+        const top = Math.min(
+          Math.max(8, rect.top + rect.height - 6),
+          Math.max(8, viewportHeight - 46)
         );
         el.style.left = left + "px";
-        el.style.top = rect.top + 8 + "px";
+        el.style.top = top + "px";
       } catch (e) {
       }
     }
     function applyTone() {
       if (!el) return;
       try {
-        el.style.border = tone === "warn" ? "1px solid rgba(255,196,84,0.95)" : tone === "muted" ? "1px solid rgba(255,255,255,0.10)" : "1px solid rgba(255,255,255,0.18)";
+        el.style.border = tone === "warn" ? "1px solid rgba(214,137,22,0.9)" : tone === "muted" ? "1px solid rgba(255,255,255,0.10)" : "1px solid rgba(86,122,154,0.55)";
         el.setAttribute("data-tone", tone);
       } catch (e) {
       }
@@ -9388,16 +9399,17 @@
         s.maxWidth = TEAM_STATUS_MAX_WIDTH + "px";
         s.padding = "5px 9px";
         s.borderRadius = "8px";
-        s.background = "rgba(20,28,45,0.72)";
-        s.color = "#ffffff";
-        s.font = '12px/1.5 "Microsoft YaHei","Leelawadee UI",Tahoma,sans-serif';
-        s.boxShadow = "0 4px 12px rgba(0,0,0,0.28)";
+        s.background = "rgba(255,251,242,0.97)";
+        s.color = "#17324a";
+        s.font = '600 12.5px/1.45 "Microsoft YaHei","Leelawadee UI",Tahoma,sans-serif';
+        s.boxShadow = "0 6px 18px rgba(10,24,42,0.45), 0 0 0 1px rgba(255,255,255,0.35) inset";
         s.pointerEvents = "none";
         s.userSelect = "none";
         s.whiteSpace = "pre-wrap";
         s.wordBreak = "break-word";
         s.overflowWrap = "anywhere";
-        s.transition = "opacity .15s";
+        s.transition = "opacity .15s, transform .15s";
+        s.transform = "translateX(-50%)";
         s.opacity = "1";
         if (doc.body && typeof doc.body.appendChild === "function") doc.body.appendChild(node);
         el = node;
@@ -9607,8 +9619,8 @@
 
   // src/client/team-source.ts
   var TEAM_PROJECTION_KEY = "agentTeam";
-  var TEAM_PROBE_SLOT = "conversation.input.overlay";
-  var TEAM_PROBE_FALLBACK_SLOT = "conversation.input.dock";
+  var TEAM_PROBE_SLOT = "conversation.session.header.actions";
+  var TEAM_PROBE_FALLBACK_SLOT = "conversation.input.overlay";
   var TEAM_PROBE_ID = "chubby-whale-team-probe";
   var MAX_SESSION_DEPTH = 8;
   var TASK_STATUSES = ["pending", "in_progress", "completed", "deleted"];
@@ -9916,10 +9928,6 @@
         R.useEffect(() => {
           if (sessionId === void 0) return;
           if (typeof useProjection !== "function") return;
-          if (mainViewFlag === "no") {
-            clearSnapshot(sessionId);
-            return;
-          }
           publishSnapshot({ sessionId, projection, approvals: approvalInputs });
         }, [projection, sessionId, approvalsSignature, mainViewFlag]);
       }
@@ -9957,8 +9965,8 @@
       }
     };
   }
-  function registerProbeInSlot(slots, slotName, probe) {
-    const descriptor = { name: slotName, id: TEAM_PROBE_ID, order: 0 };
+  function registerProbeInSlot(slots, slotName, probe, id = TEAM_PROBE_ID) {
+    const descriptor = { name: slotName, id, order: 0 };
     const register = () => slots.register(descriptor, probe);
     if (typeof slots.inject === "function") {
       slots.inject(slotName, register);
@@ -9979,20 +9987,20 @@
     const slotName = typeof options.slot === "string" && options.slot !== "" ? options.slot : TEAM_PROBE_SLOT;
     try {
       registerProbeInSlot(slots, slotName, probe);
-      return;
     } catch (error) {
       try {
         console.warn("[chubby-whale] team-source：探针槽位 " + slotName + " 注册失败，尝试备选槽位", error);
       } catch (ignored) {
       }
     }
-    if (slotName === TEAM_PROBE_FALLBACK_SLOT) return;
-    try {
-      registerProbeInSlot(slots, TEAM_PROBE_FALLBACK_SLOT, probe);
-    } catch (error) {
+    if (slotName !== TEAM_PROBE_FALLBACK_SLOT) {
       try {
-        console.warn("[chubby-whale] team-source：备选槽位注册也失败，鲸鱼看板没有数据源", error);
-      } catch (ignored) {
+        registerProbeInSlot(slots, TEAM_PROBE_FALLBACK_SLOT, probe, TEAM_PROBE_ID + "-fallback");
+      } catch (error) {
+        try {
+          console.warn("[chubby-whale] team-source：备选槽位注册失败，鲸鱼看板可能没有数据源", error);
+        } catch (ignored) {
+        }
       }
     }
   }

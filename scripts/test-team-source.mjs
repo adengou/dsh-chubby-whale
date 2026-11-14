@@ -237,8 +237,8 @@ try {
     && typeof teamProbeBridge.setSnapshot === 'function'
     && typeof teamProbeBridge.clear === 'function')
   ok('投影键是 agentTeam', TEAM_PROJECTION_KEY === 'agentTeam')
-  ok('主槽位是 conversation.input.overlay', TEAM_PROBE_SLOT === 'conversation.input.overlay')
-  ok('备选槽位是 conversation.input.dock', TEAM_PROBE_FALLBACK_SLOT === 'conversation.input.dock')
+  ok('主槽位是 conversation.session.header.actions', TEAM_PROBE_SLOT === 'conversation.session.header.actions')
+  ok('备选槽位是 conversation.input.overlay', TEAM_PROBE_FALLBACK_SLOT === 'conversation.input.overlay')
   ok('探针 id 稳定', TEAM_PROBE_ID === 'chubby-whale-team-probe')
 
   /* ---------------------------------------------------------------- */
@@ -487,7 +487,7 @@ try {
     list: sidebarList,
   })
   sidebarHarness.render()
-  ok('非 mainView 持有（侧栏子会话）不发布快照', latestTeamProbeSnapshot() === null)
+  ok('非 mainView 持有也发布快照（桌面端保留标志不稳，只信最新会话）', latestTeamProbeSnapshot() !== null)
 
   sidebarHarness.state.list = {
     ids: ['s-root'],
@@ -506,7 +506,7 @@ try {
     projectionsBySession: {},
   }
   sidebarHarness.render()
-  ok('主视图释放后清掉该会话快照', latestTeamProbeSnapshot() === null)
+  ok('主视图释放不误清快照（交给新会话覆盖）', latestTeamProbeSnapshot() !== null)
   sidebarHarness.unmount()
 
   teamProbeBridge.clear()
@@ -647,7 +647,7 @@ try {
     },
   }
   registerTeamProbe(directCtx, createFakeReact().R)
-  ok('宿主没有 inject 时直接 register', directCalls.length === 1 && directCalls[0] === TEAM_PROBE_SLOT)
+  ok('宿主没有 inject 时直接 register 主槽和兜底槽', directCalls.length === 2 && directCalls[0] === TEAM_PROBE_SLOT)
 
   let threw = false
   const originalWarn = console.warn

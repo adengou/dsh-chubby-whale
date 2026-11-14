@@ -143,10 +143,10 @@ console.log('\n[5] 全部完成只庆祝一次（真实 done 转变）')
   source.emit(snapshot([task({ status: 'completed' })]))
   const doneCall = surface.calls.find((p) => p && p.alert && p.alert.text === '鲸群回巢了')
   ok('完成提醒出现', !!doneCall, JSON.stringify(surface.calls))
-  const before = surface.calls.length
+  const beforeAlerts = surface.calls.filter((p) => p && p.alert).length
   source.emit(snapshot([task({ status: 'completed' })]))
-  const after = surface.calls.length
-  ok('重复 done 不再提醒', after === before, before + ' → ' + after)
+  const afterAlerts = surface.calls.filter((p) => p && p.alert).length
+  ok('重复 done 不再提醒', afterAlerts === beforeAlerts, beforeAlerts + ' → ' + afterAlerts)
 }
 
 console.log('\n' + '='.repeat(48))

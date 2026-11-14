@@ -183,10 +183,10 @@ try {
     ok('max-width=240', el.style.maxWidth === TEAM_STATUS_MAX_WIDTH + 'px', el.style.maxWidth)
     ok('pointer-events:none（不抢点击）', el.style.pointerEvents === 'none', el.style.pointerEvents)
     ok('aria-hidden（不朗读）', el.attrs['aria-hidden'] === 'true', JSON.stringify(el.attrs))
-    ok('半透明深色底', /rgba\(20,28,45,0\.72\)/.test(el.style.background), el.style.background)
+    ok('高对比浅色底', /rgba\(255,251,242,0\.97\)/.test(el.style.background), el.style.background)
     ok('小号圆角', el.style.borderRadius === '8px', el.style.borderRadius)
     ok('文案进入 textContent', el.textContent === '2 个任务进行中', el.textContent)
-    ok('normal 基调边框为白色半透明', /255,255,255/.test(el.style.border), el.style.border)
+    ok('normal 基调边框为蓝灰', /86,122,154/.test(el.style.border), el.style.border)
     b.hide()
     ok('hide 只藏不删', el.style.display === 'none' && doc.body.children.length === 1, el.style.display)
     b.destroy()
@@ -207,10 +207,11 @@ try {
     b.show('干活 2/5', 'normal')
     const el = doc.body.children[0]
     ok('默认 z-index=2147483000', el.style.zIndex === String(TEAM_STATUS_Z_INDEX), el.style.zIndex)
-    ok('鱼头右上方：left = 100 + 300*0.62', el.style.left === (100 + 300 * 0.62) + 'px', el.style.left)
-    ok('鱼头右侧：top = 200 + 8', el.style.top === '208px', el.style.top)
+    ok('鱼脚下：left = 100 + 300*0.5', el.style.left === (100 + 300 * 0.5) + 'px', el.style.left)
+    ok('鱼脚下：top = 200 + 400 - 6', el.style.top === '594px', el.style.top)
+    ok('水平居中：transform translateX(-50%)', el.style.transform === 'translateX(-50%)', el.style.transform)
     b.show('审批卡住了', 'warn')
-    ok('warn 换边框色（琥珀）', /255,196,84/.test(el.style.border), el.style.border)
+    ok('warn 换边框色（琥珀）', /214,137,22/.test(el.style.border), el.style.border)
     ok('warn 文案更新', el.textContent === '审批卡住了', el.textContent)
     b.show('很安静', 'muted')
     ok('muted 压透明度', el.style.opacity === '0.72', el.style.opacity)
@@ -219,10 +220,10 @@ try {
     b.setDim(false)
     ok('setDim(false) 恢复 muted 的 0.72', el.style.opacity === '0.72', el.style.opacity)
     b.updatePosition({ left: 10, top: 20, width: 100, height: 50 })
-    ok('updatePosition 重新换算', el.style.left === (10 + 100 * 0.62) + 'px' && el.style.top === '28px',
+    ok('updatePosition 重新换算', el.style.left === (10 + 100 * 0.5) + 'px' && el.style.top === '64px',
       el.style.left + '/' + el.style.top)
     b.updatePosition({ left: NaN, top: 0, width: 10, height: 10 })
-    ok('非法矩形被忽略', el.style.top === '28px', el.style.top)
+    ok('非法矩形被忽略', el.style.top === '64px', el.style.top)
     b.destroy()
   }
 
