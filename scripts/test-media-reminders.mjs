@@ -481,9 +481,9 @@ async function main() {
     })())
     ok('空清单文案', manage.boardText([], '前缀') === '前缀\n没有提醒了', JSON.stringify(manage.boardText([], '前缀')))
 
-    ok('坏条目/已完成条目被跳过', (() => {
+    ok('坏条目被跳过、已提醒条目保留（标 done）', (() => {
       const list = manage.normalizeReminderList({ reminders: [{ id: 'a', text: 'x', done: true }, {}, { id: '', text: 'y' }, null, { id: 'b', text: 'z' }] })
-      return list.length === 1 && list[0].id === 'b'
+      return list.length === 2 && list[0].id === 'b' && list[1].id === 'a' && list[1].done === true
     })())
     ok('数组形态响应也认', manage.normalizeReminderList([{ id: 'q', text: 'w' }]).length === 1)
     // 用户报的「提醒清单 BUG」（2026-11-07）：序号必须跟到期先后一致，空正文不能占号

@@ -14,10 +14,17 @@ import type { NarratorState } from './tool-narrator.js'
 /** 诗词弹幕后缀（通用池） */
 const POEM_TAILS_COMMON = [
   '——这句是不是有点像你？',
-  '。送你了。',
+  '——这首，送给你。',
   '。本鲸觉得今天该念这句。',
-  '——给你。',
-  '。像不像你？',
+]
+
+/** 「念完了，……」后面的心情：按诗句与序号轮换，不是固定一句 */
+const POEM_MOODS = [
+  '心里挺静的。',
+  '鼻子有点酸。',
+  '像喝了口热茶。',
+  '忽然有点想家。',
+  '好像听懂了一点。',
 ]
 
 /** 主题专属后缀（命中这些主题时优先） */
@@ -49,7 +56,14 @@ function poemTail(theme: string, line: string): string {
   const pool = special.concat(POEM_TAILS_COMMON)
   let h = poemTailSeq++ >>> 0
   for (const ch of String(theme || "") + String(line || "")) h = (h * 31 + (ch.codePointAt(0) || 0)) >>> 0
-  return pool[h % pool.length]
+  // 留一个位置给「念完了，心情」：念完整首之后说一句自己的感受
+  const idx = h % (pool.length + 1)
+  if (idx === pool.length) {
+    let m = h >>> 0
+    for (const ch of String(line || '')) m = (m * 31 + (ch.codePointAt(0) || 0)) >>> 0
+    return '。念完了，' + POEM_MOODS[m % POEM_MOODS.length]
+  }
+  return pool[idx]
 }
 
 

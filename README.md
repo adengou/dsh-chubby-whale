@@ -3,6 +3,11 @@
 [LICENSE](LICENSE) | [NOTICE（版权与素材来源）](NOTICE) | [素材许可说明（LICENSE-ASSETS）](LICENSE-ASSETS.md)
 [![Gitee](https://gitee.com/adengou/dsh-chubby-whale/badge/star.svg?theme=dark)](https://gitee.com/adengou/dsh-chubby-whale)
 
+[![dsh.so risk](https://cdn.dsh.so/badge/dsh-chubby-whale.svg)](https://www.dsh.so/artifact/dsh-chubby-whale/?ref=badge)
+[![dsh.so install · dsh 0.2.2-rc.1](https://cdn.dsh.so/badge/install/dsh-chubby-whale@0.2.2-rc.1.svg)](https://www.dsh.so/artifact/dsh-chubby-whale/?ref=badge-install)
+
+> 徽章由 dsh.so 独立维护，仅作参考。
+
 DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下角。可拖拽（带惯性、位置记忆）、会眨眼、能说话、能说书念诗弹琴，也能听懂你说话。
 
 > **版权与素材来源**：代码为 MIT 许可（Copyright (c) 2026 adengou）；
@@ -44,6 +49,42 @@ dsh plugin --profile web add "link:C:\Users\<你>\.dsh\plugins\dsh-chubby-whale"
 # 装完重启 dsh web
 dsh web
 ```
+
+### 桌面端（desktop profile）安装说明
+
+**注意：`--profile desktop` 不能用 CLI 安装。** DSH 会拒绝：
+
+```
+error: profile "desktop" is managed exclusively by the Electron application
+```
+
+这是 DSH 的设计——桌面 profile 由 Electron 应用独占管理。桌面端用户请按下面任一种方式安装：
+
+**方式 A（推荐，官方途径）**：打开 DSH 桌面端 →「设置 → 插件（市场）」→ 添加索引或搜索安装「肥鲸 · Chubby Whale」→ 启用 → 重启桌面端。
+
+**方式 B（手动注册，适合离线/内网）**：把插件包放进桌面 profile 的 `node_modules`，并在 `~/.dsh/profiles/desktop/package.json` 里登记：
+
+```jsonc
+{
+  "dependencies": {
+    "dsh-chubby-whale": "link:C:/Users/<你>/.dsh/plugins/dsh-chubby-whale"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "dsh-chubby-whale"          // ← 加这一行
+      ]
+    }
+  }
+}
+```
+
+然后**彻底退出**桌面端再重开（托盘图标右键退出，不是关窗口），肥鲸就会出现在右下角。
+
+> 桌面端与网页版共用同一套插件代码与 `data/`；区别只在 profile 的注册方式。
+> 如果安装后看不到肥鲸：先确认「设置 → 插件」里它是启用状态，再看桌面端日志里有没有 `dsh-chubby-whale` 的加载错误。
 
 
 ### 通过插件市场索引（方式五）
@@ -294,3 +335,14 @@ node -e "console.log(require('~/.dsh/profiles/web/node_modules/dsh-chubby-whale/
 `data/story/*.json`、`data/culture/*.json`、`data/poems.json` 都按**文件修改时间**自动失效：
 改完保存，下一次请求就会重新读取（无需重启 dsh web，也无需清缓存）。
 运行数据（记忆/成长/鱼粮/提醒/说书进度/缓存）都在 `~/.dsh-chubby-whale/`，与插件包分离。
+
+## 发布
+
+发版流程与检查清单见 [docs/发布规范.md](docs/发布规范.md)，关键命令：
+
+```bash
+node tools/check-release.mjs   # 发版一致性（package / version.ts / dist / CHANGELOG / tag）
+node tools/version-check.mjs   # 四处版本核对（本地 / Gitee / GitHub / npm）
+```
+
+版本只留当前一个 tag；旧版本在 npm 上标记废弃、不删除（npm 政策不允许删超过 72 小时的版本）。

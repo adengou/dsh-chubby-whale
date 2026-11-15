@@ -28,6 +28,15 @@ export const BUBBLE_CSS =
   // （2026-11-13 的长诗滚动需求把 max-height/overflow-y 加在本体上，导致全线路气泡三角消失。）
   '.chubby-bubble>div{max-height:calc(100vh - 120px);overflow:auto;}' +
   '.chubby-bubble.show{opacity:1;}' +
+  // 闹钟卡片：常驻右下（鱼旁边），不点不消失
+  '.chubby-alarm-card{position:fixed;right:18px;bottom:220px;z-index:10003;max-width:300px;background:#fff;color:#17325a;border-radius:16px;padding:16px 18px;box-shadow:0 12px 40px rgba(0,0,0,.28);border:2px solid #ffb703;}' +
+  '.chubby-alarm-time{font-size:26px;font-weight:700;color:#e8590c;letter-spacing:1px;}' +
+  '.chubby-alarm-text{font-size:15px;line-height:1.5;margin:8px 0 14px;white-space:pre-wrap;word-break:break-word;}' +
+  '.chubby-alarm-more{font-size:12px;color:#8a6d3b;margin:-6px 0 10px;}' +
+  '.chubby-alarm-actions{display:flex;gap:10px;}' +
+  '.chubby-alarm-btn{flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;cursor:pointer;font-family:inherit;}' +
+  '.chubby-alarm-btn.ok{background:#2f6fed;color:#fff;}' +
+  '.chubby-alarm-btn.snooze{background:#eef2f8;color:#345;}' +
   // 诗词线：字号略小、米色底，与主气泡区分
   '.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}' +
   // 解说线：字号更小、灰蓝底

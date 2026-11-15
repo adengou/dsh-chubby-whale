@@ -54,7 +54,24 @@ export function createReminderRepo(dataDir) {
     let sawCorrupt = false;
     function loadReminders() {
         const arr = parseReminders();
-        return arr === null ? [] : arr;
+        if (arr === null)
+            return [];
+        // 7 天后删除（2026-11-15 主人要求）：已响过的一次性提醒保留 7 天，方便回看；
+        // 清理只发生在读取路径上，读到的列表里不再混入 7 天前的 done 记录。
+        const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+        let kept = arr.filter((r) => {
+            if (!r || !r.done)
+                return true;
+            const stamp = r.nextAt || r.at;
+            const ms = stamp ? new Date(stamp).getTime() : NaN;
+            return Number.isFinite(ms) && ms >= cutoff;
+        });
+        // 再加上限：清理完仍超 200 条时只保留最近的 200 条，避免「列表满了加不进新提醒」
+        if (kept.length > MAX_REMINDERS)
+            kept = kept.slice(kept.length - MAX_REMINDERS);
+        // 注意：这里只过滤、不写盘——saveReminders 内部会重新读列表，写盘会构成递归。
+        // 被过滤掉的旧记录会在下一次「新增/删除提醒」正常写盘时自然消失。
+        return kept;
     }
     /**
      * 读原始列表：文件不存在 → []；内容坏（JSON 解析失败/不是数组）→ null。
@@ -165,8 +182,8 @@ export function createReminderRepo(dataDir) {
                 }
             }
             else {
-                // 一次性提醒：响过即删，别把 done=true 的空壳留在列表里占地（2026-11-07 需求）
-                pendingDelete.add(String(r.id));
+                // 一次性提醒：响过不立刻删，标 done 保留到次日（2026-11-15 主人要求改「次日删除」）
+                r.done = true;
             }
         }
         if (pendingDelete.size > 0) {

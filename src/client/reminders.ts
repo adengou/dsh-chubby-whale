@@ -31,6 +31,12 @@ export interface ReminderHost {
   isNarrating: () => boolean
   /** 是否正忙（低优先级让路） */
   isBusy: () => boolean
+  /** 闹钟：开始/停止响铃（缺省 = 不响铃，只气泡） */
+  alarm?: { start: () => void; stop: () => void }
+  /** 弹闹钟卡片（缺省 = 只气泡）；卡片常驻，由 UI 决定何时关 */
+  showAlarm?: (text: string, at: string) => void
+  /** 是否免打扰（免打扰时卡片照弹，但不响铃） */
+  isMuted?: () => boolean
 }
 
 export interface ReminderPollerOptions {
@@ -95,9 +101,23 @@ export function createReminderPoller(host: ReminderHost, opts?: ReminderPollerOp
     // 照 C# FishForm：气泡与朗读都用「主人，提醒你：」+ 正文；正文为空兜底「时间到了」
     const body = String((item && item.text) || '').trim() || '时间到了'
     const line = '主人，提醒你：' + body
-    host.bubble(line, bubbleMs)
-    host.talkFor(3000)
-    try { host.speak(line) } catch (e) { }
+    const at = String((item && (item.at || item.nextAt)) || '')
+    // 闹钟优先：卡片常驻 + 循环响铃；没有注入闹钟能力时退回原来的气泡
+    let alarmShown = false
+    if (typeof host.showAlarm === 'function') {
+      try { host.showAlarm(body, at); alarmShown = true } catch (e) { }
+    }
+    if (!alarmShown) {
+      host.bubble(line, bubbleMs)
+      host.talkFor(3000)
+      try { host.speak(line) } catch (e) { }
+    } else {
+      // 卡片已经在了：铃声 + 她用自己的话念一句（旧版就是语音提醒，别丢）
+      const muted = typeof host.isMuted === 'function' ? !!host.isMuted() : false
+      if (!muted && host.alarm) { try { host.alarm.start() } catch (e) { } }
+      host.talkFor(3000)
+      try { host.speak(line) } catch (e) { }
+    }
     dueTimer = setTimeout(() => {
       dueTimer = null
       pump()

@@ -238,7 +238,7 @@ const EXPECT_CHILD = {
     'sub:说书语速：-35% ▸', 'sub:聊天语速：-15% ▸', 'sub:叙述语速：-25% ▸', 'sub:念诗语速：-25% ▸',
   ],
   '行为开关 ▸': [
-    'item:tool-narrator', 'item:poem-echo', 'item:nervous', 'item:nervous-status',
+    'item:tool-narrator', 'item:poem-echo', 'item:alarm-muted', 'item:nervous', 'item:nervous-status',
     'item:team-board', 'item:web-search', 'item:cache-toggle', 'item:keep-awake', 'item:story-auto',
   ],
   '数据与维护 ▸': [
@@ -285,7 +285,7 @@ const SETTINGS_ONLY = [
   'narration-rate:-15%', 'narration-rate:-20%', 'narration-rate:-25%', 'narration-rate:-30%',
   'poem-rate:-15%', 'poem-rate:-20%', 'poem-rate:-25%', 'poem-rate:-30%',
   // 行为开关
-  'tool-narrator', 'poem-echo', 'nervous', 'nervous-status', 'team-board', 'web-search',
+  'tool-narrator', 'poem-echo', 'alarm-muted', 'nervous', 'nervous-status', 'team-board', 'web-search',
   'cache-toggle', 'story-auto',
   // 数据与维护
   'config-view', 'remind-manage', 'wake-recover', 'cache-clear', 'clear-memory',
@@ -309,7 +309,7 @@ const SETTINGS_ONLY = [
 }
 
 // ======================================================================
-console.log('\n[D] 动作全集：设置重构前的 117 个 + 推演 2 个 + 代笔 1 个 - 已移除功能 1 个 = 120 个，一个不少、一个不多')
+console.log('\n[D] 动作全集：设置重构前的 117 个 + 推演 2 个 + 代笔 1 个 - 已移除功能 1 个 = 121 个（含提醒铃声），一个不少、一个不多')
 // 重构前（git 1.5.1）用 8 种状态跑出的 action 全集，逐字固化在这里；
 // 这是一次「只搬家不换货」的验收口径：任何 action 改名/丢失都会在这里报警。
 // 2026-11-14 鲸群推演室接入：一级「施工队 ▸」整组 4 个 whale-works 动作被主人要求删除，
@@ -318,7 +318,7 @@ console.log('\n[D] 动作全集：设置重构前的 117 个 + 推演 2 个 + �
 // 未发布的 dictate（聊天输入听写草稿）整组移除；7 条改版又按主人要求删掉 scribe-stop。
 // 2026-11-14 再按主人要求整体移除一项独立功能，对应 1 个动作同步删除，
 // 因此全集是 117 + 2 + 1 - 1 = 120。除这些增删之外，任何新增/改名/丢失仍然报警。
-const EXTRA_ACTIONS = ['cabinet:open', 'cabinet:protocol', 'scribe-start', 'keep-awake']
+const EXTRA_ACTIONS = ['cabinet:open', 'cabinet:protocol', 'scribe-start', 'keep-awake', 'alarm-muted']
 const BEFORE_ACTIONS = [
   'bigger', 'briefing-card', 'cache-clear', 'cache-toggle', 'chat-lang:auto', 'chat-lang:en', 'chat-lang:zh',
   'chat-rate:+0%', 'chat-rate:+10%', 'chat-rate:-10%', 'chat-rate:-15%', 'chat-rate:-20%', 'chat-rate:-30%',
@@ -352,9 +352,9 @@ const BEFORE_ACTIONS = [
   for (const st of STATES) walk(buildMenu('9.9.9', st), (it) => { if (it && it.type === 'item') actual.add(it.action) })
   const missing = EXPECT_ACTIONS.filter((a) => !actual.has(a))
   const extra = [...actual].filter((a) => EXPECT_ACTIONS.indexOf(a) < 0)
-  ok('设置重构前 116 个（已扣除已移除功能）+ 推演 2 个 + 代笔 1 个 = ' + EXPECT_ACTIONS.length + ' 个 action', actual.size === EXPECT_ACTIONS.length, '实际 ' + actual.size)
+  ok('设置重构前 116 个（已扣除已移除功能）+ 推演 2 个 + 代笔 1 个 + 提醒铃声 1 个 = ' + EXPECT_ACTIONS.length + ' 个 action', actual.size === EXPECT_ACTIONS.length, '实际 ' + actual.size)
   ok('重构前有、现在全部还在（无改名字/丢失）', missing.length === 0, missing.join(','))
-  ok('新增的只有推演 2 个 + 代笔 1 个 + 保持亮屏 1 个，施工队 4 个、dictate 1 个、scribe-stop 1 个与已移除功能 1 个已删干净', extra.length === 0, extra.join(','))
+  ok('新增的只有推演 2 个 + 代笔 1 个 + 保持亮屏 1 个 + 提醒铃声 1 个，其余已删干净', extra.length === 0, extra.join(','))
 }
 
 // ======================================================================

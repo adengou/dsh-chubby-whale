@@ -34,7 +34,7 @@ import { registerNervousActions } from './client/actions/nervous.js'
 import { createPersona, applyServerMood } from './client/persona.js'
 import { attachNervous, nervousEnabled } from './client/nervous/index.js'
 import { createDeduper } from './client/text.js'
-import { getJson } from './client/http.js'
+import { getJson, postJson } from './client/http.js'
 import { createMelodyPlayer } from './client/melody.js'
 import { createBubble, clearBubbleTimer, ensureBubbleStyle } from './client/bubble.js'
 import { createBubbleScheduler } from './client/bubble-queue.js'
@@ -51,6 +51,7 @@ import { createStoryController } from './client/story.js'
 import { createLocalRouter } from './client/chat-route.js'
 import { createChatSender } from './client/chat.js'
 import { createReminderPoller } from './client/reminders.js'
+import { createAlarm } from './client/alarm.js'
 import { createReminderManager } from './client/reminder-manage.js'
 import { createRecover } from './client/recover.js'
 import { createHooks } from './client/hooks.js'
@@ -389,6 +390,65 @@ registerSkinActions(actions)
     const storyAutoRef = R.useRef((() => {
       try { const s = localStorage.getItem('chubby-story-auto'); return s === null ? true : s !== '0' } catch (e) { return true }
     })())
+      // 闹钟：Web Audio 风铃式铃声（默认开，菜单可静音）+ 常驻卡片（不点不消失）
+      const alarmRef = hookApi.useLazyRef(() => createAlarm())
+      // 多条提醒排队：一张卡片一次只显示一条，确认后自动弹下一条
+      const [alarmCard, setAlarmCard] = R.useState(null as any)
+      const [alarmQueue, setAlarmQueue] = R.useState([] as any[])
+      const alarmCardRef = R.useRef(null as any)
+      alarmCardRef.current = alarmCard
+      const alarmQueueRef = R.useRef([] as any[])
+      alarmQueueRef.current = alarmQueue
+      /** 免打扰：菜单里的「提醒铃声」关掉时只弹卡片不响铃 */
+      const alarmMuted = (): boolean => { try { return localStorage.getItem('chubby-alarm-muted') === 'on' } catch (e) { return false } }
+      /** 菜单「提醒铃声」切换 */
+      function toggleAlarmMuted(): void {
+        try {
+          const next = !alarmMuted()
+          localStorage.setItem('chubby-alarm-muted', next ? 'on' : 'off')
+          if (next) { try { alarmRef.current.stop() } catch (e) { } }
+          showBubble(next ? '提醒铃声：关（只弹卡片）' : '提醒铃声：开', 3000)
+        } catch (e) { }
+      }
+      /** 弹下一条（队列空则停铃） */
+      function pumpAlarmQueue(): void {
+        const now = alarmCardRef.current
+        if (now) return
+        const next = alarmQueueRef.current.shift()
+        if (!next) { try { alarmRef.current.stop() } catch (e) { } return }
+        setAlarmQueue(alarmQueueRef.current.slice())
+        setAlarmCard(next)
+        if (!alarmMuted()) { try { alarmRef.current.start() } catch (e) { } }
+      }
+      /** 新的到点提醒：没卡片就直接弹，否则排队 */
+      function showAlarm(text: string, at: string): void {
+        const item = { text, at }
+        if (alarmCardRef.current) {
+          alarmQueueRef.current = alarmQueueRef.current.concat([item])
+          setAlarmQueue(alarmQueueRef.current.slice())
+          return
+        }
+        setAlarmCard(item)
+        if (!alarmMuted()) { try { alarmRef.current.start() } catch (e) { } }
+      }
+      function dismissAlarm(): void {
+        try { alarmRef.current.stop() } catch (e) { }
+        setAlarmCard(null)
+        setTimeout(() => { try { pumpAlarmQueue() } catch (e) { } }, 0)
+      }
+      function snoozeAlarm(): void {
+        const c = alarmCard
+        try { alarmRef.current.stop() } catch (e) { }
+        setAlarmCard(null)
+        if (c) {
+          try {
+            const at = new Date(Date.now() + 5 * 60 * 1000).toISOString()
+            postJson('/reminders', { text: c.text, at }).catch(() => { })
+            showBubble('好，5 分钟后再提醒你。', 3000)
+          } catch (e) { }
+        }
+        setTimeout(() => { try { pumpAlarmQueue() } catch (e) { } }, 0)
+      }
       // 到点提醒：轮询 + 播报队列在 client/reminders.ts；惰性 ref 保证跨渲染只建一个实例
       const reminderPollerRef = hookApi.useLazyRef(() => createReminderPoller({
         getJson: (path, init) => getJson(path, init),
@@ -399,6 +459,12 @@ registerSkinActions(actions)
         isSpeaking: () => ttsPlaying,
         isNarrating: () => storyNarratingRef.current,
         isBusy: () => busyLock.isBusy(),
+        alarm: {
+          start: () => { try { alarmRef.current.start() } catch (e) { } },
+          stop: () => { try { alarmRef.current.stop() } catch (e) { } },
+        },
+        showAlarm: (text: string, at: string) => { try { showAlarm(text, at) } catch (e) { } },
+        isMuted: () => alarmMuted(),
       }))
 
       const [scale, setScale] = R.useState(1)
@@ -595,7 +661,7 @@ registerSkinActions(actions)
           reminderPoller: () => reminderPollerRef.current,
           stopTts: () => stopTts(),
           stopMelody: () => melody.stop(),
-          clearBubble: () => { try { bubbleScheduler.clear() } catch (e) { } clearBubbleTimer(bubbleRef.current); clearBubbleTimer(poemBubbleRef.current); clearBubbleTimer(personaBubbleRef.current); clearBubbleTimer(toolBubbleRef.current); clearBubbleTimer(voiceBubbleRef.current) },
+          clearBubble: () => { try { alarmRef.current.stop() } catch (e) { } try { bubbleScheduler.clear() } catch (e) { } clearBubbleTimer(bubbleRef.current); clearBubbleTimer(poemBubbleRef.current); clearBubbleTimer(personaBubbleRef.current); clearBubbleTimer(toolBubbleRef.current); clearBubbleTimer(voiceBubbleRef.current) },
         })
       }, [])
 
@@ -1594,6 +1660,7 @@ registerSkinActions(actions)
           showBubble(next ? '固定背景：开（不再随机换）' : '固定背景：关（每 5 分钟随机换）', 2600)
           return
         }
+        if (action === 'alarm-muted') { toggleAlarmMuted(); return }
         // 联网搜索开关（默认关）：打开后她的聊天请求会带 web:true，答案末尾附来源。
         // 搜索/抓取按官方价另计（5 元/1000 次），所以不默认开。
         if (action === 'web-search') {
@@ -2219,6 +2286,15 @@ registerSkinActions(actions)
           ),
         ),
         h('div', { ref: bubbleRef, className: 'chubby-bubble' }, h('div', { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+        alarmCard ? h('div', { className: 'chubby-alarm-card' },
+          h('div', { className: 'chubby-alarm-time' }, alarmCard.at ? new Date(alarmCard.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''),
+          h('div', { className: 'chubby-alarm-text' }, String(alarmCard.text || '')),
+          alarmQueue.length ? h('div', { className: 'chubby-alarm-more' }, '还有 ' + alarmQueue.length + ' 条提醒排着队') : null,
+          h('div', { className: 'chubby-alarm-actions' },
+            h('button', { className: 'chubby-alarm-btn ok', onClick: dismissAlarm }, '知道了'),
+            h('button', { className: 'chubby-alarm-btn snooze', onClick: snoozeAlarm }, '再响 5 分钟'),
+          ),
+        ) : null,
         h('div', { ref: poemBubbleRef, className: 'chubby-bubble chubby-bubble-poem' }, h('div', { ref: poemBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         h('div', { ref: personaBubbleRef, className: 'chubby-bubble chubby-bubble-persona' }, h('div', { ref: personaBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
         h('div', { ref: toolBubbleRef, className: 'chubby-bubble chubby-bubble-tool' }, h('div', { ref: toolBubbleTextRef, style: BUBBLE_TEXT_STYLE })),

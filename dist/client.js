@@ -29,7 +29,7 @@
   var THAI_FONT_FAMILY = "ChubbyThai";
 
   // src/client/version.ts
-  var VERSION = "1.10.1";
+  var VERSION = "1.10.2";
 
   // src/client/styles.ts
   var W = 240;
@@ -2949,7 +2949,8 @@
     "鲸式解说：": ["Whale commentary: on", "Whale commentary: off"],
     "联网搜索：": ["Web search: on", "Web search: off"],
     "保持亮屏：": ["Keep screen awake: on", "Keep screen awake: off"],
-    "诗词弹幕：": ["Poem commentary: on", "Poem commentary: off"]
+    "诗词弹幕：": ["Poem commentary: on", "Poem commentary: off"],
+    "提醒铃声：": ["Reminder chime: on", "Reminder chime: off"]
   };
   function tr(label, lang) {
     if (lang !== "en") return label;
@@ -3071,6 +3072,7 @@
         sub("行为开关 ▸", [
           item("鲸式解说：" + (state.toolNarratorOn === false ? "关" : "开"), "tool-narrator"),
           item("诗词弹幕：" + (state.poemEchoOn === false ? "关" : "开"), "poem-echo"),
+          item("提醒铃声：" + (state.alarmMuted ? "关" : "开"), "alarm-muted"),
           item("神经感知：" + (nervousOn ? "开" : "关"), "nervous"),
           item("神经感知：看一眼状态", "nervous-status"),
           item("鲸鱼看板：" + (state.teamBoardOn === false ? "关" : "开"), "team-board"),
@@ -3627,10 +3629,15 @@
   // src/client/tool-watch.ts
   var POEM_TAILS_COMMON = [
     "——这句是不是有点像你？",
-    "。送你了。",
-    "。本鲸觉得今天该念这句。",
-    "——给你。",
-    "。像不像你？"
+    "——这首，送给你。",
+    "。本鲸觉得今天该念这句。"
+  ];
+  var POEM_MOODS = [
+    "心里挺静的。",
+    "鼻子有点酸。",
+    "像喝了口热茶。",
+    "忽然有点想家。",
+    "好像听懂了一点。"
   ];
   var POEM_TAILS_BY_THEME = {
     坚持: ["。撑住。"],
@@ -3649,7 +3656,13 @@
     const pool = special.concat(POEM_TAILS_COMMON);
     let h = poemTailSeq++ >>> 0;
     for (const ch of String(theme || "") + String(line || "")) h = h * 31 + (ch.codePointAt(0) || 0) >>> 0;
-    return pool[h % pool.length];
+    const idx = h % (pool.length + 1);
+    if (idx === pool.length) {
+      let m = h >>> 0;
+      for (const ch of String(line || "")) m = m * 31 + (ch.codePointAt(0) || 0) >>> 0;
+      return "。念完了，" + POEM_MOODS[m % POEM_MOODS.length];
+    }
+    return pool[idx];
   }
   var PATH = "/nervous";
   var INTERVAL_MS = 3e3;
@@ -5652,6 +5665,7 @@
     table.define("skin-fixed", noop);
     table.define("tool-narrator", noop);
     table.define("poem-echo", noop);
+    table.define("alarm-muted", noop);
     table.define("web-search", noop);
     table.define("skin-bg-reset", noop);
   }
@@ -10938,7 +10952,7 @@
     THAI_FONT_FACE + // 本体只做「外壳」：定位、底色、圆角、内边距与三角都归它。
     // overflow 必须是 visible —— ::after 三角在 bottom:-9px（气泡下沿之外），
     // 一旦本体成为滚动容器（overflow:auto），三角就落在裁剪区外被整颗切掉。
-    ".chubby-bubble{position:fixed;z-index:10002;max-width:320px;overflow:visible;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 " + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble>div{max-height:calc(100vh - 120px);overflow:auto;}.chubby-bubble.show{opacity:1;}.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}.chubby-bubble-persona{background:#fff8ee;}.chubby-bubble-voice{background:#eef7ff;color:#2b4a6f;font-size:12.5px;max-width:280px;}'
+    ".chubby-bubble{position:fixed;z-index:10002;max-width:320px;overflow:visible;white-space:pre-wrap;opacity:0;background:#fff;color:#17325a;border-radius:14px;padding:10px 14px;font:13px/1.6 " + THAI_FONT_FAMILY + ',"Microsoft YaHei","Leelawadee UI",Tahoma,"Noto Sans Thai",sans-serif;box-shadow:0 8px 20px rgba(0,0,0,0.35);transition:opacity .2s;pointer-events:none;}.chubby-bubble::after{content:"";position:absolute;left:50%;margin-left:-9px;bottom:-9px;border-left:9px solid transparent;border-right:9px solid transparent;border-top:10px solid #fff;}.chubby-bubble>div{max-height:calc(100vh - 120px);overflow:auto;}.chubby-bubble.show{opacity:1;}.chubby-alarm-card{position:fixed;right:18px;bottom:220px;z-index:10003;max-width:300px;background:#fff;color:#17325a;border-radius:16px;padding:16px 18px;box-shadow:0 12px 40px rgba(0,0,0,.28);border:2px solid #ffb703;}.chubby-alarm-time{font-size:26px;font-weight:700;color:#e8590c;letter-spacing:1px;}.chubby-alarm-text{font-size:15px;line-height:1.5;margin:8px 0 14px;white-space:pre-wrap;word-break:break-word;}.chubby-alarm-more{font-size:12px;color:#8a6d3b;margin:-6px 0 10px;}.chubby-alarm-actions{display:flex;gap:10px;}.chubby-alarm-btn{flex:1;padding:10px 0;border-radius:10px;border:none;font-size:14px;cursor:pointer;font-family:inherit;}.chubby-alarm-btn.ok{background:#2f6fed;color:#fff;}.chubby-alarm-btn.snooze{background:#eef2f8;color:#345;}.chubby-bubble-poem{background:#fffdf6;font-size:14px;line-height:1.6;}.chubby-bubble-tool{background:#eef4ff;color:#3d5a80;font-size:12px;max-width:260px;}.chubby-bubble-persona{background:#fff8ee;}.chubby-bubble-voice{background:#eef7ff;color:#2b4a6f;font-size:12.5px;max-width:280px;}'
   );
   var STATUS_TEXTS = ["在听…", "在想…", "识别中…", "在说…"];
   deepFreeze(STATUS_TEXTS);
@@ -13990,11 +14004,35 @@
       const item2 = queue.shift();
       const body = String(item2 && item2.text || "").trim() || "时间到了";
       const line = "主人，提醒你：" + body;
-      host.bubble(line, bubbleMs);
-      host.talkFor(3e3);
-      try {
-        host.speak(line);
-      } catch (e) {
+      const at = String(item2 && (item2.at || item2.nextAt) || "");
+      let alarmShown = false;
+      if (typeof host.showAlarm === "function") {
+        try {
+          host.showAlarm(body, at);
+          alarmShown = true;
+        } catch (e) {
+        }
+      }
+      if (!alarmShown) {
+        host.bubble(line, bubbleMs);
+        host.talkFor(3e3);
+        try {
+          host.speak(line);
+        } catch (e) {
+        }
+      } else {
+        const muted = typeof host.isMuted === "function" ? !!host.isMuted() : false;
+        if (!muted && host.alarm) {
+          try {
+            host.alarm.start();
+          } catch (e) {
+          }
+        }
+        host.talkFor(3e3);
+        try {
+          host.speak(line);
+        } catch (e) {
+        }
       }
       dueTimer = setTimeout(() => {
         dueTimer = null;
@@ -14035,6 +14073,115 @@
       stopPoll();
     }
     return { pump, start, dispose };
+  }
+
+  // src/client/alarm.ts
+  var DEFAULT_ALARM_PARAMS = Object.freeze({
+    beepHz: [523.25, 659.25, 783.99],
+    beepMs: 450,
+    quietMs: 3500,
+    gain: 0.22
+  });
+  function defaultContextFactory() {
+    const w = typeof window !== "undefined" ? window : null;
+    const Ctx = w && (w.AudioContext || w.webkitAudioContext);
+    return Ctx ? new Ctx() : null;
+  }
+  function createAlarm(options = {}) {
+    const p = Object.assign({}, DEFAULT_ALARM_PARAMS, options.params || {});
+    const factory = typeof options.createContext === "function" ? options.createContext : defaultContextFactory;
+    let ctx = null;
+    let loopTimer = null;
+    let ringing = false;
+    let liveNodes = [];
+    function ensureContext() {
+      if (ctx) return ctx;
+      try {
+        ctx = factory();
+      } catch (e) {
+        ctx = null;
+      }
+      return ctx;
+    }
+    function beepOnce() {
+      const c = ensureContext();
+      if (!c || typeof c.createOscillator !== "function" || typeof c.createGain !== "function") return;
+      try {
+        if (typeof c.resume === "function" && c.state === "suspended") {
+          try {
+            c.resume();
+          } catch (e) {
+          }
+        }
+        const hz = p.beepHz;
+        const t0 = typeof c.currentTime === "number" ? c.currentTime : 0;
+        const noteSec = Math.max(0.1, p.beepMs / 1e3);
+        const vol = Math.max(0, Math.min(1, p.gain));
+        hz.forEach((freq, i) => {
+          const at = t0 + i * (noteSec * 0.9);
+          const g = c.createGain();
+          try {
+            g.gain.setValueAtTime(1e-4, at);
+            g.gain.linearRampToValueAtTime(vol, at + 0.02);
+            g.gain.linearRampToValueAtTime(1e-4, at + noteSec);
+          } catch (e) {
+          }
+          if (typeof g.connect === "function") g.connect(c.destination);
+          const o = c.createOscillator();
+          o.type = "sine";
+          try {
+            o.frequency.setValueAtTime(freq, at);
+          } catch (e) {
+          }
+          if (typeof o.connect === "function") o.connect(g);
+          try {
+            o.start(at);
+          } catch (e) {
+          }
+          try {
+            o.stop(at + noteSec + 0.05);
+          } catch (e) {
+          }
+          liveNodes.push(g, o);
+        });
+        setTimeout(() => {
+          liveNodes = [];
+        }, Math.ceil((noteSec + 0.2) * 1e3));
+      } catch (e) {
+      }
+    }
+    function tick2() {
+      if (!ringing) return;
+      beepOnce();
+      loopTimer = setTimeout(tick2, Math.max(200, p.beepMs + p.quietMs));
+    }
+    function start() {
+      if (ringing) return;
+      ringing = true;
+      tick2();
+    }
+    function stop() {
+      ringing = false;
+      if (loopTimer) {
+        try {
+          clearTimeout(loopTimer);
+        } catch (e) {
+        }
+      }
+      loopTimer = null;
+      for (const n of liveNodes) {
+        try {
+          if (n && typeof n.disconnect === "function") n.disconnect();
+        } catch (e) {
+        }
+        try {
+          if (n && typeof n.stop === "function") n.stop();
+        } catch (e) {
+        }
+      }
+      liveNodes = [];
+    }
+    return { start, stop, isRinging: () => ringing };
   }
 
   // src/client/reminder-manage.ts
@@ -14085,7 +14232,8 @@
   function boardText(items, prefix) {
     const lines = items.map((it, i) => {
       const rep = Number(it.repeat) > 0 ? "（重复）" : "";
-      return i + 1 + ". " + it.text + "（" + stampOf(it) + "）" + rep;
+      const done = it.done ? "（已提醒）" : "";
+      return i + 1 + ". " + it.text + "（" + stampOf(it) + "）" + rep + done;
     });
     const head = prefix ? prefix + "\n" : "";
     if (!lines.length) return head + "没有提醒了";
@@ -14100,7 +14248,6 @@
     const out = [];
     for (const x of arr) {
       if (!x || typeof x !== "object") continue;
-      if (x.done === true) continue;
       const id = str(x.id);
       if (!id) continue;
       const text3 = str(x.text);
@@ -14110,10 +14257,11 @@
         text: text3,
         at: x.at,
         nextAt: x.nextAt,
-        repeat: x.repeat
+        repeat: x.repeat,
+        done: x.done === true
       });
     }
-    out.sort((a, b) => dueMsOf(a) - dueMsOf(b));
+    out.sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0) || dueMsOf(a) - dueMsOf(b));
     return out;
   }
   function pickNextDue(items) {
@@ -14121,6 +14269,7 @@
     let pick = items[0];
     let pickMs = Infinity;
     for (const it of items) {
+      if (it.done) continue;
       const ms2 = new Date(it.nextAt || it.at).getTime();
       if (Number.isFinite(ms2) && ms2 < pickMs) {
         pickMs = ms2;
@@ -15046,6 +15195,105 @@
             return true;
           }
         })());
+        const alarmRef = hookApi.useLazyRef(() => createAlarm());
+        const [alarmCard, setAlarmCard] = R.useState(null);
+        const [alarmQueue, setAlarmQueue] = R.useState([]);
+        const alarmCardRef = R.useRef(null);
+        alarmCardRef.current = alarmCard;
+        const alarmQueueRef = R.useRef([]);
+        alarmQueueRef.current = alarmQueue;
+        const alarmMuted = () => {
+          try {
+            return localStorage.getItem("chubby-alarm-muted") === "on";
+          } catch (e) {
+            return false;
+          }
+        };
+        function toggleAlarmMuted() {
+          try {
+            const next = !alarmMuted();
+            localStorage.setItem("chubby-alarm-muted", next ? "on" : "off");
+            if (next) {
+              try {
+                alarmRef.current.stop();
+              } catch (e) {
+              }
+            }
+            showBubble(next ? "提醒铃声：关（只弹卡片）" : "提醒铃声：开", 3e3);
+          } catch (e) {
+          }
+        }
+        function pumpAlarmQueue() {
+          const now = alarmCardRef.current;
+          if (now) return;
+          const next = alarmQueueRef.current.shift();
+          if (!next) {
+            try {
+              alarmRef.current.stop();
+            } catch (e) {
+            }
+            return;
+          }
+          setAlarmQueue(alarmQueueRef.current.slice());
+          setAlarmCard(next);
+          if (!alarmMuted()) {
+            try {
+              alarmRef.current.start();
+            } catch (e) {
+            }
+          }
+        }
+        function showAlarm(text3, at) {
+          const item2 = { text: text3, at };
+          if (alarmCardRef.current) {
+            alarmQueueRef.current = alarmQueueRef.current.concat([item2]);
+            setAlarmQueue(alarmQueueRef.current.slice());
+            return;
+          }
+          setAlarmCard(item2);
+          if (!alarmMuted()) {
+            try {
+              alarmRef.current.start();
+            } catch (e) {
+            }
+          }
+        }
+        function dismissAlarm() {
+          try {
+            alarmRef.current.stop();
+          } catch (e) {
+          }
+          setAlarmCard(null);
+          setTimeout(() => {
+            try {
+              pumpAlarmQueue();
+            } catch (e) {
+            }
+          }, 0);
+        }
+        function snoozeAlarm() {
+          const c = alarmCard;
+          try {
+            alarmRef.current.stop();
+          } catch (e) {
+          }
+          setAlarmCard(null);
+          if (c) {
+            try {
+              const at = new Date(Date.now() + 5 * 60 * 1e3).toISOString();
+              postJson("/reminders", { text: c.text, at }).catch(() => {
+              });
+              showBubble("好，5 分钟后再提醒你。", 3e3);
+            } catch (e) {
+            }
+          }
+          setTimeout(() => {
+            try {
+              pumpAlarmQueue();
+            } catch (e) {
+            }
+          }, 0);
+        }
         const reminderPollerRef = hookApi.useLazyRef(() => createReminderPoller({
           getJson: (path, init) => getJson(path, init),
           // 到点提醒：等太久（比如正在念长诗）就不补播了，避免「过期的提醒」突然插进来
@@ -15059,7 +15307,28 @@
           },
           isSpeaking: () => ttsPlaying,
           isNarrating: () => storyNarratingRef.current,
-          isBusy: () => busyLock.isBusy()
+          isBusy: () => busyLock.isBusy(),
+          alarm: {
+            start: () => {
+              try {
+                alarmRef.current.start();
+              } catch (e) {
+              }
+            },
+            stop: () => {
+              try {
+                alarmRef.current.stop();
+              } catch (e) {
+              }
+            }
+          },
+          showAlarm: (text3, at) => {
+            try {
+              showAlarm(text3, at);
+            } catch (e) {
+            }
+          },
+          isMuted: () => alarmMuted()
         }));
         const [scale, setScale] = R.useState(1);
         const [hidden, setHidden] = R.useState(false);
@@ -15265,6 +15534,10 @@
             stopTts: () => stopTts(),
             stopMelody: () => melody.stop(),
             clearBubble: () => {
+              try {
+                alarmRef.current.stop();
+              } catch (e) {
+              }
               try {
                 bubbleScheduler.clear();
               } catch (e) {
@@ -16506,6 +16779,10 @@
             showBubble(next ? "固定背景：开（不再随机换）" : "固定背景：关（每 5 分钟随机换）", 2600);
             return;
           }
+          if (action === "alarm-muted") {
+            toggleAlarmMuted();
+            return;
+          }
           if (action === "web-search") {
             const on = (() => {
               try {
@@ -17243,6 +17520,19 @@
             )
           ),
           h("div", { ref: bubbleRef, className: "chubby-bubble" }, h("div", { ref: bubbleTextRef, style: BUBBLE_TEXT_STYLE })),
+          alarmCard ? h(
+            "div",
+            { className: "chubby-alarm-card" },
+            h("div", { className: "chubby-alarm-time" }, alarmCard.at ? new Date(alarmCard.at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : ""),
+            h("div", { className: "chubby-alarm-text" }, String(alarmCard.text || "")),
+            alarmQueue.length ? h("div", { className: "chubby-alarm-more" }, "还有 " + alarmQueue.length + " 条提醒排着队") : null,
+            h(
+              "div",
+              { className: "chubby-alarm-actions" },
+              h("button", { className: "chubby-alarm-btn ok", onClick: dismissAlarm }, "知道了"),
+              h("button", { className: "chubby-alarm-btn snooze", onClick: snoozeAlarm }, "再响 5 分钟")
+            )
+          ) : null,
           h("div", { ref: poemBubbleRef, className: "chubby-bubble chubby-bubble-poem" }, h("div", { ref: poemBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           h("div", { ref: personaBubbleRef, className: "chubby-bubble chubby-bubble-persona" }, h("div", { ref: personaBubbleTextRef, style: BUBBLE_TEXT_STYLE })),
           h("div", { ref: toolBubbleRef, className: "chubby-bubble chubby-bubble-tool" }, h("div", { ref: toolBubbleTextRef, style: BUBBLE_TEXT_STYLE })),

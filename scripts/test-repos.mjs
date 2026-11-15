@@ -448,8 +448,9 @@ try {
   once.addReminder('喝水', iso(now - 1000), 0)
   const due1 = once.dueReminders()
   ok('一次性提醒到点返回 1 条', due1.length === 1 && due1[0].remindCount === 1)
-  // 1.2.2 起：一次性提醒响过即删（不把 done=true 的空壳留在列表里），断言同步成「列表里已不存在」
-  ok('一次性提醒响过即删', once.loadReminders().length === 0)
+  // 2026-11-15 起：一次性提醒响过保留（done），7 天后清理
+  const onceAfter = once.loadReminders()
+  ok('一次性提醒响过保留并标记 done（7 天后删）', onceAfter.length === 1 && onceAfter[0].done === true, JSON.stringify(onceAfter))
   ok('一次性提醒不会重复触发（幂等）', once.dueReminders().length === 0)
 
   // 未到点不触发

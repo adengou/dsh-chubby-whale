@@ -37,6 +37,8 @@ export type ManageHost = {
 
 /** 面板里的一条提醒（只保留展示与顺延需要的字段） */
 export type ManageItem = {
+  /** 已提醒过（一次性提醒响过，保留 7 天供回看） */
+  done?: boolean
   id: string
   text: string
   at: any
@@ -112,7 +114,9 @@ function stampOf(item: ManageItem): string {
 export function boardText(items: ManageItem[], prefix?: string): string {
   const lines = items.map((it, i) => {
     const rep = Number(it.repeat) > 0 ? '（重复）' : ''
-    return (i + 1) + '. ' + it.text + '（' + stampOf(it) + '）' + rep
+    // 已提醒过的（7 天内保留）标出来，让主人能区分「还没响」和「响过了」
+    const done = it.done ? '（已提醒）' : ''
+    return (i + 1) + '. ' + it.text + '（' + stampOf(it) + '）' + rep + done
   })
   const head = prefix ? prefix + '\n' : ''
   if (!lines.length) return head + '没有提醒了'
@@ -144,7 +148,6 @@ export function normalizeReminderList(payload: any): ManageItem[] {
   const out: ManageItem[] = []
   for (const x of arr) {
     if (!x || typeof x !== 'object') continue
-    if (x.done === true) continue
     const id = str(x.id)
     if (!id) continue
     const text = str(x.text)
@@ -155,10 +158,12 @@ export function normalizeReminderList(payload: any): ManageItem[] {
       at: x.at,
       nextAt: x.nextAt,
       repeat: x.repeat,
+      done: x.done === true,
     })
   }
-  // 按到期升序；时间坏的全部 Infinity，稳定排序保持原相对顺序（V8 的 sort 自 ES2019 起稳定）
-  out.sort((a, b) => dueMsOf(a) - dueMsOf(b))
+  // 未完成在前、已完成（7 天内回看）在后；各自按到期升序。
+  // 时间坏的全部 Infinity，稳定排序保持原相对顺序（V8 的 sort 自 ES2019 起稳定）
+  out.sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0) || dueMsOf(a) - dueMsOf(b))
   return out
 }
 
@@ -168,6 +173,7 @@ export function pickNextDue(items: ManageItem[]): ManageItem | null {
   let pick = items[0]
   let pickMs = Infinity
   for (const it of items) {
+    if (it.done) continue
     const ms = new Date(it.nextAt || it.at).getTime()
     if (Number.isFinite(ms) && ms < pickMs) {
       pickMs = ms

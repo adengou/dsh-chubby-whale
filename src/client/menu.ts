@@ -184,6 +184,7 @@ const TOGGLE_EN: Record<string, [string, string]> = {
   '联网搜索：': ['Web search: on', 'Web search: off'],
   '保持亮屏：': ['Keep screen awake: on', 'Keep screen awake: off'],
   '诗词弹幕：': ['Poem commentary: on', 'Poem commentary: off'],
+  '提醒铃声：': ['Reminder chime: on', 'Reminder chime: off'],
 }
 
 export function tr(label: string, lang: string): string {
@@ -278,6 +279,9 @@ export interface MenuState {
 
 /** 诗词弹幕开关（默认开） */
   poemEchoOn?: boolean
+
+/** 提醒铃声是否静音（默认不静音） */
+  alarmMuted?: boolean
 
 /** 曲目列表（运行时从 /melodies 拉取；缺省用内置 MELODIES 兜底） */
   melodies?: string[]
@@ -379,6 +383,7 @@ export function buildMenu(version: string, state: MenuState = {}): MenuItem[] {
       sub('行为开关 ▸', [
         item('鲸式解说：' + (state.toolNarratorOn === false ? '关' : '开'), 'tool-narrator'),
         item('诗词弹幕：' + (state.poemEchoOn === false ? '关' : '开'), 'poem-echo'),
+    item('提醒铃声：' + (state.alarmMuted ? '关' : '开'), 'alarm-muted'),
         item('神经感知：' + (nervousOn ? '开' : '关'), 'nervous'),
         item('神经感知：看一眼状态', 'nervous-status'),
         item('鲸鱼看板：' + (state.teamBoardOn === false ? '关' : '开'), 'team-board'),

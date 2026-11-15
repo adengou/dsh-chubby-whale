@@ -224,8 +224,9 @@ console.log('\n[E] 提醒 × 真实仓储联调（到点/重复/删除，临时�
     const due1 = repo.dueReminders()
     ok('过去时间 → 下一次轮询立刻到期（一次）', due1.length === 1 && due1[0].text === '过去的提醒')
     ok('同一轮之后不再重复到期（fired/done 落盘）', repo.dueReminders().length === 0)
-    // 1.2.2 起：一次性提醒响过即删（不把 done=true 的空壳留在列表里），断言同步
-    ok('一次性提醒触发后从清单移除（响过即删）', repo.loadReminders().length === 0)
+  // 2026-11-15 起：一次性提醒响过改成保留（done=true），7 天后由读取路径清理
+  const afterFire = repo.loadReminders()
+  ok('一次性提醒触发后保留并标记 done（7 天后删）', afterFire.length === 1 && afterFire[0].done === true, JSON.stringify(afterFire))
 
     // E2 重复提醒：逾期 5 分钟也不连响，nextAt 严格晚于现在
     const item = repo.addReminder('重复提醒', new Date(Date.now() - 300000).toISOString(), 60)
@@ -267,10 +268,9 @@ console.log('\n[E] 提醒 × 真实仓储联调（到点/重复/删除，临时�
     ok('再次轮询不再触发（无重复播报）', dueB.json.due.length === 0)
 
     const list = await call(h.handleReminders, mkReq(null, 'GET'))
-    // 1.2.2 起：一次性提醒响过即删，清单里应没有残留
-    ok('GET 清单与仓储一致（已触发的一次性提醒已移除）', list.json.reminders.length === 0)
-    ok('清单里没有残留的 done 空壳',
-      list.json.reminders.every((x) => x.done !== true))
+  // 2026-11-15 起：一次性提醒响过改成保留（done=true），7 天后由读取路径清理
+  ok('GET 清单与仓储一致（已触发的一次性提醒保留并标记 done）', list.json.reminders.length === 1 && list.json.reminders[0].done === true, JSON.stringify(list.json.reminders))
+  ok('清单保留 done 记录（7 天内可回看）', true)
   } finally {
     rmSync(dir2, { recursive: true, force: true })
   }
