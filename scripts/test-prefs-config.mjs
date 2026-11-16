@@ -1,3 +1,4 @@
+process.env.CHUBBY_WHALE_NO_DSH_KEY = '1'
 /**
  * scripts/test-prefs-config.mjs —— B74 配置/备份/迁移模块专项回归（仅本批）
  *

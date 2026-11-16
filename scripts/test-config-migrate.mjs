@@ -1,3 +1,4 @@
+process.env.CHUBBY_WHALE_NO_DSH_KEY = '1'
 /**
  * scripts/test-config-migrate.mjs —— B100 配置与迁移分身专项回归
  *

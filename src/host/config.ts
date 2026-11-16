@@ -14,6 +14,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { homedir } from 'node:os'
 import { isMissingFileError, stripBom } from './atomic.js'
 import type { DataSourceKind } from './ports.js'
 
@@ -107,9 +108,20 @@ export type ConfigWarn = (msg: string) => void
  * @param onWarn 告警出口；缺省用本模块的 warnConfig（前缀 [chubby-whale]）
  * @returns null = 没有文件 / 读不出来 / 坏 JSON / 根不是对象（调用方一律按默认值处理）
  */
-export function readConfigJson(pluginDir: string, onWarn?: ConfigWarn): any {
-  const warn = onWarn || warnConfig
-  const file = join(pluginDir, 'config.json')
+/**
+ * 包外配置目录：默认 ~/.dsh-chubby-whale（重装/升级插件不会动它）。
+ * 可用 CHUBBY_WHALE_CONFIG_DIR 覆盖（测试用，避免读到真实 home 下的 Key）。
+ */
+function homeConfigDir(): string {
+  try {
+    const custom = process.env.CHUBBY_WHALE_CONFIG_DIR
+    if (custom && custom.trim()) return custom.trim()
+  } catch (e) { }
+  return join(homedir(), '.dsh-chubby-whale')
+}
+
+/** 读单个 config.json；不存在/坏 JSON/根不是对象一律 null（只告警，不回显值） */
+function readOneConfig(file: string, warn: ConfigWarn): any {
   let text: string
   try {
     text = String(readFileSync(file, 'utf8'))
@@ -135,6 +147,21 @@ export function readConfigJson(pluginDir: string, onWarn?: ConfigWarn): any {
   return parsed
 }
 
+/**
+ * 读配置（全仓唯一入口）。
+ *
+ * 顺序：**包外配置优先**（~/.dsh-chubby-whale/config.json，或 CHUBBY_WHALE_CONFIG_DIR），
+ * 没有再读 pluginDir/config.json。
+ * 为什么：Key 放在插件包目录里，重装/升级插件时整个目录被替换，Key 就丢了
+ * （2026-11-16 实际发生）。放包外之后，重装、升级都不影响。
+ */
+export function readConfigJson(pluginDir: string, onWarn?: ConfigWarn): any {
+  const warn = onWarn || warnConfig
+  const fromHome = readOneConfig(join(homeConfigDir(), 'config.json'), warn)
+  if (fromHome) return fromHome
+  return readOneConfig(join(pluginDir, 'config.json'), warn)
+}
+
 function fromEnv(own: string, legacy: string): string {
   try {
     const v = process.env[own]
@@ -148,14 +175,36 @@ function fromEnv(own: string, legacy: string): string {
 }
 
 /**
+ * 读 DSH 自己的凭据（~/.dsh/.credentials.yaml 的 refs.DEEPSEEK_API_KEY）。
+ * 为什么：桌面端已在 GUI 里配过 Key，肥鲸再要一份就是重复劳动；
+ * 重装/升级插件也不会动 DSH 的凭据文件，比插件包内 config.json 稳。
+ * 只按行匹配「DEEPSEEK_API_KEY: sk-...」，不引 yaml 库、不解析整份文件。
+ */
+function readDshCredentialKey(): string {
+  try {
+    // 测试开关：离线单测要求「没有 Key」时，别让它读到开发机上的真实凭据
+    if (process.env.CHUBBY_WHALE_NO_DSH_KEY === '1') return ''
+    const p = join(homedir(), '.dsh', '.credentials.yaml')
+    const text = String(readFileSync(p, 'utf8'))
+    const m = text.match(/^\s*DEEPSEEK_API_KEY:\s*["']?(sk-[A-Za-z0-9_-]+)["']?\s*$/m)
+    return m ? String(m[1]) : ''
+  } catch (e) { return '' }
+}
+
+/**
  * DeepSeek Key（聊天 / 语音识别 / 文档总结 / 对联）
  * 2026-11-14 起是唯一的外呼 Key：旧 ASR依赖已全部删除。
  */
 export function readApiKey(pluginDir: string): string {
+  // ① 插件自己的配置（包外 ~/.dsh-chubby-whale/config.json 优先，其次包内）
   const cfg = readConfigJson(pluginDir)
   const fromFileKey = readKeyField(cfg, 'deepseekKey')
   if (fromFileKey) return fromFileKey
-  return fromEnv('CHUBBY_WHALE_DEEPSEEK_KEY', 'DEEPSEEK_API_KEY')
+  // ② 环境变量
+  const fromEnvKey = fromEnv('CHUBBY_WHALE_DEEPSEEK_KEY', 'DEEPSEEK_API_KEY')
+  if (fromEnvKey) return fromEnvKey
+  // ③ 兜底：复用 DSH 自己已配好的 Key（桌面端 GUI 里配过的那份）
+  return readDshCredentialKey()
 }
 
 /**

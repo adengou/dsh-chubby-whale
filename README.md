@@ -95,24 +95,24 @@ error: profile "desktop" is managed exclusively by the Electron application
 2. 添加索引 URL：`https://gitee.com/adengou/dsh-chubby-whale/raw/main/market-index.json`；
 3. 在市场里找到「肥鲸 · Chubby Whale」，点安装即可（安装源固定到 Git 提交，可复现）。
 
-装完刷新页面即可看到肥鲸。Key 不随包分发，需要自己配。**配置要放在「插件包根目录」的 `config.json`**，具体位置取决于安装方式：
+装完刷新页面即可看到肥鲸。**Key 一般不用自己配**——肥鲸会按下面顺序找：
+
+1. **包外配置**：`~/.dsh-chubby-whale/config.json`（Windows 是 `C:\Users\<你>\.dsh-chubby-whale\config.json`）——**推荐**，重装/升级插件都不会动它；
+2. **环境变量**：`CHUBBY_WHALE_DEEPSEEK_KEY`（回退到通用的 `DEEPSEEK_API_KEY`）；
+3. **DSH 自己已配好的 Key**：读 `~/.dsh/.credentials.yaml` 里的 `refs.DEEPSEEK_API_KEY`——**桌面端 GUI 里配过 Key 的话，肥鲸直接复用，不用再配**。
+
+包外配置文件的写法：
 
 ```jsonc
-// ① 手动 link 安装（dsh plugin add link:<本目录>）：
-//    ~/.dsh/plugins/dsh-chubby-whale/config.json（这个目录本身就是插件包根目录）
-// ② 市场 / npm 安装：
-//    <插件包安装目录>/config.json
-//    例如 <profile>/node_modules/dsh-chubby-whale/config.json
+// ~/.dsh-chubby-whale/config.json（包外，重装不丢）
 {
   "deepseekKey": "sk-..."         // 聊天 + 语音识别（官方 ASR），一个 Key 全包
 }
 ```
 
-> 桌面端只读插件包根目录；手机页在包内没有配置时，会额外回退读
-> `$DSH_HOME/plugins/dsh-chubby-whale/config.json`（README 里的手动安装路径）。
-> 如果你不确定包根目录在哪，直接把 `config.json` 放在启动插件时使用的那份插件目录里。
+> **为什么不再推荐放在插件包里**：插件包目录（`<profile>/node_modules/dsh-chubby-whale`）在重装/升级时会被整体替换，放在里面的 `config.json` 会被覆盖丢失（2026-11-16 实际发生过）。
+> 现在的读取顺序是「包外配置 → 环境变量 → DSH 凭据」，包里那份只作最后兜底。
 
-也可用环境变量：`CHUBBY_WHALE_DEEPSEEK_KEY`（最后才回退到通用名 `DEEPSEEK_API_KEY`）。
 
 > 2026-11-14 起**不再需要旧 ASR Key**：语音识别改走 DeepSeek 官方 `/v1/tools/asr`，
 > 旧配置里残留的旧 ASR字段会被忽略，不影响启动。

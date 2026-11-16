@@ -21,3 +21,7 @@ data/*.bak-*
 .tmp-*
 *.tmp.mjs
 browser-screenshots/
+
+# 客户端 bundle 分析临时目录（本机调试用，不进仓库）
+.client-net-tmp/
+

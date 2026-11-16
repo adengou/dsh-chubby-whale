@@ -1,3 +1,4 @@
+process.env.CHUBBY_WHALE_NO_DSH_KEY = '1'
 /**
  * scripts/test-cloud-config.mjs —— B101「config.json 读取口径收敛」专项（离线、不联网、只碰临时目录）
  *
