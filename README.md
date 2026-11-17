@@ -22,8 +22,8 @@ DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下�
 | npm 包 | <https://www.npmjs.com/package/dsh-chubby-whale> |
 | 更新日志 | [CHANGELOG.md](CHANGELOG.md) |
 
-> **版本现状（2026-11-14）**：Gitee 主仓库为开发主线（当前 1.7.x）；GitHub 镜像与 npm 目前停在 1.6.0，
-> 尚未同步 1.7.x。安装前请以各渠道实际版本为准，不要默认三渠道同版。
+> **版本现状（2026-11-18 核查）**：Gitee 主仓库、GitHub 镜像与 npmjs 均为 1.10.3；
+> 国内 npm 镜像可能滞后（同日核查为 1.10.2）。安装前请以各渠道实际版本为准，不要默认三渠道同版。
 
 > 语音待命的信号处理设计与调参：见 [docs/耳朵算法.md](docs/耳朵算法.md)
 > 发版规范（Gitee 必发；GitHub / npm 可达时同步同一版本）：见 [docs/发布规范.md](docs/发布规范.md)
