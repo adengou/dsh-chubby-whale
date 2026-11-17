@@ -17,16 +17,16 @@ DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下�
 
 | 渠道 | 地址 |
 | --- | --- |
-| 主仓库（Gitee） | <https://gitee.com/adengou/dsh-chubby-whale> |
-| 镜像（GitHub） | <https://github.com/adengou/dsh-chubby-whale> |
+| 主仓库（GitHub） | <https://github.com/adengou/dsh-chubby-whale> |
+| 镜像（Gitee） | <https://gitee.com/adengou/dsh-chubby-whale> |
 | npm 包 | <https://www.npmjs.com/package/dsh-chubby-whale> |
 | 更新日志 | [CHANGELOG.md](CHANGELOG.md) |
 
-> **版本现状（2026-11-18 核查）**：Gitee 主仓库、GitHub 镜像与 npmjs 均为 1.10.3；
+> **版本现状（2026-11-18 核查）**：GitHub 主仓库、Gitee 镜像与 npmjs 均为 1.10.3；
 > 国内 npm 镜像可能滞后（同日核查为 1.10.2）。安装前请以各渠道实际版本为准，不要默认三渠道同版。
 
 > 语音待命的信号处理设计与调参：见 [docs/耳朵算法.md](docs/耳朵算法.md)
-> 发版规范（Gitee 必发；GitHub / npm 可达时同步同一版本）：见 [docs/发布规范.md](docs/发布规范.md)
+> 发版规范（GitHub 必发；Gitee 与 npm 同步同一版本）：见 [docs/发布规范.md](docs/发布规范.md)
 
 > **鱼账本（2026-11-07 起）**：`/fishfood` 除 token 总量外，还会给出输入/输出拆分、缓存命中数与
 > **人民币估算**（按官方价目 × 高峰/空闲 × 缓存命中，价格来源与核对日期写在响应里）。
@@ -37,11 +37,11 @@ DSH 网页版桌面宠物：蓝发女仆鲸鱼娘，常驻 harness 页面右下�
 # ① npm 包（最省事，装发布版）
 dsh plugin --profile web add "dsh-chubby-whale"
 
-# ② 从 Gitee 装（主仓库）
-dsh plugin --profile web add "git+https://gitee.com/adengou/dsh-chubby-whale.git"
-
-# ③ 从 GitHub 装（镜像，连通时与 Gitee 同一版本）
+# ② 从 GitHub 装（主仓库）
 dsh plugin --profile web add "git+https://github.com/adengou/dsh-chubby-whale.git"
+
+# ③ 从 Gitee 装（镜像，连通时与 GitHub 同一版本）
+dsh plugin --profile web add "git+https://gitee.com/adengou/dsh-chubby-whale.git"
 
 # ④ 本地 link（开发调试）
 dsh plugin --profile web add "link:C:\Users\<你>\.dsh\plugins\dsh-chubby-whale"
